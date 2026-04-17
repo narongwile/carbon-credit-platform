@@ -36,6 +36,6 @@ spec:
   - name: mqtts
     port: 8883
     targetPort: 8883
-    nodePort: 32883
+    nodePort: 31884
   selector:
     app: mosquitto
