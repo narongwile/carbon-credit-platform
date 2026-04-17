@@ -19,7 +19,9 @@ spec:
         image: eclipse-mosquitto:2.0
         ports:
         - containerPort: 1883
+          hostPort: 1883
         - containerPort: 8883
+          hostPort: 8883
         # In a production environment, mount ConfigMap or Secrets here for auth
 ---
 apiVersion: v1
