@@ -17,6 +17,13 @@ spec:
       containers:
       - name: grafana
         image: grafana/grafana:latest
+        env:
+        - name: GF_SERVER_DOMAIN
+          value: "57.158.27.30"
+        - name: GF_SERVER_ROOT_URL
+          value: "%(protocol)s://%(domain)s/grafana/"
+        - name: GF_SERVER_SERVE_FROM_SUB_PATH
+          value: "true"
         ports:
         - containerPort: 3000
 ---
