@@ -1,0 +1,17 @@
+version: '3.7'
+
+services:
+  cosmos:
+    image: azukaar/cosmos-server:latest
+    container_name: cosmos-server
+    hostname: cosmos-server
+    restart: always
+    network_mode: "host" 
+    # Host mode allows Cosmos to bind directly to ports 80/443 on the Ubuntu VPS 
+    # and directly route traffic to K3s NodePorts exposed on localhost!
+    environment:
+      - TZ=Asia/Bangkok
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./cosmos-data:/config
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket # Optional for UFW integration

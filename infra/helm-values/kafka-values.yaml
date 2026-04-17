@@ -1,0 +1,148 @@
+# ============================================================
+# Apache Kafka + Zookeeper — Helm Values
+# Chart: bitnami/kafka
+# Deploy: helm install kafka bitnami/kafka -n infra -f kafka-values.yaml
+# ============================================================
+
+replicaCount: 3
+
+image:
+  registry: docker.io
+  repository: bitnami/kafka
+  tag: "3.7"
+
+kraft:
+  enabled: false  # Using Zookeeper for compatibility
+
+zookeeper:
+  enabled: true
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClassName: local-path
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+persistence:
+  enabled: true
+  size: 50Gi
+  storageClassName: local-path
+
+# Listener configuration
+listeners:
+  client:
+    protocol: PLAINTEXT
+  interbroker:
+    protocol: PLAINTEXT
+
+# Log retention
+logRetentionHours: 168  # 7 days
+logRetentionBytes: 10737418240  # 10GB per partition
+
+# Default topic settings
+defaultReplicationFactor: 2
+numPartitions: 6
+minInsyncReplicas: 1
+
+# Auto-create topics disabled (use provisioning)
+autoCreateTopicsEnable: false
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+# ============================================================
+# Initial Topics — Created via provisioning job
+# ============================================================
+provisioning:
+  enabled: true
+  topics:
+    # Per-agency sensor data (raw from MQTT bridge)
+    - name: agency.pilot_a.sensor.raw
+      partitions: 6
+      replicationFactor: 2
+      config:
+        retention.ms: "604800000"      # 7 days
+        cleanup.policy: delete
+        compression.type: lz4
+    - name: agency.pilot_b.sensor.raw
+      partitions: 6
+      replicationFactor: 2
+      config:
+        retention.ms: "604800000"
+        cleanup.policy: delete
+        compression.type: lz4
+
+    # Validated sensor data (from Spark Streaming)
+    - name: agency.pilot_a.sensor.validated
+      partitions: 6
+      replicationFactor: 2
+      config:
+        retention.ms: "604800000"
+        cleanup.policy: delete
+        compression.type: lz4
+    - name: agency.pilot_b.sensor.validated
+      partitions: 6
+      replicationFactor: 2
+      config:
+        retention.ms: "604800000"
+        cleanup.policy: delete
+        compression.type: lz4
+
+    # Alert topics
+    - name: agency.pilot_a.alerts
+      partitions: 3
+      replicationFactor: 2
+      config:
+        retention.ms: "2592000000"     # 30 days
+        cleanup.policy: delete
+    - name: agency.pilot_b.alerts
+      partitions: 3
+      replicationFactor: 2
+      config:
+        retention.ms: "2592000000"
+        cleanup.policy: delete
+
+    # Carbon credit topics
+    - name: agency.pilot_a.carbon.credits
+      partitions: 3
+      replicationFactor: 2
+      config:
+        retention.ms: "-1"             # Infinite retention
+        cleanup.policy: compact
+    - name: agency.pilot_b.carbon.credits
+      partitions: 3
+      replicationFactor: 2
+      config:
+        retention.ms: "-1"
+        cleanup.policy: compact
+
+    # System audit (shared across all agencies)
+    - name: system.audit
+      partitions: 6
+      replicationFactor: 2
+      config:
+        retention.ms: "-1"             # Infinite retention
+        cleanup.policy: delete
+
+    # Dead Letter Queue (failed messages)
+    - name: system.dlq
+      partitions: 3
+      replicationFactor: 2
+      config:
+        retention.ms: "2592000000"     # 30 days
+
+# ============================================================
+# Kafka Connect (S3 Sink to MinIO)
+# ============================================================
+# Deployed separately — see kafka-connect-values.yaml

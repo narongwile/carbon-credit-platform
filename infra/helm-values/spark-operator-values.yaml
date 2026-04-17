@@ -1,0 +1,32 @@
+# ============================================================
+# Apache Spark Operator — Helm Values
+# Chart: spark-operator/spark-operator
+# Deploy: helm install spark-operator spark-operator/spark-operator \
+#           -n data -f spark-operator-values.yaml
+# ============================================================
+
+sparkJobNamespace: data
+
+image:
+  repository: ghcr.io/kubeflow/spark-operator
+  tag: "v2.0.0"
+
+webhook:
+  enable: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ============================================================
+# Spark Application Template — Streaming Validator
+# Apply: kubectl apply -f spark-streaming-app.yaml
+# ============================================================
+# Moved to infra/k3s/spark-streaming-app.yaml
+---
+# Template for SparkApplication CRD
+# File: infra/k3s/spark-streaming-app.yaml

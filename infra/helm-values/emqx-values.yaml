@@ -1,0 +1,98 @@
+# ============================================================
+# EMQX MQTT Broker — Helm Values
+# Chart: emqx/emqx (v5.x)
+# Deploy: helm install emqx emqx/emqx -n infra -f emqx-values.yaml
+# ============================================================
+
+replicaCount: 2
+
+image:
+  repository: emqx/emqx
+  tag: "5.5.1"
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: local-path
+
+service:
+  type: ClusterIP
+  mqtt: 1883
+  mqtts: 8883
+  ws: 8083
+  wss: 8084
+  dashboard: 18083
+  api: 8081
+
+# TLS Configuration
+emqxConfig:
+  EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
+  EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/etc/certs/cert.pem
+  EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE: /opt/emqx/etc/certs/key.pem
+  EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE: /opt/emqx/etc/certs/ca.pem
+  # WebSocket over TLS (for agencies behind firewalls)
+  EMQX_LISTENERS__WSS__DEFAULT__BIND: "0.0.0.0:8084"
+  # Dashboard
+  EMQX_DASHBOARD__DEFAULT_USERNAME: admin
+  EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_ADMIN_PASSWORD}"
+  # Logging
+  EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
+
+# ACL Rules per Agency
+emqxAclConfig: |
+  %% Agency-level ACL: each agency can only publish/subscribe to its own topics
+  %% Format: {allow, {username, "agency_a_device"}, publish, ["agency/a/sensor/#"]}.
+  
+  %% Default deny all
+  {deny, all}.
+
+# Authentication — connect to backend API for device auth
+emqxAuthConfig: |
+  authentication = [
+    {
+      mechanism = password_based
+      backend = http
+      method = post
+      url = "http://backend-api.app.svc.cluster.local:3000/mqtt/auth"
+      body {
+        username = "${username}"
+        password = "${password}"
+        clientid = "${clientid}"
+      }
+      headers {
+        content-type = "application/json"
+      }
+    }
+  ]
+
+  authorization {
+    sources = [
+      {
+        type = http
+        method = post
+        url = "http://backend-api.app.svc.cluster.local:3000/mqtt/acl"
+        body {
+          username = "${username}"
+          topic = "${topic}"
+          action = "${action}"
+        }
+        headers {
+          content-type = "application/json"
+        }
+      }
+    ]
+    no_match = deny
+  }
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# QoS support
+# QoS 0: At most once (fire-and-forget, for high-frequency low-value data)
+# QoS 1: At least once (default for sensor data)
+# QoS 2: Exactly once (for critical carbon credit transactions)

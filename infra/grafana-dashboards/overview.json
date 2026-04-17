@@ -1,0 +1,37 @@
+/**
+ * Grafana Dashboard: Carbon Credit Platform Overview
+ * Pre-configured dashboard for tracking emissions, credits, and sensor health.
+ */
+{
+  "title": "Agency Carbon Dashboard",
+  "uid": "carbon-overview",
+  "panels": [
+    {
+      "title": "Real-time CO2 (ppm)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [{ "expr": "sensor_co2_value{agency=\"$agency\"}" }]
+    },
+    {
+      "title": "Kafka Lag (Messages)",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "targets": [{ "expr": "kafka_consumergroup_lag{group=\"mqtt-bridge\"}" }]
+    },
+    {
+      "title": "Credit Balance",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [{ "expr": "carbon_credit_balance{agency=\"$agency\"}" }]
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "agency",
+        "type": "query",
+        "query": "label_values(sensor_co2_value, agency)"
+      }
+    ]
+  }
+}

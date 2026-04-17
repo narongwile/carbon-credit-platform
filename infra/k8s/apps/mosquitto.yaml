@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      containers:
+      - name: mosquitto
+        image: eclipse-mosquitto:2.0
+        ports:
+        - containerPort: 1883
+        - containerPort: 8883
+        # In a production environment, mount ConfigMap or Secrets here for auth
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+spec:
+  type: NodePort
+  ports:
+  - name: mqtt
+    port: 1883
+    targetPort: 1883
+    nodePort: 31883
+  - name: mqtts
+    port: 8883
+    targetPort: 8883
+    nodePort: 32883
+  selector:
+    app: mosquitto

@@ -1,0 +1,285 @@
+# ============================================================
+# Traefik IngressRoute — TLS Configuration
+# Deploy: kubectl apply -f traefik-config.yaml
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: app
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    stsPreload: true
+    forceSTSHeader: true
+    contentTypeNosniff: true
+    frameDeny: true
+    browserXssFilter: true
+    customResponseHeaders:
+      X-Content-Type-Options: nosniff
+      X-Frame-Options: DENY
+      X-XSS-Protection: "1; mode=block"
+      Referrer-Policy: strict-origin-when-cross-origin
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: app
+spec:
+  rateLimit:
+    average: 100
+    burst: 200
+    period: 1m
+
+# ============================================================
+# TLS Certificate (Let's Encrypt)
+# ============================================================
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@carbon-credit.go.th
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - http01:
+          ingress:
+            class: traefik
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: carbon-credit-tls
+  namespace: app
+spec:
+  secretName: carbon-credit-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "app.${DOMAIN}"
+    - "api.${DOMAIN}"
+    - "auth.${DOMAIN}"
+    - "bi.${DOMAIN}"
+    - "grafana.${DOMAIN}"
+    - "monitor.${DOMAIN}"
+    - "git.${DOMAIN}"
+    - "ci.${DOMAIN}"
+    - "airflow.${DOMAIN}"
+    - "reports.${DOMAIN}"
+
+# ============================================================
+# IngressRoute — Backend API
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backend-api
+  namespace: app
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`api.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: backend-api
+          port: 3000
+      middlewares:
+        - name: security-headers
+        - name: rate-limit
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Frontend Web
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frontend-web
+  namespace: app
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`app.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: frontend-web
+          port: 80
+      middlewares:
+        - name: security-headers
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Keycloak Auth
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: keycloak
+  namespace: auth
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`auth.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: keycloak
+          port: 8080
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Apache Superset (BI)
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: superset
+  namespace: analytics
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`bi.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: superset
+          port: 8088
+      middlewares:
+        - name: security-headers
+          namespace: app
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Grafana (Real-time Visualization)
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana-viz
+  namespace: analytics
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`grafana.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: grafana
+          port: 3000
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Monitoring (VPN-only access recommended)
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring
+  namespace: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`monitor.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: grafana
+          port: 3000
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Gitea + Drone CI
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: gitea
+  namespace: ci
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`git.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: gitea
+          port: 3000
+  tls:
+    secretName: carbon-credit-tls-secret
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: drone-ci
+  namespace: ci
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`ci.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: drone
+          port: 80
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# IngressRoute — Airflow Webserver
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: airflow
+  namespace: data
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: "Host(`airflow.${DOMAIN}`)"
+      kind: Rule
+      services:
+        - name: airflow-webserver
+          port: 8080
+  tls:
+    secretName: carbon-credit-tls-secret
+
+# ============================================================
+# HTTP → HTTPS Redirect
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: app
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

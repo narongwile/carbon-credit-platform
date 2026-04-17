@@ -1,0 +1,53 @@
+# Apache Superset — BI Dashboard for Carbon Credit Platform
+# Architecture diagram: "Dashboard" + "Real-time Visualization"
+
+replicaCount: 2
+
+image:
+  repository: apache/superset
+  tag: latest-dev
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8088
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts:
+    - host: dashboard.carbon-credit.go.th
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+
+configOverrides:
+  secret: |
+    import os
+    SECRET_KEY = os.getenv('SUPERSET_SECRET_KEY')
+    SQLALCHEMY_DATABASE_URI = f"postgresql://superset:{os.getenv('PG_PASSWORD')}@postgres-superset.infra.svc.cluster.local:5432/superset"
+    
+    # OAuth2 via Keycloak
+    from flask_appbuilder.security.manager import AUTH_OID
+    AUTH_TYPE = AUTH_OID
+    OIDC_CLIENT_ID = 'superset-client'
+    OIDC_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET')
+    OIDC_OPENID_CONNECT_URL = 'https://auth.carbon-credit.go.th/realms/master'
+
+supersetNode:
+  command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+
+supersetWorker:
+  command: ["/app/docker/docker-bootstrap.sh", "worker"]
+
+postgresql:
+  enabled: true
+  auth:
+    username: superset
+    database: superset
+
+redis:
+  enabled: true

@@ -1,0 +1,101 @@
+# ============================================================
+# Apache Airflow — Helm Values
+# Chart: apache-airflow/airflow
+# Deploy: helm install airflow apache-airflow/airflow -n data -f airflow-values.yaml
+# ============================================================
+
+defaultAirflowRepository: apache/airflow
+defaultAirflowTag: "2.8.3"
+
+executor: CeleryExecutor
+
+# Web server
+webserver:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# Scheduler
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# Celery Workers
+workers:
+  replicas: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  keda:
+    enabled: true
+    minReplicaCount: 1
+    maxReplicaCount: 6
+
+# Redis (Celery broker)
+redis:
+  enabled: true
+
+# PostgreSQL backend
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "${AIRFLOW_DB_PASSWORD}"
+    database: airflow
+
+# DAG sync from Gitea
+dags:
+  gitSync:
+    enabled: true
+    repo: "http://gitea.ci.svc.cluster.local:3000/carbon-credit/data-pipeline.git"
+    branch: develop
+    subPath: "dags"
+    wait: 60
+
+# Environment variables
+env:
+  - name: AIRFLOW__CORE__DAGS_FOLDER
+    value: /opt/airflow/dags
+  - name: AIRFLOW__CORE__LOAD_EXAMPLES
+    value: "False"
+  - name: AIRFLOW__CORE__DEFAULT_TIMEZONE
+    value: "Asia/Bangkok"
+  - name: AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG
+    value: "3"
+  - name: AIRFLOW__CORE__PARALLELISM
+    value: "32"
+  - name: AIRFLOW__CORE__DAG_CONCURRENCY
+    value: "16"
+  # Connections (set via Vault or env)
+  - name: AIRFLOW_CONN_MINIO_S3
+    value: "aws://${MINIO_ACCESS_KEY}:${MINIO_SECRET_KEY}@?endpoint_url=http://minio.infra.svc.cluster.local:9000"
+  - name: AIRFLOW_CONN_POSTGRES_CARBON
+    value: "postgresql://${PG_USER}:${PG_PASSWORD}@postgresql.infra.svc.cluster.local:5432/carbon_credit"
+  - name: AIRFLOW_CONN_KAFKA
+    value: "kafka://kafka.infra.svc.cluster.local:9092"
+  - name: AIRFLOW_CONN_SPARK
+    value: "spark://spark-master.data.svc.cluster.local:7077"
+
+# Extra pip packages for DAGs
+extraPipPackages:
+  - apache-airflow-providers-apache-spark==4.7.1
+  - apache-airflow-providers-amazon==8.16.0
+  - apache-airflow-providers-apache-kafka==1.3.1
+  - apache-airflow-providers-http==4.10.0
+  - great-expectations==0.18.12
+  - pyiceberg==0.6.0
+  - minio==7.2.5

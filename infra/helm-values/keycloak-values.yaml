@@ -1,0 +1,221 @@
+# ============================================================
+# Keycloak — Multi-Agency IAM / SSO
+# Chart: bitnami/keycloak
+# Deploy: helm install keycloak bitnami/keycloak -n auth -f keycloak-values.yaml
+# ============================================================
+
+replicaCount: 1
+
+image:
+  registry: docker.io
+  repository: bitnami/keycloak
+  tag: "24.0"
+
+auth:
+  adminUser: admin
+  adminPassword: "${KEYCLOAK_ADMIN_PASSWORD}"
+
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "${KC_DB_PASSWORD}"
+    database: keycloak
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+
+service:
+  type: ClusterIP
+  ports:
+    http: 8080
+
+# Proxy mode for behind Traefik
+proxy: edge
+httpRelativePath: /
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# ============================================================
+# Realm Configuration — Import on first boot
+# ============================================================
+# Realm exports are mounted from ConfigMap
+keycloakConfigCli:
+  enabled: true
+  configuration:
+    # Master realm (admin only)
+    master.json: |
+      {
+        "realm": "master",
+        "enabled": true
+      }
+
+    # Pilot Agency A realm
+    agency-pilot-a.json: |
+      {
+        "realm": "agency-pilot-a",
+        "enabled": true,
+        "displayName": "Ministry of Energy (Pilot A)",
+        "loginTheme": "keycloak",
+        "sslRequired": "external",
+        "registrationAllowed": false,
+        "roles": {
+          "realm": [
+            { "name": "admin", "description": "Agency administrator" },
+            { "name": "analyst", "description": "Data analyst with read/write" },
+            { "name": "viewer", "description": "Read-only dashboard access" }
+          ]
+        },
+        "clients": [
+          {
+            "clientId": "carbon-credit-web",
+            "name": "Carbon Credit Web Dashboard",
+            "enabled": true,
+            "publicClient": true,
+            "standardFlowEnabled": true,
+            "directAccessGrantsEnabled": false,
+            "rootUrl": "https://app.${DOMAIN}",
+            "redirectUris": [
+              "https://app.${DOMAIN}/*",
+              "http://localhost:5173/*"
+            ],
+            "webOrigins": [
+              "https://app.${DOMAIN}",
+              "http://localhost:5173"
+            ],
+            "protocol": "openid-connect",
+            "attributes": {
+              "pkce.code.challenge.method": "S256"
+            },
+            "defaultClientScopes": [
+              "openid",
+              "profile",
+              "email",
+              "roles"
+            ]
+          },
+          {
+            "clientId": "carbon-credit-api",
+            "name": "Carbon Credit Backend API",
+            "enabled": true,
+            "publicClient": false,
+            "bearerOnly": true,
+            "protocol": "openid-connect"
+          },
+          {
+            "clientId": "superset",
+            "name": "Apache Superset BI",
+            "enabled": true,
+            "publicClient": false,
+            "standardFlowEnabled": true,
+            "secret": "${SUPERSET_CLIENT_SECRET}",
+            "redirectUris": ["https://bi.${DOMAIN}/*"],
+            "protocol": "openid-connect"
+          },
+          {
+            "clientId": "metabase",
+            "name": "Metabase Reporting",
+            "enabled": true,
+            "publicClient": false,
+            "standardFlowEnabled": true,
+            "secret": "${METABASE_CLIENT_SECRET}",
+            "redirectUris": ["https://reports.${DOMAIN}/*"],
+            "protocol": "openid-connect"
+          }
+        ],
+        "users": [
+          {
+            "username": "admin-pilot-a",
+            "enabled": true,
+            "email": "admin@pilot-a.go.th",
+            "firstName": "Admin",
+            "lastName": "Pilot A",
+            "credentials": [
+              {
+                "type": "password",
+                "value": "${PILOT_A_ADMIN_PASSWORD}",
+                "temporary": true
+              }
+            ],
+            "realmRoles": ["admin"]
+          }
+        ],
+        "scopeMappings": [
+          {
+            "client": "carbon-credit-web",
+            "roles": ["admin", "analyst", "viewer"]
+          }
+        ]
+      }
+
+    # Pilot Agency B realm
+    agency-pilot-b.json: |
+      {
+        "realm": "agency-pilot-b",
+        "enabled": true,
+        "displayName": "Ministry of Transport (Pilot B)",
+        "loginTheme": "keycloak",
+        "sslRequired": "external",
+        "registrationAllowed": false,
+        "roles": {
+          "realm": [
+            { "name": "admin", "description": "Agency administrator" },
+            { "name": "analyst", "description": "Data analyst with read/write" },
+            { "name": "viewer", "description": "Read-only dashboard access" }
+          ]
+        },
+        "clients": [
+          {
+            "clientId": "carbon-credit-web",
+            "name": "Carbon Credit Web Dashboard",
+            "enabled": true,
+            "publicClient": true,
+            "standardFlowEnabled": true,
+            "directAccessGrantsEnabled": false,
+            "rootUrl": "https://app.${DOMAIN}",
+            "redirectUris": [
+              "https://app.${DOMAIN}/*",
+              "http://localhost:5173/*"
+            ],
+            "webOrigins": [
+              "https://app.${DOMAIN}",
+              "http://localhost:5173"
+            ],
+            "protocol": "openid-connect",
+            "attributes": {
+              "pkce.code.challenge.method": "S256"
+            }
+          },
+          {
+            "clientId": "carbon-credit-api",
+            "name": "Carbon Credit Backend API",
+            "enabled": true,
+            "publicClient": false,
+            "bearerOnly": true,
+            "protocol": "openid-connect"
+          }
+        ],
+        "users": [
+          {
+            "username": "admin-pilot-b",
+            "enabled": true,
+            "email": "admin@pilot-b.go.th",
+            "firstName": "Admin",
+            "lastName": "Pilot B",
+            "credentials": [
+              {
+                "type": "password",
+                "value": "${PILOT_B_ADMIN_PASSWORD}",
+                "temporary": true
+              }
+            ],
+            "realmRoles": ["admin"]
+          }
+        ]
+      }

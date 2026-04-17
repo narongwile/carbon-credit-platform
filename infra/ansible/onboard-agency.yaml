@@ -1,0 +1,191 @@
+# ============================================================
+# Ansible Playbook — Onboard New Government Agency
+# Run: ansible-playbook onboard-agency.yaml -e "agency_code=xxx agency_name='Ministry of ...' admin_email=admin@xxx.go.th"
+# ============================================================
+---
+- name: Onboard new government agency to Carbon Credit Platform
+  hosts: k3s_master
+  become: false
+  vars:
+    agency_code: "{{ agency_code }}"
+    agency_name: "{{ agency_name }}"
+    admin_email: "{{ admin_email }}"
+    domain: "{{ lookup('env', 'DOMAIN') | default('carbon-credit.go.th') }}"
+    keycloak_url: "http://keycloak.auth.svc.cluster.local:8080"
+    kafka_bootstrap: "kafka.infra.svc.cluster.local:9092"
+    pg_host: "postgresql.infra.svc.cluster.local"
+    pg_port: 5432
+    pg_db: "carbon_credit"
+    minio_endpoint: "http://minio.infra.svc.cluster.local:9000"
+
+  tasks:
+    # ── Step 1: Create Keycloak Realm ──
+    - name: Get Keycloak admin token
+      uri:
+        url: "{{ keycloak_url }}/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: client_credentials
+          client_id: admin-cli
+          client_secret: "{{ keycloak_admin_secret }}"
+        status_code: 200
+      register: kc_token
+
+    - name: Create agency Keycloak realm
+      uri:
+        url: "{{ keycloak_url }}/admin/realms"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ kc_token.json.access_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          realm: "agency-{{ agency_code }}"
+          enabled: true
+          displayName: "{{ agency_name }}"
+          sslRequired: external
+          registrationAllowed: false
+          roles:
+            realm:
+              - name: admin
+                description: "Agency administrator"
+              - name: analyst
+                description: "Data analyst with read/write"
+              - name: viewer
+                description: "Read-only dashboard access"
+          clients:
+            - clientId: carbon-credit-web
+              enabled: true
+              publicClient: true
+              standardFlowEnabled: true
+              directAccessGrantsEnabled: false
+              rootUrl: "https://app.{{ domain }}"
+              redirectUris:
+                - "https://app.{{ domain }}/*"
+              webOrigins:
+                - "https://app.{{ domain }}"
+              protocol: openid-connect
+              attributes:
+                pkce.code.challenge.method: S256
+            - clientId: carbon-credit-api
+              enabled: true
+              publicClient: false
+              bearerOnly: true
+              protocol: openid-connect
+        status_code: [201, 409]  # 409 = already exists
+
+    - name: Create agency admin user
+      uri:
+        url: "{{ keycloak_url }}/admin/realms/agency-{{ agency_code }}/users"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ kc_token.json.access_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          username: "admin-{{ agency_code }}"
+          enabled: true
+          email: "{{ admin_email }}"
+          emailVerified: true
+          credentials:
+            - type: password
+              value: "{{ agency_admin_password | default('ChangeMe123!') }}"
+              temporary: true
+          realmRoles:
+            - admin
+        status_code: [201, 409]
+
+    # ── Step 2: Create Kafka Topics ──
+    - name: Create Kafka topics for agency
+      command: >
+        kubectl exec -n infra kafka-0 -- kafka-topics.sh
+        --bootstrap-server {{ kafka_bootstrap }}
+        --create
+        --topic {{ item }}
+        --partitions 6
+        --replication-factor 2
+        --if-not-exists
+      loop:
+        - "agency.{{ agency_code }}.sensor.raw"
+        - "agency.{{ agency_code }}.sensor.validated"
+        - "agency.{{ agency_code }}.alerts"
+        - "agency.{{ agency_code }}.carbon.credits"
+
+    # ── Step 3: Create PostgreSQL Schema ──
+    - name: Create PostgreSQL schema for agency
+      command: >
+        kubectl exec -n infra postgresql-0 -- psql
+        -U {{ pg_user }}
+        -d {{ pg_db }}
+        -c "CREATE SCHEMA IF NOT EXISTS agency_{{ agency_code | replace('-', '_') }};"
+
+    - name: Create agency-specific tables in schema
+      command: >
+        kubectl exec -n infra postgresql-0 -- psql
+        -U {{ pg_user }}
+        -d {{ pg_db }}
+        -f /docker-entrypoint-initdb.d/agency-schema-template.sql
+        -v agency_schema=agency_{{ agency_code | replace('-', '_') }}
+
+    - name: Insert agency record
+      command: >
+        kubectl exec -n infra postgresql-0 -- psql
+        -U {{ pg_user }}
+        -d {{ pg_db }}
+        -c "INSERT INTO public.agencies (name, code, ministry, contact_email, keycloak_realm)
+            VALUES ('{{ agency_name }}', '{{ agency_code }}', '{{ agency_name }}', '{{ admin_email }}', 'agency-{{ agency_code }}')
+            ON CONFLICT (code) DO NOTHING;"
+
+    # ── Step 4: Create MinIO Bucket Prefixes ──
+    - name: Create MinIO prefixes for agency
+      command: >
+        kubectl exec -n infra minio-0 -- mc mb --ignore-existing
+        local/{{ item }}/{{ agency_code }}/
+      loop:
+        - raw
+        - bronze
+        - silver
+        - gold
+
+    # ── Step 5: Create K8s Namespace (optional per-agency)
+    - name: Create tenant namespace
+      command: >
+        kubectl create namespace tenant-{{ agency_code }} --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Apply NetworkPolicy for tenant namespace
+      command: >
+        kubectl apply -n tenant-{{ agency_code }} -f -
+      args:
+        stdin: |
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: tenant-isolation
+          spec:
+            podSelector: {}
+            policyTypes:
+              - Ingress
+              - Egress
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: app
+            egress:
+              - to:
+                  - namespaceSelector:
+                      matchLabels:
+                        tier: infrastructure
+
+    # ── Step 6: Verify ──
+    - name: Verify agency onboarding
+      debug:
+        msg: |
+          ✅ Agency '{{ agency_name }}' ({{ agency_code }}) onboarded successfully!
+          - Keycloak realm: agency-{{ agency_code }}
+          - Admin user: admin-{{ agency_code }} ({{ admin_email }})
+          - Kafka topics: agency.{{ agency_code }}.sensor.raw, .validated, .alerts, .carbon.credits
+          - PostgreSQL schema: agency_{{ agency_code | replace('-', '_') }}
+          - MinIO prefixes: raw/{{ agency_code }}/, bronze/{{ agency_code }}/, silver/{{ agency_code }}/, gold/{{ agency_code }}/
+          - K8s namespace: tenant-{{ agency_code }}
