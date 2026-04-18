@@ -47,8 +47,9 @@ spec:
     namespace: monitoring
   syncPolicy:
     automated:
-      prune: true
+      prune: false # Disable temporarily to fix "Resource not found" sync loop
       selfHeal: true
+
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
