@@ -42,6 +42,12 @@ spec:
           enabled: false
         kubeControllerManager:
           enabled: false
+        # Disable Admission Webhooks to avoid stuck Helm Hooks in K3s
+        prometheusOperator:
+          admissionWebhooks:
+            enabled: false
+            patch:
+              enabled: false
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
