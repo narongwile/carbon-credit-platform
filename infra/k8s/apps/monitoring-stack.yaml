@@ -35,6 +35,13 @@ spec:
                   resources:
                     requests:
                       storage: 2Gi
+        # Disable K3s-incompatible monitors to prevent "Resource not found" errors
+        kubeEtcd:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
@@ -44,6 +51,8 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true  # Fix for "annotations too long" error with large CRDs
-      - Replace=true          # Help with resource recreation conflicts
+      - ServerSideApply=true
+      - Replace=true
+      - SkipDryRunOnMissingResource=true # Allow applying CRDs and Resources in one go
+
 
