@@ -11,8 +11,9 @@ services:
     # and directly route traffic to K3s NodePorts exposed on localhost!
     environment:
       - TZ=Asia/Bangkok
+    privileged: true # Required for Storage management / fdisk
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./cosmos-data:/config
       - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket # Optional for UFW integration
-      - /:/mnt/host:ro # Required for Cosmos to read host RAM and CPU metrics
+      - /:/mnt/host
