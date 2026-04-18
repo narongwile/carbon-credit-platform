@@ -53,13 +53,15 @@ spec:
     namespace: monitoring
   syncPolicy:
     automated:
-      prune: false # Disable temporarily to fix "Resource not found" sync loop
+      prune: true
       selfHeal: true
-
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true
-      - Replace=true
-      - SkipDryRunOnMissingResource=true # Allow applying CRDs and Resources in one go
-
-
+      - ServerSideApply=true        # จำเป็นสำหรับ CRDs ขนาดใหญ่ของ Prometheus
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
