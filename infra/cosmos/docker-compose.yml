@@ -15,3 +15,4 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./cosmos-data:/config
       - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket # Optional for UFW integration
+      - /:/mnt/host:ro # Required for Cosmos to read host RAM and CPU metrics
