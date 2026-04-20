@@ -80,8 +80,8 @@ spec:
           prometheusSpec:
             retention: 30d
             retentionSize: "9GB"
-            podMonitorSelectorNilUsesHelmValues: false
-            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: true
+            serviceMonitorSelectorNilUsesHelmValues: true
             storageSpec:
               volumeClaimTemplate:
                 spec:
@@ -105,7 +105,7 @@ spec:
                 relabel_configs:
                   - source_labels: [__meta_kubernetes_pod_label_app]
                     action: keep
-                    regex: (mysql|mongodb)
+                    regex: (mysql|mosquitto|mongodb)
                   - source_labels: [__meta_kubernetes_pod_container_port_number]
                     action: keep
                     regex: (9104|9234|27017)
