@@ -21,8 +21,8 @@ spec:
             nodePort: 32000
           grafana.ini:
             server:
-              domain: 27.254.143.144
-              root_url: http://27.254.143.144/grafana/
+              domain: localhost
+              root_url: "%(protocol)s://%(domain)s/grafana/"
               serve_from_sub_path: true
           sidecar:
             dashboards:
