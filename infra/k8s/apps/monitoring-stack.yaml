@@ -16,7 +16,6 @@ spec:
         grafana:
           enabled: true
           adminUser: admin
-          # adminPassword: "${GRAFANA_ADMIN_PASSWORD}" # ตั้งใน Secret หรือ Manual ก็ได้
           service:
             type: NodePort
             nodePort: 32000
@@ -25,6 +24,12 @@ spec:
               domain: 27.254.143.144
               root_url: http://27.254.143.144/grafana/
               serve_from_sub_path: true
+          sidecar:
+            dashboards:
+              enabled: true
+              label: grafana_dashboard
+              labelValue: "1"
+              searchNamespace: ALL
           # Automatically provision dashboards
           dashboardProviders:
             dashboardproviders.yaml:
@@ -60,7 +65,7 @@ spec:
                   accessModes: ["ReadWriteOnce"]
                   resources:
                     requests:
-                      storage: 50Gi
+                      storage: 10Gi # Reduced from 50Gi for VPS compatibility
             additionalScrapeConfigs:
               - job_name: mysql
                 static_configs:
@@ -71,6 +76,8 @@ spec:
         kubeScheduler:
           enabled: false
         kubeControllerManager:
+          enabled: false
+        kubeProxy:
           enabled: false
         # Disable Admission Webhooks for K3s stability
         prometheusOperator:
