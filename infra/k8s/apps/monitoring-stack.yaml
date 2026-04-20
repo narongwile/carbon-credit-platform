@@ -30,19 +30,6 @@ spec:
               label: grafana_dashboard
               labelValue: "1"
               searchNamespace: ALL
-          # Automatically provision dashboards
-          dashboardProviders:
-            dashboardproviders.yaml:
-              apiVersion: 1
-              providers:
-                - name: 'default'
-                  orgId: 1
-                  folder: ''
-                  type: 'file'
-                  disableDeletion: false
-                  editable: true
-                  options:
-                    path: /var/lib/grafana/dashboards/default
           dashboards:
             default:
               mysql-overview:
@@ -74,25 +61,36 @@ spec:
                   resources:
                     requests:
                       storage: 10Gi
+            # ULTIMATE FIX: Dynamically discover pods and match them to nodes for perfect math calculation
             additionalScrapeConfigs:
-              - job_name: mysql
-                static_configs:
-                  - targets: ["mysql.carbon-credit.svc.cluster.local:9104"]
-              - job_name: mosquitto
-                static_configs:
-                  - targets: ["mosquitto.carbon-credit.svc.cluster.local:9234"]
-        # K3s Specific Adjustments
+              - job_name: 'kubernetes-pods'
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  # Filter for MySQL and Mosquitto Exporters
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    action: keep
+                    regex: (mysql|mosquitto)
+                  # Target the metrics port only
+                  - source_labels: [__meta_kubernetes_pod_container_port_number]
+                    action: keep
+                    regex: (9104|9234)
+                  # IMPORTANT: Force 'instance' to be the Node Name so it matches node_exporter data
+                  - source_labels: [__meta_kubernetes_pod_node_name]
+                    target_label: instance
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    target_label: app
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+        # K3s Specific Adjustments (Fixes N/A on Cluster Dashboards)
         kubelet:
           enabled: true
           serviceMonitor:
             https: true
-            insecureSkipVerify: true # Required for K3s certificate compatibility
+            insecureSkipVerify: true
         coreDns:
           enabled: true
-          service:
-            port: 9153
-            targetPort: 9153
-        # Disable K3s-incompatible monitors
+        # Disable K3s-incompatible monitors to keep system clean
         kubeEtcd:
           enabled: false
         kubeScheduler:
@@ -101,7 +99,6 @@ spec:
           enabled: false
         kubeProxy:
           enabled: false
-        # Disable Admission Webhooks for K3s stability
         prometheusOperator:
           admissionWebhooks:
             enabled: false
@@ -118,9 +115,3 @@ spec:
       - CreateNamespace=true
       - ServerSideApply=true
       - SkipDryRunOnMissingResource=true
-    retry:
-      limit: 10
-      backoff:
-        duration: 15s
-        factor: 2
-        maxDuration: 5m
