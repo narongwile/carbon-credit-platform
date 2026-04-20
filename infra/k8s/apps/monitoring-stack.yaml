@@ -16,6 +16,7 @@ spec:
         grafana:
           enabled: true
           adminUser: admin
+          adminPassword: admin
           service:
             type: NodePort
             nodePort: 32000
@@ -24,32 +25,42 @@ spec:
               domain: localhost
               root_url: "%(protocol)s://%(domain)s/grafana/"
               serve_from_sub_path: true
+            users:
+              default_theme: dark
+            date_formats:
+              default_timezone: Asia/Bangkok
           sidecar:
             dashboards:
               enabled: true
               label: grafana_dashboard
               labelValue: "1"
               searchNamespace: ALL
-          # THE REQUESTED DASHBOARDS
+          # THE REQUESTED DASHBOARDS - Perfected with auto-datasource mapping
           dashboards:
             default:
               k3s-cluster-monitoring:
                 gnetId: 16568
+                datasource: Prometheus
               mysql-overview:
                 gnetId: 7362
                 revision: 5
+                datasource: Prometheus
               mongodb-overview:
                 gnetId: 16450
                 revision: 1
+                datasource: Prometheus
               mosquitto-overview:
                 gnetId: 11542
                 revision: 1
+                datasource: Prometheus
               node-exporter-full:
                 gnetId: 1860
                 revision: 37
+                datasource: Prometheus
         prometheus:
           prometheusSpec:
             retention: 30d
+            retentionSize: "9GB"
             podMonitorSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
             storageSpec:
