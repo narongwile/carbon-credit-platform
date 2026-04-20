@@ -9,12 +9,14 @@ spec:
   project: default
   source:
     repoURL: https://prometheus-community.github.io/helm-charts
-    targetRevision: 83.0.0 # Latest stable version
+    targetRevision: 83.0.0
     chart: kube-prometheus-stack
     helm:
       values: |
         grafana:
           enabled: true
+          adminUser: admin
+          # adminPassword: "${GRAFANA_ADMIN_PASSWORD}" # ตั้งใน Secret หรือ Manual ก็ได้
           service:
             type: NodePort
             nodePort: 32000
@@ -23,26 +25,54 @@ spec:
               domain: 27.254.143.144
               root_url: http://27.254.143.144/grafana/
               serve_from_sub_path: true
+          # Automatically provision dashboards
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+                - name: 'default'
+                  orgId: 1
+                  folder: ''
+                  type: 'file'
+                  disableDeletion: false
+                  editable: true
+                  options:
+                    path: /var/lib/grafana/dashboards/default
+          dashboards:
+            default:
+              mysql-overview:
+                gnetId: 7362
+                revision: 5
+                datasource: Prometheus
+              mongodb-overview:
+                gnetId: 16450
+                revision: 1
+                datasource: Prometheus
         prometheus:
           prometheusSpec:
+            retention: 30d
             podMonitorSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
-            retention: 2d
             storageSpec:
               volumeClaimTemplate:
                 spec:
+                  storageClassName: local-path
                   accessModes: ["ReadWriteOnce"]
                   resources:
                     requests:
-                      storage: 2Gi
-        # Disable K3s-incompatible monitors to prevent "Resource not found" errors
+                      storage: 50Gi
+            additionalScrapeConfigs:
+              - job_name: mysql
+                static_configs:
+                  - targets: ["mysql.carbon-credit.svc.cluster.local:9104"]
+        # Disable K3s-incompatible monitors
         kubeEtcd:
           enabled: false
         kubeScheduler:
           enabled: false
         kubeControllerManager:
           enabled: false
-        # Disable Admission Webhooks to avoid stuck Helm Hooks in K3s
+        # Disable Admission Webhooks for K3s stability
         prometheusOperator:
           admissionWebhooks:
             enabled: false
@@ -57,7 +87,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
-      - ServerSideApply=true        # จำเป็นสำหรับ CRDs ขนาดใหญ่ของ Prometheus
+      - ServerSideApply=true
       - SkipDryRunOnMissingResource=true
     retry:
       limit: 10
