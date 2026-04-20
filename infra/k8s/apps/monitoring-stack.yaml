@@ -99,16 +99,52 @@ spec:
                 memory: 2Gi
             # ULTIMATE FIX: Dynamically discover pods and match them to nodes
             additionalScrapeConfigs:
-              - job_name: 'kubernetes-pods'
+              - job_name: 'mysql'
                 kubernetes_sd_configs:
                   - role: pod
                 relabel_configs:
                   - source_labels: [__meta_kubernetes_pod_label_app]
                     action: keep
-                    regex: (mysql|mosquitto|mongodb)
+                    regex: mysql
                   - source_labels: [__meta_kubernetes_pod_container_port_number]
                     action: keep
-                    regex: (9104|9234|27017)
+                    regex: "9104"
+                  - source_labels: [__meta_kubernetes_pod_host_ip]
+                    target_label: instance
+                    replacement: $1:9100
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    target_label: app
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+
+              - job_name: 'mosquitto'
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    action: keep
+                    regex: mosquitto
+                  - source_labels: [__meta_kubernetes_pod_container_port_number]
+                    action: keep
+                    regex: "9234"
+                  - source_labels: [__meta_kubernetes_pod_host_ip]
+                    target_label: instance
+                    replacement: $1:9100
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    target_label: app
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+
+              - job_name: 'mongodb'
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    action: keep
+                    regex: mongodb
+                  - source_labels: [__meta_kubernetes_pod_container_port_number]
+                    action: keep
+                    regex: "27017"
                   - source_labels: [__meta_kubernetes_pod_host_ip]
                     target_label: instance
                     replacement: $1:9100
