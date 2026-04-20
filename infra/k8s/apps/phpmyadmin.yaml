@@ -28,6 +28,8 @@ spec:
           value: "3306"
         - name: PMA_ABSOLUTE_URI
           value: "https://27.254.143.144/pma/"
+        - name: PMA_REVERSE_PROXY
+          value: "true"
         - name: UPLOAD_LIMIT
           value: "64M"
 ---
