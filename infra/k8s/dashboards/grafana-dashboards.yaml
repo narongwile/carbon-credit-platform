@@ -7,10 +7,6 @@ metadata:
     grafana_dashboard: "1"
 data:
   k3s-cluster-monitoring.json: |
-    Source: https://grafana.com/api/dashboards/16568/revisions/1/download
-    
-    ---
-    
     {
       "__inputs": [
         {
@@ -1461,10 +1457,6 @@ metadata:
     grafana_dashboard: "1"
 data:
   mysql-overview.json: |
-    Source: https://grafana.com/api/dashboards/7362/revisions/5/download
-    
-    ---
-    
     {
       "__inputs": [
         {
@@ -6232,10 +6224,6 @@ metadata:
     grafana_dashboard: "1"
 data:
   mosquitto-overview.json: |
-    Source: https://grafana.com/api/dashboards/11542/revisions/1/download
-    
-    ---
-    
     {
       "__inputs": [
         {
