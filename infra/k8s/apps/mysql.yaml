@@ -28,7 +28,7 @@ spec:
         - containerPort: 3306
           name: mysql
       - name: mysqld-exporter
-        image: prom/mysqld-exporter:v1.6.0
+        image: prom/mysqld-exporter:v0.15.0
         env:
         - name: DATA_SOURCE_NAME
           value: "root:secure-root-password@(localhost:3306)/"
