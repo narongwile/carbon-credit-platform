@@ -23,6 +23,13 @@ spec:
           name: mqtt
         - containerPort: 8883
           name: mqtts
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
         # In a production environment, mount ConfigMap or Secrets here for auth
       - name: mosquitto-exporter
         image: sapcc/mosquitto-exporter:latest

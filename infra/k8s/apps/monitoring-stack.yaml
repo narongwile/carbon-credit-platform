@@ -111,6 +111,7 @@ spec:
                     regex: (9104|9234|27017)
                   - source_labels: [__meta_kubernetes_pod_node_name]
                     target_label: instance
+                    replacement: $1:9100
                   - source_labels: [__meta_kubernetes_pod_label_app]
                     target_label: app
                   - source_labels: [__meta_kubernetes_namespace]
