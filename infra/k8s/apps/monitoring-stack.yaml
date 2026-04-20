@@ -88,7 +88,7 @@ spec:
               patch:
                 enabled: false
     - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
-      path: frontend/infra/k8s/dashboards
+      path: infra/k8s/dashboards
       targetRevision: main
   destination:
     server: https://kubernetes.default.svc
