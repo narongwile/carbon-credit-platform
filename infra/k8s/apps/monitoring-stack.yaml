@@ -82,6 +82,7 @@ spec:
             retentionSize: "9GB"
             podMonitorSelectorNilUsesHelmValues: true
             serviceMonitorSelectorNilUsesHelmValues: true
+            enableAdminApi: true
             storageSpec:
               volumeClaimTemplate:
                 spec:
