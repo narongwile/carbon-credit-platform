@@ -32,6 +32,10 @@ spec:
               searchNamespace: ALL
           dashboards:
             default:
+              k3s-cluster-monitoring:
+                gnetId: 16568
+                revision: 1
+                datasource: Prometheus
               mysql-overview:
                 gnetId: 7362
                 revision: 5
@@ -61,21 +65,18 @@ spec:
                   resources:
                     requests:
                       storage: 10Gi
-            # ULTIMATE FIX: Dynamically discover pods and match them to nodes for perfect math calculation
+            # ULTIMATE FIX: Dynamically discover pods and match them to nodes
             additionalScrapeConfigs:
               - job_name: 'kubernetes-pods'
                 kubernetes_sd_configs:
                   - role: pod
                 relabel_configs:
-                  # Filter for MySQL and Mosquitto Exporters
                   - source_labels: [__meta_kubernetes_pod_label_app]
                     action: keep
                     regex: (mysql|mosquitto)
-                  # Target the metrics port only
                   - source_labels: [__meta_kubernetes_pod_container_port_number]
                     action: keep
                     regex: (9104|9234)
-                  # IMPORTANT: Force 'instance' to be the Node Name so it matches node_exporter data
                   - source_labels: [__meta_kubernetes_pod_node_name]
                     target_label: instance
                   - source_labels: [__meta_kubernetes_pod_label_app]
@@ -93,7 +94,7 @@ spec:
           service:
             port: 9153
             targetPort: 9153
-        # Disable K3s-incompatible monitors to keep system clean
+        # Disable K3s-incompatible monitors
         kubeEtcd:
           enabled: false
         kubeScheduler:
