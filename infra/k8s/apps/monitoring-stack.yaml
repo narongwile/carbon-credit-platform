@@ -105,7 +105,7 @@ spec:
                 relabel_configs:
                   - source_labels: [__meta_kubernetes_pod_label_app]
                     action: keep
-                    regex: (mysql|mosquitto|mongodb)
+                    regex: (mysql|mongodb)
                   - source_labels: [__meta_kubernetes_pod_container_port_number]
                     action: keep
                     regex: (9104|9234|27017)
