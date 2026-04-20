@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mysql
+  namespace: carbon-credit
   labels:
     app: mysql
 spec:
@@ -25,11 +26,21 @@ spec:
           value: "carbon_credit"
         ports:
         - containerPort: 3306
+          name: mysql
+      - name: mysqld-exporter
+        image: prom/mysqld-exporter:v1.6.0
+        env:
+        - name: DATA_SOURCE_NAME
+          value: "root:secure-root-password@(localhost:3306)/"
+        ports:
+        - containerPort: 9104
+          name: metrics
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mysql
+  namespace: carbon-credit
 spec:
   type: NodePort
   ports:
@@ -37,5 +48,9 @@ spec:
     port: 3306
     targetPort: 3306
     nodePort: 32306
+  - name: metrics
+    port: 9104
+    targetPort: 9104
+    nodePort: 32104
   selector:
     app: mysql

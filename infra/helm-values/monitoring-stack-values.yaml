@@ -48,6 +48,9 @@ prometheus:
           - source_labels: [__meta_kubernetes_pod_label_app]
             regex: backend-api
             action: keep
+      - job_name: mysql
+        static_configs:
+          - targets: ["mysql.carbon-credit.svc.cluster.local:9104"]
 
 grafana:
   enabled: true
