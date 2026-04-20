@@ -27,7 +27,7 @@ spec:
         - name: PMA_PORT
           value: "3306"
         - name: PMA_ABSOLUTE_URI
-          value: "http://27.254.143.144/pma/"
+          value: "https://27.254.143.144/pma/"
         - name: UPLOAD_LIMIT
           value: "64M"
 ---
