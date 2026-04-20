@@ -30,6 +30,8 @@ spec:
           value: "https://27.254.143.144/pma/"
         - name: PMA_REVERSE_PROXY
           value: "1"
+        - name: HTTP_X_FORWARDED_PROTO
+          value: "https"
         - name: UPLOAD_LIMIT
           value: "64M"
 ---
