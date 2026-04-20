@@ -20,6 +20,13 @@ spec:
           service:
             type: NodePort
             nodePort: 32000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           grafana.ini:
             server:
               domain: localhost
@@ -83,6 +90,13 @@ spec:
                   resources:
                     requests:
                       storage: 10Gi
+            resources:
+              requests:
+                cpu: 200m
+                memory: 512Mi
+              limits:
+                cpu: 1000m
+                memory: 2Gi
             # ULTIMATE FIX: Dynamically discover pods and match them to nodes
             additionalScrapeConfigs:
               - job_name: 'kubernetes-pods'
@@ -126,6 +140,22 @@ spec:
             enabled: false
             patch:
               enabled: false
+        kube-state-metrics:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+        prometheus-node-exporter:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
