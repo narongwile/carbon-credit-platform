@@ -101,6 +101,7 @@ spec:
             # ULTIMATE FIX: Dynamically discover pods and match them to nodes
             additionalScrapeConfigs:
               - job_name: 'mysql'
+                scrape_interval: 15s
                 kubernetes_sd_configs:
                   - role: pod
                 relabel_configs:
@@ -119,6 +120,7 @@ spec:
                     target_label: namespace
 
               - job_name: 'mosquitto'
+                scrape_interval: 15s
                 kubernetes_sd_configs:
                   - role: pod
                 relabel_configs:
@@ -137,6 +139,7 @@ spec:
                     target_label: namespace
 
               - job_name: 'mongodb'
+                scrape_interval: 15s
                 kubernetes_sd_configs:
                   - role: pod
                 relabel_configs:
