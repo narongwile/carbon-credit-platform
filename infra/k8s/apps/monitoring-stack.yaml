@@ -30,28 +30,7 @@ spec:
               label: grafana_dashboard
               labelValue: "1"
               searchNamespace: ALL
-          dashboards:
-            default:
-              k3s-cluster-monitoring:
-                gnetId: 16568
-                revision: 1
-                datasource: Prometheus
-              mysql-overview:
-                gnetId: 7362
-                revision: 5
-                datasource: Prometheus
-              mongodb-overview:
-                gnetId: 16450
-                revision: 1
-                datasource: Prometheus
-              mosquitto-overview:
-                gnetId: 11542
-                revision: 1
-                datasource: Prometheus
-              node-exporter-full:
-                gnetId: 1860
-                revision: 37
-                datasource: Prometheus
+          # Custom dashboards are now managed as independent ConfigMaps for 100% reliability
         prometheus:
           prometheusSpec:
             retention: 30d
