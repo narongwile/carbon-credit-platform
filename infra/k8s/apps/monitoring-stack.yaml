@@ -7,86 +7,89 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  source:
-    repoURL: https://prometheus-community.github.io/helm-charts
-    targetRevision: 83.0.0
-    chart: kube-prometheus-stack
-    helm:
-      values: |
-        grafana:
-          enabled: true
-          adminUser: admin
-          service:
-            type: NodePort
-            nodePort: 32000
-          grafana.ini:
-            server:
-              domain: localhost
-              root_url: "%(protocol)s://%(domain)s/grafana/"
-              serve_from_sub_path: true
-          sidecar:
-            dashboards:
-              enabled: true
-              label: grafana_dashboard
-              labelValue: "1"
-              searchNamespace: ALL
-          # Custom dashboards are now managed as independent ConfigMaps for 100% reliability
-        prometheus:
-          prometheusSpec:
-            retention: 30d
-            podMonitorSelectorNilUsesHelmValues: false
-            serviceMonitorSelectorNilUsesHelmValues: false
-            storageSpec:
-              volumeClaimTemplate:
-                spec:
-                  storageClassName: local-path
-                  accessModes: ["ReadWriteOnce"]
-                  resources:
-                    requests:
-                      storage: 10Gi
-            # ULTIMATE FIX: Dynamically discover pods and match them to nodes
-            additionalScrapeConfigs:
-              - job_name: 'kubernetes-pods'
-                kubernetes_sd_configs:
-                  - role: pod
-                relabel_configs:
-                  - source_labels: [__meta_kubernetes_pod_label_app]
-                    action: keep
-                    regex: (mysql|mosquitto)
-                  - source_labels: [__meta_kubernetes_pod_container_port_number]
-                    action: keep
-                    regex: (9104|9234)
-                  - source_labels: [__meta_kubernetes_pod_node_name]
-                    target_label: instance
-                  - source_labels: [__meta_kubernetes_pod_label_app]
-                    target_label: app
-                  - source_labels: [__meta_kubernetes_namespace]
-                    target_label: namespace
-        # K3s Specific Adjustments (Fixes N/A on Cluster Dashboards)
-        kubelet:
-          enabled: true
-          serviceMonitor:
-            https: true
-            insecureSkipVerify: true
-        coreDns:
-          enabled: true
-          service:
-            port: 9153
-            targetPort: 9153
-        # Disable K3s-incompatible monitors
-        kubeEtcd:
-          enabled: false
-        kubeScheduler:
-          enabled: false
-        kubeControllerManager:
-          enabled: false
-        kubeProxy:
-          enabled: false
-        prometheusOperator:
-          admissionWebhooks:
+  sources:
+    - repoURL: https://prometheus-community.github.io/helm-charts
+      targetRevision: 83.0.0
+      chart: kube-prometheus-stack
+      helm:
+        values: |
+          grafana:
+            enabled: true
+            adminUser: admin
+            service:
+              type: NodePort
+              nodePort: 32000
+            grafana.ini:
+              server:
+                domain: localhost
+                root_url: "%(protocol)s://%(domain)s/grafana/"
+                serve_from_sub_path: true
+            sidecar:
+              dashboards:
+                enabled: true
+                label: grafana_dashboard
+                labelValue: "1"
+                searchNamespace: ALL
+            # Custom dashboards are now managed as independent ConfigMaps for 100% reliability
+          prometheus:
+            prometheusSpec:
+              retention: 30d
+              podMonitorSelectorNilUsesHelmValues: false
+              serviceMonitorSelectorNilUsesHelmValues: false
+              storageSpec:
+                volumeClaimTemplate:
+                  spec:
+                    storageClassName: local-path
+                    accessModes: ["ReadWriteOnce"]
+                    resources:
+                      requests:
+                        storage: 10Gi
+              # ULTIMATE FIX: Dynamically discover pods and match them to nodes
+              additionalScrapeConfigs:
+                - job_name: 'kubernetes-pods'
+                  kubernetes_sd_configs:
+                    - role: pod
+                  relabel_configs:
+                    - source_labels: [__meta_kubernetes_pod_label_app]
+                      action: keep
+                      regex: (mysql|mosquitto)
+                    - source_labels: [__meta_kubernetes_pod_container_port_number]
+                      action: keep
+                      regex: (9104|9234)
+                    - source_labels: [__meta_kubernetes_pod_node_name]
+                      target_label: instance
+                    - source_labels: [__meta_kubernetes_pod_label_app]
+                      target_label: app
+                    - source_labels: [__meta_kubernetes_namespace]
+                      target_label: namespace
+          # K3s Specific Adjustments (Fixes N/A on Cluster Dashboards)
+          kubelet:
+            enabled: true
+            serviceMonitor:
+              https: true
+              insecureSkipVerify: true
+          coreDns:
+            enabled: true
+            service:
+              port: 9153
+              targetPort: 9153
+          # Disable K3s-incompatible monitors
+          kubeEtcd:
             enabled: false
-            patch:
+          kubeScheduler:
+            enabled: false
+          kubeControllerManager:
+            enabled: false
+          kubeProxy:
+            enabled: false
+          prometheusOperator:
+            admissionWebhooks:
               enabled: false
+              patch:
+                enabled: false
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      path: frontend/infra/k8s/dashboards
+      targetRevision: main
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
