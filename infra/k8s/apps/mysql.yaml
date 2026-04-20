@@ -16,6 +16,17 @@ spec:
       labels:
         app: mysql
     spec:
+      initContainers:
+      - name: init-exporter-config
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          printf "[client]\nuser=root\npassword=secure-root-password\nhost=127.0.0.1\n" > /etc/mysql-exporter/.my.cnf
+        volumeMounts:
+        - name: exporter-config
+          mountPath: /etc/mysql-exporter
       containers:
       - name: mysql
         image: mysql:8.0
@@ -28,13 +39,18 @@ spec:
         - containerPort: 3306
           name: mysql
       - name: mysqld-exporter
-        image: prom/mysqld-exporter:v0.16.0
-        env:
-        - name: DATA_SOURCE_NAME
-          value: "root:secure-root-password@tcp(127.0.0.1:3306)/"
+        image: prom/mysqld-exporter:v0.15.0
+        args:
+        - "--config.my-cnf=/etc/mysql-exporter/.my.cnf"
         ports:
         - containerPort: 9104
           name: metrics
+        volumeMounts:
+        - name: exporter-config
+          mountPath: /etc/mysql-exporter
+      volumes:
+      - name: exporter-config
+        emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
