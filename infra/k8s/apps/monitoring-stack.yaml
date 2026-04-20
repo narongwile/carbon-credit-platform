@@ -53,6 +53,14 @@ spec:
                 gnetId: 16450
                 revision: 1
                 datasource: Prometheus
+              mosquitto-overview:
+                gnetId: 11542
+                revision: 1
+                datasource: Prometheus
+              node-exporter-full:
+                gnetId: 1860
+                revision: 37
+                datasource: Prometheus
         prometheus:
           prometheusSpec:
             retention: 30d
@@ -65,11 +73,25 @@ spec:
                   accessModes: ["ReadWriteOnce"]
                   resources:
                     requests:
-                      storage: 10Gi # Reduced from 50Gi for VPS compatibility
+                      storage: 10Gi
             additionalScrapeConfigs:
               - job_name: mysql
                 static_configs:
                   - targets: ["mysql.carbon-credit.svc.cluster.local:9104"]
+              - job_name: mosquitto
+                static_configs:
+                  - targets: ["mosquitto.carbon-credit.svc.cluster.local:9234"]
+        # K3s Specific Adjustments
+        kubelet:
+          enabled: true
+          serviceMonitor:
+            https: true
+            insecureSkipVerify: true # Required for K3s certificate compatibility
+        coreDns:
+          enabled: true
+          service:
+            port: 9153
+            targetPort: 9153
         # Disable K3s-incompatible monitors
         kubeEtcd:
           enabled: false

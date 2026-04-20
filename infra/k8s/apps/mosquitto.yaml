@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mosquitto
+  namespace: carbon-credit
   labels:
     app: mosquitto
 spec:
@@ -19,15 +20,24 @@ spec:
         image: eclipse-mosquitto:2.0
         ports:
         - containerPort: 1883
-          hostPort: 1883
+          name: mqtt
         - containerPort: 8883
-          hostPort: 8883
+          name: mqtts
         # In a production environment, mount ConfigMap or Secrets here for auth
+      - name: mosquitto-exporter
+        image: sapcc/mosquitto-exporter:latest
+        args:
+        - --endpoint
+        - tcp://127.0.0.1:1883
+        ports:
+        - containerPort: 9234
+          name: metrics
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mosquitto
+  namespace: carbon-credit
 spec:
   type: NodePort
   ports:
@@ -39,5 +49,9 @@ spec:
     port: 8883
     targetPort: 8883
     nodePort: 31884
+  - name: metrics
+    port: 9234
+    targetPort: 9234
+    nodePort: 32234
   selector:
     app: mosquitto
