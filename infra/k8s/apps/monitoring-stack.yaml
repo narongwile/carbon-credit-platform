@@ -90,6 +90,9 @@ spec:
             insecureSkipVerify: true
         coreDns:
           enabled: true
+          service:
+            port: 9153
+            targetPort: 9153
         # Disable K3s-incompatible monitors to keep system clean
         kubeEtcd:
           enabled: false
@@ -115,3 +118,9 @@ spec:
       - CreateNamespace=true
       - ServerSideApply=true
       - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m
