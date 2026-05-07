@@ -14,16 +14,22 @@ export default function RefrigerationMonitor() {
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200 font-sans">
       {/* Top Navigation */}
-      <header className="flex items-center justify-between px-6 py-5 bg-[#172033] border-b border-slate-800 shadow-sm relative z-50">
-        <div className="flex items-center space-x-6">
-          <div className="px-6 py-2.5 bg-slate-800/80 rounded border border-slate-700 uppercase tracking-widest text-sm font-bold text-slate-400 shadow-inner">
+      <header className="flex flex-col sm:flex-row items-center justify-between px-4 sm:px-6 py-4 sm:py-5 bg-[#172033] border-b border-slate-800 shadow-sm relative z-50 gap-4 sm:gap-0">
+        <div className="flex items-center w-full sm:w-auto justify-between sm:justify-start sm:space-x-6">
+          <div className="hidden sm:block px-6 py-2.5 bg-slate-800/80 rounded border border-slate-700 uppercase tracking-widest text-sm font-bold text-slate-400 shadow-inner">
             Company Logo
           </div>
-          <h1 className="text-2xl font-extrabold text-white tracking-wide pl-6 border-l-2 border-slate-700/50">
+          <h1 className="text-lg sm:text-2xl font-extrabold text-white tracking-wide sm:pl-6 sm:border-l-2 border-slate-700/50">
             Industrial IoT Monitor
           </h1>
+          {/* Mobile Online Status */}
+          <div className="flex sm:hidden items-center text-emerald-400 text-xs font-bold tracking-wide">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 mr-2 shadow-[0_0_10px_rgba(52,211,153,0.8)] animate-pulse"></span>
+            Online
+          </div>
         </div>
-        <div className="flex items-center text-emerald-400 text-sm font-bold tracking-wide">
+        {/* Desktop Online Status */}
+        <div className="hidden sm:flex items-center text-emerald-400 text-sm font-bold tracking-wide">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 mr-2.5 shadow-[0_0_10px_rgba(52,211,153,0.8)] animate-pulse"></span>
           System Online
         </div>

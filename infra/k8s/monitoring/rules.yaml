@@ -1,0 +1,28 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: carbon-credit-alerts
+  namespace: carbon-credit
+  labels:
+    prometheus: k8s
+    role: alert-rules
+spec:
+  groups:
+  - name: carbon-data-alerts
+    rules:
+    - alert: HighCO2Emission
+      expr: sensor_co2_ppm > 1000
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High CO2 emission detected on sensor {{ $labels.sensor_id }}"
+        description: "CO2 levels are above 1000 ppm for more than 5 minutes."
+    - alert: SensorOffline
+      expr: up{job="sensor-exporter"} == 0
+      for: 1m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Sensor {{ $labels.instance }} is offline"
+        description: "The sensor exporter has been down for more than 1 minute."

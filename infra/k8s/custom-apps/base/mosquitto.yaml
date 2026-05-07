@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mosquitto-config
+  namespace: carbon-credit
+data:
+  mosquitto.conf: |
+    persistence true
+    persistence_location /mosquitto/data/
+    log_dest stdout
+    
+    # Listener for outside connections
+    listener 1883 0.0.0.0
+    
+    # Authentication
+    allow_anonymous false
+    password_file /mosquitto/config/passwd
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mosquitto
+  namespace: carbon-credit
+  labels:
+    app: mosquitto
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mosquitto
+  template:
+    metadata:
+      labels:
+        app: mosquitto
+    spec:
+      # Generate password file before Mosquitto starts
+      initContainers:
+      - name: init-passwd
+        image: eclipse-mosquitto:2.0
+        env:
+        - name: MQTT_USER
+          valueFrom:
+            secretKeyRef:
+              name: mosquitto-auth
+              key: username
+        - name: MQTT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: mosquitto-auth
+              key: password
+        command: ["sh", "-c"]
+        args:
+        - |
+          touch /mosquitto/config/passwd && \
+          mosquitto_passwd -b /mosquitto/config/passwd $MQTT_USER $MQTT_PASS
+        volumeMounts:
+        - name: auth-vol
+          mountPath: /mosquitto/config
+      containers:
+      - name: mosquitto
+        image: eclipse-mosquitto:2.0
+        ports:
+        - containerPort: 1883
+          name: mqtt
+        - containerPort: 8883
+          name: mqtts
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: config-vol
+          mountPath: /mosquitto/config/mosquitto.conf
+          subPath: mosquitto.conf
+        - name: auth-vol
+          mountPath: /mosquitto/config/passwd
+          subPath: passwd
+        - name: data-vol
+          mountPath: /mosquitto/data
+      - name: mosquitto-exporter
+        image: sapcc/mosquitto-exporter:latest
+        env:
+        - name: MQTT_USER
+          valueFrom:
+            secretKeyRef:
+              name: mosquitto-auth
+              key: username
+        - name: MQTT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: mosquitto-auth
+              key: password
+        args:
+        - --endpoint
+        - tcp://127.0.0.1:1883
+        - --user
+        - $(MQTT_USER)
+        - --pass
+        - $(MQTT_PASS)
+        ports:
+        - containerPort: 9234
+          name: metrics
+      volumes:
+      - name: config-vol
+        configMap:
+          name: mosquitto-config
+      - name: auth-vol
+        emptyDir: {}
+      - name: data-vol
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mosquitto
+  namespace: carbon-credit
+spec:
+  type: NodePort
+  ports:
+  - name: mqtt
+    port: 1883
+    targetPort: 1883
+    nodePort: 31883
+  - name: mqtts
+    port: 8883
+    targetPort: 8883
+    nodePort: 31884
+  - name: metrics
+    port: 9234
+    targetPort: 9234
+    nodePort: 32234
+  selector:
+    app: mosquitto

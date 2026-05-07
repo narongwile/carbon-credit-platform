@@ -1,0 +1,26 @@
+# ============================================================
+# Kustomize Base — Custom Applications
+# Only contains apps WE build and control (not Helm charts)
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+commonLabels:
+  app.kubernetes.io/part-of: carbon-credit-platform
+  tier: custom-apps
+
+resources:
+  # ── Namespaces ──
+  - namespace.yaml
+  # ── Custom Apps ──
+  - backend.yaml
+  - frontend-app.yaml
+  - ai-agents.yaml
+  - mqtt-bridge.yaml
+  # ── IoT Services ──
+  - mosquitto.yaml
+  - node-red.yaml
+  # ── Observability ──
+  - ai-agents-monitor.yaml
+  # ── Security ──
+  - network-policy.yaml

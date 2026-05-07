@@ -1,0 +1,216 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    targetRevision: 83.0.0
+    chart: kube-prometheus-stack
+    helm:
+      values: |
+        grafana:
+          enabled: true
+          adminUser: admin
+          adminPassword: admin
+          service:
+            type: NodePort
+            nodePort: 32000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          grafana.ini:
+            server:
+              domain: localhost
+              root_url: "%(protocol)s://%(domain)s/grafana/"
+              serve_from_sub_path: true
+            users:
+              default_theme: dark
+            date_formats:
+              default_timezone: Asia/Bangkok
+          sidecar:
+            dashboards:
+              enabled: true
+              label: grafana_dashboard
+              labelValue: "1"
+              searchNamespace: ALL
+          # THE REQUESTED DASHBOARDS - Perfected with auto-datasource mapping
+          dashboards:
+            default:
+              k3s-cluster-monitoring:
+                gnetId: 16568
+                datasource: Prometheus
+              mysql-overview:
+                gnetId: 7362
+                revision: 5
+                datasource: Prometheus
+              mongodb-overview:
+                gnetId: 16450
+                revision: 1
+                datasource: Prometheus
+              mosquitto-overview:
+                gnetId: 11542
+                revision: 1
+                datasource: Prometheus
+              node-exporter-full:
+                gnetId: 1860
+                revision: 37
+                datasource: Prometheus
+          dashboardProviders:
+            dashboardproviders.yaml:
+              apiVersion: 1
+              providers:
+                - name: 'default'
+                  orgId: 1
+                  folder: ''
+                  type: file
+                  disableDeletion: false
+                  editable: true
+                  options:
+                    path: /var/lib/grafana/dashboards/default
+        prometheus:
+          prometheusSpec:
+            retention: 30d
+            retentionSize: "9GB"
+            podMonitorSelectorNilUsesHelmValues: true
+            serviceMonitorSelectorNilUsesHelmValues: true
+            enableAdminAPI: true
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: local-path
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 10Gi
+            resources:
+              requests:
+                cpu: 200m
+                memory: 512Mi
+              limits:
+                cpu: 1000m
+                memory: 2Gi
+            # ULTIMATE FIX: Dynamically discover pods and match them to nodes
+            additionalScrapeConfigs:
+              - job_name: 'mysql'
+                scrape_interval: 15s
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    action: keep
+                    regex: mysql
+                  - source_labels: [__meta_kubernetes_pod_container_port_number]
+                    action: keep
+                    regex: "9104"
+                  - source_labels: [__meta_kubernetes_pod_host_ip]
+                    target_label: instance
+                    replacement: $1:9100
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    target_label: app
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+
+              - job_name: 'mosquitto'
+                scrape_interval: 15s
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    action: keep
+                    regex: mosquitto
+                  - source_labels: [__meta_kubernetes_pod_container_port_number]
+                    action: keep
+                    regex: "9234"
+                  - source_labels: [__meta_kubernetes_pod_host_ip]
+                    target_label: instance
+                    replacement: $1:9100
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    target_label: app
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+
+              - job_name: 'mongodb'
+                scrape_interval: 15s
+                kubernetes_sd_configs:
+                  - role: pod
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    action: keep
+                    regex: mongodb
+                  - source_labels: [__meta_kubernetes_pod_container_port_number]
+                    action: keep
+                    regex: "27017"
+                  - source_labels: [__meta_kubernetes_pod_host_ip]
+                    target_label: instance
+                    replacement: $1:9100
+                  - source_labels: [__meta_kubernetes_pod_label_app]
+                    target_label: app
+                  - source_labels: [__meta_kubernetes_namespace]
+                    target_label: namespace
+        # K3s Specific Adjustments (Fixes N/A on Cluster Dashboards)
+        kubelet:
+          enabled: true
+          serviceMonitor:
+            https: true
+            insecureSkipVerify: true
+        coreDns:
+          enabled: true
+          service:
+            port: 9153
+            targetPort: 9153
+        # Disable K3s-incompatible monitors
+        kubeEtcd:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeControllerManager:
+          enabled: false
+        kubeProxy:
+          enabled: false
+        prometheusOperator:
+          admissionWebhooks:
+            enabled: false
+            patch:
+              enabled: false
+        kube-state-metrics:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+        prometheus-node-exporter:
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 5m

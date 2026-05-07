@@ -1,0 +1,46 @@
+# ============================================================
+# Kustomize Overlay — Production Environment
+# Higher replicas, strict resource limits, PDB
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+commonAnnotations:
+  environment: production
+
+patches:
+  # ── Backend: 3 replicas for Production ──
+  - target:
+      kind: Deployment
+      name: backend-api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  # ── Frontend: 3 replicas for Production ──
+  - target:
+      kind: Deployment
+      name: frontend-web
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  # ── AI Agents: 2 replicas for Production ──
+  - target:
+      kind: Deployment
+      name: ai-agents
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  # ── MQTT Bridge: 3 replicas for HA in Production ──
+  - target:
+      kind: Deployment
+      name: mqtt-bridge
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3

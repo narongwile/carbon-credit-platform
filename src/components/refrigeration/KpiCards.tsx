@@ -19,8 +19,68 @@ export default function KpiCards({ node, history, globalThreshold, setGlobalThre
       ? { title: 'Door Left Open', status: 'Critical' }
       : { title: 'No Events', status: 'System Normal' };
 
+  let maxHeatDuration = 0, maxHeatStart = '', maxHeatEnd = '';
+  let currHeatDuration = 0, currHeatStart = '', currHeatEnd = '';
+
+  let maxDoorDuration = 0, maxDoorStart = '', maxDoorEnd = '';
+  let currDoorDuration = 0, currDoorStart = '', currDoorEnd = '';
+
+  history.forEach((h) => {
+    // Heat Duration
+    if (h.temperature > globalThreshold) {
+      if (!currHeatStart) currHeatStart = h.date;
+      currHeatEnd = h.date;
+      currHeatDuration = new Date(currHeatEnd).getTime() - new Date(currHeatStart).getTime();
+    } else {
+      if (currHeatDuration >= maxHeatDuration && currHeatStart) {
+        maxHeatDuration = currHeatDuration;
+        maxHeatStart = currHeatStart;
+        maxHeatEnd = currHeatEnd;
+      }
+      currHeatStart = ''; currHeatEnd = ''; currHeatDuration = 0;
+    }
+
+    // Door Duration
+    if (h.door_status === 1) {
+      if (!currDoorStart) currDoorStart = h.date;
+      currDoorEnd = h.date;
+      currDoorDuration = new Date(currDoorEnd).getTime() - new Date(currDoorStart).getTime();
+    } else {
+      if (currDoorDuration >= maxDoorDuration && currDoorStart) {
+        maxDoorDuration = currDoorDuration;
+        maxDoorStart = currDoorStart;
+        maxDoorEnd = currDoorEnd;
+      }
+      currDoorStart = ''; currDoorEnd = ''; currDoorDuration = 0;
+    }
+  });
+
+  // Final check at end of array
+  if (currHeatDuration >= maxHeatDuration && currHeatStart) {
+    maxHeatDuration = currHeatDuration; maxHeatStart = currHeatStart; maxHeatEnd = currHeatEnd;
+  }
+  if (currDoorDuration >= maxDoorDuration && currDoorStart) {
+    maxDoorDuration = currDoorDuration; maxDoorStart = currDoorStart; maxDoorEnd = currDoorEnd;
+  }
+
+  const formatDuration = (ms: number, start: string) => {
+    if (!start) return '-- S';
+    if (ms === 0) return '< 6 H';
+    const hours = Math.floor(ms / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
+    if (days > 0) return `${days} D ${hours % 24} H`;
+    return `${hours} H`;
+  };
+
+  const formatTimeRange = (start: string, end: string) => {
+    if (!start || !end) return '--:--:-- --:--:--';
+    const fmt = (dStr: string) => dStr.substring(5, 16).replace('T', ' '); // MM-DD HH:mm
+    if (start === end) return fmt(start);
+    return `${fmt(start)} to ${fmt(end)}`;
+  };
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-5 gap-6 h-full mt-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6 h-full mt-12">
       
       {/* MAX TEMP RECORDED */}
       <div className="bg-[#1e293b] rounded-xl border border-slate-700 p-6 flex flex-col justify-center items-center shadow-lg relative overflow-hidden group hover:-translate-y-1 transition-all">
@@ -34,16 +94,16 @@ export default function KpiCards({ node, history, globalThreshold, setGlobalThre
       <div className="bg-[#1e293b] rounded-xl border border-slate-700 p-6 flex flex-col justify-center items-center shadow-lg relative overflow-hidden group hover:-translate-y-1 transition-all">
         <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent pointer-events-none" />
         <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-2 text-center leading-tight">Max Heat Duration<br/><span className="text-[9px] text-slate-500">(&gt;LIMIT)</span></span>
-        <span className="text-2xl font-extrabold text-orange-400 drop-shadow mt-1">-- S</span>
-        <span className="text-[10px] font-mono text-slate-600 mt-3 tracking-widest">--:--:-- --:--:--</span>
+        <span className="text-2xl font-extrabold text-orange-400 drop-shadow mt-1">{formatDuration(maxHeatDuration, maxHeatStart)}</span>
+        <span className="text-[10px] font-mono text-slate-600 mt-3 tracking-widest text-center">{formatTimeRange(maxHeatStart, maxHeatEnd)}</span>
       </div>
 
       {/* LONGEST DOOR OPEN */}
       <div className="bg-[#1e293b] rounded-xl border border-slate-700 p-6 flex flex-col justify-center items-center shadow-lg relative overflow-hidden group hover:-translate-y-1 transition-all">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent pointer-events-none" />
         <span className="text-[10px] font-bold tracking-widest text-slate-400 uppercase mb-2 text-center">Longest Door Open</span>
-        <span className="text-2xl font-extrabold text-blue-500 drop-shadow mt-1">-- S</span>
-        <span className="text-[10px] font-mono text-slate-600 mt-3 tracking-widest">--:--:-- --:--:--</span>
+        <span className="text-2xl font-extrabold text-blue-500 drop-shadow mt-1">{formatDuration(maxDoorDuration, maxDoorStart)}</span>
+        <span className="text-[10px] font-mono text-slate-600 mt-3 tracking-widest text-center">{formatTimeRange(maxDoorStart, maxDoorEnd)}</span>
       </div>
 
       {/* CRITICAL EVENT */}

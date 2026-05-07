@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-agents
+  namespace: ai
+  labels:
+    app: ai-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai-agents
+  template:
+    metadata:
+      labels:
+        app: ai-agents
+    spec:
+      containers:
+      - name: ai-agents
+        image: registry.ci.svc.cluster.local/carbon-credit/ai-agents:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: OLLAMA_URL
+          value: "http://ollama.ai.svc.cluster.local:11434"
+        - name: MILVUS_HOST
+          value: "milvus.data.svc.cluster.local"
+        - name: MILVUS_PORT
+          value: "19530"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-agents
+  namespace: ai
+spec:
+  selector:
+    app: ai-agents
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 8000

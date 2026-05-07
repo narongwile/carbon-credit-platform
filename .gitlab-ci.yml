@@ -8,6 +8,8 @@ pages:
     # GitLab Pages requires the exported artifacts folder to be exactly named "public"
     - rm -rf public
     - mv dist public
+    # Fix 404 routing for SPA (React Router) on GitLab Pages
+    - cp public/index.html public/404.html
   artifacts:
     paths:
       - public

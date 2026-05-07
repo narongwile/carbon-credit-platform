@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-agents
+  namespace: monitoring
+  labels:
+    app: ai-agents
+spec:
+  selector:
+    matchLabels:
+      app: ai-agents
+  namespaceSelector:
+    matchNames:
+      - ai
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s

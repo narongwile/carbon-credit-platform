@@ -1,7 +1,14 @@
+# ============================================================
+# ArgoCD Root Application — App-of-Apps Pattern
+# This is the ONLY Application that needs to be applied manually
+# It bootstraps all other Applications automatically
+#
+# kubectl apply -f application.yaml
+# ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: carbon-credit-platform
+  name: carbon-credit-root
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
@@ -10,10 +17,10 @@ spec:
   source:
     repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
     targetRevision: main
-    path: infra/k8s/apps
+    path: infra/argocd/root-apps
   destination:
     server: https://kubernetes.default.svc
-    namespace: carbon-credit
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true

@@ -1,0 +1,42 @@
+# ============================================================
+# ArgoCD Application — Spark Operator
+# Helm Chart: spark-on-k8s-operator
+# Namespace: data
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spark-operator
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://googlecloudplatform.github.io/spark-on-k8s-operator
+      chart: spark-operator
+      targetRevision: 1.1.27
+      helm:
+        valueFiles:
+          - $values/frontend/infra/helm-values/spark-operator-values.yaml
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

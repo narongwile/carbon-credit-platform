@@ -1,0 +1,48 @@
+# ============================================================
+# ArgoCD Application — PostgreSQL + TimescaleDB
+# Helm Chart: bitnami/postgresql
+# Namespace: data
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: postgresql
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://charts.bitnami.com/bitnami
+    chart: postgresql
+    targetRevision: 15.2.0
+    helm:
+      values: |
+        primary:
+          extendedConfiguration: |
+            shared_preload_libraries = 'timescaledb'
+          persistence:
+            enabled: true
+            size: 20Gi
+            storageClass: local-path
+        auth:
+          postgresPassword: "${PG_PASSWORD}"
+          database: carbon_credit
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

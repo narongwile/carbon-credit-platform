@@ -1,0 +1,86 @@
+# ==========================================
+# Node-RED: Production Environment
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-red-prod
+  labels:
+    app: node-red
+    env: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-red
+      env: production
+  template:
+    metadata:
+      labels:
+        app: node-red
+        env: production
+    spec:
+      containers:
+      - name: node-red
+        image: nodered/node-red:latest
+        ports:
+        - containerPort: 1880 # Internal app port
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-red-prod
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 1880
+    targetPort: 1880
+    nodePort: 31880
+  selector:
+    app: node-red
+    env: production
+
+---
+# ==========================================
+# Node-RED: Dev / Demo Environment
+# ==========================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-red-dev
+  labels:
+    app: node-red
+    env: development
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-red
+      env: development
+  template:
+    metadata:
+      labels:
+        app: node-red
+        env: development
+    spec:
+      containers:
+      - name: node-red
+        image: nodered/node-red:latest
+        ports:
+        - containerPort: 1880 # NodeRED always listens on 1880 inside its own container
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-red-dev
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 1881       # Custom internal API port as per diagram
+    targetPort: 1880 # Map 1881 to container's 1880
+    nodePort: 31881
+  selector:
+    app: node-red
+    env: development

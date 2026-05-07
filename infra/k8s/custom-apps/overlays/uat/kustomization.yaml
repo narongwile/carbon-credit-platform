@@ -1,0 +1,46 @@
+# ============================================================
+# Kustomize Overlay — UAT Environment
+# Lower replicas, relaxed resource limits
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+commonAnnotations:
+  environment: uat
+
+patches:
+  # ── Backend: 1 replica for UAT ──
+  - target:
+      kind: Deployment
+      name: backend-api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # ── Frontend: 1 replica for UAT ──
+  - target:
+      kind: Deployment
+      name: frontend-web
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # ── AI Agents: 1 replica for UAT ──
+  - target:
+      kind: Deployment
+      name: ai-agents
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  # ── MQTT Bridge: 1 replica for UAT ──
+  - target:
+      kind: Deployment
+      name: mqtt-bridge
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
