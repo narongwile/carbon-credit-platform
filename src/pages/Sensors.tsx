@@ -133,8 +133,8 @@ const Sensors = () => {
         </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800 overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-sm border border-gray-200 dark:border-gray-800">
+        <div className="overflow-x-auto min-h-[350px]">
           <table className="w-full text-left whitespace-nowrap">
             <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
               <tr>
@@ -147,7 +147,7 @@ const Sensors = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-              {filteredSensors.length > 0 ? filteredSensors.map((sensor) => (
+              {filteredSensors.length > 0 ? filteredSensors.map((sensor, index) => (
                 <tr key={sensor.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors group">
                   <td className="px-6 py-4 font-mono text-sm font-semibold text-gray-900 dark:text-white">{sensor.device_serial}</td>
                   <td className="px-6 py-4">
@@ -194,7 +194,7 @@ const Sensors = () => {
                     {openDropdownId === sensor.id && (
                       <>
                         <div className="fixed inset-0 z-10" onClick={() => setOpenDropdownId(null)}></div>
-                        <div className="absolute right-8 top-10 w-48 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl shadow-xl z-20 py-2 animate-in fade-in zoom-in-95 duration-100">
+                        <div className={`absolute right-8 ${index >= filteredSensors.length - 2 ? 'bottom-10 mb-2' : 'top-10'} w-48 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-xl shadow-xl z-20 py-2 animate-in fade-in zoom-in-95 duration-100`}>
                           <button 
                             onClick={() => handleViewDetails(sensor)}
                             className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center transition-colors"
