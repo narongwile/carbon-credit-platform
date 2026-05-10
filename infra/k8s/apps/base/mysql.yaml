@@ -1,15 +1,3 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: mysql-exporter-config
-  namespace: carbon-credit
-data:
-  .my.cnf: |
-    [client]
-    user=root
-    password=secure-root-password
-    host=127.0.0.1
----
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -29,37 +17,67 @@ spec:
         app: mysql
     spec:
       containers:
-      - name: mysql
-        image: mysql:8.0
-        env:
-        - name: MYSQL_ROOT_PASSWORD
-          value: "secure-root-password"
-        - name: MYSQL_DATABASE
-          value: "carbon_credit"
-        ports:
-        - containerPort: 3306
-          name: mysql
+        - name: mysql
+          image: mysql:8.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-auth
+                  key: root-password
+            - name: MYSQL_DATABASE
+              value: "carbon_credit"
+          ports:
+            - containerPort: 3306
+              name: mysql
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD"
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD"
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+        - name: mysqld-exporter
+          image: prom/mysqld-exporter:v0.16.0
+          env:
+            - name: DATA_SOURCE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-auth
+                  key: exporter-dsn
+          ports:
+            - containerPort: 9104
+              name: metrics
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
         resources:
           requests:
-            cpu: 250m
-            memory: 256Mi
-          limits:
-            cpu: 1000m
-            memory: 1Gi
-      - name: mysqld-exporter
-        image: prom/mysqld-exporter:v0.16.0
-        args:
-        - "--config.my-cnf=/etc/mysql-exporter/.my.cnf"
-        ports:
-        - containerPort: 9104
-          name: metrics
-        volumeMounts:
-        - name: exporter-config
-          mountPath: /etc/mysql-exporter
-      volumes:
-      - name: exporter-config
-        configMap:
-          name: mysql-exporter-config
+            storage: 20Gi
 ---
 apiVersion: v1
 kind: Service
@@ -67,15 +85,13 @@ metadata:
   name: mysql
   namespace: carbon-credit
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
-  - name: tcp
-    port: 3306
-    targetPort: 3306
-    nodePort: 32306
-  - name: metrics
-    port: 9104
-    targetPort: 9104
-    nodePort: 32104
+    - name: tcp
+      port: 3306
+      targetPort: 3306
+    - name: metrics
+      port: 9104
+      targetPort: 9104
   selector:
     app: mysql

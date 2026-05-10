@@ -16,31 +16,42 @@ spec:
         app: phpmyadmin
     spec:
       containers:
-      - name: phpmyadmin
-        image: phpmyadmin:latest
-        ports:
-        - containerPort: 80
-          name: http
-        resources:
-          requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
-            cpu: 200m
-            memory: 256Mi
-        env:
-        - name: PMA_HOST
-          value: "mysql"
-        - name: PMA_PORT
-          value: "3306"
-        - name: PMA_ABSOLUTE_URI
-          value: "https://27.254.143.144/pma/"
-        - name: PMA_REVERSE_PROXY
-          value: "1"
-        - name: HTTP_X_FORWARDED_PROTO
-          value: "https"
-        - name: UPLOAD_LIMIT
-          value: "64M"
+        - name: phpmyadmin
+          image: phpmyadmin:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          env:
+            - name: PMA_HOST
+              value: "mysql"
+            - name: PMA_PORT
+              value: "3306"
+            - name: PMA_REVERSE_PROXY
+              value: "1"
+            - name: HTTP_X_FORWARDED_PROTO
+              value: "https"
+            - name: UPLOAD_LIMIT
+              value: "64M"
 ---
 apiVersion: v1
 kind: Service
@@ -48,11 +59,10 @@ metadata:
   name: phpmyadmin
   namespace: carbon-credit
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
-  - name: http
-    port: 80
-    targetPort: 80
-    nodePort: 32080
+    - name: http
+      port: 80
+      targetPort: 80
   selector:
     app: phpmyadmin

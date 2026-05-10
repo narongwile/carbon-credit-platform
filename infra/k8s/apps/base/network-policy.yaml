@@ -12,6 +12,85 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
+  name: allow-traefik-to-node-red
+  namespace: carbon-credit
+spec:
+  podSelector:
+    matchLabels:
+      app: node-red
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: traefik
+    ports:
+    - protocol: TCP
+      port: 1880
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-carbon-credit-essential-egress
+  namespace: carbon-credit
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector: {}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: app
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: data
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-to-carbon-credit-metrics
+  namespace: carbon-credit
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - mosquitto
+          - mysql
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9234
+    - protocol: TCP
+      port: 9104
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
   name: allow-app-to-data
   namespace: app
 spec:
@@ -29,8 +108,13 @@ metadata:
   namespace: app
 spec:
   podSelector: {}
+  policyTypes:
+  - Ingress
   ingress:
   - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: traefik

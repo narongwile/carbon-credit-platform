@@ -1,0 +1,149 @@
+# ============================================================
+# Thermexpertise single-node gateway template
+# Replace the placeholder hostnames and secret names before applying.
+# Public web apps go through HTTPS. Admin surfaces stay behind auth and
+# source-IP allowlists. Raw database access stays private.
+# ============================================================
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: app
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    stsPreload: true
+    forceSTSHeader: true
+    contentTypeNosniff: true
+    frameDeny: true
+    browserXssFilter: true
+    referrerPolicy: strict-origin-when-cross-origin
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: admin-ip-allowlist
+  namespace: carbon-credit
+spec:
+  ipAllowList:
+    sourceRange:
+      - 203.0.113.10/32
+      - 198.51.100.0/24
+
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-thermexpertise
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@thermexpertise.com
+    privateKeySecretRef:
+      name: letsencrypt-thermexpertise-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: traefik
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: thermexpertise-tls
+  namespace: app
+spec:
+  secretName: thermexpertise-tls
+  issuerRef:
+    name: letsencrypt-thermexpertise
+    kind: ClusterIssuer
+  dnsNames:
+    - thermexpertise.com
+    - www.thermexpertise.com
+    - api.thermexpertise.com
+    - grafana.thermexpertise.com
+    - nodered.thermexpertise.com
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frontend-web
+  namespace: app
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`thermexpertise.com`) || Host(`www.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+      services:
+        - name: frontend-web
+          port: 80
+  tls:
+    secretName: thermexpertise-tls
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backend-api
+  namespace: app
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`api.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+      services:
+        - name: backend-api
+          port: 3000
+  tls:
+    secretName: thermexpertise-tls
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana-admin
+  namespace: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`grafana.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+          namespace: carbon-credit
+      services:
+        - name: grafana
+          port: 3000
+  tls:
+    secretName: thermexpertise-tls
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: node-red-admin
+  namespace: carbon-credit
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`nodered.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: node-red
+          port: 1880
+  tls:
+    secretName: thermexpertise-tls

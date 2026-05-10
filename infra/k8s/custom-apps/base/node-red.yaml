@@ -1,86 +1,94 @@
 # ==========================================
-# Node-RED: Production Environment
+# Node-RED: private admin service with persistence
+# Public exposure should happen only through a secured Traefik route.
 # ==========================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: node-red-data
+  namespace: carbon-credit
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: local-path
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: node-red-prod
+  name: node-red
+  namespace: carbon-credit
   labels:
     app: node-red
-    env: production
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: node-red
-      env: production
   template:
     metadata:
       labels:
         app: node-red
-        env: production
     spec:
+      securityContext:
+        fsGroup: 1000
       containers:
-      - name: node-red
-        image: nodered/node-red:latest
-        ports:
-        - containerPort: 1880 # Internal app port
+        - name: node-red
+          image: nodered/node-red:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 1880
+              name: http
+          env:
+            - name: TZ
+              value: Asia/Bangkok
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+          volumeMounts:
+            - name: node-red-data
+              mountPath: /data
+      volumes:
+        - name: node-red-data
+          persistentVolumeClaim:
+            claimName: node-red-data
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: node-red-prod
+  name: node-red
+  namespace: carbon-credit
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
-  - name: http
-    port: 1880
-    targetPort: 1880
-    nodePort: 31880
+    - name: http
+      port: 1880
+      targetPort: http
   selector:
     app: node-red
-    env: production
-
----
-# ==========================================
-# Node-RED: Dev / Demo Environment
-# ==========================================
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: node-red-dev
-  labels:
-    app: node-red
-    env: development
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: node-red
-      env: development
-  template:
-    metadata:
-      labels:
-        app: node-red
-        env: development
-    spec:
-      containers:
-      - name: node-red
-        image: nodered/node-red:latest
-        ports:
-        - containerPort: 1880 # NodeRED always listens on 1880 inside its own container
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: node-red-dev
-spec:
-  type: NodePort
-  ports:
-  - name: http
-    port: 1881       # Custom internal API port as per diagram
-    targetPort: 1880 # Map 1881 to container's 1880
-    nodePort: 31881
-  selector:
-    app: node-red
-    env: development

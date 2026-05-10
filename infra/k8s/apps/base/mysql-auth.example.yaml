@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-auth
+  namespace: carbon-credit
+type: Opaque
+stringData:
+  root-password: "replace-with-a-generated-password"
+  exporter-dsn: "root:replace-with-a-generated-password@(127.0.0.1:3306)/"

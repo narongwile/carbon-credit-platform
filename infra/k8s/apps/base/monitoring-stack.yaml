@@ -15,11 +15,12 @@ spec:
       values: |
         grafana:
           enabled: true
-          adminUser: admin
-          adminPassword: admin
+          admin:
+            existingSecret: grafana-admin-credentials
+            userKey: admin-user
+            passwordKey: admin-password
           service:
-            type: NodePort
-            nodePort: 32000
+            type: ClusterIP
           resources:
             requests:
               cpu: 100m
@@ -29,9 +30,9 @@ spec:
               memory: 512Mi
           grafana.ini:
             server:
-              domain: localhost
-              root_url: "%(protocol)s://%(domain)s/grafana/"
-              serve_from_sub_path: true
+              domain: grafana.thermexpertise.com
+              root_url: https://grafana.thermexpertise.com/
+              serve_from_sub_path: false
             users:
               default_theme: dark
             date_formats:
