@@ -66,6 +66,8 @@ spec:
     - api.thermexpertise.com
     - grafana.thermexpertise.com
     - nodered.thermexpertise.com
+    - phpmyadmin.thermexpertise.com
+    - emqx.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -145,5 +147,46 @@ spec:
       services:
         - name: node-red
           port: 1880
+  tls:
+    secretName: thermexpertise-tls
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: phpmyadmin-admin
+  namespace: carbon-credit
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`phpmyadmin.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: phpmyadmin
+          port: 80
+  tls:
+    secretName: thermexpertise-tls
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: emqx-admin
+  namespace: data
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`emqx.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+          namespace: carbon-credit
+      services:
+        - name: emqx
+          port: 18083
   tls:
     secretName: thermexpertise-tls
