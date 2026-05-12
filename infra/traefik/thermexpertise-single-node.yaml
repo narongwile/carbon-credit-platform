@@ -30,8 +30,8 @@ metadata:
 spec:
   ipAllowList:
     sourceRange:
-      - 203.0.113.10/32
-      - 198.51.100.0/24
+      # TODO: Change 0.0.0.0/0 to your actual public IP for security
+      - 0.0.0.0/0
 
 ---
 apiVersion: cert-manager.io/v1
@@ -49,14 +49,17 @@ spec:
           ingress:
             class: traefik
 
+# ==========================================
+# Namespace: app (Frontend & Backend)
+# ==========================================
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: thermexpertise-tls
+  name: thermexpertise-tls-app
   namespace: app
 spec:
-  secretName: thermexpertise-tls
+  secretName: thermexpertise-tls-app
   issuerRef:
     name: letsencrypt-thermexpertise
     kind: ClusterIssuer
@@ -64,10 +67,6 @@ spec:
     - thermexpertise.com
     - www.thermexpertise.com
     - api.thermexpertise.com
-    - grafana.thermexpertise.com
-    - nodered.thermexpertise.com
-    - phpmyadmin.thermexpertise.com
-    - emqx.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -87,7 +86,7 @@ spec:
         - name: frontend-web
           port: 80
   tls:
-    secretName: thermexpertise-tls
+    secretName: thermexpertise-tls-app
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -107,7 +106,24 @@ spec:
         - name: backend-api
           port: 3000
   tls:
-    secretName: thermexpertise-tls
+    secretName: thermexpertise-tls-app
+
+# ==========================================
+# Namespace: monitoring (Grafana)
+# ==========================================
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: thermexpertise-tls-monitoring
+  namespace: monitoring
+spec:
+  secretName: thermexpertise-tls-monitoring
+  issuerRef:
+    name: letsencrypt-thermexpertise
+    kind: ClusterIssuer
+  dnsNames:
+    - grafana.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -125,10 +141,28 @@ spec:
         - name: admin-ip-allowlist
           namespace: carbon-credit
       services:
-        - name: grafana
-          port: 3000
+        - name: monitoring-stack-grafana
+          port: 80
   tls:
-    secretName: thermexpertise-tls
+    secretName: thermexpertise-tls-monitoring
+
+# ==========================================
+# Namespace: carbon-credit (Node-RED, phpMyAdmin)
+# ==========================================
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: thermexpertise-tls-carbon
+  namespace: carbon-credit
+spec:
+  secretName: thermexpertise-tls-carbon
+  issuerRef:
+    name: letsencrypt-thermexpertise
+    kind: ClusterIssuer
+  dnsNames:
+    - nodered.thermexpertise.com
+    - phpmyadmin.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -148,7 +182,7 @@ spec:
         - name: node-red
           port: 1880
   tls:
-    secretName: thermexpertise-tls
+    secretName: thermexpertise-tls-carbon
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -168,7 +202,24 @@ spec:
         - name: phpmyadmin
           port: 80
   tls:
-    secretName: thermexpertise-tls
+    secretName: thermexpertise-tls-carbon
+
+# ==========================================
+# Namespace: data (EMQX)
+# ==========================================
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: thermexpertise-tls-data
+  namespace: data
+spec:
+  secretName: thermexpertise-tls-data
+  issuerRef:
+    name: letsencrypt-thermexpertise
+    kind: ClusterIssuer
+  dnsNames:
+    - emqx.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -189,4 +240,4 @@ spec:
         - name: emqx
           port: 18083
   tls:
-    secretName: thermexpertise-tls
+    secretName: thermexpertise-tls-data
