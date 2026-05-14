@@ -17,7 +17,7 @@ spec:
   source:
     repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
     targetRevision: main
-    path: frontend/infra/k8s/monitoring
+    path: infra/k8s/monitoring
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring

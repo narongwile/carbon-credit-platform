@@ -16,7 +16,7 @@ spec:
     targetRevision: 26.8.0
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/kafka-values.yaml
+        - $values/infra/helm-values/kafka-values.yaml
   sources:
     - repoURL: https://charts.bitnami.com/bitnami
       chart: kafka
@@ -46,7 +46,7 @@ spec:
     targetRevision: 14.6.0
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/minio-values.yaml
+        - $values/infra/helm-values/minio-values.yaml
   sources:
     - repoURL: https://charts.bitnami.com/bitnami
       chart: minio
@@ -76,7 +76,7 @@ spec:
     targetRevision: 18.2.0
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/keycloak-values.yaml
+        - $values/infra/helm-values/keycloak-values.yaml
   sources:
     - repoURL: https://charts.bitnami.com/bitnami
       chart: keycloak
@@ -106,7 +106,7 @@ spec:
     targetRevision: 1.1.27
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/spark-operator-values.yaml
+        - $values/infra/helm-values/spark-operator-values.yaml
   sources:
     - repoURL: https://googlecloudplatform.github.io/spark-on-k8s-operator
       chart: spark-operator
@@ -136,7 +136,7 @@ spec:
     targetRevision: 5.4.1
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/emqx-values.yaml
+        - $values/infra/helm-values/emqx-values.yaml
   sources:
     - repoURL: https://repos.emqx.io/charts
       chart: emqx
@@ -210,7 +210,7 @@ spec:
     targetRevision: 0.12.0
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/superset-values.yaml
+        - $values/infra/helm-values/superset-values.yaml
   sources:
     - repoURL: https://apache.github.io/superset
       chart: superset
@@ -240,7 +240,7 @@ spec:
     targetRevision: 1.2.0
     helm:
       valueFiles:
-        - $values/frontend/infra/helm-values/metabase-values.yaml
+        - $values/infra/helm-values/metabase-values.yaml
   sources:
     - repoURL: https://pmint93.github.io/helm-charts
       chart: metabase

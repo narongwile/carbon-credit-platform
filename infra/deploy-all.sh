@@ -5,6 +5,10 @@
 #
 # This script is IDEMPOTENT — safe to re-run.
 # Usage:  chmod +x deploy-all.sh && sudo ./deploy-all.sh
+#
+# Cosmos (infra/cosmos/docker-compose) is intentionally not installed — use aaPanel
+# for WordPress/host sites. Set PRESERVE_AAPANEL_WEB=1 to avoid stopping nginx/apache
+# when aaPanel must keep binding 80/443 (then resolve Traefik vs aaPanel port conflict separately).
 # ============================================================
 set -euo pipefail
 
@@ -25,6 +29,20 @@ err()  { echo -e "${RED}[✗]${NC} $*" >&2; }
 info() { echo -e "${CYAN}[i]${NC} $*"; }
 
 gen_password() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20 || true; }
+
+# Replaces {{NODE_PRIMARY_IP}} in Traefik CRDs so port-80 routes work when browsing by public IP.
+apply_traefik_routes() {
+  local tpl="${REPO_DIR}/infra/traefik/thermexpertise-single-node.yaml"
+  local primary_ip=""
+  primary_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }' || true)
+  [[ -z "${primary_ip}" ]] && primary_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+  if [[ -z "${primary_ip}" ]]; then
+    err "Could not determine primary IPv4 for {{NODE_PRIMARY_IP}} in Traefik manifest."
+    return 1
+  fi
+  info "Applying Traefik routes (HTTP by node IP: ${primary_ip})"
+  sed "s/{{NODE_PRIMARY_IP}}/${primary_ip}/g" "${tpl}" | $KUBECTL apply -f -
+}
 
 # ── Detect aaPanel port from ALL sources ─────────────────────
 detect_aapanel_port() {
@@ -113,6 +131,8 @@ setup_firewall() {
   ufw allow 80/tcp comment 'HTTP' > /dev/null 2>&1
   ufw allow 443/tcp comment 'HTTPS' > /dev/null 2>&1
   ufw allow 8883/tcp comment 'MQTTS IoT' > /dev/null 2>&1
+  # NodePort admin UIs (Grafana / Node-RED / phpMyAdmin) when using public IP without DNS
+  ufw allow 30080:30082/tcp comment 'K8s NodePort tools' > /dev/null 2>&1
 
   # K3s API (local only)
   ufw allow from 127.0.0.0/8 to any port 6443 proto tcp comment 'K3s local' > /dev/null 2>&1
@@ -153,6 +173,9 @@ isolate_aapanel() {
   log "Step 3/10: aaPanel isolation..."
 
   # Stop aaPanel-managed web servers conflicting with Traefik 80/443
+  if [[ "${PRESERVE_AAPANEL_WEB:-0}" == "1" ]]; then
+    info "PRESERVE_AAPANEL_WEB=1 — leaving nginx/apache/httpd running for aaPanel/WordPress"
+  else
   for svc in nginx apache2 httpd; do
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
       warn "Stopping $svc (conflicts with Traefik 80/443)..."
@@ -160,6 +183,7 @@ isolate_aapanel() {
       systemctl disable "$svc" 2>/dev/null || true
     fi
   done
+  fi
 
   # Detect aaPanel by checking multiple paths
   if command -v bt &>/dev/null || [[ -f /etc/init.d/bt ]] || [[ -d /www/server/panel ]]; then
@@ -314,7 +338,7 @@ install_argocd() {
 
   # Traefik ingress
   sleep 10
-  $KUBECTL apply -f "${REPO_DIR}/infra/traefik/thermexpertise-single-node.yaml" 2>/dev/null || \
+  apply_traefik_routes 2>/dev/null || \
     warn "Traefik CRDs not ready — will retry in fix step"
 
   log "ArgoCD bootstrap complete"
@@ -404,7 +428,7 @@ fix_known_issues() {
 
   # ── Fix 4: Re-apply Traefik routes (in case cert-manager wasn't ready) ──
   info "Re-applying Traefik ingress routes..."
-  $KUBECTL apply -f "${REPO_DIR}/infra/traefik/thermexpertise-single-node.yaml" 2>/dev/null || true
+  apply_traefik_routes 2>/dev/null || true
 
   # ── Fix 5: Ensure aaPanel port is definitely open ──
   info "Final aaPanel firewall check..."
@@ -479,8 +503,10 @@ health_check() {
   echo ""
   echo " 🌐 Domain:     https://${DOMAIN}"
   echo " 🔌 API:        https://api.${DOMAIN}"
-  echo " 📊 Grafana:    https://grafana.${DOMAIN}"
-  echo " 🔧 Node-RED:   https://nodered.${DOMAIN}"
+  echo " 📊 Grafana:    https://grafana.${DOMAIN}  (or http://${server_ip}:30080)"
+  echo " 🔧 Node-RED:   https://nodered.${DOMAIN}   (or http://${server_ip}:30081)"
+  echo " 🗄️  phpMyAdmin: https://phpmyadmin.${DOMAIN} (or http://${server_ip}:30082)"
+  echo " 🏠 App (IP):   http://${server_ip}/  and API http://${server_ip}/api/"
   echo " 🚀 ArgoCD:     kubectl port-forward svc/argocd-server -n argocd 8080:443"
   if [[ -n "$bt_port" ]]; then
     echo " 🖥️  aaPanel:    http://${server_ip}:${bt_port}"

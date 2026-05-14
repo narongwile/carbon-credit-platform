@@ -20,7 +20,8 @@ spec:
             userKey: admin-user
             passwordKey: admin-password
           service:
-            type: ClusterIP
+            type: NodePort
+            nodePort: 30080
           resources:
             requests:
               cpu: 100m
@@ -30,8 +31,7 @@ spec:
               memory: 512Mi
           grafana.ini:
             server:
-              domain: grafana.thermexpertise.com
-              root_url: https://grafana.thermexpertise.com/
+              root_url: "%(protocol)s://%(domain)s/"
               serve_from_sub_path: false
             users:
               default_theme: dark

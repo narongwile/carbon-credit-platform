@@ -85,10 +85,11 @@ metadata:
   name: node-red
   namespace: carbon-credit
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
     - name: http
       port: 1880
       targetPort: http
+      nodePort: 30081
   selector:
     app: node-red

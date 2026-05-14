@@ -21,7 +21,7 @@ spec:
       targetRevision: 5.4.1
       helm:
         valueFiles:
-          - $values/frontend/infra/helm-values/emqx-values.yaml
+          - $values/infra/helm-values/emqx-values.yaml
     - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
       targetRevision: main
       ref: values

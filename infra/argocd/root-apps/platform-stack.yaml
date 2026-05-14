@@ -17,7 +17,7 @@ spec:
   source:
     repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
     targetRevision: main
-    path: frontend/infra/argocd/platform-stack
+    path: infra/argocd/platform-stack
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

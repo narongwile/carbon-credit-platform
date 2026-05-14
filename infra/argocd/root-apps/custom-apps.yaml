@@ -17,7 +17,7 @@ spec:
   source:
     repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
     targetRevision: develop
-    path: frontend/infra/k8s/custom-apps/overlays/uat
+    path: infra/k8s/custom-apps/overlays/uat
   destination:
     server: https://kubernetes.default.svc
     namespace: app
@@ -43,7 +43,7 @@ spec:
   source:
     repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
     targetRevision: main
-    path: frontend/infra/k8s/custom-apps/overlays/prod
+    path: infra/k8s/custom-apps/overlays/prod
   destination:
     server: https://kubernetes.default.svc
     namespace: app
