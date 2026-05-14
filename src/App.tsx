@@ -16,6 +16,7 @@ import LiveMap from './pages/LiveMap';
 import AdminPanel from './pages/AdminPanel';
 import Reports from './pages/Reports';
 import { ThemeProvider } from './context/ThemeContext';
+import { Toaster } from 'react-hot-toast';
 
 const PrivateRoute = ({ children }: { children: JSX.Element }) => {
   const { keycloak, initialized } = useKeycloak();
@@ -32,6 +33,19 @@ const PrivateRoute = ({ children }: { children: JSX.Element }) => {
 function App() {
   return (
     <ThemeProvider>
+      <Toaster 
+        position="top-right" 
+        toastOptions={{
+          className: 'dark:bg-slate-800 dark:text-white',
+          style: {
+            background: '#1e293b',
+            color: '#fff',
+            border: '1px solid #334155',
+            fontSize: '14px',
+            maxWidth: '400px'
+          }
+        }} 
+      />
       <Router>
       <div className="min-h-screen">
         <Routes>

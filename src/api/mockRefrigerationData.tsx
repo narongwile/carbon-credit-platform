@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import toast from 'react-hot-toast';
 import { useMqttTelemetry } from '../hooks/useMqttTelemetry';
+import { X } from 'lucide-react';
 
 export interface RefrigerationNode {
   id: string;
@@ -116,6 +118,75 @@ export function useRefrigerationData() {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // 3. Real-time Alerts Tracking
+  const lastAlertTimes = useRef<Record<string, { door: number, temp: number }>>({});
+  const doorOpenTimes = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    const now = Date.now();
+    
+    nodes.forEach(node => {
+      if (!node.online) return;
+
+      const alertState = lastAlertTimes.current[node.id] || { door: 0, temp: 0 };
+      
+      // -- Door Alert Logic --
+      if (node.doorOpen) {
+        if (!doorOpenTimes.current[node.id]) {
+          doorOpenTimes.current[node.id] = now; // Mark when door was first opened
+        }
+        
+        const openDuration = now - doorOpenTimes.current[node.id];
+        const DOOR_THRESHOLD_MS = 15000; // 15 seconds for testing
+        const ALERT_COOLDOWN_MS = 60000; // 60 seconds between repeat alerts
+        
+        if (openDuration > DOOR_THRESHOLD_MS) {
+          if (now - alertState.door > ALERT_COOLDOWN_MS) {
+            toast.error((t) => (
+              <div className="flex items-center justify-between gap-4">
+                <span>⚠️ Alert! {node.name} door has been open for too long!</span>
+                <button onClick={() => toast.dismiss(t.id)} className="p-1 hover:bg-slate-700/50 rounded-full shrink-0">
+                  <X size={16} />
+                </button>
+              </div>
+            ), {
+              id: `door-alert-${node.id}`,
+              duration: 5000,
+            });
+            alertState.door = now;
+          }
+        }
+      } else {
+        doorOpenTimes.current[node.id] = 0; // Reset when closed
+      }
+
+      // -- Temperature Alert Logic --
+      const TEMP_MIN = 2.0;
+      const TEMP_MAX = 6.0;
+      const TEMP_COOLDOWN_MS = 60000;
+
+      if (node.temperature < TEMP_MIN || node.temperature > TEMP_MAX) {
+        if (now - alertState.temp > TEMP_COOLDOWN_MS) {
+          toast.error((t) => (
+            <div className="flex items-center justify-between gap-4">
+              <span>🌡️ Temp Warning! {node.name} is at {node.temperature.toFixed(1)}°C (Normal: 2.0 - 6.0)</span>
+              <button onClick={() => toast.dismiss(t.id)} className="p-1 hover:bg-slate-700/50 rounded-full shrink-0">
+                <X size={16} />
+              </button>
+            </div>
+          ), { 
+              id: `temp-alert-${node.id}`,
+              duration: 5000,
+            }
+          );
+          alertState.temp = now;
+        }
+      }
+
+      lastAlertTimes.current[node.id] = alertState;
+    });
+  }, [nodes]);
 
   return { 
     nodes, 

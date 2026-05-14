@@ -15,12 +15,12 @@ export default function NodeCard({ node, threshold, onClick }: Props) {
 
   const borderColor = isOffline
     ? 'border-slate-800'
-    : isCritical 
-      ? 'border-red-500' 
-      : isWarning 
-        ? 'border-[#eab308]' 
+    : isCritical
+      ? 'border-red-500'
+      : isWarning
+        ? 'border-[#eab308]'
         : 'border-slate-700 hover:border-slate-600';
-      
+
   const shadowGlow = isOffline
     ? 'shadow-none opacity-60 grayscale-[0.3]'
     : isCritical
@@ -28,11 +28,11 @@ export default function NodeCard({ node, threshold, onClick }: Props) {
       : isWarning
         ? 'shadow-[0_0_20px_rgba(234,179,8,0.2)]'
         : 'shadow-lg hover:shadow-2xl';
-  
+
   const tempColor = isOffline ? 'text-slate-600' : isWarning ? 'text-[#eab308]' : 'text-white';
 
   return (
-    <div 
+    <div
       className={`bg-[#1e293b] rounded-xl border border-b-[3px] ${borderColor} ${shadowGlow} p-5 flex flex-col justify-between relative overflow-hidden transition-all duration-300 transform ${isOffline ? 'opacity-80' : 'hover:-translate-y-1 cursor-pointer'}`}
       onClick={() => { if (!isOffline) onClick(node.id); }}
     >
@@ -61,7 +61,7 @@ export default function NodeCard({ node, threshold, onClick }: Props) {
           <span className={`mr-2 text-xs ${isOffline ? 'text-slate-600' : 'text-slate-400'}`}>Door: </span>
           {isOffline ? (
             <span className="text-slate-600 flex items-center gap-1.5 text-xs font-medium">
-               --
+              --
             </span>
           ) : node.doorOpen ? (
             <span className="text-red-500 flex items-center gap-1.5 uppercase font-bold text-xs tracking-wider">
@@ -73,13 +73,13 @@ export default function NodeCard({ node, threshold, onClick }: Props) {
             </span>
           )}
         </div>
-        
+
         <div className="flex space-x-2 z-20 relative">
-          <button 
+          <button
             onClick={(e) => {
               e.stopPropagation();
               // Replace with your actual Grafana URL structure
-              window.open(`https://27.254.143.144/grafana/d/wTMoiOPZk/mosquitto-broker?orgId=1&from=now-12h&to=now&timezone=Asia%2FBangkok&refresh=1m&var-node=${node.mac}`, '_blank');
+              window.open(`http://203.154.158.103:3000/d/cfatbwykoix34c/oie-monitoring?orgId=1&timezone=Asia%2FBangkok&refresh=5m&var-node=${node.mac}`, '_blank');
             }}
             className="px-2 py-1.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 active:bg-orange-500/30 transition-all rounded-md uppercase text-[10px] font-bold tracking-widest border border-orange-500/20 hover:border-orange-500/50 flex items-center"
             title="Open Grafana Dashboard"
@@ -87,7 +87,7 @@ export default function NodeCard({ node, threshold, onClick }: Props) {
             <BarChart2 size={12} className="mr-1" strokeWidth={3} />
             Grafana
           </button>
-          
+
           <button className="px-3 py-1.5 bg-blue-600/10 text-blue-400 hover:bg-blue-600/20 active:bg-blue-600/30 transition-all rounded-md uppercase text-[10px] font-bold tracking-widest border border-blue-500/20 hover:border-blue-500/50">
             View
           </button>
