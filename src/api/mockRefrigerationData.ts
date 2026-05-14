@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useMqttTelemetry } from '../hooks/useMqttTelemetry';
 
 export interface RefrigerationNode {
   id: string;
@@ -46,10 +47,10 @@ const MOCK_NODES: RefrigerationNode[] = [
   { id: '2', name: 'Node #2', mac: '00:1A:2B:3C:4D:02', temperature: 5.1, doorOpen: false, online: true },
   { id: '3', name: 'Node #3', mac: '00:1A:2B:3C:4D:03', temperature: 4.3, doorOpen: false, online: true },
   { id: '4', name: 'Node #4', mac: '00:1A:2B:3C:4D:04', temperature: 6.7, doorOpen: false, online: true },
-  { id: '5', name: 'Node #5', mac: '00:1A:2B:3C:4D:05', temperature: 2.9, doorOpen: false, online: true },
-  { id: '6', name: 'Node #6', mac: '00:1A:2B:3C:4D:06', temperature: 6.1, doorOpen: false, online: true },
-  { id: '7', name: 'Node #7', mac: '00:1A:2B:3C:4D:07', temperature: 10.6, doorOpen: false, online: true },
-  { id: '8', name: 'Node #8', mac: '00:1A:2B:3C:4D:08', temperature: 3.9, doorOpen: false, online: true },
+  { id: '5', name: 'Node #5', mac: '00:1A:2B:3C:4D:05', temperature: 2.9, doorOpen: false, online: false },
+  { id: '6', name: 'Node #6', mac: '00:1A:2B:3C:4D:06', temperature: 6.1, doorOpen: false, online: false },
+  { id: '7', name: 'Node #7', mac: '00:1A:2B:3C:4D:07', temperature: 10.6, doorOpen: false, online: false },
+  { id: '8', name: 'Node #8', mac: '00:1A:2B:3C:4D:08', temperature: 3.9, doorOpen: false, online: false },
   { id: '9', name: 'Node #9', mac: '00:1A:2B:3C:4D:09', temperature: 3.1, doorOpen: false, online: true },
   { id: '10', name: 'Node #10', mac: '00:1A:2B:3C:4D:0A', temperature: 6.9, doorOpen: true, online: true },
   { id: '11', name: 'Node #11', mac: '00:1A:2B:3C:4D:0B', temperature: 6.5, doorOpen: false, online: true },
@@ -65,12 +66,46 @@ const MOCK_HISTORY = MOCK_NODES.reduce((acc, node) => {
 
 export function useRefrigerationData() {
   const [nodes, setNodes] = useState<RefrigerationNode[]>(MOCK_NODES);
+  const [historyMap, setHistoryMap] = useState<Record<string, RefrigerationHistory[]>>(MOCK_HISTORY);
+  const { telemetry } = useMqttTelemetry(); // Connects to ws://localhost:8080
   
-  // Simulate live real-time updates every 5 seconds (compressor fluctuations)
+  // 1. Handle incoming real-time MQTT telemetry
+  useEffect(() => {
+    if (telemetry && telemetry.id === '1') {
+      // Update Node #1 current state
+      setNodes(current => current.map(node => {
+        if (node.id === '1') {
+          return {
+            ...node,
+            temperature: telemetry.temperature,
+            doorOpen: telemetry.doorOpen,
+          };
+        }
+        return node;
+      }));
+
+      // Append to Node #1 history for real-time chart updating
+      setHistoryMap(current => {
+        const currentHist = current['1'] || [];
+        const newEntry = {
+          date: telemetry.timestamp.replace('T', ' ').substring(0, 16) + ':' + telemetry.timestamp.substring(17, 19), // Include seconds for real-time feel
+          temperature: telemetry.temperature,
+          door_status: telemetry.doorOpen ? 1 : 0,
+        };
+        // Keep last 150 points
+        const updatedHist = [...currentHist, newEntry].slice(-150);
+        return { ...current, '1': updatedHist };
+      });
+    }
+  }, [telemetry]);
+
+  // 2. Simulate live real-time updates every 5 seconds (compressor fluctuations for other nodes)
   useEffect(() => {
     const interval = setInterval(() => {
       setNodes(current => 
         current.map(node => {
+          if (node.id === '1') return node; // SKIP Node #1 (it is real-time now)
+          
           // Normal nodes fluctuate small amounts. High temp nodes fluctuate more.
           const variance = (Math.random() - 0.5) * (node.temperature > 6 ? 0.8 : 0.4);
           let newTemp = node.temperature + variance;
@@ -85,6 +120,6 @@ export function useRefrigerationData() {
   return { 
     nodes, 
     threshold: 6, // Global default threshold matching the image
-    getHistory: (nodeId: string) => MOCK_HISTORY[nodeId] || []
+    getHistory: (nodeId: string) => historyMap[nodeId] || []
   };
 }
