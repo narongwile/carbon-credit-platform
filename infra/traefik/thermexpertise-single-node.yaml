@@ -30,7 +30,39 @@ metadata:
 spec:
   ipAllowList:
     sourceRange:
-      # TODO: Change 0.0.0.0/0 to your actual public IP for security
+      - 0.0.0.0/0
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: admin-ip-allowlist
+  namespace: monitoring
+spec:
+  ipAllowList:
+    sourceRange:
+      - 0.0.0.0/0
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: admin-ip-allowlist
+  namespace: data
+spec:
+  ipAllowList:
+    sourceRange:
+      - 0.0.0.0/0
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: admin-ip-allowlist
+  namespace: app
+spec:
+  ipAllowList:
+    sourceRange:
       - 0.0.0.0/0
 
 ---
@@ -139,7 +171,6 @@ spec:
       kind: Rule
       middlewares:
         - name: admin-ip-allowlist
-          namespace: carbon-credit
       services:
         - name: monitoring-stack-grafana
           port: 80
@@ -235,7 +266,6 @@ spec:
       kind: Rule
       middlewares:
         - name: admin-ip-allowlist
-          namespace: carbon-credit
       services:
         - name: emqx
           port: 18083
