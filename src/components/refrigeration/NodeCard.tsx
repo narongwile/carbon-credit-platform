@@ -79,7 +79,10 @@ export default function NodeCard({ node, threshold, onClick }: Props) {
             onClick={(e) => {
               e.stopPropagation();
               // Replace with your actual Grafana URL structure
-              window.open(`http://203.154.158.103:3000/d/bf3iqmg9cjxfke/refri001?orgId=10&from=1778735042329&to=1778736266218&timezone=Asia%2FBangkok&refresh=5m&var-node=${node.mac}`, '_blank');
+              const grafanaUrl = node.id === '1'
+                ? `http://203.154.158.103:3000/d/bf3iqmg9cjxfke/refri001?orgId=10&from=1778735042329&to=1778736266218&timezone=Asia%2FBangkok&refresh=5m&var-node=${node.mac}`
+                : `http://203.154.158.103:3000/d/cfatbwykoix34c/oie-monitoring?orgId=1&refresh=5m&timezone=Asia%2FBangkok&refresh=1m&var-node=${node.mac}`;
+              window.open(grafanaUrl, '_blank');
             }}
             className="px-2 py-1.5 bg-orange-500/10 text-orange-400 hover:bg-orange-500/20 active:bg-orange-500/30 transition-all rounded-md uppercase text-[10px] font-bold tracking-widest border border-orange-500/20 hover:border-orange-500/50 flex items-center"
             title="Open Grafana Dashboard"
