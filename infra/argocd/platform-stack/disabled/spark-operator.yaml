@@ -16,9 +16,10 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: https://googlecloudplatform.github.io/spark-on-k8s-operator
+    # Repo moved: googlecloudplatform → kubeflow (2024)
+    - repoURL: https://kubeflow.github.io/spark-operator
       chart: spark-operator
-      targetRevision: 1.1.27
+      targetRevision: 2.1.0
       helm:
         valueFiles:
           - $values/infra/helm-values/spark-operator-values.yaml
