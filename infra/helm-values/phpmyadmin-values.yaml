@@ -11,8 +11,11 @@ image:
 replicaCount: 1
 
 service:
-  type: ClusterIP
+  type: NodePort
   port: 80
+  nodePort: 30808          # http://VPS_IP:30808  (NOTE: NodePort bypasses Traefik
+                           # BasicAuth — phpMyAdmin's own login page still requires
+                           # MySQL credentials, but rate-limit/IP-whitelist is gone.)
 
 # Connect to in-cluster MySQL by service DNS
 extraEnvVars:

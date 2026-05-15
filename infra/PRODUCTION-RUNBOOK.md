@@ -28,7 +28,15 @@ grafana.thermexpertise.com   A   <VPS_IP>
 nodered.thermexpertise.com   A   <VPS_IP>
 phpmyadmin.thermexpertise.com A  <VPS_IP>
 emqx.thermexpertise.com      A   <VPS_IP>
+# Optional — only needed if you opt into BRIDGE_AAPANEL=1 (not recommended):
+# aapanel.thermexpertise.com  A   <VPS_IP>
 ```
+
+> **Why is `aapanel.${DOMAIN}` missing?** aaPanel is intentionally kept
+> **outside** k3s as an out-of-band admin tool — if k3s/Traefik dies, you still
+> need aaPanel + SSH to recover. Routing aaPanel through the very system it's
+> meant to recover creates a chicken-and-egg failure mode. Reach it directly
+> at `http://<VPS_IP>:<bt_port>`.
 
 Verify locally:
 ```bash
@@ -138,18 +146,238 @@ sudo DEPLOY_USER=deploy ./scripts/prod-deploy.sh harden
 
 ## 3. Access URLs
 
-| Service | URL | Login |
-|---|---|---|
-| ArgoCD | `https://argocd.thermexpertise.com` | `admin` / see `/root/.carbon-credit-secrets.txt` |
-| Grafana | `https://grafana.thermexpertise.com` | `admin` / `iothub.2026` |
-| Node-RED | `https://nodered.thermexpertise.com` | `admin` / `iothub.2026` |
-| phpMyAdmin | `https://phpmyadmin.thermexpertise.com` | BasicAuth: `admin` / `iothub.2026`, then DB: `root` / `iothub.2026` |
-| WordPress | `https://thermexpertise.com` | `admin` / `iothub.2026` |
-| EMQX dashboard | `https://emqx.thermexpertise.com` | `admin` / `iothub.2026` |
-| EMQX MQTT | `tcp://<VPS_IP>:1883`, `tls://<VPS_IP>:8883` | per-device JWT (via backend) |
-| aaPanel | `http://<VPS_IP>:<bt_port>` | `admin` / `iothub.2026` |
+Every service is reachable **two ways** — pick whichever is easier.
+
+| Service | Domain (HTTPS + LE) | Direct IP (NodePort) | Login |
+|---|---|---|---|
+| ArgoCD | `https://argocd.thermexpertise.com` | `http://<VPS_IP>:30880` | `admin` / see `/root/.carbon-credit-secrets.txt` |
+| aaPanel | `https://aapanel.${DOMAIN}` *(opt-in via `EDGE_PROXY=nginx`)* | `http://<VPS_IP>:8888` | `admin` / `iothub.2026` |
+| EMQX Dashboard | `https://emqx.thermexpertise.com` | `http://<VPS_IP>:30183` | `admin` / `iothub.2026` |
+| EMQX MQTT | — | `tcp://<VPS_IP>:1883`  ← DNATed | per-device JWT (via backend) |
+| EMQX MQTT (direct) | — | `tcp://<VPS_IP>:31883` | per-device JWT |
+| EMQX MQTTS | — | `tls://<VPS_IP>:8883`  ← DNATed | per-device JWT |
+| EMQX MQTTS (direct) | — | `tls://<VPS_IP>:38883` | per-device JWT |
+| EMQX API | — | `http://<VPS_IP>:30081` | `admin` / `iothub.2026` |
+| Grafana | `https://grafana.thermexpertise.com` | `http://<VPS_IP>:3000` | `admin` / `iothub.2026` |
+| Node-RED | `https://nodered.thermexpertise.com` | `http://<VPS_IP>:1880` | `admin` / `iothub.2026` |
+| phpMyAdmin | `https://phpmyadmin.thermexpertise.com` (Traefik BasicAuth) | `http://<VPS_IP>:30808` (no BasicAuth) | DB: `root` / `iothub.2026` |
+| WordPress | `https://thermexpertise.com` | `http://<VPS_IP>:30088` | `admin` / `iothub.2026` |
+| MySQL | — | `kubectl -n data port-forward svc/mysql 3306:3306` then `mysql://localhost:3306` | `root` / `iothub.2026` |
+
+> **Domain vs IP — what's the difference?**
+> - Domain: full HTTPS with valid Let's Encrypt cert + Traefik middleware
+>   (e.g. phpMyAdmin BasicAuth). Use this in production-facing tools.
+> - Direct IP: plain HTTP (no TLS), bypasses Traefik middleware. Use for
+>   emergency/admin access when DNS is down or for quick smoke tests.
+
+> **Security note on `phpMyAdmin` via IP**: the NodePort `:30808` skips the
+> Traefik BasicAuth gate. phpMyAdmin's own login still requires MySQL
+> credentials, but you lose the extra layer + Traefik rate-limit. Consider
+> restricting `:30808` via UFW source-IP rules in production.
 
 All passwords are recorded in `/root/.carbon-credit-secrets.txt` (chmod 600).
+
+---
+
+## 3a. Architecture decision: aaPanel sits OUTSIDE k3s
+
+```
+              ┌────────────────────────────────────────────┐
+              │                  VPS host                  │
+              │                                            │
+   internet ──┼─►  :80, :443  ─►  k3s + Traefik  ─►  apps  │  ← platform plane
+              │                                            │
+              │            (independent)                   │
+              │                                            │
+   internet ──┼─►  :8888    ─►  aaPanel              ─►    │  ← admin plane
+              │   (SSH :22) ─►  sshd                       │
+              └────────────────────────────────────────────┘
+```
+
+**The two planes never talk to each other.** This is deliberate:
+
+1. **Failure isolation** — if Traefik/k3s breaks, you still have aaPanel (and
+   SSH) to debug and recover. The admin escape hatch must not depend on the
+   system it is used to fix.
+2. **No bootstrap-order coupling** — aaPanel runs whether or not k3s is up.
+3. **Independent lifecycles** — GitOps drives k3s; aaPanel updates itself.
+4. **Conceptual clarity** — "Is aaPanel part of the platform?" Answer: no.
+   It's host infrastructure, like SSH or systemd.
+
+### Five ways to reach aaPanel (pick one)
+
+| Option | Mode | URL | Failure isolation |
+|---|---|---|---|
+| **A** *(default)* | direct IP only | `http://<VPS_IP>:8888` | ✅ fully isolated |
+| **D-nginx** ⭐ *(RECOMMENDED)* | **nginx** as edge proxy on :80/:443 | `https://aapanel.${DOMAIN}` ← no port | ✅ |
+| D-caddy | Caddy as edge proxy on :80/:443 | `https://aapanel.${DOMAIN}` ← no port | ✅ |
+| B | Caddy sidecar on host (:8443) | `https://aapanel.${DOMAIN}:8443` ← has port | ✅ |
+| C | k3s bridge | `https://aapanel.${DOMAIN}` | ❌ couples failure domains |
+
+```bash
+# Option D-nginx — nginx as edge proxy (RECOMMENDED — clean URLs, industry standard)
+sudo \
+  EDGE_PROXY=nginx \
+  INSTALL_AAPANEL=1 \
+  DOMAIN=thermexpertise.com \
+  LE_EMAIL=admin@thermexpertise.com \
+  ./scripts/prod-deploy.sh bootstrap
+
+# Option D-caddy — Caddy as edge proxy (alternative, simpler config)
+sudo EDGE_PROXY=caddy INSTALL_AAPANEL=1 ./scripts/prod-deploy.sh bootstrap
+
+# Option B — Caddy sidecar (URL has :8443)
+sudo AAPANEL_TLS=caddy INSTALL_AAPANEL=1 ./scripts/prod-deploy.sh bootstrap
+
+# Option C — k3s bridge (NOT recommended)
+sudo BRIDGE_AAPANEL=1 INSTALL_AAPANEL=1 ./scripts/prod-deploy.sh bootstrap
+```
+
+### Option D-nginx (recommended) — what happens
+
+1. Traefik moves from `hostPort 80/443` → `NodePort 32080/32443` (no longer public)
+2. nginx installs on host via apt, takes over `:80` and `:443` as the **only** public edge
+3. nginx vhosts in `/etc/nginx/sites-available/edge.conf`:
+   - `aapanel.${DOMAIN}` → `proxy_pass http://127.0.0.1:8888` (aaPanel direct — bypasses k3s)
+   - everything else → `proxy_pass http://127.0.0.1:32080` (Traefik NodePort)
+4. `certbot --nginx` issues real Let's Encrypt certs for all subdomains (HTTP-01)
+5. certbot auto-renewal via `certbot.timer` (systemd)
+6. UFW DENIES `:32080/:32443` externally → Traefik only reachable from `127.0.0.1`
+7. **Every URL becomes clean**: `https://grafana.${DOMAIN}` (no `:30030`, no `:8443`)
+8. Failure isolation preserved: nginx route to aaPanel doesn't go through k3s
+
+### Why nginx over Caddy (for this project)
+
+| | nginx | Caddy |
+|---|---|---|
+| Team familiarity | ✅ everyone reads nginx config | learning curve |
+| aaPanel uses it | ✅ same mental model | different |
+| Industry standard | ✅ AWS/GCP/CF reference docs | growing |
+| Modules / ecosystem | ✅ vast | smaller |
+| LE auto-renewal | certbot.timer (systemd, standard) | built-in |
+| Config size for this task | ~25 lines | ~10 lines |
+| Debug tools | `nginx -T/-t`, error.log | `caddy validate`, journalctl |
+
+In both B and C you'll need a DNS A record:
+```
+aapanel.thermexpertise.com  A  <VPS_IP>
+```
+
+**Why Caddy (Option B) is the recommended HTTPS path:**
+- Caddy runs as its own host systemd service — totally independent of k3s
+- Auto-LE via DNS-01 (no port 80 conflict with Traefik)
+- 3-line config; no nginx/certbot complexity
+- If k3s/Traefik dies, Caddy → aaPanel still works
+- If Caddy dies, direct `http://<IP>:8888` still works
+
+---
+
+## 3b. Connecting MQTT devices to EMQX
+
+EMQX accepts connections out-of-the-box from any device, anywhere, using the
+shared `device` credential. Every device must use a unique `clientid` —
+the ACL restricts each device to its own topic namespace.
+
+### Credentials
+
+| User | Password | Permissions |
+|---|---|---|
+| `admin`  | `iothub.2026` | full access (`#`) — for backend services and ops tools |
+| `device` | `iothub.2026` | scoped — publish `devices/<clientid>/#`, subscribe `cmd/<clientid>/#` |
+
+### Endpoints
+
+| Protocol | URL | Notes |
+|---|---|---|
+| MQTT (plain TCP) | `tcp://<VPS_IP>:1883` | LAN/VPN/dev; or `:31883` direct NodePort |
+| MQTT over TLS    | `tls://<VPS_IP>:8883` | production — uses CA from `/opt/emqx/etc/certs/` |
+| MQTT over WebSocket (plain) | `ws://<VPS_IP>:30083/mqtt` | browser dev |
+| MQTT over WebSocket (TLS)   | `wss://<VPS_IP>:30084/mqtt` | browser prod |
+
+### Topic naming convention
+
+```
+devices/<clientid>/...        device publishes its own data
+sensors/<clientid>/...        sensor readings
+telemetry/<clientid>/...      heartbeat / status
+cmd/<clientid>/...            commands TO the device (subscribe)
+config/<clientid>/...         config push TO the device (subscribe)
+broadcast/...                 broadcast to all devices (subscribe-only)
+```
+
+`<clientid>` is the MQTT `clientId` set by the device on connect. The ACL
+enforces that a device with `clientid=esp32-001` can only publish to
+`devices/esp32-001/...` — it cannot impersonate other devices.
+
+### Quick test (laptop → VPS)
+
+```bash
+# Install mosquitto-clients (Ubuntu/Debian)
+sudo apt install mosquitto-clients
+
+# Subscribe to commands for clientid esp32-001
+mosquitto_sub -h <VPS_IP> -p 1883 \
+  -u device -P 'iothub.2026' \
+  -i esp32-001 \
+  -t 'cmd/esp32-001/#' -v
+
+# In another terminal — publish a temperature reading
+mosquitto_pub -h <VPS_IP> -p 1883 \
+  -u device -P 'iothub.2026' \
+  -i esp32-001 \
+  -t devices/esp32-001/temperature \
+  -m '{"value":24.5,"unit":"C","ts":1700000000}' -q 1
+
+# TLS variant (production)
+mosquitto_pub -h <VPS_IP> -p 8883 \
+  --cafile /path/to/ca.crt \
+  -u device -P 'iothub.2026' \
+  -i esp32-001 -t devices/esp32-001/temperature -m '24.5' -q 1
+```
+
+### Example device code (ESP32 / Arduino PubSubClient)
+
+```cpp
+#include <WiFi.h>
+#include <PubSubClient.h>
+WiFiClient   wifi;
+PubSubClient mqtt(wifi);
+
+const char* MQTT_HOST = "your.vps.ip";
+const int   MQTT_PORT = 1883;
+const char* CLIENT_ID = "esp32-001";        // unique per device
+const char* MQTT_USER = "device";
+const char* MQTT_PASS = "iothub.2026";
+
+void setup() {
+  // ... WiFi.begin() ...
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.connect(CLIENT_ID, MQTT_USER, MQTT_PASS);
+  mqtt.subscribe("cmd/esp32-001/#");
+}
+
+void loop() {
+  mqtt.loop();
+  mqtt.publish("devices/esp32-001/temperature", "24.5");
+  delay(5000);
+}
+```
+
+### Managing users beyond the bootstrap pair
+
+The bootstrap CSV is read **once** on EMQX's first start. After that, manage
+users via the dashboard (`https://emqx.${DOMAIN}`) or REST API:
+
+```bash
+# Add a new device user (per-device credentials)
+curl -u "admin:iothub.2026" \
+  -X POST https://emqx.thermexpertise.com/api/v5/authentication/password_based%3Abuilt_in_database/users \
+  -H 'content-type: application/json' \
+  -d '{"user_id":"esp32-002","password":"<strong-random>"}'
+```
+
+For production, **migrate from the shared `device` credential to per-device
+credentials** — this is the single highest-value security upgrade for IoT.
 
 ---
 

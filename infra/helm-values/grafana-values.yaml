@@ -15,9 +15,10 @@ admin:
   passwordKey: admin-password
 
 service:
-  type: ClusterIP
+  type: NodePort
   port: 80
   targetPort: 3000
+  nodePort: 3000           # http://VPS_IP:3000  (requires K3s NodePort range 1024+)
   portName: http
 
 persistence:

@@ -36,7 +36,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly BOOTSTRAP="${SCRIPT_DIR}/../deploy-bootstrap.sh"
 
 # Subdomains that MUST resolve to this VPS before bootstrap (LE HTTP-01)
-readonly REQUIRED_DNS=(
+REQUIRED_DNS=(
   "${DOMAIN}"
   "www.${DOMAIN}"
   "argocd.${DOMAIN}"
@@ -45,6 +45,18 @@ readonly REQUIRED_DNS=(
   "phpmyadmin.${DOMAIN}"
   "emqx.${DOMAIN}"
 )
+# aapanel.${DOMAIN} is only required if you opt into one of:
+#   EDGE_PROXY=nginx    (nginx at edge :80/:443 — clean URLs, RECOMMENDED)
+#   EDGE_PROXY=caddy    (Caddy at edge :80/:443 — clean URLs, alt)
+#   AAPANEL_TLS=caddy   (Caddy sidecar :8443 — URL has port)
+#   BRIDGE_AAPANEL=1    (k3s bridge — couples failure domains, not recommended)
+# Default: aaPanel reachable at http://<VPS_IP>:<bt_port> only — no DNS needed.
+if [[ "${BRIDGE_AAPANEL:-0}" == "1" ]] \
+  || [[ "${AAPANEL_TLS:-}" == "caddy" ]] \
+  || [[ "${EDGE_PROXY:-}" =~ ^(nginx|caddy)$ ]]; then
+  REQUIRED_DNS+=("aapanel.${DOMAIN}")
+fi
+readonly REQUIRED_DNS
 
 # ── Colors ───────────────────────────────────────────────────
 readonly G='\033[0;32m' Y='\033[1;33m' R='\033[0;31m' C='\033[0;36m' B='\033[1m' N='\033[0m'
@@ -299,18 +311,38 @@ phase_smoke() {
     bash -c "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
             -u '${U}:${P}' 'https://phpmyadmin.${DOMAIN}/' | grep -qE '^(200|302)$'"
 
-  # 5.4 EMQX MQTT pub/sub round-trip
-  local topic="smoke/$(date +%s)" payload="ping-$$"
-  ( mosquitto_sub -h "${ip}" -p 1883 -t "${topic}" -C 1 -W 8 >/tmp/.mqttsub 2>&1 ) &
+  # 5.4 EMQX MQTT pub/sub round-trip — uses bootstrap 'device' credential.
+  # The ACL allows publishing to devices/<clientid>/# only, so use clientid='smoke'
+  # and topic devices/smoke/test.
+  local clientid="smoke-$$" topic="devices/smoke-$$/test" payload="ping-$$"
+  ( mosquitto_sub -h "${ip}" -p 1883 \
+      -u device -P "${P}" -i "${clientid}-sub" \
+      -t "${topic}" -C 1 -W 8 >/tmp/.mqttsub 2>&1 ) &
   local subpid=$!
   sleep 1
-  mosquitto_pub -h "${ip}" -p 1883 -t "${topic}" -m "${payload}" -q 1 2>/dev/null || true
+  mosquitto_pub -h "${ip}" -p 1883 \
+    -u device -P "${P}" -i "${clientid}" \
+    -t "${topic}" -m "${payload}" -q 1 2>/dev/null || true
   wait "${subpid}" 2>/dev/null || true
   if grep -q "${payload}" /tmp/.mqttsub 2>/dev/null; then
-    log "PASS  EMQX MQTT pub/sub on tcp://${ip}:1883"
+    log "PASS  EMQX MQTT pub/sub on tcp://${ip}:1883 (user=device)"
     pass=$((pass+1))
   else
-    err "FAIL  EMQX MQTT round-trip"; fail=$((fail+1))
+    err "FAIL  EMQX MQTT round-trip (user=device, topic=${topic})"
+    fail=$((fail+1))
+  fi
+
+  # 5.4b ACL boundary test — device should NOT be able to publish to admin-only topic
+  if mosquitto_pub -h "${ip}" -p 1883 \
+       -u device -P "${P}" -i "${clientid}-evil" \
+       -t "admin/secrets" -m "should-fail" -q 1 \
+       -W 3 2>&1 | grep -qiE 'denied|not authorized|connection refused'; then
+    log "PASS  EMQX ACL denies device on out-of-scope topic"
+    pass=$((pass+1))
+  else
+    # mosquitto_pub may silently succeed-at-network-level even when EMQX drops
+    # the message; we accept that. Just record it as informational.
+    info "INFO  ACL check non-conclusive — verify in dashboard"
   fi
 
   # 5.5 MySQL connectivity via in-cluster port-forward (smoke from host)

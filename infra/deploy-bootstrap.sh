@@ -145,15 +145,31 @@ setup_firewall() {
   ufw default deny incoming >/dev/null
   ufw default allow outgoing >/dev/null
 
-  # Ingress
+  # Ingress (domain access via Traefik)
   ufw allow 22/tcp    comment 'SSH'             >/dev/null
   ufw allow 80/tcp    comment 'HTTP/Traefik'    >/dev/null
   ufw allow 443/tcp   comment 'HTTPS/Traefik'   >/dev/null
-  # MQTT
+  # MQTT (standard ports — DNATed to NodePorts below)
   ufw allow 1883/tcp  comment 'EMQX MQTT'       >/dev/null
   ufw allow 8883/tcp  comment 'EMQX MQTTS'      >/dev/null
   # aaPanel admin (default 8888 — re-detected after install)
   ufw allow 8888/tcp  comment 'aaPanel'         >/dev/null
+
+  # ── Service NodePorts — direct IP access for every service ──
+  # http://VPS_IP:<port> works alongside the domain-based Traefik routes.
+  # Standard ports (1880, 3000) — needs K3s service-node-port-range=1024-32767.
+  ufw allow 1880/tcp  comment 'Node-RED NodePort'     >/dev/null
+  ufw allow 3000/tcp  comment 'Grafana NodePort'      >/dev/null
+  # Helper/admin NodePorts in 30xxx range
+  ufw allow 30081/tcp comment 'EMQX API NodePort'     >/dev/null
+  ufw allow 30083/tcp comment 'EMQX WS NodePort'      >/dev/null
+  ufw allow 30084/tcp comment 'EMQX WSS NodePort'     >/dev/null
+  ufw allow 30088/tcp comment 'WordPress NodePort'    >/dev/null
+  ufw allow 30183/tcp comment 'EMQX Dashboard'        >/dev/null
+  ufw allow 30443/tcp comment 'ArgoCD NodePort'       >/dev/null
+  ufw allow 30808/tcp comment 'phpMyAdmin NodePort'   >/dev/null
+  ufw allow 31883/tcp comment 'EMQX MQTT NodePort'    >/dev/null
+  ufw allow 38883/tcp comment 'EMQX MQTTS NodePort'   >/dev/null
 
   # K3s API only from local + cluster CIDRs
   ufw allow from 127.0.0.0/8 to any port 6443 proto tcp comment 'K3s local'  >/dev/null
@@ -166,16 +182,21 @@ setup_firewall() {
 
 # ── Step 3: Pre-empt host services that bind 80/443 ──────────
 free_web_ports() {
-  log "[3/8] Freeing host ports 80/443 for Traefik…"
+  log "[3/8] Freeing host ports 80/443…"
   if [[ "${PRESERVE_AAPANEL_WEB:-0}" == "1" ]]; then
     warn "PRESERVE_AAPANEL_WEB=1 — leaving host nginx/apache running"
     warn "  → You MUST remap Traefik or aaPanel to non-conflicting ports."
     return
   fi
+  # In EDGE_PROXY=nginx mode, nginx IS the edge — don't stop it.
+  local skip_nginx=0
+  [[ "${EDGE_PROXY:-}" == "nginx" ]] && skip_nginx=1
+
   local svc
   for svc in nginx apache2 httpd; do
+    [[ "$svc" == "nginx" ]] && (( skip_nginx )) && { info "Keeping nginx (edge proxy)"; continue; }
     if systemctl is-active --quiet "$svc" 2>/dev/null; then
-      warn "Stopping $svc (conflicts with Traefik 80/443)"
+      warn "Stopping $svc (conflicts with edge proxy on 80/443)"
       systemctl disable --now "$svc" >/dev/null 2>&1 || true
     fi
   done
@@ -190,14 +211,27 @@ free_web_ports() {
 # ── Step 4: Install K3s ──────────────────────────────────────
 install_k3s() {
   log "[4/8] Installing K3s…"
+
+  # Pre-seed K3s config — extends NodePort range down to 1024 so we can use
+  # the *standard* service ports (1880 for Node-RED, 3000 for Grafana, etc.).
+  # This file is read by k3s on every start, so it survives re-installs.
+  mkdir -p /etc/rancher/k3s
+  cat >/etc/rancher/k3s/config.yaml <<'EOF'
+# Managed by deploy-bootstrap.sh — edits here are overwritten on next run.
+disable:
+  - servicelb           # we use Traefik hostPort instead
+write-kubeconfig-mode: "0644"
+kube-apiserver-arg:
+  - "service-node-port-range=1024-32767"
+EOF
+  log "K3s config → /etc/rancher/k3s/config.yaml (NodePort 1024-32767)"
+
   if command -v k3s &>/dev/null && systemctl is-active --quiet k3s; then
-    info "K3s already installed and running ($(k3s --version | head -1))"
+    info "K3s already installed ($(k3s --version | head -1)) — restarting to pick up config"
+    systemctl restart k3s
   else
-    # ServiceLB disabled — Traefik uses hostPort directly on this single node.
-    # Disable Traefik temporarily? NO — we want bundled Traefik for ingress.
     curl -sfL https://get.k3s.io | \
       INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION}" \
-      INSTALL_K3S_EXEC="--disable servicelb --write-kubeconfig-mode 644" \
       sh -
   fi
 
@@ -266,11 +300,33 @@ seed_cluster() {
     "admin-user=${ADMIN_USER}" "admin-password=${pw}"
   record_secret "grafana ${ADMIN_USER}@monitoring" "${pw}"
 
-  # ─ EMQX dashboard ─
+  # ─ EMQX dashboard (admin UI auth) ─
   ensure_secret data emqx-dashboard \
     "EMQX_DASHBOARD__DEFAULT_USERNAME=${ADMIN_USER}" \
     "EMQX_DASHBOARD__DEFAULT_PASSWORD=${pw}"
   record_secret "emqx dashboard ${ADMIN_USER}@data" "${pw}"
+
+  # ─ EMQX MQTT bootstrap users (built-in database) ─
+  # CSV format:   user_id,password    (plaintext on first import, hashed at rest)
+  #   admin   — full access (backends, ops tools)
+  #   device  — shared credential for all IoT devices; scoped via ACL
+  #             devices publish/subscribe only to topics under their clientid
+  if ! $KUBECTL get secret emqx-bootstrap-users -n data &>/dev/null; then
+    local tmp_csv
+    tmp_csv="$(mktemp)"
+    cat >"${tmp_csv}" <<EOF
+${ADMIN_USER},${pw}
+device,${pw}
+EOF
+    $KUBECTL create secret generic emqx-bootstrap-users -n data \
+      --from-file=users.csv="${tmp_csv}"
+    rm -f "${tmp_csv}"
+    record_secret "emqx MQTT ${ADMIN_USER}@data"  "${pw}  (full access)"
+    record_secret "emqx MQTT device@data"          "${pw}  (scoped: devices/<clientid>/#)"
+    log "EMQX bootstrap users secret created (admin + device)"
+  else
+    info "EMQX bootstrap users secret already exists — keeping"
+  fi
 
   # ─ WordPress ─ bitnami/wordpress: wordpress-password, mariadb-password
   ensure_secret web wordpress-credentials \
@@ -336,14 +392,61 @@ EOF
   record_secret "argocd admin@argocd" "${argocd_pw}"
   log "ArgoCD admin password recorded"
 
-  # Patch Traefik to bind hostPorts (single-node, no external LB)
-  if [[ "$($KUBECTL -n kube-system get svc traefik -o jsonpath='{.spec.type}' 2>/dev/null)" == "LoadBalancer" ]]; then
+  # ── Traefik exposure mode ──
+  # Default: Traefik binds host's 80/443 directly (hostPort) — clean, fast.
+  # EDGE_PROXY=caddy: Caddy on host owns 80/443; Traefik moves to NodePort
+  # 32080/32443 so Caddy can reverse-proxy to it.
+  if [[ "${EDGE_PROXY:-}" == "caddy" ]] || [[ "${EDGE_PROXY:-}" == "nginx" ]]; then
+    info "EDGE_PROXY=${EDGE_PROXY} → Traefik moves to NodePort 32080/32443 (edge proxy owns 80/443)"
+    # Remove any pre-existing hostPort patch (no-op if already absent)
     $KUBECTL -n kube-system patch deployment traefik --type=json -p='[
-      {"op":"add","path":"/spec/template/spec/containers/0/ports/0/hostPort","value":80},
-      {"op":"add","path":"/spec/template/spec/containers/0/ports/1/hostPort","value":443}
-    ]' 2>/dev/null || warn "Traefik hostPort patch skipped (already set?)"
-    $KUBECTL -n kube-system patch svc traefik -p '{"spec":{"type":"ClusterIP"}}' 2>/dev/null || true
+      {"op":"remove","path":"/spec/template/spec/containers/0/ports/0/hostPort"},
+      {"op":"remove","path":"/spec/template/spec/containers/0/ports/1/hostPort"}
+    ]' 2>/dev/null || true
+    $KUBECTL -n kube-system patch svc traefik --type=merge -p '{
+      "spec":{"type":"NodePort","ports":[
+        {"name":"web","port":80,"targetPort":8000,"nodePort":32080,"protocol":"TCP"},
+        {"name":"websecure","port":443,"targetPort":8443,"nodePort":32443,"protocol":"TCP"}
+      ]}
+    }' 2>/dev/null || warn "Traefik service patch failed (already NodePort?)"
+  else
+    # Classic mode — Traefik = edge on 80/443 via hostPort
+    if [[ "$($KUBECTL -n kube-system get svc traefik -o jsonpath='{.spec.type}' 2>/dev/null)" == "LoadBalancer" ]]; then
+      $KUBECTL -n kube-system patch deployment traefik --type=json -p='[
+        {"op":"add","path":"/spec/template/spec/containers/0/ports/0/hostPort","value":80},
+        {"op":"add","path":"/spec/template/spec/containers/0/ports/1/hostPort","value":443}
+      ]' 2>/dev/null || warn "Traefik hostPort patch skipped (already set?)"
+      $KUBECTL -n kube-system patch svc traefik -p '{"spec":{"type":"ClusterIP"}}' 2>/dev/null || true
+    fi
   fi
+
+  # Expose ArgoCD on a stable NodePort so it's reachable by IP too.
+  # (Domain-based access still works via the platform's Ingress.)
+  $KUBECTL -n argocd patch svc argocd-server --type=merge -p '{
+    "spec": {
+      "type": "NodePort",
+      "ports": [
+        {"name":"http","port":80,"targetPort":8080,"nodePort":30880,"protocol":"TCP"},
+        {"name":"https","port":443,"targetPort":8080,"nodePort":30443,"protocol":"TCP"}
+      ]
+    }
+  }' 2>/dev/null || warn "ArgoCD NodePort patch skipped"
+  ufw allow 30880/tcp comment 'ArgoCD NodePort HTTP' >/dev/null 2>&1 || true
+
+  # Standard MQTT/MQTTS port forwarding 1883→31883 and 8883→38883 so legacy
+  # IoT clients can keep using default ports while EMQX listens on NodePorts.
+  # Persists across reboots via iptables-persistent (installed if needed).
+  if ! command -v netfilter-persistent &>/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables-persistent >/dev/null
+  fi
+  for rule in \
+      "PREROUTING -t nat -p tcp --dport 1883 -j REDIRECT --to-port 31883" \
+      "PREROUTING -t nat -p tcp --dport 8883 -j REDIRECT --to-port 38883"; do
+    # shellcheck disable=SC2086
+    iptables -C $rule 2>/dev/null || iptables -A $rule
+  done
+  netfilter-persistent save >/dev/null 2>&1 || true
+  log "MQTT DNAT: 1883→31883, 8883→38883 (legacy port compat)"
 
   # Root App-of-Apps — ArgoCD now drives everything from Git
   $KUBECTL apply -f "${REPO_DIR}/infra/argocd/root-apps/platform-stack.yaml"
@@ -361,11 +464,13 @@ install_aapanel() {
     bash <(curl -fsSL https://www.aapanel.com/script/install_7.0_en.sh) aapanel <<<"y" || \
       warn "aaPanel installer returned non-zero — review output"
   fi
+  local bt_port="8888"
   if [[ -f /www/server/panel/data/port.pl ]]; then
-    local port; port="$(cat /www/server/panel/data/port.pl)"
-    ufw allow "${port}"/tcp comment 'aaPanel detected' >/dev/null 2>&1 || true
-    info "aaPanel listening on port ${port}"
+    bt_port="$(cat /www/server/panel/data/port.pl)"
+    ufw allow "${bt_port}"/tcp comment 'aaPanel detected' >/dev/null 2>&1 || true
+    info "aaPanel listening on port ${bt_port}"
   fi
+  local ip; ip="$(hostname -I | awk '{print $1}')"
 
   # ── Force aaPanel admin credentials to ${ADMIN_USER} / ${ADMIN_PASSWORD} ──
   # tools.py path differs by aaPanel version — try both modern and legacy.
@@ -391,6 +496,510 @@ install_aapanel() {
     warn "  bt 5    # change username"
     warn "  bt 6    # change password"
   fi
+
+  # ── aaPanel intentionally runs OUTSIDE k3s ──
+  # Rationale: separation of failure domains. If k3s/Traefik dies, you still
+  # need aaPanel + SSH to recover. Don't put the admin escape hatch behind the
+  # very system it's meant to recover. Access aaPanel directly at
+  # http://${ip}:${bt_port:-8888}/<security-entry-path>.
+  #
+  # Opt-in (NOT recommended for prod): set BRIDGE_AAPANEL=1 to expose aaPanel
+  # at https://aapanel.${DOMAIN} through Traefik+Let's Encrypt.
+  case "${EDGE_PROXY:-}" in
+    nginx)
+      info "EDGE_PROXY=nginx — installing nginx as host edge (clean URLs, no port)"
+      install_nginx_edge_proxy "${bt_port}" "${ip}"
+      ;;
+    caddy)
+      info "EDGE_PROXY=caddy — installing Caddy as host edge (clean URLs, no port)"
+      install_caddy_edge_proxy "${bt_port}" "${ip}"
+      ;;
+    *)
+      if [[ "${BRIDGE_AAPANEL:-0}" == "1" ]]; then
+        warn "BRIDGE_AAPANEL=1 — bridging aaPanel through k3s (not recommended)"
+        expose_aapanel_via_traefik
+      elif [[ "${AAPANEL_TLS:-}" == "caddy" ]]; then
+        info "AAPANEL_TLS=caddy — installing host-side Caddy on port 8443 (sidecar)"
+        install_aapanel_caddy_proxy "${bt_port}" "${ip}"
+      else
+        info "aaPanel intentionally kept separate from k3s (recommended)."
+        info "  → access at  http://${ip}:${bt_port}"
+        info "  → for clean HTTPS URLs (no port) on every service:"
+        info "        EDGE_PROXY=nginx  ./deploy-bootstrap.sh   (recommended)"
+        info "    or  EDGE_PROXY=caddy  ./deploy-bootstrap.sh"
+      fi
+      ;;
+  esac
+}
+
+# ── Host-side Caddy reverse proxy — INDEPENDENT of k3s ───────
+# Architecture (preserves failure isolation):
+#
+#   :80, :443  → Traefik (k3s)        ← platform plane
+#   :8443      → Caddy (host)         ← admin plane HTTPS edge
+#                  └─► 127.0.0.1:8888  (aaPanel)
+#   :8888      → aaPanel direct       ← admin plane fallback
+#
+# Cert mode:
+#   - Default: Caddy's `tls internal` (self-signed, browser warning once)
+#   - Real LE via DNS-01: set CADDY_CF_API_TOKEN=<cloudflare-token>
+#     (works without touching port 80 which Traefik owns)
+install_aapanel_caddy_proxy() {
+  local bt_port="$1" host_ip="$2"
+  local caddy_port="${AAPANEL_CADDY_PORT:-8443}"
+  local proxy_host="aapanel.${DOMAIN}"
+
+  log "Installing Caddy as aaPanel TLS edge on :${caddy_port}…"
+  if ! command -v caddy &>/dev/null; then
+    # Official Caddy apt repo (https://caddyserver.com/docs/install#debian-ubuntu-raspbian)
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+      | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+    apt-get update -qq
+    apt-get install -y -qq caddy >/dev/null
+  else
+    info "Caddy already installed ($(caddy version | head -1))"
+  fi
+
+  # Write Caddyfile
+  if [[ -n "${CADDY_CF_API_TOKEN:-}" ]]; then
+    # Cloudflare DNS-01 — needs caddy-dns/cloudflare module. Install via xcaddy
+    # only if not already bundled in the binary.
+    if ! caddy list-modules 2>/dev/null | grep -q 'dns.providers.cloudflare'; then
+      info "Adding caddy-dns/cloudflare module via xcaddy"
+      apt-get install -y -qq golang-go >/dev/null
+      go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest >/dev/null 2>&1 || true
+      /root/go/bin/xcaddy build --with github.com/caddy-dns/cloudflare \
+        --output /usr/bin/caddy
+    fi
+    cat >/etc/caddy/Caddyfile <<EOF
+{
+  email ${LE_EMAIL}
+  # DNS-01 via Cloudflare — does NOT touch port 80 (owned by Traefik)
+  acme_dns cloudflare ${CADDY_CF_API_TOKEN}
+}
+
+${proxy_host}:${caddy_port} {
+  reverse_proxy 127.0.0.1:${bt_port} {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+  encode gzip
+  log {
+    output file /var/log/caddy/aapanel.log
+    format console
+  }
+}
+EOF
+    log "Caddyfile written with LE (Cloudflare DNS-01)"
+  else
+    # Self-signed via Caddy's internal CA — no external dependencies
+    cat >/etc/caddy/Caddyfile <<EOF
+{
+  email ${LE_EMAIL}
+}
+
+${proxy_host}:${caddy_port}, ${host_ip}:${caddy_port} {
+  tls internal
+  reverse_proxy 127.0.0.1:${bt_port} {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+  encode gzip
+  log {
+    output file /var/log/caddy/aapanel.log
+    format console
+  }
+}
+EOF
+    warn "Caddyfile uses self-signed cert (tls internal)."
+    warn "  → browser will warn once; accept and continue, OR re-run with"
+    warn "    CADDY_CF_API_TOKEN=… for a real Let's Encrypt cert"
+  fi
+
+  mkdir -p /var/log/caddy
+  chown -R caddy:caddy /var/log/caddy /etc/caddy 2>/dev/null || true
+
+  caddy validate --config /etc/caddy/Caddyfile 2>&1 \
+    | sed 's/^/    /' \
+    || { err "Caddyfile invalid"; return 1; }
+
+  systemctl enable --now caddy
+  systemctl reload caddy 2>/dev/null || systemctl restart caddy
+
+  # Allow the Caddy port in UFW
+  ufw allow "${caddy_port}/tcp" comment 'aaPanel HTTPS via Caddy' >/dev/null 2>&1 || true
+
+  # Add the subdomain to aaPanel's allowed Host list
+  if [[ -f /www/server/panel/data/domain.conf ]]; then
+    grep -qx "${proxy_host}" /www/server/panel/data/domain.conf \
+      || echo "${proxy_host}" >>/www/server/panel/data/domain.conf
+  fi
+  if [[ -f /www/server/panel/data/limitip.conf ]] && \
+     [[ -s /www/server/panel/data/limitip.conf ]]; then
+    grep -qx "127.0.0.1" /www/server/panel/data/limitip.conf \
+      || echo "127.0.0.1" >>/www/server/panel/data/limitip.conf
+  fi
+  systemctl restart bt 2>/dev/null || /etc/init.d/bt restart 2>/dev/null || true
+
+  log "Caddy → aaPanel ready:"
+  log "  https://${proxy_host}:${caddy_port}/"
+  log "  https://${host_ip}:${caddy_port}/  (also valid; same self-signed cert)"
+  record_secret "aaPanel TLS edge" "https://${proxy_host}:${caddy_port} → 127.0.0.1:${bt_port}"
+}
+
+# ── nginx as EDGE proxy on :80/:443 (RECOMMENDED — no port in any URL) ──
+# Architecture:
+#
+#   internet :80,:443 ─► nginx (host, systemd) ─┬─► aapanel.${DOMAIN}
+#                                                │     → 127.0.0.1:${bt_port}
+#                                                │
+#                                                └─► everything else
+#                                                      → 127.0.0.1:32080 (Traefik)
+#
+# Why nginx over Caddy here:
+#   - Industry-standard config; everyone on your team can read it
+#   - aaPanel uses nginx internally — same mental model
+#   - certbot HTTP-01 issues real Let's Encrypt certs (nginx owns :80)
+#   - Auto-renewal via certbot.timer (systemd)
+#
+# Failure isolation: aaPanel route does NOT touch k3s; if k3s dies, aaPanel
+# stays reachable through nginx → 127.0.0.1:${bt_port}.
+install_nginx_edge_proxy() {
+  local bt_port="$1" host_ip="$2"
+
+  log "Installing nginx + certbot as public edge proxy on :80/:443…"
+  apt-get install -y -qq --no-install-recommends \
+    nginx certbot python3-certbot-nginx >/dev/null
+
+  # Disable default site
+  rm -f /etc/nginx/sites-enabled/default
+
+  # Common proxy snippet — re-used by every server block
+  mkdir -p /etc/nginx/snippets
+  cat >/etc/nginx/snippets/proxy-common.conf <<'EOF'
+# Managed by deploy-bootstrap.sh
+proxy_set_header   Host              $host;
+proxy_set_header   X-Real-IP         $remote_addr;
+proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+proxy_set_header   X-Forwarded-Proto $scheme;
+proxy_set_header   X-Forwarded-Host  $host;
+proxy_http_version 1.1;
+proxy_set_header   Upgrade           $http_upgrade;
+proxy_set_header   Connection        "upgrade";
+proxy_read_timeout 90s;
+proxy_send_timeout 90s;
+proxy_connect_timeout 30s;
+proxy_buffering    off;            # WebSocket-friendly
+client_max_body_size 256m;         # phpMyAdmin / WordPress uploads
+EOF
+
+  cat >/etc/nginx/sites-available/edge.conf <<EOF
+# ============================================================
+# Carbon Credit Platform — edge proxy (managed by deploy-bootstrap.sh)
+#
+#   aapanel.${DOMAIN}                  → 127.0.0.1:${bt_port}   (aaPanel)
+#   ${DOMAIN}, www.${DOMAIN},
+#   argocd|grafana|nodered|
+#   phpmyadmin|emqx.${DOMAIN}         → 127.0.0.1:32080         (Traefik)
+# ============================================================
+
+# ── aaPanel — routes DIRECTLY to host (not through k3s) ──
+server {
+    listen 80;
+    listen [::]:80;
+    server_name aapanel.${DOMAIN};
+
+    access_log /var/log/nginx/aapanel.access.log;
+    error_log  /var/log/nginx/aapanel.error.log warn;
+
+    location / {
+        proxy_pass http://127.0.0.1:${bt_port};
+        include    /etc/nginx/snippets/proxy-common.conf;
+    }
+}
+
+# ── All k3s-served apps — route through Traefik NodePort ──
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN} www.${DOMAIN}
+                argocd.${DOMAIN}
+                grafana.${DOMAIN}
+                nodered.${DOMAIN}
+                phpmyadmin.${DOMAIN}
+                emqx.${DOMAIN};
+
+    access_log /var/log/nginx/k3s.access.log;
+    error_log  /var/log/nginx/k3s.error.log warn;
+
+    location / {
+        proxy_pass http://127.0.0.1:32080;
+        include    /etc/nginx/snippets/proxy-common.conf;
+    }
+}
+EOF
+  ln -sfn /etc/nginx/sites-available/edge.conf /etc/nginx/sites-enabled/edge.conf
+
+  nginx -t || { err "nginx config invalid — fix and re-run"; return 1; }
+  systemctl enable --now nginx
+  systemctl reload nginx
+
+  # ── Issue Let's Encrypt certs via certbot HTTP-01 ──
+  # certbot will edit edge.conf to add `listen 443 ssl;` and certificate paths.
+  local domains=(
+    "aapanel.${DOMAIN}"
+    "${DOMAIN}" "www.${DOMAIN}"
+    "argocd.${DOMAIN}" "grafana.${DOMAIN}"
+    "nodered.${DOMAIN}" "phpmyadmin.${DOMAIN}" "emqx.${DOMAIN}"
+  )
+  local domain_args=()
+  local d
+  for d in "${domains[@]}"; do domain_args+=(-d "$d"); done
+
+  info "Requesting Let's Encrypt certificates (HTTP-01, via nginx)…"
+  if certbot --nginx --non-interactive --agree-tos \
+       --email "${LE_EMAIL}" \
+       --redirect \
+       --no-eff-email \
+       "${domain_args[@]}" 2>&1 | sed 's/^/    /'; then
+    log "Let's Encrypt certificates issued + nginx redirected to HTTPS"
+  else
+    warn "certbot did not issue all certs — probably DNS hasn't propagated yet."
+    warn "  Re-run later:  certbot --nginx ${domain_args[*]}"
+    warn "  Auto-renewal:  systemctl status certbot.timer"
+  fi
+
+  # ── UFW: only nginx is public; lock Traefik NodePorts to localhost only ──
+  ufw allow 80/tcp  comment 'nginx HTTP/ACME' >/dev/null 2>&1 || true
+  ufw allow 443/tcp comment 'nginx HTTPS'      >/dev/null 2>&1 || true
+  ufw deny 32080/tcp comment 'Traefik NodePort (loopback only)' >/dev/null 2>&1 || true
+  ufw deny 32443/tcp comment 'Traefik NodePort (loopback only)' >/dev/null 2>&1 || true
+
+  # ── aaPanel must accept the new Host header ──
+  if [[ -f /www/server/panel/data/domain.conf ]]; then
+    grep -qx "aapanel.${DOMAIN}" /www/server/panel/data/domain.conf \
+      || echo "aapanel.${DOMAIN}" >>/www/server/panel/data/domain.conf
+  fi
+  if [[ -f /www/server/panel/data/limitip.conf ]] && \
+     [[ -s /www/server/panel/data/limitip.conf ]]; then
+    grep -qx "127.0.0.1" /www/server/panel/data/limitip.conf \
+      || echo "127.0.0.1" >>/www/server/panel/data/limitip.conf
+  fi
+  systemctl restart bt 2>/dev/null || /etc/init.d/bt restart 2>/dev/null || true
+
+  # Ensure certbot auto-renewal timer is enabled (installed by the package).
+  systemctl enable --now certbot.timer 2>/dev/null || true
+
+  log "nginx edge proxy ready — every URL on standard :443, no port:"
+  log "  https://aapanel.${DOMAIN}     → 127.0.0.1:${bt_port}"
+  log "  https://argocd.${DOMAIN}      → Traefik (:32080)"
+  log "  https://grafana.${DOMAIN}     → Traefik (:32080)"
+  log "  https://nodered.${DOMAIN}     → Traefik (:32080)"
+  log "  https://phpmyadmin.${DOMAIN}  → Traefik (:32080)"
+  log "  https://emqx.${DOMAIN}        → Traefik (:32080)"
+  log "  https://${DOMAIN}             → Traefik (:32080)"
+  record_secret "nginx edge proxy" "owns :80/:443; Traefik → :32080 (loopback)"
+}
+
+# ── Caddy as EDGE proxy on :80/:443 (no port in any URL) ─────
+# Routes:
+#   aapanel.${DOMAIN}      → 127.0.0.1:${bt_port}   (aaPanel on host)
+#   <every-other-host>     → 127.0.0.1:32080        (Traefik NodePort)
+#
+# Caddy handles TLS for every subdomain via HTTP-01 ACME (it owns :80 now).
+# Traefik no longer terminates TLS — it serves plain HTTP behind Caddy.
+# Failure isolation: if k3s dies, aapanel.${DOMAIN} still works because Caddy
+# routes it directly to 127.0.0.1:${bt_port} without going through k3s.
+install_caddy_edge_proxy() {
+  local bt_port="$1" host_ip="$2"
+
+  log "Installing Caddy as public edge proxy on :80/:443…"
+  if ! command -v caddy &>/dev/null; then
+    apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+      | tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+    apt-get update -qq
+    apt-get install -y -qq caddy >/dev/null
+  fi
+
+  # Explicit per-subdomain blocks (HTTP-01 can't issue wildcards; need DNS-01
+  # for that). Each subdomain gets its own LE cert auto-managed by Caddy.
+  cat >/etc/caddy/Caddyfile <<EOF
+{
+  email ${LE_EMAIL}
+  # HTTP-01 challenge works now because Caddy owns :80 (Traefik moved to :32080)
+}
+
+# ── aaPanel: routes directly to host service (NOT through k3s) ──
+aapanel.${DOMAIN} {
+  reverse_proxy 127.0.0.1:${bt_port} {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+  encode gzip
+  log { output file /var/log/caddy/aapanel.log }
+}
+
+# ── All k3s-served apps go through Traefik NodePort 32080 ──
+# Traefik will re-route by Host header to the correct Ingress/Service.
+${DOMAIN},
+www.${DOMAIN},
+argocd.${DOMAIN},
+grafana.${DOMAIN},
+nodered.${DOMAIN},
+phpmyadmin.${DOMAIN},
+emqx.${DOMAIN} {
+  reverse_proxy 127.0.0.1:32080 {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+  encode gzip
+  log { output file /var/log/caddy/k3s.log }
+}
+EOF
+
+  mkdir -p /var/log/caddy
+  chown -R caddy:caddy /var/log/caddy /etc/caddy 2>/dev/null || true
+
+  caddy validate --config /etc/caddy/Caddyfile 2>&1 | sed 's/^/    /' \
+    || { err "Caddyfile invalid — fix and re-run"; return 1; }
+
+  systemctl enable --now caddy
+  systemctl reload caddy 2>/dev/null || systemctl restart caddy
+
+  # Caddy owns 80/443. Traefik NodePorts 32080/32443 should NOT be reachable
+  # from the outside — limit them to localhost so the only public entry is Caddy.
+  ufw allow 80/tcp  comment 'Caddy HTTP/ACME'    >/dev/null 2>&1 || true
+  ufw allow 443/tcp comment 'Caddy HTTPS'         >/dev/null 2>&1 || true
+  # Explicitly DENY external traffic to Traefik NodePorts; only loopback OK.
+  ufw deny 32080/tcp comment 'Traefik NodePort — Caddy only' >/dev/null 2>&1 || true
+  ufw deny 32443/tcp comment 'Traefik NodePort — Caddy only' >/dev/null 2>&1 || true
+
+  # Add the subdomain to aaPanel's allowed Host list
+  if [[ -f /www/server/panel/data/domain.conf ]]; then
+    grep -qx "aapanel.${DOMAIN}" /www/server/panel/data/domain.conf \
+      || echo "aapanel.${DOMAIN}" >>/www/server/panel/data/domain.conf
+  fi
+  if [[ -f /www/server/panel/data/limitip.conf ]] && \
+     [[ -s /www/server/panel/data/limitip.conf ]]; then
+    grep -qx "127.0.0.1" /www/server/panel/data/limitip.conf \
+      || echo "127.0.0.1" >>/www/server/panel/data/limitip.conf
+  fi
+  systemctl restart bt 2>/dev/null || /etc/init.d/bt restart 2>/dev/null || true
+
+  log "Caddy edge proxy ready — every service on standard :443, no port in URL"
+  log "  https://aapanel.${DOMAIN}   → 127.0.0.1:${bt_port}"
+  log "  https://*.${DOMAIN}         → 127.0.0.1:32080 (Traefik)"
+  record_secret "Caddy edge proxy" "owns :80/:443 on host; Traefik → :32080"
+}
+
+# Creates a headless Service + EndpointSlice that points the cluster at the
+# host's aaPanel port, then an Ingress for https://aapanel.${DOMAIN}.
+# Idempotent — re-runs safely with the latest detected port.
+expose_aapanel_via_traefik() {
+  local bt_port host_ip
+  bt_port="$(cat /www/server/panel/data/port.pl 2>/dev/null || echo 8888)"
+  # Pick the primary outbound IP (the one pods will reach via the default GW).
+  host_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
+  [[ -z "$host_ip" ]] && host_ip="$(hostname -I | awk '{print $1}')"
+  info "Wiring https://aapanel.${DOMAIN} → ${host_ip}:${bt_port}"
+
+  $KUBECTL apply -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: host-proxies
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: host-bridges
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aapanel
+  namespace: host-proxies
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: ${bt_port}
+      protocol: TCP
+  # No selector — endpoints are managed manually (next resource).
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: aapanel
+  namespace: host-proxies
+  labels:
+    kubernetes.io/service-name: aapanel
+addressType: IPv4
+ports:
+  - name: http
+    port: ${bt_port}
+    protocol: TCP
+endpoints:
+  - addresses: ["${host_ip}"]
+    conditions:
+      ready: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aapanel
+  namespace: host-proxies
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: aapanel.${DOMAIN}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aapanel
+                port:
+                  number: 80
+  tls:
+    - hosts: [aapanel.${DOMAIN}]
+      secretName: aapanel-tls
+EOF
+
+  # Make sure aaPanel does NOT reject requests with the new Host header.
+  # /www/server/panel/data/domain.conf — if present, only listed hostnames work.
+  if [[ -f /www/server/panel/data/domain.conf ]]; then
+    if ! grep -qx "aapanel.${DOMAIN}" /www/server/panel/data/domain.conf; then
+      echo "aapanel.${DOMAIN}" >>/www/server/panel/data/domain.conf
+      info "Added aapanel.${DOMAIN} to /www/server/panel/data/domain.conf"
+    fi
+  fi
+  # Likewise lift IP restrictions if any are set (cluster pod IPs are 10.42.x.x).
+  if [[ -f /www/server/panel/data/limitip.conf ]] && \
+     [[ -s /www/server/panel/data/limitip.conf ]]; then
+    grep -qx "10.42.0.0/16" /www/server/panel/data/limitip.conf \
+      || echo "10.42.0.0/16" >>/www/server/panel/data/limitip.conf
+  fi
+  # Restart aaPanel to pick up domain.conf changes (idempotent no-op if running)
+  systemctl restart bt 2>/dev/null || /etc/init.d/bt restart 2>/dev/null || true
+  log "aaPanel bridge ready → https://aapanel.${DOMAIN}"
 }
 
 # ── Final summary ────────────────────────────────────────────
@@ -402,19 +1011,43 @@ summary() {
   echo
   local ip; ip="$(hostname -I | awk '{print $1}')"
   local bt_port=""; [[ -f /www/server/panel/data/port.pl ]] && bt_port="$(cat /www/server/panel/data/port.pl)"
+  local edge_url="" edge_mode="off (direct IP only)"
+  if [[ "${EDGE_PROXY:-}" == "nginx" ]] && systemctl is-active --quiet nginx 2>/dev/null; then
+    edge_mode="nginx :80/:443 (recommended)"
+    edge_url="https://aapanel.${DOMAIN}  (no port)"
+  elif [[ "${EDGE_PROXY:-}" == "caddy" ]] && systemctl is-active --quiet caddy 2>/dev/null; then
+    edge_mode="caddy :80/:443"
+    edge_url="https://aapanel.${DOMAIN}  (no port)"
+  elif systemctl is-active --quiet caddy 2>/dev/null; then
+    local cp="${AAPANEL_CADDY_PORT:-8443}"
+    edge_mode="caddy sidecar :${cp}"
+    edge_url="https://aapanel.${DOMAIN}:${cp}"
+  fi
 
   cat <<EOF
  GitOps state:
    ArgoCD UI       https://argocd.${DOMAIN}
    (or local)      kubectl -n argocd port-forward svc/argocd-server 8080:443
 
- Reconciled by ArgoCD (watch with: kubectl get app -n argocd):
-   • EMQX MQTT broker         tcp://${ip}:1883  tls://${ip}:8883  https://emqx.${DOMAIN}
-   • Node-RED                 https://nodered.${DOMAIN}    (cluster: 1880)
-   • MySQL                    mysql://${ip}:3306            (cluster: 3306)
-   • phpMyAdmin               https://phpmyadmin.${DOMAIN}
-   • Grafana                  https://grafana.${DOMAIN}    (cluster: 3000)
-   • WordPress                https://${DOMAIN}            (cluster: 80)
+ Reconciled by ArgoCD — accessible via DOMAIN *and* direct IP:
+   ┌─────────────────┬────────────────────────────────────┬───────────────────────────┐
+   │ Service         │ Domain URL                         │ Direct IP URL             │
+   ├─────────────────┼────────────────────────────────────┼───────────────────────────┤
+   │ Edge proxy      │ mode: ${edge_mode}
+   │ ArgoCD          │ https://argocd.${DOMAIN}           │ http://${ip}:30880        │
+   │ aaPanel (TLS)   │ ${edge_url:-(off; EDGE_PROXY=nginx to enable)}
+   │ aaPanel (HTTP)  │ (off-cluster, by design)           │ http://${ip}:${bt_port:-8888}        │
+   │ EMQX Dashboard  │ https://emqx.${DOMAIN}             │ http://${ip}:30183        │
+   │ EMQX MQTT       │ —                                  │ tcp://${ip}:1883  (DNAT)  │
+   │                 │                                    │ tcp://${ip}:31883 (direct)│
+   │ EMQX MQTTS      │ —                                  │ tls://${ip}:8883  (DNAT)  │
+   │                 │                                    │ tls://${ip}:38883 (direct)│
+   │ Grafana         │ https://grafana.${DOMAIN}          │ http://${ip}:3000         │
+   │ Node-RED        │ https://nodered.${DOMAIN}          │ http://${ip}:1880         │
+   │ phpMyAdmin      │ https://phpmyadmin.${DOMAIN}       │ http://${ip}:30808        │
+   │ WordPress       │ https://${DOMAIN}                  │ http://${ip}:30088        │
+   │ MySQL           │ — (in-cluster only by default)     │ kubectl -n data port-fwd  │
+   └─────────────────┴────────────────────────────────────┴───────────────────────────┘
 
  Host services:
    • aaPanel                  http://${ip}:${bt_port:-8888}

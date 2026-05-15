@@ -17,9 +17,11 @@ image:
 replicaCount: 1
 
 service:
-  type: ClusterIP
+  type: NodePort
   ports:
     http: 80
+  nodePorts:
+    http: 30088            # http://VPS_IP:30088
 
 persistence:
   enabled: true
