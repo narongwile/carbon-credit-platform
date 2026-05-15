@@ -55,6 +55,53 @@ securityContext:
   runAsUser: 472
   fsGroup: 472
 
+# ── Resources for init/sidecar containers ──────────────────
+# The `monitoring` namespace has a ResourceQuota that requires every
+# container (init + sidecar) to declare requests + limits. Without these
+# the pod is rejected at admission with "failed quota: monitoring-quota".
+
+# Init: chowns the PVC so grafana (uid 472) can write to it.
+# We already set fsGroup=472 above; chart still runs this for safety.
+initChownData:
+  enabled: true
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# Init: pre-downloads any dashboards listed under `dashboards:` (gnetId).
+downloadDashboards:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Long-running sidecars: watch ConfigMaps cluster-wide and reload Grafana
+# when one with the appropriate label appears. Shared resource block for
+# both `sidecar.dashboards` and `sidecar.datasources`.
+sidecar:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    searchNamespace: ALL
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    searchNamespace: ALL
+
 # Pre-wire MySQL + Prometheus datasources (Grafana auto-provisions)
 datasources:
   datasources.yaml:
@@ -109,14 +156,4 @@ dashboards:
       revision: 5
       datasource: MySQL
 
-# Sidecar for ConfigMap-based dashboards (drop a CM with grafana_dashboard label
-# anywhere in cluster and Grafana picks it up)
-sidecar:
-  dashboards:
-    enabled: true
-    label: grafana_dashboard
-    searchNamespace: ALL
-  datasources:
-    enabled: true
-    label: grafana_datasource
-    searchNamespace: ALL
+# (sidecar block consolidated above — resources + dashboards + datasources)

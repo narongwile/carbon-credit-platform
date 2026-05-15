@@ -150,6 +150,93 @@ spec:
     pods: "20"
 
 # ============================================================
+# LimitRange defaults — auto-fill missing requests/limits
+# ============================================================
+# Why: ResourceQuotas above force EVERY container (init, sidecar, main) to
+# declare requests + limits. Many community Helm charts forget to set these
+# on auxiliary containers (e.g., wait-for-X init, sidecar watchers), causing
+# pod admission to fail with "must specify limits.cpu for: ...".
+#
+# A LimitRange named `defaults` injects requests/limits at admission time for
+# any container that omits them. Charts that already declare resources keep
+# their own values (LimitRange only fills in missing fields).
+#
+# `max` puts a per-container ceiling so no single container can swallow the
+# entire namespace quota.
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: infra
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m,  memory: 64Mi }
+      default:        { cpu: 500m, memory: 512Mi }
+      max:            { cpu: "4",  memory: 8Gi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: data
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m,  memory: 64Mi }
+      default:        { cpu: 500m, memory: 512Mi }
+      max:            { cpu: "8",  memory: 16Gi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: ai
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m,  memory: 64Mi }
+      default:        { cpu: 500m, memory: 512Mi }
+      max:            { cpu: "4",  memory: 8Gi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: app
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m,  memory: 64Mi }
+      default:        { cpu: 500m, memory: 512Mi }
+      max:            { cpu: "2",  memory: 4Gi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: analytics
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m,  memory: 64Mi }
+      default:        { cpu: 500m, memory: 512Mi }
+      max:            { cpu: "2",  memory: 4Gi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: monitoring
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m,  memory: 64Mi }
+      default:        { cpu: 500m, memory: 512Mi }
+      max:            { cpu: "2",  memory: 4Gi }
+
+# ============================================================
 # Network Policies — Multi-Agency Tenant Isolation
 # ============================================================
 ---
