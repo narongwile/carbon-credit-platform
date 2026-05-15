@@ -1,0 +1,97 @@
+# ============================================================
+# ArgoCD — Ingress + Insecure Mode Config
+#
+# Problem: ArgoCD server by default serves TLS on port 8080.
+# Traefik sends plain HTTP to it → TLS handshake fails →
+# browser reports "Request has been terminated / CORS error".
+#
+# Fix:
+#   1. argocd-cmd-params-cm  → server.insecure=true
+#      ArgoCD now serves plain HTTP on :8080 (Traefik handles TLS)
+#   2. IngressRoute           → argocd.thermexpertise.com → argocd-server:80
+#
+# Apply: kubectl apply -f argocd-ingress.yaml
+# Then:  kubectl -n argocd rollout restart deploy/argocd-server
+# ============================================================
+
+---
+# Tell ArgoCD server to skip its own TLS so Traefik can terminate it.
+# This ConfigMap is watched by argocd-server — changes take effect after
+# a rollout restart (no reinstall needed).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cmd-params-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: argocd
+data:
+  server.insecure: "true"
+
+---
+# Traefik IngressRoute — routes argocd.thermexpertise.com → argocd-server:80
+# TLS is terminated here by Traefik/cert-manager (not by ArgoCD itself).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-server
+  namespace: argocd
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`argocd.thermexpertise.com`)
+      priority: 10
+      services:
+        - name: argocd-server
+          port: 80
+  tls:
+    secretName: argocd-tls
+
+---
+# Redirect HTTP → HTTPS for ArgoCD
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-server-http
+  namespace: argocd
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`argocd.thermexpertise.com`)
+      priority: 10
+      middlewares:
+        - name: argocd-https-redirect
+          namespace: argocd
+      services:
+        - name: argocd-server
+          port: 80
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: argocd-https-redirect
+  namespace: argocd
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+
+---
+# cert-manager issues the TLS certificate for argocd.thermexpertise.com
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-tls
+  namespace: argocd
+spec:
+  secretName: argocd-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - argocd.thermexpertise.com
