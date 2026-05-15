@@ -30,18 +30,11 @@ info() { echo -e "${CYAN}[i]${NC} $*"; }
 
 gen_password() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20 || true; }
 
-# Replaces {{NODE_PRIMARY_IP}} in Traefik CRDs so port-80 routes work when browsing by public IP.
+# Applies Traefik IngressRoutes (HTTP entrypoint "web" + HTTPS "websecure").
 apply_traefik_routes() {
   local tpl="${REPO_DIR}/infra/traefik/thermexpertise-single-node.yaml"
-  local primary_ip=""
-  primary_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }' || true)
-  [[ -z "${primary_ip}" ]] && primary_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-  if [[ -z "${primary_ip}" ]]; then
-    err "Could not determine primary IPv4 for {{NODE_PRIMARY_IP}} in Traefik manifest."
-    return 1
-  fi
-  info "Applying Traefik routes (HTTP by node IP: ${primary_ip})"
-  sed "s/{{NODE_PRIMARY_IP}}/${primary_ip}/g" "${tpl}" | $KUBECTL apply -f -
+  info "Applying Traefik routes from ${tpl}"
+  $KUBECTL apply -f "${tpl}"
 }
 
 # ── Detect aaPanel port from ALL sources ─────────────────────

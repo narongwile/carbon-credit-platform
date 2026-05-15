@@ -80,6 +80,10 @@ spec:
       - http01:
           ingress:
             class: traefik
+            ingressTemplate:
+              metadata:
+                annotations:
+                  traefik.ingress.kubernetes.io/router.entrypoints: web
 
 # ==========================================
 # Namespace: app (Frontend & Backend)
@@ -120,6 +124,24 @@ spec:
   tls:
     secretName: thermexpertise-tls-app
 
+# HTTP :80 — same Hosts as HTTPS (Traefik default 404 on web if no routers here).
+# Exclude ACME HTTP-01 so cert-manager solver paths are not sent to app backends.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frontend-web-http
+  namespace: app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: (Host(`thermexpertise.com`) || Host(`www.thermexpertise.com`)) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      services:
+        - name: frontend-web
+          port: 80
+
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -140,6 +162,22 @@ spec:
   tls:
     secretName: thermexpertise-tls-app
 
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backend-api-http
+  namespace: app
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`api.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      services:
+        - name: backend-api
+          port: 3000
+
 # ==========================================
 # Namespace: monitoring (Grafana)
 # ==========================================
@@ -158,31 +196,38 @@ spec:
     - grafana.thermexpertise.com
 
 ---
-apiVersion: networking.k8s.io/v1
-kind: Ingress
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
   name: grafana-admin
   namespace: monitoring
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-thermexpertise
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
-    # We can add the middleware back later if needed, leaving it off for testing
 spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`grafana.thermexpertise.com`)
+      kind: Rule
+      services:
+        - name: monitoring-stack-grafana
+          port: 80
   tls:
-    - hosts:
-        - grafana.thermexpertise.com
-      secretName: thermexpertise-tls-monitoring
-  rules:
-    - host: grafana.thermexpertise.com
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: monitoring-stack-grafana
-                port:
-                  number: 80
+    secretName: thermexpertise-tls-monitoring
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana-admin-http
+  namespace: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`grafana.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      services:
+        - name: monitoring-stack-grafana
+          port: 80
 
 # ==========================================
 # Namespace: carbon-credit (Node-RED, phpMyAdmin)
@@ -226,6 +271,24 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
+  name: node-red-admin-http
+  namespace: carbon-credit
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`nodered.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: node-red
+          port: 1880
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
   name: phpmyadmin-admin
   namespace: carbon-credit
 spec:
@@ -241,6 +304,24 @@ spec:
           port: 80
   tls:
     secretName: thermexpertise-tls-carbon
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: phpmyadmin-admin-http
+  namespace: carbon-credit
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`phpmyadmin.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: phpmyadmin
+          port: 80
 
 # ==========================================
 # Namespace: data (EMQX)
@@ -279,9 +360,26 @@ spec:
   tls:
     secretName: thermexpertise-tls-data
 
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: emqx-admin-http
+  namespace: data
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`emqx.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: emqx
+          port: 18083
+
 # ==========================================
-# HTTP (port 80) by node primary IPv4 — {{NODE_PRIMARY_IP}} is substituted by deploy-all.sh
-# LetsEncrypt HTTP-01 is unaffected (solver uses its own Ingress rules / paths).
+# HTTP by public IPv4 (Host header = x.x.x.x) — no sed/deploy substitution required.
 # ==========================================
 ---
 apiVersion: traefik.io/v1alpha1
@@ -306,7 +404,7 @@ spec:
   routes:
     - kind: Rule
       priority: 20
-      match: Host(`{{NODE_PRIMARY_IP}}`) && PathPrefix(`/api`)
+      match: HostRegexp(`^[0-9]{1,3}(\.[0-9]{1,3}){3}$`) && PathPrefix(`/api`) && !PathPrefix(`/.well-known/acme-challenge`)
       middlewares:
         - name: strip-api-prefix
       services:
@@ -325,7 +423,7 @@ spec:
   routes:
     - kind: Rule
       priority: 10
-      match: Host(`{{NODE_PRIMARY_IP}}`)
+      match: HostRegexp(`^[0-9]{1,3}(\.[0-9]{1,3}){3}$`) && !PathPrefix(`/.well-known/acme-challenge`)
       services:
         - name: frontend-web
           port: 80
