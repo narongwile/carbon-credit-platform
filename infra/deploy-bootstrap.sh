@@ -230,9 +230,12 @@ EOF
     info "K3s already installed ($(k3s --version | head -1)) — restarting to pick up config"
     systemctl restart k3s
   else
-    curl -sfL https://get.k3s.io | \
-      INSTALL_K3S_VERSION="${INSTALL_K3S_VERSION}" \
-      sh -
+    # NOTE: INSTALL_K3S_VERSION is declared `readonly` at the top of this
+    # script. The `VAR=value cmd` prefix form ALSO requires assignment, which
+    # bash refuses for readonly vars. Export it instead so the subshell sees
+    # it through the environment (no re-assignment needed).
+    export INSTALL_K3S_VERSION
+    curl -sfL https://get.k3s.io | sh -
   fi
 
   info "Waiting for node Ready…"
