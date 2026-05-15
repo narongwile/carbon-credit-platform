@@ -21,7 +21,7 @@ spec:
   sources:
     - repoURL: registry-1.docker.io/bitnamicharts
       chart: mysql
-      targetRevision: 12.2.0
+      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
       helm:
         releaseName: mysql
         valueFiles:

@@ -20,7 +20,7 @@ spec:
   sources:
     - repoURL: registry-1.docker.io/bitnamicharts
       chart: phpmyadmin
-      targetRevision: 20.0.2
+      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
       helm:
         releaseName: phpmyadmin
         valueFiles:

@@ -18,7 +18,7 @@ spec:
   source:
     repoURL: https://charts.bitnami.com/bitnami
     chart: redis
-    targetRevision: 18.6.0
+    targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
     helm:
       values: |
         architecture: standalone

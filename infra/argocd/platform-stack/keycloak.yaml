@@ -18,7 +18,7 @@ spec:
   sources:
     - repoURL: https://charts.bitnami.com/bitnami
       chart: keycloak
-      targetRevision: 18.2.0
+      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
       helm:
         valueFiles:
           - $values/infra/helm-values/keycloak-values.yaml
