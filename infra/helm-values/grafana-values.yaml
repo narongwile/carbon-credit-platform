@@ -1,7 +1,9 @@
 # ============================================================
 # Grafana — official chart values
 # Chart: https://grafana.github.io/helm-charts  chart=grafana
-# Pre-existing secret: grafana-admin (admin-user, admin-password)
+# Pre-existing secrets (namespace monitoring):
+#   grafana-admin        — admin-user, admin-password
+#   mysql-credentials    — mysql-password (for MySQL datasource file mount)
 # Public URL: https://grafana.${DOMAIN}
 # ============================================================
 replicas: 1
@@ -42,14 +44,33 @@ ingress:
       hosts:
         - grafana.thermexpertise.com
 
-# Main container — keep modest on single-node VPS
+# Main container — 128Mi is too tight for Grafana 11 on a slow node
 resources:
   requests:
     cpu: 50m
-    memory: 128Mi
+    memory: 256Mi
   limits:
     cpu: 500m
-    memory: 512Mi
+    memory: 768Mi
+
+# Chart default readiness has no initialDelay; fails while Grafana still boots
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 12
+
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 6
 
 podSecurityContext:
   runAsNonRoot: true

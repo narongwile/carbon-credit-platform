@@ -303,6 +303,12 @@ seed_cluster() {
     "admin-user=${ADMIN_USER}" "admin-password=${pw}"
   record_secret "grafana ${ADMIN_USER}@monitoring" "${pw}"
 
+  # Grafana mounts mysql-credentials as a file (extraSecretMounts); must be in
+  # namespace monitoring — cannot reference data/mysql-credentials cross-namespace.
+  ensure_secret monitoring mysql-credentials \
+    "mysql-password=${pw}" \
+    "mysql-root-password=${pw}"
+
   # ─ EMQX dashboard (admin UI auth) ─
   ensure_secret data emqx-dashboard \
     "EMQX_DASHBOARD__DEFAULT_USERNAME=${ADMIN_USER}" \
