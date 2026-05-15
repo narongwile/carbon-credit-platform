@@ -2,7 +2,7 @@
 # phpMyAdmin — cowboysysop chart values
 # Chart: https://cowboysysop.github.io/charts/  chart=phpmyadmin
 # Connects to mysql.data.svc.cluster.local:3306
-# Public URL: https://phpmyadmin.${DOMAIN}
+# Public URL: https://pma.${DOMAIN}
 # ============================================================
 image:
   repository: phpmyadmin
