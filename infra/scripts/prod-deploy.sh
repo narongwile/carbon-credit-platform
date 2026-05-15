@@ -42,7 +42,7 @@ REQUIRED_DNS=(
   "argocd.${DOMAIN}"
   "grafana.${DOMAIN}"
   "nodered.${DOMAIN}"
-  "phpmyadmin.${DOMAIN}"
+  "pma.${DOMAIN}"
   "emqx.${DOMAIN}"
 )
 # aapanel.${DOMAIN} is only required if you opt into one of:
@@ -306,10 +306,10 @@ phase_smoke() {
   # 5.3 phpMyAdmin BasicAuth gate (expect 200 with creds, 401 without)
   check "phpMyAdmin BasicAuth challenges anonymous" \
     bash -c "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
-            'https://phpmyadmin.${DOMAIN}/' | grep -q '^401$'"
+            'https://pma.${DOMAIN}/' | grep -q '^401$'"
   check "phpMyAdmin accepts ${U}:${P}" \
     bash -c "curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
-            -u '${U}:${P}' 'https://phpmyadmin.${DOMAIN}/' | grep -qE '^(200|302)$'"
+            -u '${U}:${P}' 'https://pma.${DOMAIN}/' | grep -qE '^(200|302)$'"
 
   # 5.4 EMQX MQTT pub/sub round-trip — uses bootstrap 'device' credential.
   # The ACL allows publishing to devices/<clientid>/# only, so use clientid='smoke'

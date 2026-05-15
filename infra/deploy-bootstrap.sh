@@ -707,7 +707,7 @@ EOF
 #   aapanel.${DOMAIN}                  → 127.0.0.1:${bt_port}   (aaPanel)
 #   ${DOMAIN}, www.${DOMAIN},
 #   argocd|grafana|nodered|
-#   phpmyadmin|emqx.${DOMAIN}         → 127.0.0.1:32080         (Traefik)
+#   pma|emqx.${DOMAIN}         → 127.0.0.1:32080         (Traefik)
 # ============================================================
 
 # ── aaPanel — routes DIRECTLY to host (not through k3s) ──
@@ -733,7 +733,7 @@ server {
                 argocd.${DOMAIN}
                 grafana.${DOMAIN}
                 nodered.${DOMAIN}
-                phpmyadmin.${DOMAIN}
+                pma.${DOMAIN}
                 emqx.${DOMAIN};
 
     access_log /var/log/nginx/k3s.access.log;
@@ -757,7 +757,7 @@ EOF
     "aapanel.${DOMAIN}"
     "${DOMAIN}" "www.${DOMAIN}"
     "argocd.${DOMAIN}" "grafana.${DOMAIN}"
-    "nodered.${DOMAIN}" "phpmyadmin.${DOMAIN}" "emqx.${DOMAIN}"
+    "nodered.${DOMAIN}" "pma.${DOMAIN}" "emqx.${DOMAIN}"
   )
   local domain_args=()
   local d
@@ -802,7 +802,7 @@ EOF
   log "  https://argocd.${DOMAIN}      → Traefik (:32080)"
   log "  https://grafana.${DOMAIN}     → Traefik (:32080)"
   log "  https://nodered.${DOMAIN}     → Traefik (:32080)"
-  log "  https://phpmyadmin.${DOMAIN}  → Traefik (:32080)"
+  log "  https://pma.${DOMAIN}  → Traefik (:32080)"
   log "  https://emqx.${DOMAIN}        → Traefik (:32080)"
   log "  https://${DOMAIN}             → Traefik (:32080)"
   record_secret "nginx edge proxy" "owns :80/:443; Traefik → :32080 (loopback)"
@@ -858,7 +858,7 @@ www.${DOMAIN},
 argocd.${DOMAIN},
 grafana.${DOMAIN},
 nodered.${DOMAIN},
-phpmyadmin.${DOMAIN},
+pma.${DOMAIN},
 emqx.${DOMAIN} {
   reverse_proxy 127.0.0.1:32080 {
     header_up Host {host}
@@ -1044,7 +1044,7 @@ summary() {
    │                 │                                    │ tls://${ip}:38883 (direct)│
    │ Grafana         │ https://grafana.${DOMAIN}          │ http://${ip}:3000         │
    │ Node-RED        │ https://nodered.${DOMAIN}          │ http://${ip}:1880         │
-   │ phpMyAdmin      │ https://phpmyadmin.${DOMAIN}       │ http://${ip}:30808        │
+   │ phpMyAdmin      │ https://pma.${DOMAIN}       │ http://${ip}:30808        │
    │ WordPress       │ https://${DOMAIN}                  │ http://${ip}:30088        │
    │ MySQL           │ — (in-cluster only by default)     │ kubectl -n data port-fwd  │
    └─────────────────┴────────────────────────────────────┴───────────────────────────┘
@@ -1060,7 +1060,7 @@ summary() {
  Next:
    1. Point DNS A records → ${ip}:
         ${DOMAIN}, argocd.${DOMAIN}, grafana.${DOMAIN},
-        nodered.${DOMAIN}, phpmyadmin.${DOMAIN}, emqx.${DOMAIN}
+        nodered.${DOMAIN}, pma.${DOMAIN}, emqx.${DOMAIN}
    2. Watch reconciliation:
         kubectl get app -n argocd -w
    3. Anything you change in Git under infra/argocd/platform-stack/
