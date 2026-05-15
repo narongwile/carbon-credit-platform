@@ -1,10 +1,5 @@
 # Apache Superset — BI Dashboard for Carbon Credit Platform
-# Architecture diagram: "Dashboard" + "Real-time Visualization"
-#
-# analytics namespace enforces ResourceQuota: every container (main + init)
-# must declare requests/limits for cpu and memory.
-
-replicaCount: 2
+# Single-node VPS: 1 web + 1 worker, modest memory requests.
 
 image:
   repository: apache/superset
@@ -32,24 +27,20 @@ configOverrides:
     import os
     SECRET_KEY = os.getenv('SUPERSET_SECRET_KEY')
     SQLALCHEMY_DATABASE_URI = f"postgresql://superset:{os.getenv('PG_PASSWORD')}@postgres-superset.infra.svc.cluster.local:5432/superset"
-    
-    # OAuth2 via Keycloak
     from flask_appbuilder.security.manager import AUTH_OID
     AUTH_TYPE = AUTH_OID
     OIDC_CLIENT_ID = 'superset-client'
     OIDC_CLIENT_SECRET = os.getenv('KEYCLOAK_CLIENT_SECRET')
     OIDC_OPENID_CONNECT_URL = 'https://auth.carbon-credit.go.th/realms/master'
 
-# Default for all Superset pods; per-component blocks below override when set.
 resources:
   requests:
-    cpu: 250m
-    memory: 512Mi
+    cpu: 100m
+    memory: 384Mi
   limits:
     cpu: "1"
-    memory: 2Gi
+    memory: 1536Mi
 
-# Init containers in chart 0.12.x ship without limits.cpu — override with full spec.
 _initWaitPostgres: &initWaitPostgres
   name: wait-for-postgres
   image: "{{ .Values.initImage.repository }}:{{ .Values.initImage.tag }}"
@@ -63,11 +54,11 @@ _initWaitPostgres: &initWaitPostgres
     - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 25m
+      memory: 64Mi
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 100m
+      memory: 128Mi
 
 _initWaitPostgresRedis: &initWaitPostgresRedis
   name: wait-for-postgres-redis
@@ -82,44 +73,46 @@ _initWaitPostgresRedis: &initWaitPostgresRedis
     - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -wait "tcp://$REDIS_HOST:$REDIS_PORT" -timeout 120s
   resources:
     requests:
-      cpu: 50m
-      memory: 128Mi
+      cpu: 25m
+      memory: 64Mi
     limits:
-      cpu: 200m
-      memory: 256Mi
+      cpu: 100m
+      memory: 128Mi
 
 supersetNode:
+  replicaCount: 1
   command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 384Mi
     limits:
       cpu: "1"
-      memory: 2Gi
+      memory: 1536Mi
   initContainers:
     - *initWaitPostgres
 
 supersetWorker:
+  replicaCount: 1
   command: ["/app/docker/docker-bootstrap.sh", "worker"]
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 384Mi
     limits:
       cpu: "1"
-      memory: 2Gi
+      memory: 1536Mi
   initContainers:
     - *initWaitPostgresRedis
 
 init:
   resources:
     requests:
-      cpu: 250m
-      memory: 512Mi
+      cpu: 100m
+      memory: 384Mi
     limits:
       cpu: "1"
-      memory: 2Gi
+      memory: 1536Mi
   initContainers:
     - *initWaitPostgres
 
@@ -128,6 +121,22 @@ postgresql:
   auth:
     username: superset
     database: superset
+  primary:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
 
 redis:
   enabled: true
+  master:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi

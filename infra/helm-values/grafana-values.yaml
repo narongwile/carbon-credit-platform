@@ -18,7 +18,7 @@ service:
   type: NodePort
   port: 80
   targetPort: 3000
-  nodePort: 3000           # http://VPS_IP:3000  (requires K3s NodePort range 1024+)
+  nodePort: 3000
   portName: http
 
 persistence:
@@ -42,28 +42,26 @@ ingress:
       hosts:
         - grafana.thermexpertise.com
 
+# Main container — keep modest on single-node VPS
 resources:
   requests:
-    cpu: 100m
-    memory: 256Mi
+    cpu: 50m
+    memory: 128Mi
   limits:
-    cpu: "1"
-    memory: 1Gi
+    cpu: 500m
+    memory: 512Mi
 
-securityContext:
+podSecurityContext:
   runAsNonRoot: true
   runAsUser: 472
   fsGroup: 472
 
-# ── Resources for init/sidecar containers ──────────────────
-# The `monitoring` namespace has a ResourceQuota that requires every
-# container (init + sidecar) to declare requests + limits. Without these
-# the pod is rejected at admission with "failed quota: monitoring-quota".
-
-# Init: chowns the PVC so grafana (uid 472) can write to it.
-# We already set fsGroup=472 above; chart still runs this for safety.
+# monitoring-quota requires every container to declare cpu/memory.
+# Disable optional init/sidecars — datasources below are provisioned via ConfigMap.
 initChownData:
-  enabled: true
+  enabled: false
+
+downloadDashboards:
   resources:
     requests:
       cpu: 10m
@@ -72,37 +70,19 @@ initChownData:
       cpu: 100m
       memory: 64Mi
 
-# Init: pre-downloads any dashboards listed under `dashboards:` (gnetId).
-downloadDashboards:
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 128Mi
-
-# Long-running sidecars: watch ConfigMaps cluster-wide and reload Grafana
-# when one with the appropriate label appears. Shared resource block for
-# both `sidecar.dashboards` and `sidecar.datasources`.
 sidecar:
   resources:
     requests:
-      cpu: 50m
-      memory: 64Mi
+      cpu: 10m
+      memory: 32Mi
     limits:
-      cpu: 200m
-      memory: 128Mi
+      cpu: 100m
+      memory: 64Mi
   dashboards:
-    enabled: true
-    label: grafana_dashboard
-    searchNamespace: ALL
+    enabled: false
   datasources:
-    enabled: true
-    label: grafana_datasource
-    searchNamespace: ALL
+    enabled: false
 
-# Pre-wire MySQL + Prometheus datasources (Grafana auto-provisions)
 datasources:
   datasources.yaml:
     apiVersion: 1
@@ -124,7 +104,6 @@ datasources:
         access: proxy
         isDefault: true
 
-# Mount the pre-seeded MySQL secret so the datasource above can read it
 extraSecretMounts:
   - name: mysql-credentials
     secretName: mysql-credentials
@@ -132,7 +111,6 @@ extraSecretMounts:
     mountPath: /etc/secrets/mysql
     readOnly: true
 
-# Default dashboards: pull from grafana.com IDs (k8s + node + mysql)
 dashboardProviders:
   dashboardproviders.yaml:
     apiVersion: 1
@@ -145,15 +123,6 @@ dashboardProviders:
         editable: true
         options:
           path: /var/lib/grafana/dashboards/default
-dashboards:
-  default:
-    node-exporter:
-      gnetId: 1860
-      revision: 37
-      datasource: Prometheus
-    mysql-overview:
-      gnetId: 7362
-      revision: 5
-      datasource: MySQL
 
-# (sidecar block consolidated above — resources + dashboards + datasources)
+# gnetId init container downloads dashboards at startup — skip on memory-tight nodes
+dashboards: {}
