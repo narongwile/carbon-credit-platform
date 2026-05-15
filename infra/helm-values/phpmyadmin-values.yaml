@@ -1,48 +1,46 @@
 # ============================================================
-# phpMyAdmin — cowboysysop chart values
-# Chart: https://cowboysysop.github.io/charts/  chart=phpmyadmin
+# phpMyAdmin — Bitnami chart values
+# Chart: oci://registry-1.docker.io/bitnamicharts/phpmyadmin
 # Connects to mysql.data.svc.cluster.local:3306
 # Public URL: https://pma.${DOMAIN}
 # ============================================================
-image:
-  repository: phpmyadmin
-  tag: "5.2.1-apache"
 
-replicaCount: 1
+# Use chart-default bitnami/phpmyadmin image (do not pin removed docker.io tags)
+
+db:
+  allowArbitraryServer: false
+  host: mysql.data.svc.cluster.local
+  port: 3306
+  bundleTestDB: false
+
+extraEnvVars:
+  - name: PHPMYADMIN_ABSOLUTE_URI
+    value: https://pma.thermexpertise.com/
+  - name: PHP_UPLOAD_MAX_FILESIZE
+    value: 256M
+  - name: PHP_POST_MAX_SIZE
+    value: 256M
 
 service:
   type: NodePort
-  port: 80
-  nodePort: 30808          # http://VPS_IP:30808  (NOTE: NodePort bypasses Traefik
-                           # BasicAuth — phpMyAdmin's own login page still requires
-                           # MySQL credentials, but rate-limit/IP-whitelist is gone.)
-
-# Connect to in-cluster MySQL by service DNS
-extraEnvVars:
-  - name: PMA_HOST
-    value: mysql.data.svc.cluster.local
-  - name: PMA_PORT
-    value: "3306"
-  - name: PMA_ABSOLUTE_URI
-    value: https://pma.thermexpertise.com/
-  - name: UPLOAD_LIMIT
-    value: 256M
+  ports:
+    http: 80
+  nodePorts:
+    http: 30808
 
 ingress:
   enabled: true
   ingressClassName: traefik
+  hostname: pma.thermexpertise.com
+  path: /
+  pathType: Prefix
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    # Front phpMyAdmin with Basic Auth (secret seeded by bootstrap)
     traefik.ingress.kubernetes.io/router.middlewares: data-phpmyadmin-basicauth@kubernetescrd
-  hosts:
-    - host: pma.thermexpertise.com
-      paths:
-        - path: /
-          pathType: Prefix
-  tls:
+  tls: true
+  extraTls:
     - secretName: phpmyadmin-tls
       hosts:
         - pma.thermexpertise.com
@@ -56,17 +54,15 @@ resources:
     memory: 512Mi
 
 podSecurityContext:
-  fsGroup: 33
+  enabled: true
+
 containerSecurityContext:
-  runAsUser: 33
+  enabled: true
   runAsNonRoot: true
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false
   capabilities:
     drop: [ALL]
 
-# Traefik Basic-Auth middleware — points at phpmyadmin-basicauth secret
-# (rendered alongside the chart so we keep one source of truth)
 extraDeploy:
   - apiVersion: traefik.io/v1alpha1
     kind: Middleware
