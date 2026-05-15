@@ -1,7 +1,7 @@
 # ============================================================
-# EMQX MQTT Broker — Helm Values
-# Chart: emqx/emqx (v5.x)
-# Deploy: helm install emqx emqx/emqx -n infra -f emqx-values.yaml
+# EMQX MQTT Broker — Helm Values (simplified for v5.4.1)
+# Chart: emqx/emqx
+# Namespace: data
 # ============================================================
 
 replicaCount: 1
@@ -12,114 +12,26 @@ image:
 
 persistence:
   enabled: true
-  size: 10Gi
+  size: 5Gi
   storageClassName: local-path
 
 service:
   type: NodePort
-  mqtt: 1883
-  mqtts: 8883
-  ws: 8083
-  wss: 8084
-  dashboard: 18083
-  api: 8081
-  # NodePort assignments — accessible at tcp://VPS_IP:<nodePort>.
-  # K8s NodePort range is 30000–32767, so we mirror the standard ports
-  # in the 31xxx/38xxx range. Standard 1883/8883 can additionally be
-  # DNAT-forwarded by the bootstrap script (see free_web_ports).
-  nodePorts:
-    mqtt: 31883            # tcp://VPS_IP:31883   (and DNAT from :1883)
-    mqtts: 38883           # tls://VPS_IP:38883   (and DNAT from :8883)
-    ws: 30083              # ws://VPS_IP:30083
-    wss: 30084             # wss://VPS_IP:30084
-    dashboard: 30183       # http://VPS_IP:30183  ← EMQX dashboard UI
-    api: 30081             # http://VPS_IP:30081  ← EMQX management API
 
-# ── Listener configuration ──────────────────────────────────
-# Bind all listeners on 0.0.0.0 so every device IP can reach them.
 emqxConfig:
-  # MQTT 1883 (plain TCP) — for LAN / VPN / dev IoT devices
-  EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883"
-  EMQX_LISTENERS__TCP__DEFAULT__MAX_CONNECTIONS: "100000"
-
-  # MQTT 8883 (TLS) — for public-internet devices (production preferred)
-  EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
-  EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/etc/certs/cert.pem
-  EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE: /opt/emqx/etc/certs/key.pem
-  EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE: /opt/emqx/etc/certs/ca.pem
-
-  # WebSocket 8083 (plain) — for browser clients in dev
-  EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"
-  # WebSocket 8084 (TLS) — for browser clients in production
-  EMQX_LISTENERS__WSS__DEFAULT__BIND: "0.0.0.0:8084"
-
-  # Logging
   EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
-
-  # ── Authentication: built-in database, no external dependency ──
-  # On first start EMQX imports users from the mounted bootstrap CSV.
-  # Manage users afterwards via Dashboard or API.
-  EMQX_AUTHENTICATION__1__MECHANISM: password_based
-  EMQX_AUTHENTICATION__1__BACKEND: built_in_database
-  EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
-  EMQX_AUTHENTICATION__1__BOOTSTRAP_FILE: /opt/emqx/data/bootstrap/users.csv
-  EMQX_AUTHENTICATION__1__BOOTSTRAP_TYPE: plain
-  EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__NAME: bcrypt
-  EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_ROUNDS: "10"
-
-  # ── Authorization: file-based ACL, mounted from ConfigMap ──
-  EMQX_AUTHORIZATION__NO_MATCH: deny
-  EMQX_AUTHORIZATION__DENY_ACTION: ignore
-  EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
-  EMQX_AUTHORIZATION__SOURCES__1__TYPE: file
-  EMQX_AUTHORIZATION__SOURCES__1__ENABLE: "true"
-  EMQX_AUTHORIZATION__SOURCES__1__PATH: /opt/emqx/etc/acl.conf
-
-# Dashboard admin credentials — read from pre-seeded secret data/emqx-dashboard.
-# Secret keys (EMQX_DASHBOARD__DEFAULT_USERNAME / EMQX_DASHBOARD__DEFAULT_PASSWORD)
-# are picked up directly by the EMQX runtime as env vars.
-envFromSecret: emqx-dashboard
-
-# ── Mount the bootstrap users (Secret) + ACL file (ConfigMap) ──
-extraVolumes:
-  - name: emqx-bootstrap-users
-    secret:
-      secretName: emqx-bootstrap-users
-      defaultMode: 0400
-  - name: emqx-acl
-    configMap:
-      name: emqx-acl
-      items:
-        - key: acl.conf
-          path: acl.conf
-
-extraVolumeMounts:
-  - name: emqx-bootstrap-users
-    mountPath: /opt/emqx/data/bootstrap
-    readOnly: true
-  - name: emqx-acl
-    mountPath: /opt/emqx/etc/acl.conf
-    subPath: acl.conf
-    readOnly: true
 
 resources:
   requests:
-    cpu: 500m
-    memory: 512Mi
+    cpu: 200m
+    memory: 256Mi
   limits:
-    cpu: "2"
-    memory: 2Gi
+    cpu: "1"
+    memory: 1Gi
 
-# QoS support
-# QoS 0: At most once (fire-and-forget, for high-frequency low-value data)
-# QoS 1: At least once (default for sensor data)
-# QoS 2: Exactly once (for critical carbon credit transactions)
-
-# ── Companion resources (deployed alongside the Helm release) ──
+# ── Companion resources ──
 extraDeploy:
-  # ── ACL rules — Erlang term file format read by EMQX authorization ──
-  # Rules evaluated top-to-bottom; first match wins.
-  # `${clientid}` and `${username}` are runtime substitutions.
+  # ACL ConfigMap
   - apiVersion: v1
     kind: ConfigMap
     metadata:
@@ -127,25 +39,9 @@ extraDeploy:
       namespace: data
     data:
       acl.conf: |
-        %% ============================================================
-        %% EMQX ACL — Carbon Credit Platform
-        %%
-        %% Topic naming convention (per device):
-        %%   devices/<clientid>/...        device publishes its data
-        %%   sensors/<clientid>/...        sensor readings
-        %%   telemetry/<clientid>/...      telemetry / heartbeat
-        %%   cmd/<clientid>/...            commands TO the device (server → device)
-        %%   broadcast/#                   broadcast to all (read-only)
-        %%
-        %% Format: {allow|deny, {username, "<user>"}, <action>, [<topics>]}.
-        %%   action: publish | subscribe | all
-        %%   topics: list of MQTT topic filters (wildcards + + #)
-        %% ============================================================
-
-        %% ── admin: full access (for backend services + ops tools) ──
+        %% admin: full access
         {allow, {username, "admin"}, all, ["#"]}.
-
-        %% ── device: scoped to topics under its own clientid ──
+        %% device: scoped to own topics
         {allow, {username, "device"}, publish, [
             "devices/${clientid}/#",
             "sensors/${clientid}/#",
@@ -156,13 +52,10 @@ extraDeploy:
             "config/${clientid}/#",
             "broadcast/#"
         ]}.
-
-        %% ── default: deny everything else ──
+        %% default deny
         {deny, all}.
 
-  # ── HTTPS Ingress for the EMQX Dashboard ──
-  # Reachable at  https://emqx.${DOMAIN}  with Let's Encrypt TLS via Traefik.
-  # Internal NodePort (http://VPS_IP:30183) also remains available.
+  # Dashboard Ingress
   - apiVersion: networking.k8s.io/v1
     kind: Ingress
     metadata:
@@ -184,7 +77,7 @@ extraDeploy:
                   service:
                     name: emqx
                     port:
-                      name: dashboard
+                      number: 18083
       tls:
         - hosts: [emqx.thermexpertise.com]
           secretName: emqx-dashboard-tls

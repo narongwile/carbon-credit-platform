@@ -21,6 +21,6 @@ resources:
   - mosquitto.yaml
   - node-red.yaml
   # ── Observability ──
-  - ai-agents-monitor.yaml
+  # - ai-agents-monitor.yaml   # disabled: requires ServiceMonitor CRD (kube-prometheus-stack)
   # ── Security ──
   - network-policy.yaml
