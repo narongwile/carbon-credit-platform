@@ -1,0 +1,46 @@
+# ============================================================
+# ArgoCD Application — phpMyAdmin (cowboysysop chart)
+# Namespace: data       Connects to: mysql.data.svc.cluster.local:3306
+# Sync wave 0 → after MySQL (-10).
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: phpmyadmin
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://cowboysysop.github.io/charts/
+      chart: phpmyadmin
+      targetRevision: 17.0.1
+      helm:
+        releaseName: phpmyadmin
+        valueFiles:
+          - $values/infra/helm-values/phpmyadmin-values.yaml
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

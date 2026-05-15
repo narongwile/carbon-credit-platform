@@ -24,7 +24,7 @@ service:
   dashboard: 18083
   api: 8081
 
-# TLS Configuration
+# TLS Configuration  (dashboard creds come from envFromSecret — see below)
 emqxConfig:
   EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
   EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: /opt/emqx/etc/certs/cert.pem
@@ -32,11 +32,13 @@ emqxConfig:
   EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE: /opt/emqx/etc/certs/ca.pem
   # WebSocket over TLS (for agencies behind firewalls)
   EMQX_LISTENERS__WSS__DEFAULT__BIND: "0.0.0.0:8084"
-  # Dashboard
-  EMQX_DASHBOARD__DEFAULT_USERNAME: admin
-  EMQX_DASHBOARD__DEFAULT_PASSWORD: "${EMQX_ADMIN_PASSWORD}"
   # Logging
   EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
+
+# Dashboard admin credentials — read from pre-seeded secret data/emqx-dashboard.
+# Secret keys (EMQX_DASHBOARD__DEFAULT_USERNAME / EMQX_DASHBOARD__DEFAULT_PASSWORD)
+# are picked up directly by the EMQX runtime as env vars.
+envFromSecret: emqx-dashboard
 
 # ACL Rules per Agency
 emqxAclConfig: |

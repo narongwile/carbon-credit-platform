@@ -46,6 +46,22 @@ spec:
           env:
             - name: TZ
               value: Asia/Bangkok
+            # adminAuth credentials, consumed by /data/settings.js below
+            - name: NODE_RED_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: node-red-auth
+                  key: username
+            - name: NODE_RED_PASSWORD_BCRYPT
+              valueFrom:
+                secretKeyRef:
+                  name: node-red-auth
+                  key: password-bcrypt
+            # Tell Node-RED to load our settings.js from /etc/node-red-config
+            - name: NODE_RED_USERDIR
+              value: /data
+            - name: FLOWS
+              value: flows.json
           resources:
             requests:
               cpu: 100m
@@ -74,10 +90,54 @@ spec:
           volumeMounts:
             - name: node-red-data
               mountPath: /data
+            - name: node-red-settings
+              mountPath: /data/settings.js
+              subPath: settings.js
       volumes:
         - name: node-red-data
           persistentVolumeClaim:
             claimName: node-red-data
+        - name: node-red-settings
+          configMap:
+            name: node-red-settings
+            items:
+              - key: settings.js
+                path: settings.js
+---
+# Node-RED runtime settings — picks up admin user/bcrypt from env vars,
+# which are wired to the pre-seeded `node-red-auth` Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-red-settings
+  namespace: carbon-credit
+data:
+  settings.js: |
+    module.exports = {
+      uiPort: process.env.PORT || 1880,
+      flowFile: 'flows.json',
+      flowFilePretty: true,
+      adminAuth: {
+        type: 'credentials',
+        users: [{
+          username: process.env.NODE_RED_USERNAME || 'admin',
+          password: process.env.NODE_RED_PASSWORD_BCRYPT,
+          permissions: '*'
+        }]
+      },
+      httpNodeAuth: {
+        user: process.env.NODE_RED_USERNAME || 'admin',
+        pass: process.env.NODE_RED_PASSWORD_BCRYPT
+      },
+      logging: {
+        console: { level: 'info', metrics: false, audit: false }
+      },
+      editorTheme: {
+        projects: { enabled: false },
+        page:     { title: 'Carbon Credit — Node-RED' }
+      },
+      functionGlobalContext: {}
+    };
 ---
 apiVersion: v1
 kind: Service

@@ -1,0 +1,121 @@
+# ============================================================
+# Grafana — official chart values
+# Chart: https://grafana.github.io/helm-charts  chart=grafana
+# Pre-existing secret: grafana-admin (admin-user, admin-password)
+# Public URL: https://grafana.${DOMAIN}
+# ============================================================
+replicas: 1
+
+image:
+  tag: "11.4.0"
+
+admin:
+  existingSecret: grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+  portName: http
+
+persistence:
+  enabled: true
+  type: pvc
+  storageClassName: local-path
+  size: 10Gi
+  accessModes: [ReadWriteOnce]
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts:
+    - grafana.thermexpertise.com
+  tls:
+    - secretName: grafana-tls
+      hosts:
+        - grafana.thermexpertise.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 472
+  fsGroup: 472
+
+# Pre-wire MySQL + Prometheus datasources (Grafana auto-provisions)
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: MySQL
+        type: mysql
+        url: mysql.data.svc.cluster.local:3306
+        database: carbon_credit
+        user: app
+        secureJsonData:
+          password: $__file{/etc/secrets/mysql/mysql-password}
+        jsonData:
+          maxOpenConns: 25
+          maxIdleConns: 25
+          connMaxLifetime: 14400
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc.cluster.local
+        access: proxy
+        isDefault: true
+
+# Mount the pre-seeded MySQL secret so the datasource above can read it
+extraSecretMounts:
+  - name: mysql-credentials
+    secretName: mysql-credentials
+    defaultMode: 0440
+    mountPath: /etc/secrets/mysql
+    readOnly: true
+
+# Default dashboards: pull from grafana.com IDs (k8s + node + mysql)
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+dashboards:
+  default:
+    node-exporter:
+      gnetId: 1860
+      revision: 37
+      datasource: Prometheus
+    mysql-overview:
+      gnetId: 7362
+      revision: 5
+      datasource: MySQL
+
+# Sidecar for ConfigMap-based dashboards (drop a CM with grafana_dashboard label
+# anywhere in cluster and Grafana picks it up)
+sidecar:
+  dashboards:
+    enabled: true
+    label: grafana_dashboard
+    searchNamespace: ALL
+  datasources:
+    enabled: true
+    label: grafana_datasource
+    searchNamespace: ALL

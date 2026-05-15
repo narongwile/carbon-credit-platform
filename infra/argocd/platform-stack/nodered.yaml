@@ -1,0 +1,41 @@
+# ============================================================
+# ArgoCD Application — Node-RED (kustomize from this repo)
+# Namespace: carbon-credit     Internal port: 1880
+# Manifests: infra/k8s/custom-apps/base/node-red.yaml + PVC + Service
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nodered
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+    targetRevision: main
+    path: infra/k8s/custom-apps/base
+    # We pin to the explicit Node-RED resources only by relying on Kustomize
+    # base; see infra/k8s/custom-apps/base/kustomization.yaml.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: carbon-credit
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

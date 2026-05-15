@@ -1,0 +1,46 @@
+# ============================================================
+# ArgoCD Application — WordPress (Bitnami chart, includes MariaDB)
+# Namespace: web        Public URL: https://${DOMAIN}
+# Secret used: web/wordpress-credentials
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: wordpress
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: registry-1.docker.io/bitnamicharts
+      chart: wordpress
+      targetRevision: 24.1.18
+      helm:
+        releaseName: wordpress
+        valueFiles:
+          - $values/infra/helm-values/wordpress-values.yaml
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: web
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

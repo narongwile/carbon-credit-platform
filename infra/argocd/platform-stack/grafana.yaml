@@ -1,0 +1,46 @@
+# ============================================================
+# ArgoCD Application — Grafana
+# Namespace: monitoring     Internal port: 3000
+# Secret used: monitoring/grafana-admin (admin-user, admin-password)
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: grafana
+      targetRevision: 8.5.2
+      helm:
+        releaseName: grafana
+        valueFiles:
+          - $values/infra/helm-values/grafana-values.yaml
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

@@ -1,0 +1,75 @@
+# ============================================================
+# phpMyAdmin — cowboysysop chart values
+# Chart: https://cowboysysop.github.io/charts/  chart=phpmyadmin
+# Connects to mysql.data.svc.cluster.local:3306
+# Public URL: https://phpmyadmin.${DOMAIN}
+# ============================================================
+image:
+  repository: phpmyadmin
+  tag: "5.2.1-apache"
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Connect to in-cluster MySQL by service DNS
+extraEnvVars:
+  - name: PMA_HOST
+    value: mysql.data.svc.cluster.local
+  - name: PMA_PORT
+    value: "3306"
+  - name: PMA_ABSOLUTE_URI
+    value: https://phpmyadmin.thermexpertise.com/
+  - name: UPLOAD_LIMIT
+    value: 256M
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # Front phpMyAdmin with Basic Auth (secret seeded by bootstrap)
+    traefik.ingress.kubernetes.io/router.middlewares: data-phpmyadmin-basicauth@kubernetescrd
+  hosts:
+    - host: phpmyadmin.thermexpertise.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: phpmyadmin-tls
+      hosts:
+        - phpmyadmin.thermexpertise.com
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  fsGroup: 33
+containerSecurityContext:
+  runAsUser: 33
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]
+
+# Traefik Basic-Auth middleware — points at phpmyadmin-basicauth secret
+# (rendered alongside the chart so we keep one source of truth)
+extraDeploy:
+  - apiVersion: traefik.io/v1alpha1
+    kind: Middleware
+    metadata:
+      name: phpmyadmin-basicauth
+      namespace: data
+    spec:
+      basicAuth:
+        secret: phpmyadmin-basicauth

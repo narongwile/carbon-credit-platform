@@ -1,0 +1,76 @@
+# ============================================================
+# MySQL — Bitnami chart values
+# Chart: oci://registry-1.docker.io/bitnamicharts/mysql
+# Pre-existing secret: mysql-credentials  (seeded by deploy-bootstrap.sh)
+#   keys: mysql-root-password, mysql-replication-password, mysql-password
+# ============================================================
+architecture: standalone
+
+auth:
+  existingSecret: mysql-credentials
+  database: carbon_credit
+  username: app
+
+primary:
+  service:
+    type: ClusterIP
+    ports:
+      mysql: 3306
+  persistence:
+    enabled: true
+    storageClass: local-path
+    size: 20Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1001
+  containerSecurityContext:
+    enabled: true
+    runAsUser: 1001
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  configuration: |-
+    [mysqld]
+    default-authentication-plugin=mysql_native_password
+    skip-name-resolve
+    explicit_defaults_for_timestamp
+    basedir=/opt/bitnami/mysql
+    plugin_dir=/opt/bitnami/mysql/lib/plugin
+    port=3306
+    socket=/opt/bitnami/mysql/tmp/mysql.sock
+    datadir=/bitnami/mysql/data
+    tmpdir=/opt/bitnami/mysql/tmp
+    max_allowed_packet=64M
+    bind-address=0.0.0.0
+    pid-file=/opt/bitnami/mysql/tmp/mysqld.pid
+    log-error=/opt/bitnami/mysql/logs/mysqld.log
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+    slow_query_log=0
+    long_query_time=10.0
+    [client]
+    port=3306
+    socket=/opt/bitnami/mysql/tmp/mysql.sock
+    default-character-set=utf8mb4
+    plugin_dir=/opt/bitnami/mysql/lib/plugin
+    [manager]
+    port=3306
+    socket=/opt/bitnami/mysql/tmp/mysql.sock
+    pid-file=/opt/bitnami/mysql/tmp/mysqld.pid
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false   # flip to true once Prometheus Operator is installed
+
+# Backups — wire up your own cronjob/snapshot policy as needed
+volumePermissions:
+  enabled: true

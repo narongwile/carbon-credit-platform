@@ -1,0 +1,89 @@
+# ============================================================
+# WordPress — Bitnami chart values
+# Chart: oci://registry-1.docker.io/bitnamicharts/wordpress
+# Pre-existing secret: wordpress-credentials
+#   keys: wordpress-password, mariadb-password, mariadb-root-password
+# Public URL: https://${DOMAIN}
+# ============================================================
+wordpressUsername: admin
+wordpressEmail: admin@thermexpertise.com
+wordpressBlogName: "Carbon Credit Platform"
+existingSecret: wordpress-credentials
+
+# Pin to a specific image tag (avoid surprise upgrades from `latest`)
+image:
+  tag: 6.7.1-debian-12-r0
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  ports:
+    http: 80
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 10Gi
+  accessModes: [ReadWriteOnce]
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hostname: thermexpertise.com
+  tls: true
+  selfSigned: false
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  extraTls:
+    - hosts: [thermexpertise.com, www.thermexpertise.com]
+      secretName: wordpress-tls
+  extraHosts:
+    - name: www.thermexpertise.com
+      path: /
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 1001
+containerSecurityContext:
+  enabled: true
+  runAsUser: 1001
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+# Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
+# to avoid coupling site lifecycle to platform DB).
+mariadb:
+  enabled: true
+  architecture: standalone
+  auth:
+    existingSecret: wordpress-credentials   # uses mariadb-password / mariadb-root-password
+    database: wordpress
+    username: wordpress
+  primary:
+    persistence:
+      enabled: true
+      storageClass: local-path
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+metrics:
+  enabled: false
