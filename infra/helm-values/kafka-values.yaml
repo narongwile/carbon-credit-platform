@@ -1,83 +1,96 @@
 # ============================================================
-# Apache Kafka + Zookeeper — Helm Values
-# Chart: bitnami/kafka
-# Deploy: helm install kafka bitnami/kafka -n infra -f kafka-values.yaml
+# Apache Kafka — Bitnami chart v26.x values
+# Chart: bitnami/kafka (targetRevision: 26.8.0)
+#
+# BREAKING CHANGE v26: Zookeeper removed — KRaft is mandatory.
+# Old keys removed: kraft.enabled, zookeeper.*
+# listeners.*.containerPort must be explicit int32 (not string).
+#
+# Single-node VPS: 1 controller+broker combined (minISR=1).
 # ============================================================
 
-replicaCount: 3
+# 1 pod — combined controller + broker (KRaft combined mode)
+controller:
+  replicaCount: 1
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClassName: local-path
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+# No separate broker pods on a single node
+broker:
+  replicaCount: 0
 
 image:
   registry: docker.io
   repository: bitnami/kafka
   tag: "3.7"
 
-kraft:
-  enabled: false  # Using Zookeeper for compatibility
-
-zookeeper:
-  enabled: true
-  replicaCount: 3
-  persistence:
-    enabled: true
-    size: 8Gi
-    storageClassName: local-path
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: 500m
-      memory: 512Mi
-
-persistence:
-  enabled: true
-  size: 50Gi
-  storageClassName: local-path
-
-# Listener configuration
+# ── Listeners — containerPort MUST be int32, not string ────────────────
+# Explicit ports prevent the "cannot unmarshal string into containerPort"
+# error that occurs when Helm renders a missing int as a type mismatch.
 listeners:
   client:
+    containerPort: 9092
     protocol: PLAINTEXT
+    name: CLIENT
+    sslClientAuth: ""
+  controller:
+    containerPort: 9093
+    protocol: PLAINTEXT
+    name: CONTROLLER
+    sslClientAuth: ""
   interbroker:
+    containerPort: 9094
     protocol: PLAINTEXT
+    name: INTERBROKER
+    sslClientAuth: ""
+  external:
+    containerPort: 9095
+    protocol: PLAINTEXT
+    name: EXTERNAL
+    sslClientAuth: ""
+
+# Advertise internal cluster DNS so brokers can discover each other
+advertisedListeners: ""   # let chart auto-generate from pod DNS
 
 # Log retention
-logRetentionHours: 168  # 7 days
-logRetentionBytes: 10737418240  # 10GB per partition
+logRetentionHours: 168        # 7 days
+logRetentionBytes: 10737418240  # 10 GB per partition
 
-# Default topic settings
-defaultReplicationFactor: 2
-numPartitions: 6
+# Single-node safe: ISR=1 avoids "not enough in-sync replicas" errors
+defaultReplicationFactor: 1
+numPartitions: 3
 minInsyncReplicas: 1
 
-# Auto-create topics disabled (use provisioning)
+# Auto-create topics disabled — use provisioning job below
 autoCreateTopicsEnable: false
 
-resources:
-  requests:
-    cpu: 500m
-    memory: 1Gi
-  limits:
-    cpu: "2"
-    memory: 4Gi
-
 # ============================================================
-# Initial Topics — Created via provisioning job
+# Initial Topics — provisioned by Helm post-install job
+# replicationFactor capped at 1 for single-node (no multi-broker)
 # ============================================================
 provisioning:
   enabled: true
   topics:
     # Per-agency sensor data (raw from MQTT bridge)
     - name: agency.pilot_a.sensor.raw
-      partitions: 6
-      replicationFactor: 2
+      partitions: 3
+      replicationFactor: 1
       config:
         retention.ms: "604800000"      # 7 days
         cleanup.policy: delete
         compression.type: lz4
     - name: agency.pilot_b.sensor.raw
-      partitions: 6
-      replicationFactor: 2
+      partitions: 3
+      replicationFactor: 1
       config:
         retention.ms: "604800000"
         cleanup.policy: delete
@@ -85,15 +98,15 @@ provisioning:
 
     # Validated sensor data (from Spark Streaming)
     - name: agency.pilot_a.sensor.validated
-      partitions: 6
-      replicationFactor: 2
+      partitions: 3
+      replicationFactor: 1
       config:
         retention.ms: "604800000"
         cleanup.policy: delete
         compression.type: lz4
     - name: agency.pilot_b.sensor.validated
-      partitions: 6
-      replicationFactor: 2
+      partitions: 3
+      replicationFactor: 1
       config:
         retention.ms: "604800000"
         cleanup.policy: delete
@@ -102,13 +115,13 @@ provisioning:
     # Alert topics
     - name: agency.pilot_a.alerts
       partitions: 3
-      replicationFactor: 2
+      replicationFactor: 1
       config:
         retention.ms: "2592000000"     # 30 days
         cleanup.policy: delete
     - name: agency.pilot_b.alerts
       partitions: 3
-      replicationFactor: 2
+      replicationFactor: 1
       config:
         retention.ms: "2592000000"
         cleanup.policy: delete
@@ -116,21 +129,21 @@ provisioning:
     # Carbon credit topics
     - name: agency.pilot_a.carbon.credits
       partitions: 3
-      replicationFactor: 2
+      replicationFactor: 1
       config:
         retention.ms: "-1"             # Infinite retention
         cleanup.policy: compact
     - name: agency.pilot_b.carbon.credits
       partitions: 3
-      replicationFactor: 2
+      replicationFactor: 1
       config:
         retention.ms: "-1"
         cleanup.policy: compact
 
     # System audit (shared across all agencies)
     - name: system.audit
-      partitions: 6
-      replicationFactor: 2
+      partitions: 3
+      replicationFactor: 1
       config:
         retention.ms: "-1"             # Infinite retention
         cleanup.policy: delete
@@ -138,11 +151,10 @@ provisioning:
     # Dead Letter Queue (failed messages)
     - name: system.dlq
       partitions: 3
-      replicationFactor: 2
+      replicationFactor: 1
       config:
         retention.ms: "2592000000"     # 30 days
 
 # ============================================================
-# Kafka Connect (S3 Sink to MinIO)
+# Kafka Connect (S3 Sink to MinIO) — deployed separately
 # ============================================================
-# Deployed separately — see kafka-connect-values.yaml
