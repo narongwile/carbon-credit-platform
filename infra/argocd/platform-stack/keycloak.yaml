@@ -16,10 +16,11 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: https://charts.bitnami.com/bitnami
+    - repoURL: registry-1.docker.io/bitnamicharts
       chart: keycloak
-      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
+      targetRevision: "*"    # latest — OCI registry supports wildcard
       helm:
+        releaseName: keycloak
         valueFiles:
           - $values/infra/helm-values/keycloak-values.yaml
     - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
@@ -34,6 +35,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
     retry:
       limit: 5
       backoff:

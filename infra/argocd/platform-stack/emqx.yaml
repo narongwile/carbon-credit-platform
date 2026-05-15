@@ -20,6 +20,7 @@ spec:
       chart: emqx
       targetRevision: 5.4.1
       helm:
+        releaseName: emqx
         valueFiles:
           - $values/infra/helm-values/emqx-values.yaml
     - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
@@ -34,6 +35,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
     retry:
       limit: 5
       backoff:

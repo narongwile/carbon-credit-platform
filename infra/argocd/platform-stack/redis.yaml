@@ -16,10 +16,11 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://charts.bitnami.com/bitnami
+    repoURL: registry-1.docker.io/bitnamicharts
     chart: redis
-    targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
+    targetRevision: "*"    # latest — OCI registry supports wildcard
     helm:
+      releaseName: redis
       values: |
         architecture: standalone
         auth:
@@ -41,6 +42,7 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+      - ServerSideApply=true
     retry:
       limit: 5
       backoff:
