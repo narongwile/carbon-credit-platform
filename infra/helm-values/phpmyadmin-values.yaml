@@ -24,7 +24,7 @@ extraEnvVars:
   - name: PMA_PORT
     value: "3306"
   - name: PMA_ABSOLUTE_URI
-    value: https://phpmyadmin.thermexpertise.com/
+    value: https://pma.thermexpertise.com/
   - name: UPLOAD_LIMIT
     value: 256M
 
@@ -38,14 +38,14 @@ ingress:
     # Front phpMyAdmin with Basic Auth (secret seeded by bootstrap)
     traefik.ingress.kubernetes.io/router.middlewares: data-phpmyadmin-basicauth@kubernetescrd
   hosts:
-    - host: phpmyadmin.thermexpertise.com
+    - host: pma.thermexpertise.com
       paths:
         - path: /
           pathType: Prefix
   tls:
     - secretName: phpmyadmin-tls
       hosts:
-        - phpmyadmin.thermexpertise.com
+        - pma.thermexpertise.com
 
 resources:
   requests:

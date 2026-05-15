@@ -26,7 +26,7 @@ www.thermexpertise.com       A   <VPS_IP>
 argocd.thermexpertise.com    A   <VPS_IP>
 grafana.thermexpertise.com   A   <VPS_IP>
 nodered.thermexpertise.com   A   <VPS_IP>
-phpmyadmin.thermexpertise.com A  <VPS_IP>
+pma.thermexpertise.com A  <VPS_IP>
 emqx.thermexpertise.com      A   <VPS_IP>
 # Optional — only needed if you opt into BRIDGE_AAPANEL=1 (not recommended):
 # aapanel.thermexpertise.com  A   <VPS_IP>
@@ -40,7 +40,7 @@ emqx.thermexpertise.com      A   <VPS_IP>
 
 Verify locally:
 ```bash
-for s in '' www. argocd. grafana. nodered. phpmyadmin. emqx.; do
+for s in '' www. argocd. grafana. nodered. pma. emqx.; do
   echo -n "${s}thermexpertise.com → "; dig +short "${s}thermexpertise.com" @1.1.1.1
 done
 ```
@@ -160,7 +160,7 @@ Every service is reachable **two ways** — pick whichever is easier.
 | EMQX API | — | `http://<VPS_IP>:30081` | `admin` / `iothub.2026` |
 | Grafana | `https://grafana.thermexpertise.com` | `http://<VPS_IP>:3000` | `admin` / `iothub.2026` |
 | Node-RED | `https://nodered.thermexpertise.com` | `http://<VPS_IP>:1880` | `admin` / `iothub.2026` |
-| phpMyAdmin | `https://phpmyadmin.thermexpertise.com` (Traefik BasicAuth) | `http://<VPS_IP>:30808` (no BasicAuth) | DB: `root` / `iothub.2026` |
+| phpMyAdmin | `https://pma.thermexpertise.com` (Traefik BasicAuth) | `http://<VPS_IP>:30808` (no BasicAuth) | DB: `root` / `iothub.2026` |
 | WordPress | `https://thermexpertise.com` | `http://<VPS_IP>:30088` | `admin` / `iothub.2026` |
 | MySQL | — | `kubectl -n data port-forward svc/mysql 3306:3306` then `mysql://localhost:3306` | `root` / `iothub.2026` |
 

@@ -245,7 +245,7 @@ spec:
     kind: ClusterIssuer
   dnsNames:
     - nodered.thermexpertise.com
-    - phpmyadmin.thermexpertise.com
+    - pma.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -295,7 +295,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`phpmyadmin.thermexpertise.com`)
+    - match: Host(`pma.thermexpertise.com`)
       kind: Rule
       middlewares:
         - name: admin-ip-allowlist
@@ -315,7 +315,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`phpmyadmin.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+    - match: Host(`pma.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
       kind: Rule
       middlewares:
         - name: admin-ip-allowlist
