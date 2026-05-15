@@ -66,6 +66,14 @@ metadata:
   labels:
     app.kubernetes.io/part-of: carbon-credit-platform
     tier: ci-cd
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: web
 
 # ============================================================
 # Resource Quotas per Namespace
