@@ -14,13 +14,19 @@ ingress:
   enabled: true
   ingressClassName: traefik
   annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
+  # apache/superset chart expects a flat list of hostname strings here,
+  # NOT the {host: ..., paths: ...} object format used by other charts.
   hosts:
-    - host: dashboard.carbon-credit.go.th
-      paths:
-        - path: /
-          pathType: ImplementationSpecific
+    - "dashboard.carbon-credit.go.th"
+  path: /
+  pathType: ImplementationSpecific
+  tls:
+    - hosts:
+        - "dashboard.carbon-credit.go.th"
+      secretName: superset-tls
 
 configOverrides:
   secret: |

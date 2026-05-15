@@ -20,7 +20,7 @@ spec:
   sources:
     - repoURL: registry-1.docker.io/bitnamicharts
       chart: wordpress
-      targetRevision: 27.0.0
+      targetRevision: 24.1.18
       helm:
         releaseName: wordpress
         valueFiles:
