@@ -33,6 +33,20 @@ service:
 proxy: edge
 httpRelativePath: /
 
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hostname: keycloak.thermexpertise.com
+  tls: true
+  selfSigned: false
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  extraTls:
+    - hosts: [keycloak.thermexpertise.com]
+      secretName: keycloak-tls
+
 resources:
   requests:
     cpu: 100m

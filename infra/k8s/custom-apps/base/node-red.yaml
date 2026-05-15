@@ -150,6 +150,33 @@ spec:
     - name: http
       port: 1880
       targetPort: http
-      nodePort: 1880       # http://VPS_IP:1880  (requires K3s NodePort range 1024+)
+      nodePort: 1880       # http://VPS_IP:1880  (K3s NodePort range starts at 1024)
   selector:
     app: node-red
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: node-red
+  namespace: carbon-credit
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: nodered.thermexpertise.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: node-red
+                port:
+                  number: 1880
+  tls:
+    - hosts:
+        - nodered.thermexpertise.com
+      secretName: nodered-tls

@@ -4,7 +4,7 @@
 # Deploy: helm install emqx emqx/emqx -n infra -f emqx-values.yaml
 # ============================================================
 
-replicaCount: 2
+replicaCount: 1
 
 image:
   repository: emqx/emqx
