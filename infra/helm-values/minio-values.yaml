@@ -1,141 +1,112 @@
 # ============================================================
-# MinIO — Distributed Object Storage (S3-compatible Data Lake)
-# Chart: minio/minio
-# Deploy: helm install minio minio/minio -n infra -f minio-values.yaml
+# MinIO — S3-compatible Object Storage
+# Chart: bitnami/minio v14.6.0  (NOT minio/minio — different schema!)
+#
+# bitnami/minio prefixes image.registry + image.repository:
+#   docker.io + quay.io/minio/minio → WRONG (docker.io/quay.io/...)
+# Use bitnami defaults or set registry=quay.io + repository=minio/minio
+#
+# Single-node VPS: standalone mode, 1 replica.
 # ============================================================
 
-mode: distributed
-replicas: 4
+mode: standalone
 
-image:
-  repository: quay.io/minio/minio
-  tag: "RELEASE.2024-03-15T01-07-19Z"
+# Use chart-default bitnami/minio image (don't override to quay.io —
+# bitnami chart prepends image.registry, causing double-path error)
 
-rootUser: minio-admin
-rootPassword: "${MINIO_ROOT_PASSWORD}"
+auth:
+  rootUser: minio-admin
+  rootPassword: "${MINIO_ROOT_PASSWORD}"
 
 persistence:
   enabled: true
-  size: 100Gi
+  size: 50Gi
   storageClassName: local-path
 
 resources:
   requests:
-    cpu: 500m
-    memory: 1Gi
+    cpu: 100m
+    memory: 256Mi
   limits:
-    cpu: "2"
-    memory: 4Gi
+    cpu: "1"
+    memory: 1Gi
 
-# Console (Web UI)
-consoleService:
-  type: ClusterIP
-  port: 9001
-
-# API Service
 service:
   type: ClusterIP
-  port: 9000
+  ports:
+    api: 9000
+    console: 9001
 
 # Server-Side Encryption (SSE-S3)
-environment:
-  MINIO_KMS_SECRET_KEY: "carbon-credit-key:${MINIO_ENCRYPTION_KEY}"
+extraEnvVars:
+  - name: MINIO_KMS_SECRET_KEY
+    value: "carbon-credit-key:${MINIO_ENCRYPTION_KEY}"
 
 # ============================================================
 # Bucket Provisioning — Medallion Architecture
 # ============================================================
-buckets:
-  # Layer 0: Raw landing zone
-  - name: raw
-    policy: none
-    purge: false
-    versioning: false
-    objectlocking: false
-
-  # Layer 1: Bronze (schema-enforced Iceberg)
-  - name: bronze
-    policy: none
-    purge: false
-    versioning: true
-    objectlocking: false
-
-  # Layer 2: Silver (validated + AI cleansed)
-  - name: silver
-    policy: none
-    purge: false
-    versioning: true
-    objectlocking: false
-
-  # Layer 3: Gold (aggregated carbon metrics)
-  - name: gold
-    policy: none
-    purge: false
-    versioning: true
-    objectlocking: false
-
-  # ML model artifacts
-  - name: models
-    policy: none
-    purge: false
-    versioning: true
-    objectlocking: false
-
-  # Backup storage
-  - name: backups
-    policy: none
-    purge: false
-    versioning: false
-    objectlocking: false
-
-  # Iceberg metadata warehouse
-  - name: warehouse
-    policy: none
-    purge: false
-    versioning: true
-    objectlocking: false
-
-# ============================================================
-# IAM Policies — Per-Agency Isolation
-# ============================================================
-policies:
-  - name: agency-read-own
-    statements:
-      - effect: Allow
-        resources:
-          - "arn:aws:s3:::raw/${aws:username}/*"
-          - "arn:aws:s3:::bronze/${aws:username}/*"
-          - "arn:aws:s3:::silver/${aws:username}/*"
-          - "arn:aws:s3:::gold/${aws:username}/*"
-        actions:
-          - "s3:GetObject"
-          - "s3:ListBucket"
-
-  - name: data-pipeline-full
-    statements:
-      - effect: Allow
-        resources:
-          - "arn:aws:s3:::*"
-        actions:
-          - "s3:*"
-
-  - name: spark-readwrite
-    statements:
-      - effect: Allow
-        resources:
-          - "arn:aws:s3:::raw/*"
-          - "arn:aws:s3:::bronze/*"
-          - "arn:aws:s3:::silver/*"
-          - "arn:aws:s3:::gold/*"
-          - "arn:aws:s3:::warehouse/*"
-        actions:
-          - "s3:GetObject"
-          - "s3:PutObject"
-          - "s3:DeleteObject"
-          - "s3:ListBucket"
-
-# ============================================================
-# Lifecycle Rules — Data Retention
-# ============================================================
-# Applied via mc ilm after deployment:
-#   mc ilm rule add minio/raw --expiry-days 365
-#   mc ilm rule add minio/backups --expiry-days 30
+provisioning:
+  enabled: true
+  buckets:
+    - name: raw
+      policy: none
+      versioning: false
+    - name: bronze
+      policy: none
+      versioning: true
+    - name: silver
+      policy: none
+      versioning: true
+    - name: gold
+      policy: none
+      versioning: true
+    - name: models
+      policy: none
+      versioning: true
+    - name: backups
+      policy: none
+      versioning: false
+    - name: warehouse
+      policy: none
+      versioning: true
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  # IAM Policies — Per-Agency Isolation
+  policies:
+    - name: agency-read-own
+      statements:
+        - effect: Allow
+          resources:
+            - "arn:aws:s3:::raw/${aws:username}/*"
+            - "arn:aws:s3:::bronze/${aws:username}/*"
+            - "arn:aws:s3:::silver/${aws:username}/*"
+            - "arn:aws:s3:::gold/${aws:username}/*"
+          actions:
+            - "s3:GetObject"
+            - "s3:ListBucket"
+    - name: data-pipeline-full
+      statements:
+        - effect: Allow
+          resources:
+            - "arn:aws:s3:::*"
+          actions:
+            - "s3:*"
+    - name: spark-readwrite
+      statements:
+        - effect: Allow
+          resources:
+            - "arn:aws:s3:::raw/*"
+            - "arn:aws:s3:::bronze/*"
+            - "arn:aws:s3:::silver/*"
+            - "arn:aws:s3:::gold/*"
+            - "arn:aws:s3:::warehouse/*"
+          actions:
+            - "s3:GetObject"
+            - "s3:PutObject"
+            - "s3:DeleteObject"
+            - "s3:ListBucket"

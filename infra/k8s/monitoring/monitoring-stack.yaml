@@ -94,11 +94,11 @@ spec:
                       storage: 10Gi
             resources:
               requests:
-                cpu: 200m
-                memory: 512Mi
+                cpu: 100m
+                memory: 256Mi
               limits:
-                cpu: 1000m
-                memory: 2Gi
+                cpu: 500m
+                memory: 1Gi
             # ULTIMATE FIX: Dynamically discover pods and match them to nodes
             additionalScrapeConfigs:
               - job_name: 'mysql'

@@ -24,13 +24,13 @@ ingress:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-  # pmint93/metabase chart expects flat hostname strings, NOT {host:/paths:} objects.
-  hostname: report.carbon-credit.go.th
-  path: /
+  # pmint93/metabase chart v1.2.0 uses flat string list for hosts.
+  hosts:
+    - "report.carbon-credit.go.th"
   tls:
     - secretName: metabase-tls
       hosts:
-        - report.carbon-credit.go.th
+        - "report.carbon-credit.go.th"
 
 resources:
   limits:
