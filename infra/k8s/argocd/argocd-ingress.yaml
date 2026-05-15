@@ -8,7 +8,13 @@
 # Fix:
 #   1. argocd-cmd-params-cm  → server.insecure=true
 #      ArgoCD now serves plain HTTP on :8080 (Traefik handles TLS)
-#   2. IngressRoute           → argocd.thermexpertise.com → argocd-server:80
+#   2. IngressRoute (websecure only) → argocd.thermexpertise.com → argocd-server:80
+#
+# NOTE: No HTTP→HTTPS redirect IngressRoute here.
+# Traefik already does a global HTTP→HTTPS redirect via entrypoint config.
+# Adding an explicit HTTP redirect IngressRoute causes a redirect loop that
+# breaks cert-manager's ACME HTTP-01 self-check
+# (cert-manager HTTP → Traefik global redirect HTTPS → redirect again → 10 hops).
 #
 # Apply: kubectl apply -f argocd-ingress.yaml
 # Then:  kubectl -n argocd rollout restart deploy/argocd-server
@@ -29,8 +35,9 @@ data:
   server.insecure: "true"
 
 ---
-# Traefik IngressRoute — routes argocd.thermexpertise.com → argocd-server:80
-# TLS is terminated here by Traefik/cert-manager (not by ArgoCD itself).
+# Traefik IngressRoute — HTTPS only.
+# Routes argocd.thermexpertise.com → argocd-server:80 (plain HTTP internally).
+# TLS is terminated by Traefik/cert-manager (not by ArgoCD itself).
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -50,39 +57,10 @@ spec:
     secretName: argocd-tls
 
 ---
-# Redirect HTTP → HTTPS for ArgoCD
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: argocd-server-http
-  namespace: argocd
-spec:
-  entryPoints:
-    - web
-  routes:
-    - kind: Rule
-      match: Host(`argocd.thermexpertise.com`)
-      priority: 10
-      middlewares:
-        - name: argocd-https-redirect
-          namespace: argocd
-      services:
-        - name: argocd-server
-          port: 80
-
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: argocd-https-redirect
-  namespace: argocd
-spec:
-  redirectScheme:
-    scheme: https
-    permanent: true
-
----
 # cert-manager issues the TLS certificate for argocd.thermexpertise.com
+# HTTP-01 challenge: cert-manager creates its own solver Ingress on port 80.
+# Without an explicit HTTP IngressRoute, Traefik passes HTTP traffic to
+# the solver Ingress uninterrupted — no redirect loop.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
