@@ -12,15 +12,15 @@ commonLabels:
 resources:
   # ── Namespaces ──
   - namespace.yaml
-  # ── Custom Apps ──
-  - backend.yaml
-  - frontend-app.yaml
-  - ai-agents.yaml
-  - mqtt-bridge.yaml
+  # ── Custom Apps (disabled until CI registry + images are built) ──
+  # - backend.yaml           # needs registry.ci.svc.cluster.local image
+  # - frontend-app.yaml      # needs registry.ci.svc.cluster.local image
+  # - ai-agents.yaml         # needs registry.ci.svc.cluster.local image
+  # - mqtt-bridge.yaml       # needs registry.ci.svc.cluster.local image + Kafka
   # ── IoT Services ──
-  - mosquitto.yaml
+  # - mosquitto.yaml         # replaced by EMQX (data namespace)
   - node-red.yaml
   # ── Observability ──
-  # - ai-agents-monitor.yaml   # disabled: requires ServiceMonitor CRD (kube-prometheus-stack)
+  # - ai-agents-monitor.yaml # disabled: requires ServiceMonitor CRD
   # ── Security ──
   - network-policy.yaml

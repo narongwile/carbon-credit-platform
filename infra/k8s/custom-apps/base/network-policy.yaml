@@ -62,25 +62,28 @@ spec:
     - protocol: TCP
       port: 53
 ---
+# Node-RED → EMQX (data namespace) MQTT connectivity
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-monitoring-to-mosquitto
+  name: allow-node-red-to-emqx
   namespace: carbon-credit
 spec:
   podSelector:
     matchLabels:
-      app: mosquitto
+      app: node-red
   policyTypes:
-  - Ingress
-  ingress:
-  - from:
+  - Egress
+  egress:
+  - to:
     - namespaceSelector:
         matchLabels:
-          kubernetes.io/metadata.name: monitoring
+          kubernetes.io/metadata.name: data
     ports:
     - protocol: TCP
-      port: 9234
+      port: 1883
+    - protocol: TCP
+      port: 8883
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

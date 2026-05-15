@@ -46,6 +46,13 @@ spec:
           env:
             - name: TZ
               value: Asia/Bangkok
+            # ── EMQX MQTT Broker (replaces Mosquitto) ──
+            - name: MQTT_BROKER_URL
+              value: "mqtt://emqx.data.svc.cluster.local:1883"
+            - name: MQTT_BROKER_HOST
+              value: emqx.data.svc.cluster.local
+            - name: MQTT_BROKER_PORT
+              value: "1883"
             # adminAuth credentials, consumed by /data/settings.js below
             - name: NODE_RED_USERNAME
               valueFrom:

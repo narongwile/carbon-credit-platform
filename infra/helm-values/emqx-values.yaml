@@ -24,10 +24,28 @@ emqxConfig:
 resources:
   requests:
     cpu: 200m
-    memory: 256Mi
+    memory: 512Mi
   limits:
     cpu: "1"
     memory: 1Gi
+
+# EMQX 5.x needs time to start on constrained nodes
+emqxAclConfig: ""
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 30
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  failureThreshold: 6
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  failureThreshold: 5
 
 # ── Companion resources ──
 extraDeploy:
