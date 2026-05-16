@@ -1,7 +1,7 @@
 # ============================================================
-# ArgoCD Application — phpMyAdmin (Bitnami chart)
-# Namespace: data       Connects to: mysql.data.svc.cluster.local:3306
-# Sync wave 0 → after MySQL (-10).
+# ArgoCD Application — phpMyAdmin (Official image, plain manifests)
+# Replaces Bitnami chart (images removed from Docker Hub)
+# Namespace: data    Connects to: mysql.data.svc.cluster.local:3306
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -17,17 +17,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  sources:
-    - repoURL: registry-1.docker.io/bitnamicharts
-      chart: phpmyadmin
-      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
-      helm:
-        releaseName: phpmyadmin
-        valueFiles:
-          - $values/infra/helm-values/phpmyadmin-values.yaml
-    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
-      targetRevision: main
-      ref: values
+  source:
+    repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+    targetRevision: main
+    path: infra/k8s/platform-services
+    directory:
+      include: 'phpmyadmin.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: data

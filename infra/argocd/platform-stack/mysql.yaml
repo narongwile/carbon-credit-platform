@@ -1,8 +1,7 @@
 # ============================================================
-# ArgoCD Application — MySQL (Bitnami chart)
+# ArgoCD Application — MySQL (Official image, plain manifests)
+# Replaces Bitnami chart (images removed from Docker Hub)
 # Namespace: data         Internal port: 3306
-# Secret used: data/mysql-credentials  (seeded by deploy-bootstrap.sh)
-# Sync wave -10 → MySQL must be Ready before phpMyAdmin syncs.
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -18,17 +17,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  sources:
-    - repoURL: registry-1.docker.io/bitnamicharts
-      chart: mysql
-      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
-      helm:
-        releaseName: mysql
-        valueFiles:
-          - $values/infra/helm-values/mysql-values.yaml
-    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
-      targetRevision: main
-      ref: values
+  source:
+    repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+    targetRevision: main
+    path: infra/k8s/platform-services
+    directory:
+      include: 'mysql.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: data

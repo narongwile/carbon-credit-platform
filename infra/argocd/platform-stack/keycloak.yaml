@@ -1,6 +1,6 @@
 # ============================================================
-# ArgoCD Application — Keycloak IAM
-# Helm Chart: bitnami/keycloak
+# ArgoCD Application — Keycloak IAM (Official image, plain manifests)
+# Replaces Bitnami chart (images removed from Docker Hub)
 # Namespace: auth
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
@@ -15,17 +15,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  sources:
-    - repoURL: registry-1.docker.io/bitnamicharts
-      chart: keycloak
-      targetRevision: "*"    # latest — OCI registry supports wildcard
-      helm:
-        releaseName: keycloak
-        valueFiles:
-          - $values/infra/helm-values/keycloak-values.yaml
-    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
-      targetRevision: main
-      ref: values
+  source:
+    repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+    targetRevision: main
+    path: infra/k8s/platform-services
+    directory:
+      include: 'keycloak.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: auth
