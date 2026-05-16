@@ -98,40 +98,52 @@ phase2_emqx() {
   apikey_id=$($KUBECTL -n data get secret emqx-api-key -o jsonpath='{.data.key}' 2>/dev/null | base64 -d || echo "platform-admin")
   apikey_sec=$($KUBECTL -n data get secret emqx-api-key -o jsonpath='{.data.secret}' 2>/dev/null | base64 -d || echo "iothub.2026.apikey.secret")
 
-  # Run config update via curl pod
+  # Run config update via curl pod — write JSON to files in-pod (no escape hell)
   $KUBECTL -n data run emqx-config-patch --rm -i --restart=Never \
-    --image=curlimages/curl:latest --quiet -- sh -c "
+    --image=curlimages/curl:latest --quiet \
+    --env="APIKEY_ID=${apikey_id}" \
+    --env="APIKEY_SEC=${apikey_sec}" \
+    -- sh -c '
       set -e
-      EMQX='http://emqx.data.svc.cluster.local:30183'
-      AUTH='-u ${apikey_id}:${apikey_sec}'
+      EMQX="http://emqx.data.svc.cluster.local:30183"
 
-      echo '→ Setting MQTT keepalive_multiplier (don\\'t drop on idle publish)'
-      curl -sS \$AUTH -H 'Content-Type: application/json' \
-        -X PUT \"\$EMQX/api/v5/configs/mqtt\" \
-        -d '{
-          \"keepalive_multiplier\": 1.5,
-          \"max_packet_size\": \"1MB\",
-          \"retain_available\": true,
-          \"session_expiry_interval\": \"2h\",
-          \"upgrade_qos\": false,
-          \"use_username_as_clientid\": false
-        }' && echo
+      cat >/tmp/mqtt.json <<JSON
+{
+  "keepalive_multiplier": 1.5,
+  "max_packet_size": "1MB",
+  "retain_available": true,
+  "session_expiry_interval": "2h",
+  "upgrade_qos": false,
+  "use_username_as_clientid": false
+}
+JSON
 
-      echo '→ Listener tuning — disable idle disconnect on TCP'
-      curl -sS \$AUTH -H 'Content-Type: application/json' \
-        -X PUT \"\$EMQX/api/v5/listeners/tcp:default\" \
-        -d '{
-          \"bind\": \"0.0.0.0:1883\",
-          \"max_connections\": 10000,
-          \"max_conn_rate\": \"1000/s\",
-          \"tcp_options\": {
-            \"keepalive\": \"7200,75,9\",
-            \"nodelay\": true,
-            \"send_timeout\": \"15s\"
-          },
-          \"enable_authn\": true
-        }' && echo
-    " 2>&1 | grep -v '^If you don.t see' | head -20 || warn "Config patch had errors (may still apply)"
+      cat >/tmp/listener.json <<JSON
+{
+  "bind": "0.0.0.0:1883",
+  "max_connections": 10000,
+  "max_conn_rate": "1000/s",
+  "tcp_options": {
+    "keepalive": "7200,75,9",
+    "nodelay": true,
+    "send_timeout": "15s"
+  },
+  "enable_authn": true
+}
+JSON
+
+      echo "-> PUT /api/v5/configs/mqtt"
+      curl -sS -u "$APIKEY_ID:$APIKEY_SEC" \
+        -H "Content-Type: application/json" \
+        -X PUT "$EMQX/api/v5/configs/mqtt" \
+        -d @/tmp/mqtt.json -w " [HTTP %{http_code}]\n"
+
+      echo "-> PUT /api/v5/listeners/tcp:default"
+      curl -sS -u "$APIKEY_ID:$APIKEY_SEC" \
+        -H "Content-Type: application/json" \
+        -X PUT "$EMQX/api/v5/listeners/tcp:default" \
+        -d @/tmp/listener.json -w " [HTTP %{http_code}]\n"
+    ' 2>&1 | head -10 || warn "Config patch had errors (may still apply)"
 
   # NetworkPolicy: allow carbon-credit → data:1883
   info "Adding NetworkPolicy: carbon-credit → data:1883/8883/30183"
@@ -532,7 +544,7 @@ metadata:
   namespace: kube-system
   labels:
     app.kubernetes.io/part-of: carbon-credit-platform
-type: kubernetes.io/basic-auth
+type: Opaque
 stringData:
   users: |
     ${htpw}
