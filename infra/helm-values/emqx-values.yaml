@@ -1,7 +1,27 @@
 # ============================================================
-# EMQX MQTT Broker — Helm Values (simplified for v5.4.1)
-# Chart: emqx/emqx
-# Namespace: data
+# EMQX MQTT Broker — Helm Values (best-practice, v5.x)
+# Chart: emqx/emqx                         Namespace: data
+#
+# Design decisions:
+#   • hostNetwork: true        → pod binds 1883/8883/18083 directly on the
+#                                node interface. Fixes ECONNREFUSED for
+#                                external clients on standard MQTT ports
+#                                without extending K3s NodePort range or
+#                                inventing iptables DNAT.
+#   • dnsPolicy: ClusterFirstWithHostNet → keeps cluster DNS working for
+#                                EMQX → backend webhooks (auth/ACL).
+#   • Dashboard / cluster-cookie credentials sourced from K8s Secrets
+#     (seeded by deploy-bootstrap.sh) via envFrom — chart never owns the
+#     password, so re-syncs cannot rotate it.
+#   • Authentication: built-in DB (managed via dashboard or REST API).
+#     Authorization: file-based ACL mounted from the ConfigMap below.
+#   • Anonymous access disabled. ACL default = deny.
+#   • Single-node: replicaCount=1 + nodeSelector pin. Bump for HA later.
+#
+# Pre-existing secret (created by bootstrap):
+#   data/emqx-dashboard   keys:
+#     EMQX_DASHBOARD__DEFAULT_USERNAME
+#     EMQX_DASHBOARD__DEFAULT_PASSWORD
 # ============================================================
 
 replicaCount: 1
@@ -9,33 +29,114 @@ replicaCount: 1
 image:
   repository: emqx/emqx
   tag: "5.5.1"
+  pullPolicy: IfNotPresent
 
+# ── Host networking: standard MQTT ports bind on the node ───────────
+# Pod IP becomes the node IP. Required for clients hard-coding :1883.
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+# Pin to a single node so hostPorts don't ping-pong on reschedule.
+# On single-node K3s this is a no-op, but it's an explicit guarantee.
+nodeSelector:
+  kubernetes.io/os: linux
+
+# ── Storage ─────────────────────────────────────────────────────────
 persistence:
   enabled: true
   size: 5Gi
   storageClassName: local-path
 
+# ── Service ─────────────────────────────────────────────────────────
+# With hostNetwork the Service is mostly for in-cluster consumers
+# (Node-RED, backend, etc.). Keep ClusterIP — external traffic bypasses
+# it and hits the node interface directly via hostNetwork.
 service:
-  type: NodePort
+  type: ClusterIP
+  mqtt: 1883
+  mqttssl: 8883
+  ws: 8083
+  wss: 8084
+  dashboard: 18083
+  api: 18083
 
+# ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
 emqxConfig:
+  # Logging
   EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
+  EMQX_LOG__FILE_HANDLERS__DEFAULT__LEVEL: warning
 
-resources:
-  requests:
-    cpu: 200m
-    memory: 512Mi
-  limits:
-    cpu: "1"
-    memory: 1Gi
+  # Cluster (single-node static)
+  EMQX_CLUSTER__DISCOVERY_STRATEGY: static
+  EMQX_NODE__NAME: "emqx@127.0.0.1"
 
-# EMQX 5.x needs time to start on constrained nodes
-emqxAclConfig: ""
+  # Listeners — explicit binds for clarity
+  EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883"
+  EMQX_LISTENERS__TCP__DEFAULT__MAX_CONNECTIONS: "10000"
+  EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
+  EMQX_LISTENERS__SSL__DEFAULT__MAX_CONNECTIONS: "10000"
+  EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"
+  EMQX_LISTENERS__WSS__DEFAULT__BIND: "0.0.0.0:8084"
+
+  # ── Authentication: built-in database (manage users in dashboard) ─
+  EMQX_AUTHENTICATION__1__MECHANISM: password_based
+  EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+  EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
+  EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__NAME: sha256
+  EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_POSITION: suffix
+
+  # ── Authorization: file-based ACL mounted from ConfigMap ──────────
+  EMQX_AUTHORIZATION__SOURCES__1__TYPE: file
+  EMQX_AUTHORIZATION__SOURCES__1__ENABLE: "true"
+  EMQX_AUTHORIZATION__SOURCES__1__PATH: "/opt/emqx/etc/acl.conf"
+  EMQX_AUTHORIZATION__NO_MATCH: deny
+  EMQX_AUTHORIZATION__DENY_ACTION: ignore
+  EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
+
+  # Disable anonymous explicitly (default false in 5.x, set for clarity)
+  EMQX_ALLOW_ANONYMOUS: "false"
+
+  # Per-client limits (multi-tenant safety)
+  EMQX_MQTT__MAX_PACKET_SIZE: "1MB"
+  EMQX_MQTT__MAX_CLIENTID_LEN: "65535"
+  EMQX_MQTT__MAX_QOS_ALLOWED: "2"
+  EMQX_MQTT__KEEPALIVE_MULTIPLIER: "1.5"
+  EMQX_MQTT__RETAIN_AVAILABLE: "true"
+  EMQX_MQTT__WILDCARD_SUBSCRIPTION: "true"
+  EMQX_MQTT__SHARED_SUBSCRIPTION: "true"
+
+  # System resource guards
+  EMQX_SYSMON__VM__LONG_GC: "disabled"
+  EMQX_SYSMON__VM__LONG_SCHEDULE: "240ms"
+
+# ── Inject dashboard admin user/password from Secret ────────────────
+# bootstrap created `emqx-dashboard` in namespace `data` with keys
+# matching the EMQX env-var names.
+extraEnvFrom:
+  - secretRef:
+      name: emqx-dashboard
+
+# ── Mount the ACL ConfigMap into the expected file path ─────────────
+extraVolumeMounts:
+  - name: emqx-acl
+    mountPath: /opt/emqx/etc/acl.conf
+    subPath: acl.conf
+    readOnly: true
+
+extraVolumes:
+  - name: emqx-acl
+    configMap:
+      name: emqx-acl
+      items:
+        - key: acl.conf
+          path: acl.conf
+
+# ── Probes — EMQX 5 boots slowly on constrained nodes ───────────────
 startupProbe:
   enabled: true
   initialDelaySeconds: 30
   periodSeconds: 10
-  failureThreshold: 30
+  failureThreshold: 30   # 5 min total to start
 readinessProbe:
   enabled: true
   initialDelaySeconds: 30
@@ -47,33 +148,77 @@ livenessProbe:
   periodSeconds: 30
   failureThreshold: 5
 
-# ── Companion resources ──
+# ── Resources ───────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# ── Security context ────────────────────────────────────────────────
+# EMQX image runs as user 1000 (emqx). hostNetwork doesn't require
+# privileged; ports >1024 don't need NET_BIND_SERVICE either.
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+  runAsNonRoot: true
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+# ── Prometheus metrics ──────────────────────────────────────────────
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false   # flip true once kube-prometheus-stack is installed
+
+# ── Companion resources reconciled by the same Application ──────────
 extraDeploy:
-  # ACL ConfigMap
+  # ── ACL ConfigMap (mounted above into /opt/emqx/etc/acl.conf) ────
   - apiVersion: v1
     kind: ConfigMap
     metadata:
       name: emqx-acl
       namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
     data:
       acl.conf: |
-        %% admin: full access
-        {allow, {username, "admin"}, all, ["#"]}.
-        %% device: scoped to own topics
-        {allow, {username, "device"}, publish, [
+        %% ─────────────────────────────────────────────────────────
+        %% EMQX ACL — file-based, evaluated top-to-bottom
+        %% Syntax: {allow|deny, who, action, topics}
+        %% Placeholders: ${username}, ${clientid}, ${peerhost}
+        %% ─────────────────────────────────────────────────────────
+
+        %% Superuser: full access (manage in dashboard → built-in DB)
+        {allow, {user, "admin"}, all, ["#"]}.
+
+        %% Internal services (backend, node-red) — full access on app topics
+        {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
+        {allow, {user, "nodered"}, all, ["app/#", "iot/#"]}.
+
+        %% Devices — scoped to own topic tree by clientid
+        {allow, {user, "device"}, publish, [
             "devices/${clientid}/#",
             "sensors/${clientid}/#",
             "telemetry/${clientid}/#"
         ]}.
-        {allow, {username, "device"}, subscribe, [
+        {allow, {user, "device"}, subscribe, [
             "cmd/${clientid}/#",
             "config/${clientid}/#",
             "broadcast/#"
         ]}.
-        %% default deny
+
+        %% Allow anyone to subscribe to $SYS health topics? NO — keep deny.
+
+        %% Default deny
         {deny, all}.
 
-  # Dashboard Ingress
+  # ── Dashboard Ingress (HTTPS via Traefik + cert-manager) ─────────
   - apiVersion: networking.k8s.io/v1
     kind: Ingress
     metadata:
