@@ -31,13 +31,15 @@ image:
   tag: "5.5.1"
   pullPolicy: IfNotPresent
 
-# ── Host networking: standard MQTT ports bind on the node ───────────
-# Pod IP becomes the node IP. Required for clients hard-coding :1883.
-hostNetwork: true
-dnsPolicy: ClusterFirstWithHostNet
+# NOTE: emqx/emqx chart does NOT honor top-level `hostNetwork` —
+# the StatefulSet template never reads it. We bind standard ports
+# (1883/8883) on the node via a companion Service with `externalIPs`
+# (see extraDeploy at the bottom). kube-proxy installs iptables rules
+# that catch packets to <node-ip>:1883 and forward to the pod —
+# functionally equivalent to hostPort, but managed by the chart.
 
-# Pin to a single node so hostPorts don't ping-pong on reschedule.
-# On single-node K3s this is a no-op, but it's an explicit guarantee.
+# Pin to a single node — externalIPs Service binds on every node, but
+# we run a single replica so this is deterministic.
 nodeSelector:
   kubernetes.io/os: linux
 
@@ -133,22 +135,29 @@ extraVolumes:
         - key: acl.conf
           path: acl.conf
 
-# ── Probes — EMQX 5 boots slowly on constrained nodes ───────────────
+# ── Probes — EMQX 5.x cold-start on constrained nodes ≈ 60–90s ─────
+# Symptom we hit: "Readiness probe failed: connect: connection refused
+# on :18083". Cause: dashboard listener comes up LAST in EMQX boot.
+# Give startupProbe a wide window so readiness/liveness don't fire
+# before the listener exists.
 startupProbe:
   enabled: true
   initialDelaySeconds: 30
   periodSeconds: 10
-  failureThreshold: 30   # 5 min total to start
+  failureThreshold: 60    # 10 min total — generous for first cold start
+  timeoutSeconds: 5
 readinessProbe:
   enabled: true
-  initialDelaySeconds: 30
-  periodSeconds: 10
-  failureThreshold: 6
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  failureThreshold: 8
+  timeoutSeconds: 5
 livenessProbe:
   enabled: true
-  initialDelaySeconds: 60
+  initialDelaySeconds: 120
   periodSeconds: 30
-  failureThreshold: 5
+  failureThreshold: 6
+  timeoutSeconds: 5
 
 # ── Resources ───────────────────────────────────────────────────────
 resources:
@@ -184,6 +193,36 @@ metrics:
 
 # ── Companion resources reconciled by the same Application ──────────
 extraDeploy:
+  # ── External-facing Service: binds 1883/8883 on the node IP ──────
+  # kube-proxy installs iptables rules: <NODE_IP>:1883 → pod:1883.
+  # Replace `externalIPs` with the actual public IP of every node that
+  # should accept MQTT traffic. On a single-node cluster, set the one
+  # node IP. CHANGE THIS when you reprovision.
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: emqx-external
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+        app.kubernetes.io/component: external-listener
+    spec:
+      type: ClusterIP
+      externalIPs:
+        - 14.207.141.71      # ← node public IP — edit when changing host
+      selector:
+        app.kubernetes.io/name: emqx
+        app.kubernetes.io/instance: emqx
+      ports:
+        - name: mqtt
+          port: 1883
+          targetPort: 1883
+          protocol: TCP
+        - name: mqttssl
+          port: 8883
+          targetPort: 8883
+          protocol: TCP
+
   # ── ACL ConfigMap (mounted above into /opt/emqx/etc/acl.conf) ────
   - apiVersion: v1
     kind: ConfigMap
