@@ -120,6 +120,11 @@ emqxConfig:
   EMQX_SYSMON__VM__LONG_GC: "disabled"
   EMQX_SYSMON__VM__LONG_SCHEDULE: "240ms"
 
+  # Dashboard bind port — MUST match service.dashboard/api above (30183).
+  # Without this, EMQX still binds default 18083 → Service routes to a
+  # port nothing listens on → 502 / connection refused.
+  EMQX_DASHBOARD__LISTENERS__HTTP__BIND: "30183"
+
 # ── Inject dashboard admin user/password from Secret ────────────────
 # IMPORTANT: chart template sets EMQX_DASHBOARD__DEFAULT_PASSWORD=public
 # directly in container.env. We MUST use extraEnv (not extraEnvFrom) so
@@ -160,12 +165,14 @@ extraVolumes:
   - name: emqx-acl
     configMap:
       name: emqx-acl
+      optional: true           # don't block pod start if CM missing
       items:
         - key: acl.conf
           path: acl.conf
   - name: emqx-apikey
     secret:
       secretName: emqx-api-key
+      optional: true           # pod boots even if Secret not yet synced
       items:
         - key: apikey_bootstrap.txt
           path: apikey_bootstrap.txt
