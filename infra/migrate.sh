@@ -493,15 +493,15 @@ spec:
 EOF
 
   # Commit + push to git so ArgoCD pulls
-  if (cd "$REPO_DIR" && git status --porcelain | grep -qE 'traefik-values|platform-stack/traefik'); then
-    info "Committing Traefik manifests"
-    (
-      cd "$REPO_DIR"
-      git add infra/helm-values/traefik-values.yaml infra/argocd/platform-stack/traefik.yaml
-      git commit -m "feat(traefik): manage via ArgoCD (replaces K3s bundled)"
-      git push origin "$(git rev-parse --abbrev-ref HEAD)" || warn "git push failed — push manually"
-    ) 2>&1 | tail -5
-  fi
+  # if (cd "$REPO_DIR" && git status --porcelain | grep -qE 'traefik-values|platform-stack/traefik'); then
+  #   info "Committing Traefik manifests"
+  #   (
+  #     cd "$REPO_DIR"
+  #     git add infra/helm-values/traefik-values.yaml infra/argocd/platform-stack/traefik.yaml
+  #     git commit -m "feat(traefik): manage via ArgoCD (replaces K3s bundled)"
+  #     git push origin "$(git rev-parse --abbrev-ref HEAD)" || warn "git push failed — push manually"
+  #   ) 2>&1 | tail -5
+  # fi
 
   # Apply Application directly (don't wait for ArgoCD root sync)
   $KUBECTL apply -f "${REPO_DIR}/infra/argocd/platform-stack/traefik.yaml"
