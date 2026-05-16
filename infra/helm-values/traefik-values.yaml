@@ -148,18 +148,9 @@ metrics:
     addRoutersLabels: true
 
 # ── Health checks ──────────────────────────────────────────────────
+# Chart auto-creates probes from `ping.enabled` — do NOT add custom
+# livenessProbe/readinessProbe at root: chart schema rejects them
+# ("Additional property httpGet is not allowed")
 ping:
   enabled: true
   entryPoint: traefik
-livenessProbe:
-  httpGet:
-    path: /ping
-    port: 9000
-  initialDelaySeconds: 10
-  periodSeconds: 10
-readinessProbe:
-  httpGet:
-    path: /ping
-    port: 9000
-  initialDelaySeconds: 5
-  periodSeconds: 5

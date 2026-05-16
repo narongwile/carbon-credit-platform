@@ -343,6 +343,27 @@ EOF
 phase4_traefik_argocd() {
   phase "Phase 4: Provision ArgoCD-managed Traefik (parallel install)"
 
+  # ── Install Traefik CRDs first — never rely on Helm chart's crds/ dir ──
+  # ArgoCD's behavior with chart-embedded CRDs is inconsistent; install
+  # them explicitly so future K3s bundled cleanup doesn't yank them.
+  info "Installing Traefik v3 CRDs from upstream chart"
+  local crd_base="https://raw.githubusercontent.com/traefik/traefik-helm-chart/v33.2.1/traefik/crds"
+  for crd in \
+    traefik.io_ingressroutes \
+    traefik.io_ingressroutetcps \
+    traefik.io_ingressrouteudps \
+    traefik.io_middlewares \
+    traefik.io_middlewaretcps \
+    traefik.io_serverstransports \
+    traefik.io_serverstransporttcps \
+    traefik.io_tlsoptions \
+    traefik.io_tlsstores \
+    traefik.io_traefikservices; do
+    $KUBECTL apply --server-side -f "${crd_base}/${crd}.yaml" >/dev/null 2>&1 \
+      && echo "  ✓ ${crd}" \
+      || echo "  ✗ ${crd} (failed — check internet/firewall)"
+  done
+
   # Write Helm values + ArgoCD Application into git repo
   info "Writing infra/helm-values/traefik-values.yaml"
   cat > "${REPO_DIR}/infra/helm-values/traefik-values.yaml" <<'EOF'
@@ -655,11 +676,24 @@ EOF
   rm -f /var/lib/rancher/k3s/server/manifests/traefik.yaml
   rm -f /var/lib/rancher/k3s/server/manifests/traefik-crd.yaml
 
-  # Step 2: Delete bundled Traefik resources
-  info "Removing K3s bundled Traefik resources"
-  $KUBECTL -n kube-system delete helmchart       traefik traefik-crd 2>/dev/null || true
+  # Step 2: Delete bundled Traefik resources (but keep CRDs!)
+  # CRDs were installed standalone in Phase 4 — DO NOT delete traefik-crd HelmChart
+  # if it could cascade-delete CRDs. Safer: delete only the runtime chart.
+  info "Removing K3s bundled Traefik runtime (keeping CRDs)"
+  $KUBECTL -n kube-system delete helmchart       traefik             2>/dev/null || true
   $KUBECTL -n kube-system delete helmchartconfig traefik             2>/dev/null || true
+  # traefik-crd HelmChart: only delete if it's not source of CRDs we depend on
+  # (Our Phase 4 server-side-applied CRDs survive helmchart deletion)
+  $KUBECTL -n kube-system delete helmchart       traefik-crd         2>/dev/null || true
   $KUBECTL delete ingressclass traefik 2>/dev/null || true   # ArgoCD chart recreates
+
+  # Re-apply our standalone CRDs in case helmchart deletion cascaded
+  info "Re-ensuring Traefik CRDs (safety net)"
+  local crd_base="https://raw.githubusercontent.com/traefik/traefik-helm-chart/v33.2.1/traefik/crds"
+  for crd in traefik.io_ingressroutes traefik.io_middlewares \
+             traefik.io_serverstransports traefik.io_traefikservices; do
+    $KUBECTL apply --server-side -f "${crd_base}/${crd}.yaml" >/dev/null 2>&1 || true
+  done
 
   # Step 3: Stop + mask nginx
   info "Stopping host nginx"
