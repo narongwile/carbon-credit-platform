@@ -32,6 +32,7 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - start-dev
+            - --health-enabled=true
           ports:
             - containerPort: 8080
               name: http
@@ -44,9 +45,9 @@ spec:
               value: "false"
             - name: KC_HOSTNAME
               value: keycloak.thermexpertise.com
-            - name: KEYCLOAK_ADMIN
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
               value: admin
-            - name: KEYCLOAK_ADMIN_PASSWORD
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: keycloak-credentials
@@ -55,25 +56,25 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 384Mi
+              memory: 512Mi
             limits:
-              cpu: 500m
-              memory: 768Mi
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30
           readinessProbe:
-            httpGet:
-              path: /health/ready
+            tcpSocket:
               port: http
-            initialDelaySeconds: 60
-            periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 10
+            periodSeconds: 10
+            failureThreshold: 3
           livenessProbe:
-            httpGet:
-              path: /health/live
+            tcpSocket:
               port: http
-            initialDelaySeconds: 120
             periodSeconds: 30
-            timeoutSeconds: 5
             failureThreshold: 5
           volumeMounts:
             - name: data
