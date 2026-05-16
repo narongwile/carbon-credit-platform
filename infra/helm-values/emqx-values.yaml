@@ -82,12 +82,17 @@ emqxConfig:
   EMQX_LISTENERS__WS__DEFAULT__MAX_CONNECTIONS: "5000"
   EMQX_LISTENERS__WSS__DEFAULT__MAX_CONNECTIONS: "5000"
 
-  # ── Authentication: built-in database (manage users in dashboard) ─
+  # ── Authentication: built-in database, seeded from bootstrap file ─
+  # Without bootstrap_file the DB starts empty → every MQTT client gets
+  # CONNACK 5 "not authorised". The file below is mounted from a Secret
+  # in extraDeploy and contains plain `username:password` lines.
   EMQX_AUTHENTICATION__1__MECHANISM: password_based
   EMQX_AUTHENTICATION__1__BACKEND: built_in_database
   EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
   EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__NAME: sha256
   EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_POSITION: suffix
+  EMQX_AUTHENTICATION__1__BOOTSTRAP_FILE: "/opt/emqx/data/bootstrap_users.txt"
+  EMQX_AUTHENTICATION__1__BOOTSTRAP_TYPE: plain
 
   # ── Authorization: file-based ACL mounted from ConfigMap ──────────
   EMQX_AUTHORIZATION__SOURCES__1__TYPE: file
@@ -120,11 +125,15 @@ extraEnvFrom:
   - secretRef:
       name: emqx-dashboard
 
-# ── Mount the ACL ConfigMap into the expected file path ─────────────
+# ── Mount the ACL ConfigMap + MQTT bootstrap users file ────────────
 extraVolumeMounts:
   - name: emqx-acl
     mountPath: /opt/emqx/etc/acl.conf
     subPath: acl.conf
+    readOnly: true
+  - name: emqx-bootstrap-users
+    mountPath: /opt/emqx/data/bootstrap_users.txt
+    subPath: bootstrap_users.txt
     readOnly: true
 
 extraVolumes:
@@ -134,6 +143,12 @@ extraVolumes:
       items:
         - key: acl.conf
           path: acl.conf
+  - name: emqx-bootstrap-users
+    secret:
+      secretName: emqx-mqtt-users
+      items:
+        - key: bootstrap_users.txt
+          path: bootstrap_users.txt
 
 # ── Probes — EMQX 5.x cold-start on constrained nodes ≈ 60–90s ─────
 # Symptom we hit: "Readiness probe failed: connect: connection refused
@@ -193,6 +208,26 @@ metrics:
 
 # ── Companion resources reconciled by the same Application ──────────
 extraDeploy:
+  # ── MQTT bootstrap users (seeds built_in_database on first boot) ─
+  # File format: one `username:password` per line. EMQX reads this ONCE
+  # on first start and writes users to its built-in DB; subsequent
+  # restarts skip if the user already exists (idempotent).
+  # ⚠️  Hardcoded password — fine for dev/internal, ROTATE for prod.
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: emqx-mqtt-users
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+    type: Opaque
+    stringData:
+      bootstrap_users.txt: |
+        admin:iothub.2026
+        backend:iothub.2026
+        nodered:iothub.2026
+        device:iothub.2026
+
   # ── External-facing Service: binds 1883/8883 on the node IP ──────
   # kube-proxy installs iptables rules: <NODE_IP>:1883 → pod:1883.
   # Replace `externalIPs` with the actual public IP of every node that
