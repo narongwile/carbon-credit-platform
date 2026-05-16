@@ -442,6 +442,11 @@ additionalArguments:
   - "--log.level=INFO"
   - "--accesslog=true"
   - "--accesslog.format=json"
+  # Force-enable dashboard + API via CLI (chart's api.insecure values block
+  # doesn't always render to --api.insecure flag — explicit is safer)
+  - "--api=true"
+  - "--api.dashboard=true"
+  - "--api.insecure=true"
 
 resources:
   requests: { cpu: 100m, memory: 128Mi }
@@ -639,7 +644,7 @@ spec:
     - ${NODE_IP}
   selector:
     app.kubernetes.io/name: traefik
-    app.kubernetes.io/instance: traefik-kube-system
+    app.kubernetes.io/instance: traefik     # release name in ArgoCD Application
   ports:
     - name: traefik
       port: 9000

@@ -104,6 +104,11 @@ additionalArguments:
   - "--accesslog.format=json"
   - "--accesslog.fields.headers.defaultmode=keep"
   - "--serverstransport.insecureskipverify=false"
+  # CRITICAL: chart's `api.insecure: true` มักไม่แปลงเป็น CLI flag
+  # ใส่เองตรงนี้เพื่อรับประกันว่า dashboard + API พร้อมที่ entrypoint `traefik:9000`
+  - "--api=true"
+  - "--api.dashboard=true"
+  - "--api.insecure=true"
 
 # ── Resources ──────────────────────────────────────────────────────
 resources:
