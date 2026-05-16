@@ -59,7 +59,7 @@ service:
   mqttssl: 8883
   ws: 8083
   wss: 8084
-  dashboard: 30183
+  dashboard: 30183    # custom NodePort-style port for direct host access
   api: 30183
 
 # ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
