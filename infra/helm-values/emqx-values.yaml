@@ -443,8 +443,10 @@ extraDeploy:
       name: emqx-dashboard
       namespace: data
       annotations:
+        # Traefik bind hostPort 80/443 directly — handles TLS via cert-manager
+        # nginx ถูก stopped + masked (อยู่ที่ /etc/systemd/system/nginx.service)
         cert-manager.io/cluster-issuer: letsencrypt-prod
-        traefik.ingress.kubernetes.io/router.entrypoints: websecure
+        traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
         traefik.ingress.kubernetes.io/router.tls: "true"
     spec:
       ingressClassName: traefik

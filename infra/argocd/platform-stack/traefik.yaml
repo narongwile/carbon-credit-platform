@@ -1,0 +1,46 @@
+# ============================================================
+# ArgoCD Application — Traefik v3 (replaces K3s bundled Traefik)
+# Namespace: kube-system
+# Sync wave -20  → must exist before any Ingress reconciles
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  annotations:
+    argocd.argoproj.io/sync-wave: "-20"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://traefik.github.io/charts
+      chart: traefik
+      targetRevision: 33.2.1   # Traefik v3.2.x
+      helm:
+        releaseName: traefik
+        valueFiles:
+          - $values/infra/helm-values/traefik-values.yaml
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: false           # IMPORTANT: never prune kube-system resources
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
