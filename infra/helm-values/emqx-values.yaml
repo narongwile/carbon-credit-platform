@@ -70,13 +70,15 @@ emqxConfig:
   EMQX_CLUSTER__DISCOVERY_STRATEGY: static
   EMQX_NODE__NAME: "emqx@127.0.0.1"
 
-  # Listeners — explicit binds for clarity
-  EMQX_LISTENERS__TCP__DEFAULT__BIND: "0.0.0.0:1883"
+  # Listener limits only — DO NOT set EMQX_LISTENERS__*__BIND here.
+  # The chart auto-renders containerPort from service.{mqtt,mqttssl,ws,wss}
+  # by parsing these env vars; passing "0.0.0.0:1883" breaks schema
+  # validation ("containerPort: expected numeric, got string").
+  # Bind addresses are controlled by the `service` block above.
   EMQX_LISTENERS__TCP__DEFAULT__MAX_CONNECTIONS: "10000"
-  EMQX_LISTENERS__SSL__DEFAULT__BIND: "0.0.0.0:8883"
   EMQX_LISTENERS__SSL__DEFAULT__MAX_CONNECTIONS: "10000"
-  EMQX_LISTENERS__WS__DEFAULT__BIND: "0.0.0.0:8083"
-  EMQX_LISTENERS__WSS__DEFAULT__BIND: "0.0.0.0:8084"
+  EMQX_LISTENERS__WS__DEFAULT__MAX_CONNECTIONS: "5000"
+  EMQX_LISTENERS__WSS__DEFAULT__MAX_CONNECTIONS: "5000"
 
   # ── Authentication: built-in database (manage users in dashboard) ─
   EMQX_AUTHENTICATION__1__MECHANISM: password_based
@@ -171,10 +173,14 @@ containerSecurityContext:
     drop: ["ALL"]
 
 # ── Prometheus metrics ──────────────────────────────────────────────
+# Disabled until kube-prometheus-stack (Prometheus Operator CRDs) is
+# installed. Enabling this now causes ArgoCD to track a ServiceMonitor
+# whose CRD (monitoring.coreos.com/v1) doesn't exist → ComparisonError.
+# Re-enable both fields together when Prometheus Operator is deployed.
 metrics:
-  enabled: true
+  enabled: false
   serviceMonitor:
-    enabled: false   # flip true once kube-prometheus-stack is installed
+    enabled: false
 
 # ── Companion resources reconciled by the same Application ──────────
 extraDeploy:
