@@ -403,6 +403,7 @@ extraDeploy:
       type: ClusterIP
       externalIPs:
         - 14.207.141.71      # ← node public IP — edit when changing host
+        - 127.0.0.1           # ← localhost access from the node itself
       selector:
         app.kubernetes.io/name: emqx
         app.kubernetes.io/instance: emqx
