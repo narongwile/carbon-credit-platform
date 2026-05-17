@@ -339,6 +339,7 @@ spec:
     kind: ClusterIssuer
   dnsNames:
     - emqx.thermexpertise.com
+    - aapanel.thermexpertise.com
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -377,6 +378,76 @@ spec:
       services:
         - name: emqx
           port: 18083
+
+# ==========================================
+# Namespace: data (aaPanel — host-level service)
+# aaPanel runs directly on the host at 0.0.0.0:37162.
+# We expose it to Traefik via a headless Service + manual Endpoints.
+# ==========================================
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aapanel
+  namespace: data
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+    - name: http
+      port: 37162
+      targetPort: 37162
+
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: aapanel
+  namespace: data
+subsets:
+  - addresses:
+      - ip: 14.207.141.71
+    ports:
+      - name: http
+        port: 37162
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aapanel-admin
+  namespace: data
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`aapanel.thermexpertise.com`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: aapanel
+          port: 37162
+  tls:
+    secretName: thermexpertise-tls-data
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: aapanel-admin-http
+  namespace: data
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`aapanel.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
+      kind: Rule
+      middlewares:
+        - name: admin-ip-allowlist
+      services:
+        - name: aapanel
+          port: 37162
 
 # ==========================================
 # HTTP by public IPv4 (Host header = x.x.x.x) — no sed/deploy substitution required.
