@@ -152,7 +152,7 @@ Every service is reachable **two ways** — pick whichever is easier.
 |---|---|---|---|
 | ArgoCD | `https://argocd.thermexpertise.com` | `http://<VPS_IP>:30880` | `admin` / see `/root/.carbon-credit-secrets.txt` |
 | aaPanel | `https://aapanel.${DOMAIN}` *(opt-in via `EDGE_PROXY=nginx`)* | `http://<VPS_IP>:8888` | `admin` / `iothub.2026` |
-| EMQX Dashboard | `https://emqx.thermexpertise.com` | `http://<VPS_IP>:30183` | `admin` / `iothub.2026` |
+| EMQX Dashboard | `https://emqx.thermexpertise.com` | `http://<VPS_IP>:18083` | `admin` / `iothub.2026` |
 | EMQX MQTT | — | `tcp://<VPS_IP>:1883`  ← DNATed | per-device JWT (via backend) |
 | EMQX MQTT (direct) | — | `tcp://<VPS_IP>:31883` | per-device JWT |
 | EMQX MQTTS | — | `tls://<VPS_IP>:8883`  ← DNATed | per-device JWT |

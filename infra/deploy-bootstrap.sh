@@ -165,7 +165,7 @@ setup_firewall() {
   ufw allow 30083/tcp comment 'EMQX WS NodePort'      >/dev/null
   ufw allow 30084/tcp comment 'EMQX WSS NodePort'     >/dev/null
   ufw allow 30088/tcp comment 'WordPress NodePort'    >/dev/null
-  ufw allow 30183/tcp comment 'EMQX Dashboard'        >/dev/null
+  ufw allow 18083/tcp comment 'EMQX Dashboard'        >/dev/null
   ufw allow 30443/tcp comment 'ArgoCD NodePort'       >/dev/null
   ufw allow 30808/tcp comment 'phpMyAdmin NodePort'   >/dev/null
   ufw allow 31883/tcp comment 'EMQX MQTT NodePort'    >/dev/null
@@ -1046,7 +1046,7 @@ summary() {
    │ ArgoCD          │ https://argocd.${DOMAIN}           │ http://${ip}:30880        │
    │ aaPanel (TLS)   │ ${edge_url:-(off; EDGE_PROXY=nginx to enable)}
    │ aaPanel (HTTP)  │ (off-cluster, by design)           │ http://${ip}:${bt_port:-8888}        │
-   │ EMQX Dashboard  │ https://emqx.${DOMAIN}             │ http://${ip}:30183        │
+   │ EMQX Dashboard  │ https://emqx.${DOMAIN}             │ http://${ip}:18083        │
    │ EMQX MQTT       │ —                                  │ tcp://${ip}:1883  (DNAT)  │
    │                 │                                    │ tcp://${ip}:31883 (direct)│
    │ EMQX MQTTS      │ —                                  │ tls://${ip}:8883  (DNAT)  │

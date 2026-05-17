@@ -105,7 +105,7 @@ phase2_emqx() {
     --env="APIKEY_SEC=${apikey_sec}" \
     -- sh -c '
       set -e
-      EMQX="http://emqx.data.svc.cluster.local:30183"
+      EMQX="http://emqx.data.svc.cluster.local:18083"
 
       cat >/tmp/mqtt.json <<JSON
 {
@@ -146,7 +146,7 @@ JSON
     ' 2>&1 | head -10 || warn "Config patch had errors (may still apply)"
 
   # NetworkPolicy: allow carbon-credit → data:1883
-  info "Adding NetworkPolicy: carbon-credit → data:1883/8883/30183"
+  info "Adding NetworkPolicy: carbon-credit → data:1883/8883/18083"
   cat <<EOF | $KUBECTL apply -f -
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -183,7 +183,7 @@ spec:
         - protocol: TCP
           port: 8883
         - protocol: TCP
-          port: 30183
+          port: 18083
 EOF
 
   log "EMQX patched + NetPol applied — Node-RED can now reach emqx.data:1883"
@@ -300,7 +300,7 @@ spec:
         - protocol: TCP
           port: 8883
         - protocol: TCP
-          port: 30183
+          port: 18083
     # Internet (npm registry + GitHub for nodes)
     - to:
         - ipBlock:
@@ -812,7 +812,7 @@ phase6_verify() {
   check "https://argocd.${DOMAIN}"
   check "https://keycloak.${DOMAIN}"
   check "http://${NODE_IP}:1880"           "200|302"
-  check "http://${NODE_IP}:30183"          "200|302"
+  check "http://${NODE_IP}:18083"          "200|302"
   check "https://${NODE_IP}:37162/fed30761" "200|302"
   check "http://${NODE_IP}:9000/dashboard/" "200|301|302|401"   # 401 = BasicAuth prompt = OK
   check "https://traefik.${DOMAIN}/dashboard/" "200|301|302|401"

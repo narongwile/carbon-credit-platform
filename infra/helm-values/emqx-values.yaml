@@ -3,7 +3,7 @@
 # Chart: emqx/emqx                         Namespace: data
 #
 # Design decisions:
-#   • hostNetwork: true        → pod binds 1883/8883/30183 directly on the
+#   • hostNetwork: true        → pod binds 1883/8883/18083 directly on the
 #                                node interface. Fixes ECONNREFUSED for
 #                                external clients on standard MQTT ports
 #                                without extending K3s NodePort range or
@@ -59,8 +59,8 @@ service:
   mqttssl: 8883
   ws: 8083
   wss: 8084
-  dashboard: 30183    # EMQX internal default — DO NOT change (chart uses as containerPort)
-  api: 30183          # Must match dashboard — chart probes use this
+  dashboard: 18083    # EMQX internal default — DO NOT change (chart uses as containerPort)
+  api: 18083          # Must match dashboard — chart probes use this
 
 # ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
 emqxConfig:
@@ -147,10 +147,10 @@ emqxConfig:
   # ── Dashboard port ───────────────────────────────────────────────
   # DO NOT set EMQX_DASHBOARD__LISTENERS__HTTP__BIND here!
   # The Helm chart parses BIND values → containerPort. Any format
-  # ("0.0.0.0:30183" or "30183") gets normalized to "0.0.0.0:30183"
-  # which is a string → K8s rejects it. EMQX defaults to 30183.
-  # External access at port 30183 is via emqx-external Service:
-  #   port:30183 → targetPort:30183
+  # ("0.0.0.0:18083" or "18083") gets normalized to "0.0.0.0:18083"
+  # which is a string → K8s rejects it. EMQX defaults to 18083.
+  # External access at port 18083 is via emqx-external Service:
+  #   port:18083 → targetPort:18083
 
 # ── Inject dashboard admin user/password from Secret ────────────────
 # IMPORTANT: chart template sets EMQX_DASHBOARD__DEFAULT_PASSWORD=public
@@ -211,7 +211,7 @@ extraVolumes:
 
 # ── Probes — EMQX 5.x cold-start on constrained nodes ≈ 60–90s ─────
 # Symptom we hit: "Readiness probe failed: connect: connection refused
-# on :30183". Cause: dashboard listener comes up LAST in EMQX boot.
+# on :18083". Cause: dashboard listener comes up LAST in EMQX boot.
 # Give startupProbe a wide window so readiness/liveness don't fire
 # before the listener exists.
 startupProbe:
@@ -348,7 +348,7 @@ extraDeploy:
               args:
                 - |
                   set -eu
-                  EMQX="http://emqx.data.svc.cluster.local:30183"
+                  EMQX="http://emqx.data.svc.cluster.local:18083"
                   echo "Waiting for EMQX API ready..."
                   for i in $(seq 1 60); do
                     code=$(curl -s -o /dev/null -w '%{http_code}' \
@@ -418,8 +418,8 @@ extraDeploy:
           targetPort: 8883
           protocol: TCP
         - name: dashboard
-          port: 30183              # ภายนอกเข้า 14.207.141.71:30183
-          targetPort: 30183        # forward ไป pod:30183 (EMQX default)
+          port: 18083              # ภายนอกเข้า 14.207.141.71:18083
+          targetPort: 18083        # forward ไป pod:18083 (EMQX default)
           protocol: TCP
         - name: ws
           port: 8083
@@ -494,7 +494,7 @@ extraDeploy:
                   service:
                     name: emqx
                     port:
-                      number: 30183
+                      number: 18083
       tls:
         - hosts: [emqx.thermexpertise.com]
           secretName: emqx-dashboard-tls

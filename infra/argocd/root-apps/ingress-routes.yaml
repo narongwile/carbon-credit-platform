@@ -9,7 +9,7 @@
 #   • grafana.thermexpertise.com→ Grafana (monitoring/80)
 #   • nodered.thermexpertise.com→ Node-RED (carbon-credit/1880)
 #   • pma.thermexpertise.com    → phpMyAdmin (carbon-credit/80)
-#   • emqx.thermexpertise.com   → EMQX Dashboard (data/30183)
+#   • emqx.thermexpertise.com   → EMQX Dashboard (data/18083)
 # ============================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
