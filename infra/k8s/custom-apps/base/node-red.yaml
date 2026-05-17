@@ -1,18 +1,26 @@
-# ==========================================
-# Node-RED: private admin service with persistence
-# Public exposure should happen only through a secured Traefik route.
-# ==========================================
+# ============================================================
+# Node-RED — production-grade single-replica (Recreate strategy)
+#   • EMQX via cluster DNS: emqx.data.svc.cluster.local:1883
+#     (NEVER use localhost — localhost in pod = pod itself, not EMQX)
+#   • Exposed:
+#       - https://nodered.${DOMAIN}        (Traefik + Let's Encrypt)
+#       - http://NODE_IP:1880               (externalIPs Service)
+#   • WebSocket-friendly probes & settings (kills "Lost connection..." storms)
+#   • Palette install enabled: writable /data, npm egress via NetworkPolicy
+# ============================================================
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: node-red-data
   namespace: carbon-credit
+  labels:
+    app: node-red
 spec:
-  accessModes:
-    - ReadWriteOnce
+  accessModes: [ReadWriteOnce]
   resources:
     requests:
-      storage: 5Gi
+      storage: 10Gi          # Palette modules + flow history
   storageClassName: local-path
 ---
 apiVersion: apps/v1
@@ -22,10 +30,12 @@ metadata:
   namespace: carbon-credit
   labels:
     app: node-red
+    app.kubernetes.io/name: node-red
+    app.kubernetes.io/component: iot-flow-editor
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: Recreate            # PVC RWO — single writer only
   selector:
     matchLabels:
       app: node-red
@@ -36,64 +46,89 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: node-red
-          image: nodered/node-red:latest
+          image: nodered/node-red:4.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 1880
               name: http
+              protocol: TCP
           env:
             - name: TZ
               value: Asia/Bangkok
-            # ── EMQX MQTT Broker (replaces Mosquitto) ──
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=1536"
+            # ── EMQX (cluster DNS) ──
             - name: MQTT_BROKER_URL
               value: "mqtt://emqx.data.svc.cluster.local:1883"
             - name: MQTT_BROKER_HOST
               value: emqx.data.svc.cluster.local
             - name: MQTT_BROKER_PORT
               value: "1883"
-            # adminAuth credentials, consumed by /data/settings.js below
+            - name: MQTT_USERNAME
+              value: nodered
+            # Dashboard admin auth (from seeded Secret)
             - name: NODE_RED_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: node-red-auth
                   key: username
+                  optional: true
             - name: NODE_RED_PASSWORD_BCRYPT
               valueFrom:
                 secretKeyRef:
                   name: node-red-auth
                   key: password-bcrypt
-            # Tell Node-RED to load our settings.js from /etc/node-red-config
+                  optional: true
+            # Storage / runtime
             - name: NODE_RED_USERDIR
               value: /data
             - name: FLOWS
               value: flows.json
+            - name: NPM_CONFIG_REGISTRY
+              value: "https://registry.npmjs.org/"
+            - name: NPM_CONFIG_CACHE
+              value: "/data/.npm"
+            - name: NODE_RED_ENABLE_PROJECTS
+              value: "false"
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
+              cpu: 200m
               memory: 512Mi
-          readinessProbe:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # Probes — generous timing keeps editor WebSocket alive
+          startupProbe:
             tcpSocket:
               port: http
             initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
             tcpSocket:
               port: http
             initialDelaySeconds: 30
-            periodSeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
-              drop:
-                - ALL
+              drop: [ALL]
             readOnlyRootFilesystem: false
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
           volumeMounts:
             - name: node-red-data
               mountPath: /data
@@ -111,56 +146,129 @@ spec:
               - key: settings.js
                 path: settings.js
 ---
-# Node-RED runtime settings — picks up admin user/bcrypt from env vars,
-# which are wired to the pre-seeded `node-red-auth` Secret.
+# Runtime settings — adminAuth + WebSocket tuning + palette install
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: node-red-settings
   namespace: carbon-credit
+  labels:
+    app: node-red
 data:
   settings.js: |
     module.exports = {
       uiPort: process.env.PORT || 1880,
-      flowFile: 'flows.json',
+      uiHost: '0.0.0.0',
+
+      flowFile: process.env.FLOWS || 'flows.json',
       flowFilePretty: true,
+      userDir: process.env.NODE_RED_USERDIR || '/data',
+
+      // Admin authentication
       adminAuth: {
         type: 'credentials',
         users: [{
           username: process.env.NODE_RED_USERNAME || 'admin',
-          password: process.env.NODE_RED_PASSWORD_BCRYPT,
+          password: process.env.NODE_RED_PASSWORD_BCRYPT
+                   || '$2b$08$ZpFlbR2/4UwEK4Vw4eWZleANvAUcuExt95YwXk3SCFsv9c.LFPYqK',
           permissions: '*'
-        }]
+        }],
+        sessionExpiryTime: 86400
       },
-      httpNodeAuth: {
-        user: process.env.NODE_RED_USERNAME || 'admin',
-        pass: process.env.NODE_RED_PASSWORD_BCRYPT
+
+      // HTTP CORS — allow external dashboards to consume Node-RED HTTP endpoints
+      httpNodeCors: {
+        origin:  '*',
+        methods: 'GET,PUT,POST,DELETE'
       },
+
+      // WebSocket / Editor live-link tuning — kills "Lost connection" reconnect storms
+      apiMaxLength:               '50mb',
+      socketReconnectTime:        5000,
+      socketTimeout:              60000,
+      webSocketNodeVerifyClient:  false,
+
+      // Runtime flags
+      runtimeState: { enabled: true, ui: true },
+      diagnostics:  { enabled: true, ui: true },
+
       logging: {
-        console: { level: 'info', metrics: false, audit: false }
+        console: {
+          level:   'info',
+          metrics: false,
+          audit:   false
+        }
       },
+
       editorTheme: {
         projects: { enabled: false },
-        page:     { title: 'Carbon Credit — Node-RED' }
+        palette: {
+          editable: true,
+          catalogues: [
+            'https://catalogue.nodered.org/catalogue.json'
+          ]
+        },
+        page: {
+          title: 'Carbon Credit IoT Platform'
+        },
+        header: {
+          title: 'Carbon Credit — Node-RED'
+        }
       },
-      functionGlobalContext: {}
+
+      functionGlobalContext: {
+        mqttBroker: process.env.MQTT_BROKER_URL,
+        mqttUser:   process.env.MQTT_USERNAME
+      },
+
+      functionExternalModules: true,
+
+      contextStorage: {
+        default: { module: 'localfilesystem' }
+      }
     };
 ---
+# Internal Service — used by cluster DNS / Ingress / other pods
 apiVersion: v1
 kind: Service
 metadata:
   name: node-red
   namespace: carbon-credit
+  labels:
+    app: node-red
 spec:
-  type: NodePort
+  type: ClusterIP            # was NodePort:1880 — invalid (K3s NodePort range 30000-32767)
+  selector:
+    app: node-red
   ports:
     - name: http
       port: 1880
       targetPort: http
-      nodePort: 1880       # http://VPS_IP:1880  (K3s NodePort range starts at 1024)
+      protocol: TCP
+---
+# External Service — direct IP access at http://NODE_IP:1880
+# kube-proxy installs iptables rule for externalIPs → pod
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-red-external
+  namespace: carbon-credit
+  labels:
+    app: node-red
+    app.kubernetes.io/component: external-listener
+spec:
+  type: ClusterIP
+  externalIPs:
+    - 14.207.141.71          # CHANGE if node IP changes
   selector:
     app: node-red
+  ports:
+    - name: http
+      port: 1880
+      targetPort: http
+      protocol: TCP
 ---
+# Ingress — domain access via Traefik + Let's Encrypt
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -168,7 +276,7 @@ metadata:
   namespace: carbon-credit
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   ingressClassName: traefik

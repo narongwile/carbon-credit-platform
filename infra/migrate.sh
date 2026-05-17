@@ -334,7 +334,26 @@ EOF
   pod=$($KUBECTL -n carbon-credit get pod -l app=node-red -o jsonpath='{.items[0].metadata.name}')
   $KUBECTL -n carbon-credit exec "$pod" -- mkdir -p /data/.npm /data/node_modules 2>/dev/null || true
 
+  # Open firewall for direct IP access (1880 = Node-RED web UI)
+  open_host_port 1880 'Node-RED Web UI'
+
   log "Node-RED ready — palette install enabled, http://${NODE_IP}:1880"
+}
+
+# ── Helper: open a TCP port on host firewall (idempotent, works with ufw/iptables) ──
+open_host_port() {
+  local port="$1" comment="${2:-k8s service}"
+  if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+    ufw allow "${port}"/tcp comment "${comment}" >/dev/null 2>&1
+    info "UFW opened port ${port} (${comment})"
+  elif command -v iptables &>/dev/null; then
+    if ! iptables -C INPUT -p tcp --dport "${port}" -j ACCEPT 2>/dev/null; then
+      iptables -I INPUT -p tcp --dport "${port}" -j ACCEPT
+      info "iptables opened port ${port} (${comment})"
+    fi
+  else
+    warn "No firewall tool found (ufw/iptables) — port ${port} may not be reachable from outside"
+  fi
 }
 
 # ════════════════════════════════════════════════════════════════════
@@ -651,6 +670,9 @@ spec:
       targetPort: 9000
       protocol: TCP
 EOF
+
+  # Open firewall for Traefik dashboard direct IP access
+  open_host_port 9000 'Traefik Dashboard'
 
   log "Traefik dashboard exposed:"
   log "  → https://traefik.${DOMAIN}/dashboard/   (Basic Auth: admin / iothub.2026)"
