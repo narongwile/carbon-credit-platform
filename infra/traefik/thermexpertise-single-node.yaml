@@ -406,7 +406,8 @@ metadata:
   namespace: data
 subsets:
   - addresses:
-      - ip: 14.207.141.71
+      # - ip: 14.207.141.71
+      - ip: 10.42.0.1
     ports:
       - name: http
         port: 37162
