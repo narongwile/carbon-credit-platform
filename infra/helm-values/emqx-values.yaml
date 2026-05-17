@@ -59,8 +59,8 @@ service:
   mqttssl: 8883
   ws: 8083
   wss: 8084
-  dashboard: 30183    # custom NodePort-style port for direct host access
-  api: 30183
+  dashboard: 18083    # EMQX default — chart probes hardcode /status path on 18083
+  api: 18083          # changing port breaks probes → revert
 
 # ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
 emqxConfig:
@@ -123,10 +123,8 @@ emqxConfig:
   EMQX_SYSMON__VM__LONG_GC: "disabled"
   EMQX_SYSMON__VM__LONG_SCHEDULE: "240ms"
 
-  # Dashboard bind port — MUST match service.dashboard/api above (30183).
-  # Without this, EMQX still binds default 18083 → Service routes to a
-  # port nothing listens on → 502 / connection refused.
-  EMQX_DASHBOARD__LISTENERS__HTTP__BIND: "30183"
+  # Dashboard bind = EMQX default 18083 (don't override)
+  EMQX_DASHBOARD__LISTENERS__HTTP__BIND: "0.0.0.0:18083"
 
 # ── Inject dashboard admin user/password from Secret ────────────────
 # IMPORTANT: chart template sets EMQX_DASHBOARD__DEFAULT_PASSWORD=public
@@ -324,7 +322,7 @@ extraDeploy:
               args:
                 - |
                   set -eu
-                  EMQX="http://emqx.data.svc.cluster.local:30183"
+                  EMQX="http://emqx.data.svc.cluster.local:18083"
                   echo "Waiting for EMQX API ready..."
                   for i in $(seq 1 60); do
                     code=$(curl -s -o /dev/null -w '%{http_code}' \
@@ -392,8 +390,8 @@ extraDeploy:
           targetPort: 8883
           protocol: TCP
         - name: dashboard
-          port: 30183
-          targetPort: 30183
+          port: 18083              # standard EMQX default
+          targetPort: 18083
           protocol: TCP
         - name: ws
           port: 8083
@@ -468,7 +466,7 @@ extraDeploy:
                   service:
                     name: emqx
                     port:
-                      number: 30183
+                      number: 18083
       tls:
         - hosts: [emqx.thermexpertise.com]
           secretName: emqx-dashboard-tls
