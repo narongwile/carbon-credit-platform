@@ -216,22 +216,22 @@ extraVolumes:
 # before the listener exists.
 startupProbe:
   enabled: true
-  initialDelaySeconds: 30
+  initialDelaySeconds: 60      # Dashboard listener is LAST to start (~60-90s)
   periodSeconds: 10
-  failureThreshold: 60    # 10 min total — generous for first cold start
-  timeoutSeconds: 5
+  failureThreshold: 60         # 10 min total — generous for first cold start
+  timeoutSeconds: 10           # Prevent "context deadline exceeded"
 readinessProbe:
   enabled: true
-  initialDelaySeconds: 60
+  initialDelaySeconds: 10      # Short — startup probe already gates this
   periodSeconds: 15
-  failureThreshold: 8
-  timeoutSeconds: 5
+  failureThreshold: 3          # 3 failures before marking unready
+  timeoutSeconds: 10           # Prevent "context deadline exceeded"
 livenessProbe:
   enabled: true
-  initialDelaySeconds: 120
+  initialDelaySeconds: 30      # Short — startup probe already gates this
   periodSeconds: 30
   failureThreshold: 6
-  timeoutSeconds: 5
+  timeoutSeconds: 10           # Prevent "context deadline exceeded"
 
 # ── Resources ───────────────────────────────────────────────────────
 resources:
