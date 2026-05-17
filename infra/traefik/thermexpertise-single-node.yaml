@@ -356,7 +356,7 @@ spec:
         - name: admin-ip-allowlist
       services:
         - name: emqx
-          port: 18083
+          port: 30183
   tls:
     secretName: thermexpertise-tls-data
 
@@ -376,7 +376,7 @@ spec:
         - name: admin-ip-allowlist
       services:
         - name: emqx
-          port: 18083
+          port: 30183
 
 # ==========================================
 # HTTP by public IPv4 (Host header = x.x.x.x) — no sed/deploy substitution required.

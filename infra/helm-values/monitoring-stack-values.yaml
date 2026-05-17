@@ -28,7 +28,7 @@ prometheus:
     additionalScrapeConfigs:
       - job_name: emqx
         static_configs:
-          - targets: ["emqx.infra.svc.cluster.local:18083"]
+          - targets: ["emqx.infra.svc.cluster.local:30183"]
       - job_name: kafka
         static_configs:
           - targets: ["kafka-metrics.infra.svc.cluster.local:9308"]

@@ -59,8 +59,8 @@ service:
   mqttssl: 8883
   ws: 8083
   wss: 8084
-  dashboard: 18083    # EMQX internal default — DO NOT change (chart uses as containerPort)
-  api: 18083          # Must match dashboard — chart probes use this
+  dashboard: 30183    # EMQX internal default — DO NOT change (chart uses as containerPort)
+  api: 30183          # Must match dashboard — chart probes use this
 
 # ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
 emqxConfig:
@@ -148,9 +148,9 @@ emqxConfig:
   # DO NOT set EMQX_DASHBOARD__LISTENERS__HTTP__BIND here!
   # The Helm chart parses BIND values → containerPort. Any format
   # ("0.0.0.0:30183" or "30183") gets normalized to "0.0.0.0:30183"
-  # which is a string → K8s rejects it. EMQX defaults to 18083.
+  # which is a string → K8s rejects it. EMQX defaults to 30183.
   # External access at port 30183 is via emqx-external Service:
-  #   port:30183 → targetPort:18083
+  #   port:30183 → targetPort:30183
 
 # ── Inject dashboard admin user/password from Secret ────────────────
 # IMPORTANT: chart template sets EMQX_DASHBOARD__DEFAULT_PASSWORD=public
@@ -348,7 +348,7 @@ extraDeploy:
               args:
                 - |
                   set -eu
-                  EMQX="http://emqx.data.svc.cluster.local:18083"
+                  EMQX="http://emqx.data.svc.cluster.local:30183"
                   echo "Waiting for EMQX API ready..."
                   for i in $(seq 1 60); do
                     code=$(curl -s -o /dev/null -w '%{http_code}' \
@@ -419,7 +419,7 @@ extraDeploy:
           protocol: TCP
         - name: dashboard
           port: 30183              # ภายนอกเข้า 14.207.141.71:30183
-          targetPort: 18083        # forward ไป pod:18083 (EMQX default)
+          targetPort: 30183        # forward ไป pod:30183 (EMQX default)
           protocol: TCP
         - name: ws
           port: 8083
@@ -494,7 +494,7 @@ extraDeploy:
                   service:
                     name: emqx
                     port:
-                      number: 18083
+                      number: 30183
       tls:
         - hosts: [emqx.thermexpertise.com]
           secretName: emqx-dashboard-tls

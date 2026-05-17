@@ -812,7 +812,7 @@ phase6_verify() {
   check "https://argocd.${DOMAIN}"
   check "https://keycloak.${DOMAIN}"
   check "http://${NODE_IP}:1880"           "200|302"
-  check "http://${NODE_IP}:18083"          "200|302"
+  check "http://${NODE_IP}:30183"          "200|302"
   check "https://${NODE_IP}:37162/fed30761" "200|302"
   check "http://${NODE_IP}:9000/dashboard/" "200|301|302|401"   # 401 = BasicAuth prompt = OK
   check "https://traefik.${DOMAIN}/dashboard/" "200|301|302|401"
