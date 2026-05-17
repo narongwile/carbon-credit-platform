@@ -383,6 +383,7 @@ spec:
 # Namespace: data (aaPanel — host-level service)
 # aaPanel runs directly on the host at 0.0.0.0:37162.
 # We expose it to Traefik via a headless Service + manual Endpoints.
+# Its nginx expects Host header to include :37162, so we rewrite it.
 # ==========================================
 ---
 apiVersion: v1
@@ -414,6 +415,17 @@ subsets:
 
 ---
 apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: aapanel-host-rewrite
+  namespace: data
+spec:
+  headers:
+    customRequestHeaders:
+      Host: "aapanel.thermexpertise.com:37162"
+
+---
+apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: aapanel-admin
@@ -425,6 +437,7 @@ spec:
     - match: Host(`aapanel.thermexpertise.com`)
       kind: Rule
       middlewares:
+        - name: aapanel-host-rewrite
         - name: admin-ip-allowlist
       services:
         - name: aapanel
@@ -445,6 +458,7 @@ spec:
     - match: Host(`aapanel.thermexpertise.com`) && !PathPrefix(`/.well-known/acme-challenge`)
       kind: Rule
       middlewares:
+        - name: aapanel-host-rewrite
         - name: admin-ip-allowlist
       services:
         - name: aapanel
