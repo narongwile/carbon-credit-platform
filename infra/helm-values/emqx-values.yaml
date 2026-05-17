@@ -403,7 +403,8 @@ extraDeploy:
       type: ClusterIP
       externalIPs:
         - 14.207.141.71      # ← node public IP — edit when changing host
-        - 127.0.0.1           # ← localhost access from the node itself
+        # NOTE: 127.0.0.1 is NOT allowed in externalIPs (K8s blocks loopback).
+        # Use: mosquitto_pub -h 14.207.141.71 instead of -h localhost
       selector:
         app.kubernetes.io/name: emqx
         app.kubernetes.io/instance: emqx
