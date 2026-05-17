@@ -1,0 +1,48 @@
+# ============================================================
+# ArgoCD Application — Traefik IngressRoutes & Certificates
+# Auto-deploys: thermexpertise-single-node.yaml, traefik-config.yaml
+# from infra/traefik/ directory.
+#
+# Services covered:
+#   • thermexpertise.com / www  → Frontend (app/80)
+#   • api.thermexpertise.com    → Backend API (app/3000)
+#   • grafana.thermexpertise.com→ Grafana (monitoring/80)
+#   • nodered.thermexpertise.com→ Node-RED (carbon-credit/1880)
+#   • pma.thermexpertise.com    → phpMyAdmin (carbon-credit/80)
+#   • emqx.thermexpertise.com   → EMQX Dashboard (data/18083)
+# ============================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-routes
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: infrastructure
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+    targetRevision: main
+    path: infra/traefik
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    # No namespace — resources define their own namespaces
+    # (app, monitoring, carbon-credit, data)
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
