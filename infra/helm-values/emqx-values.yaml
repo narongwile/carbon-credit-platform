@@ -59,8 +59,8 @@ service:
   mqttssl: 8883
   ws: 8083
   wss: 8084
-  dashboard: 18083    # EMQX default — chart probes hardcode /status path on 18083
-  api: 18083          # changing port breaks probes → revert
+  dashboard: 30183    # Dashboard exposed on port 30183
+  api: 30183          # API co-located with dashboard on 30183
 
 # ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
 emqxConfig:
@@ -114,17 +114,38 @@ emqxConfig:
   EMQX_MQTT__MAX_PACKET_SIZE: "1MB"
   EMQX_MQTT__MAX_CLIENTID_LEN: "65535"
   EMQX_MQTT__MAX_QOS_ALLOWED: "2"
-  EMQX_MQTT__KEEPALIVE_MULTIPLIER: "1.5"
+  # EMQX_MQTT__KEEPALIVE_MULTIPLIER: "1.5"
   EMQX_MQTT__RETAIN_AVAILABLE: "true"
   EMQX_MQTT__WILDCARD_SUBSCRIPTION: "true"
   EMQX_MQTT__SHARED_SUBSCRIPTION: "true"
+
+  # ── Anti-disconnect tuning ───────────────────────────────────────
+  # Prevent broker from dropping connections right after PUBLISH.
+  # • keepalive_multiplier 2.5 → broker waits 2.5× the client's
+  #   keepalive interval before declaring it dead (MQTT spec = 1.5).
+  #   Tolerates jittery networks / GC pauses.
+  # • idle_timeout infinity → never close a socket for being "idle".
+  # • session_expiry_interval = 7200s → if the client does get
+  #   disconnected, its session + subscriptions survive for 2 hours,
+  #   allowing seamless reconnect without re-subscribing.
+  # • max_awaiting_rel / await_rel_timeout → large QoS-2 windows.
+  EMQX_MQTT__KEEPALIVE_MULTIPLIER: "2.5"
+  EMQX_MQTT__IDLE_TIMEOUT: "infinity"
+  EMQX_MQTT__SESSION_EXPIRY_INTERVAL: "7200s"
+  EMQX_MQTT__MAX_AWAITING_REL: "1000"
+  EMQX_MQTT__AWAIT_REL_TIMEOUT: "300s"
+
+  # ── Connection / rate-limit tuning (don't kill slow publishers) ──
+  EMQX_LISTENERS__TCP__DEFAULT__MAX_CONN_RATE: "500"
+  EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: "5000"
+  EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE: "256MB"
 
   # System resource guards
   EMQX_SYSMON__VM__LONG_GC: "disabled"
   EMQX_SYSMON__VM__LONG_SCHEDULE: "240ms"
 
-  # Dashboard bind = EMQX default 18083 (don't override)
-  EMQX_DASHBOARD__LISTENERS__HTTP__BIND: "0.0.0.0:18083"
+  # ── Dashboard bind = port 30183 ──────────────────────────────────
+  EMQX_DASHBOARD__LISTENERS__HTTP__BIND: "0.0.0.0:30183"
 
 # ── Inject dashboard admin user/password from Secret ────────────────
 # IMPORTANT: chart template sets EMQX_DASHBOARD__DEFAULT_PASSWORD=public
@@ -322,7 +343,7 @@ extraDeploy:
               args:
                 - |
                   set -eu
-                  EMQX="http://emqx.data.svc.cluster.local:18083"
+                  EMQX="http://emqx.data.svc.cluster.local:30183"
                   echo "Waiting for EMQX API ready..."
                   for i in $(seq 1 60); do
                     code=$(curl -s -o /dev/null -w '%{http_code}' \
@@ -390,8 +411,8 @@ extraDeploy:
           targetPort: 8883
           protocol: TCP
         - name: dashboard
-          port: 18083              # standard EMQX default
-          targetPort: 18083
+          port: 30183              # Dashboard on port 30183
+          targetPort: 30183
           protocol: TCP
         - name: ws
           port: 8083
@@ -402,7 +423,7 @@ extraDeploy:
           targetPort: 8084
           protocol: TCP
 
-  # ── ACL ConfigMap (mounted above into /opt/emqx/etc/acl.conf) ────
+  # ── ACL ConfigMap (mounted above into /opt/emqx/mount/acl/) ──────
   - apiVersion: v1
     kind: ConfigMap
     metadata:
@@ -418,14 +439,14 @@ extraDeploy:
         %% Placeholders: ${username}, ${clientid}, ${peerhost}
         %% ─────────────────────────────────────────────────────────
 
-        %% Superuser: full access (manage in dashboard → built-in DB)
+        %% Superuser
         {allow, {user, "admin"}, all, ["#"]}.
 
-        %% Internal services (backend, node-red) — full access on app topics
+        %% Internal services
         {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
         {allow, {user, "nodered"}, all, ["app/#", "iot/#"]}.
 
-        %% Devices — scoped to own topic tree by clientid
+        %% Devices — scoped by clientid
         {allow, {user, "device"}, publish, [
             "devices/${clientid}/#",
             "sensors/${clientid}/#",
@@ -466,7 +487,7 @@ extraDeploy:
                   service:
                     name: emqx
                     port:
-                      number: 18083
+                      number: 30183
       tls:
         - hosts: [emqx.thermexpertise.com]
           secretName: emqx-dashboard-tls

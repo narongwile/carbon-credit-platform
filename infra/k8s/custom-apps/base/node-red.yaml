@@ -69,6 +69,8 @@ spec:
               value: "1883"
             - name: MQTT_USERNAME
               value: nodered
+            - name: MQTT_PASSWORD
+              value: "iothub.2026"
             # Dashboard admin auth (from seeded Secret)
             - name: NODE_RED_USERNAME
               valueFrom:
@@ -217,8 +219,9 @@ data:
       },
 
       functionGlobalContext: {
-        mqttBroker: process.env.MQTT_BROKER_URL,
-        mqttUser:   process.env.MQTT_USERNAME
+        mqttBroker:   process.env.MQTT_BROKER_URL,
+        mqttUser:     process.env.MQTT_USERNAME,
+        mqttPassword: process.env.MQTT_PASSWORD
       },
 
       functionExternalModules: true,
