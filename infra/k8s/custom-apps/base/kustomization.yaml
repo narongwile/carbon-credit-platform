@@ -5,9 +5,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-commonLabels:
-  app.kubernetes.io/part-of: carbon-credit-platform
-  tier: custom-apps
+# Use new `labels` syntax with includeSelectors:false → labels added to metadata
+# only, NOT pod selectors. Prevents "field is immutable" error when upgrading
+# existing Deployments where selector includes these labels.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: carbon-credit-platform
+      tier: custom-apps
+    includeSelectors: false
+    includeTemplates: false
 
 resources:
   # ── Namespaces ──

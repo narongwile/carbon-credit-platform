@@ -127,10 +127,30 @@ datasources:
 
 extraSecretMounts:
   - name: mysql-credentials
-    secretName: mysql-credentials
-    defaultMode: 0440
-    mountPath: /etc/secrets/mysql
+    secretName: mysql-credentials     # MUST exist in monitoring namespace
+    defaultMode: 0440                 # K8s does NOT support cross-namespace
+    mountPath: /etc/secrets/mysql     # secret mounts — see extraObjects below
     readOnly: true
+
+# Create monitoring/mysql-credentials by mirroring data/mysql-credentials.
+# This avoids ManualCopy drift — chart manages the mirror.
+extraObjects:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: mysql-credentials
+      namespace: monitoring
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+        app.kubernetes.io/managed-by: Helm
+      annotations:
+        # WARNING: this stores the password in the chart values. For prod,
+        # replace with SealedSecrets / External Secrets Operator (ESO).
+        description: "Mirror of data/mysql-credentials for Grafana MySQL datasource"
+    type: Opaque
+    stringData:
+      mysql-password: "iothub.2026"
+      mysql-root-password: "iothub.2026"
 
 dashboardProviders:
   dashboardproviders.yaml:

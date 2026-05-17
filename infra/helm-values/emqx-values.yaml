@@ -94,12 +94,15 @@ emqxConfig:
   EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_POSITION: suffix
 
   # ── API key bootstrap (5.4+) — feeds the seed Job below ──────────
-  EMQX_API_KEY__BOOTSTRAP_FILE: "/opt/emqx/data/apikey_bootstrap.txt"
+  # Mount as directory to avoid subPath-on-existing-file containerd bug
+  EMQX_API_KEY__BOOTSTRAP_FILE: "/opt/emqx/mount/apikey/apikey_bootstrap.txt"
 
   # ── Authorization: file-based ACL mounted from ConfigMap ──────────
+  # Use directory mount path (NOT subPath onto /opt/emqx/etc/acl.conf —
+  # containerd can fail to overlay subPath onto pre-existing file in image)
   EMQX_AUTHORIZATION__SOURCES__1__TYPE: file
   EMQX_AUTHORIZATION__SOURCES__1__ENABLE: "true"
-  EMQX_AUTHORIZATION__SOURCES__1__PATH: "/opt/emqx/etc/acl.conf"
+  EMQX_AUTHORIZATION__SOURCES__1__PATH: "/opt/emqx/mount/acl/acl.conf"
   EMQX_AUTHORIZATION__NO_MATCH: deny
   EMQX_AUTHORIZATION__DENY_ACTION: ignore
   EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
@@ -151,14 +154,17 @@ extraEnv:
         key: EMQX_DASHBOARD__DEFAULT_PASSWORD
 
 # ── Mount the ACL ConfigMap + API key bootstrap file ───────────────
+# Mount as directories (NOT subPath onto file paths) — containerd has
+# a known bug where subPath mount onto a file in the image rootfs fails:
+#   "cannot create subdirectories in <path>: not a directory"
+# Directory mounts avoid this entirely. The env vars EMQX_*__PATH /
+# EMQX_API_KEY__BOOTSTRAP_FILE point to /opt/emqx/mount/<name>/<file>.
 extraVolumeMounts:
   - name: emqx-acl
-    mountPath: /opt/emqx/etc/acl.conf
-    subPath: acl.conf
+    mountPath: /opt/emqx/mount/acl     # directory (contains acl.conf)
     readOnly: true
   - name: emqx-apikey
-    mountPath: /opt/emqx/data/apikey_bootstrap.txt
-    subPath: apikey_bootstrap.txt
+    mountPath: /opt/emqx/mount/apikey  # directory (contains apikey_bootstrap.txt)
     readOnly: true
 
 extraVolumes:
@@ -166,6 +172,7 @@ extraVolumes:
     configMap:
       name: emqx-acl
       optional: true           # don't block pod start if CM missing
+      defaultMode: 0444
       items:
         - key: acl.conf
           path: acl.conf
@@ -173,6 +180,7 @@ extraVolumes:
     secret:
       secretName: emqx-api-key
       optional: true           # pod boots even if Secret not yet synced
+      defaultMode: 0444
       items:
         - key: apikey_bootstrap.txt
           path: apikey_bootstrap.txt
