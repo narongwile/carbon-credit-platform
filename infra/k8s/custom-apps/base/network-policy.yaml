@@ -45,16 +45,20 @@ spec:
   policyTypes:
   - Egress
   egress:
+  # Same namespace
   - to:
     - podSelector: {}
+  # app namespace
   - to:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: app
+  # data namespace (EMQX, MySQL, etc.)
   - to:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: data
+  # DNS (kube-system)
   - to:
     - namespaceSelector:
         matchLabels:
@@ -64,6 +68,19 @@ spec:
       port: 53
     - protocol: TCP
       port: 53
+  # External internet (npm registry, etc.)
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
 ---
 # Node-RED → EMQX (data namespace) MQTT connectivity
 apiVersion: networking.k8s.io/v1
