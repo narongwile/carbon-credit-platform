@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
-import { Zap, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
+import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV = [
@@ -45,9 +45,9 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
           <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
             <div className="flex items-center gap-2 mb-1">
               <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                <Zap size={14} className="text-white" />
+                <Boxes size={14} className="text-white" />
               </div>
-              <span className="font-bold text-white tracking-wider text-sm">ETERNITY</span>
+              <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
             </div>
             <div className="text-[10px] text-slate-600 ml-9">Customer Portal</div>
           </div>

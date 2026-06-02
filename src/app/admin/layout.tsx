@@ -7,7 +7,7 @@ import { getSession, clearSession } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
 import { useRealtimeData } from '@/lib/realtime'
 import {
-  Zap, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
+  Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
   Search, Database, ShieldCheck
@@ -77,9 +77,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
             <div className="flex items-center gap-2 mb-1">
               <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                <Zap size={14} className="text-white" />
+                <Boxes size={14} className="text-white" />
               </div>
-              <span className="font-bold text-white tracking-wider text-sm">ETERNITY</span>
+              <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
             </div>
             <div className="text-[10px] text-slate-500 truncate mt-0.5 ml-9">{orgName}</div>
           </div>
