@@ -8,6 +8,7 @@ import {
   dashboardThemes,
   roleLabels,
 } from '@/lib/orgData'
+import { getOrgThemeGrants } from '@/lib/orgThemes'
 import type { Department, ManagedUser, ManagedRole } from '@/types/org'
 import {
   Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check,
@@ -210,7 +211,7 @@ export default function UserManagementPage() {
 
       {/* PERMISSIONS */}
       {tab === 'permissions' && (
-        <DashboardPermissions departments={departments} setDepartments={setDepartments} users={users} />
+        <DashboardPermissions orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} />
       )}
 
       {(editingUser || showNewUser) && (
@@ -227,7 +228,8 @@ export default function UserManagementPage() {
 }
 
 // ---- Dashboard View Permission tab ----------------------------------------
-function DashboardPermissions({ departments, setDepartments, users }: {
+function DashboardPermissions({ orgId, departments, setDepartments, users }: {
+  orgId: string
   departments: Department[]
   setDepartments: React.Dispatch<React.SetStateAction<Department[]>>
   users: ManagedUser[]
@@ -235,7 +237,12 @@ function DashboardPermissions({ departments, setDepartments, users }: {
   const [selectedDept, setSelectedDept] = useState(departments[0]?.id ?? '')
   const dept = departments.find((d) => d.id === selectedDept)
 
+  // Only themes the SUPER ADMIN has granted to this organization are selectable.
+  const grantedIds = getOrgThemeGrants(orgId)
+  const availableThemes = dashboardThemes.filter((t) => grantedIds.includes(t.id))
+
   const toggleTheme = (themeId: string) => {
+    if (!grantedIds.includes(themeId)) return
     setDepartments((prev) => prev.map((d) => d.id !== selectedDept ? d : {
       ...d,
       themeIds: d.themeIds.includes(themeId) ? d.themeIds.filter((t) => t !== themeId) : [...d.themeIds, themeId],
@@ -271,9 +278,18 @@ function DashboardPermissions({ departments, setDepartments, users }: {
       {/* theme selection (multiple) */}
       <div className="rounded-xl p-4 lg:col-span-2" style={surface}>
         <h3 className="text-sm font-semibold text-white mb-1">Dashboard Themes <span className="text-slate-500 font-normal">(select multiple)</span></h3>
-        <p className="text-xs text-slate-500 mb-3">Themes enabled here become visible to every user in {dept?.name ?? 'this department'}.</p>
+        <p className="text-xs text-slate-500 mb-1">Themes enabled here become visible to every user in {dept?.name ?? 'this department'}.</p>
+        <p className="text-[11px] text-slate-600 mb-3 flex items-center gap-1.5">
+          <Palette size={12} className="text-violet-400" />
+          The themes available to your organization are managed by Super Admin.
+        </p>
+        {availableThemes.length === 0 ? (
+          <div className="p-4 rounded-lg text-xs text-slate-500" style={inset}>
+            No dashboard themes have been granted to your organization yet. Contact your Super Admin to enable themes.
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {dashboardThemes.map((th) => {
+          {availableThemes.map((th) => {
             const on = dept?.themeIds.includes(th.id)
             return (
               <button key={th.id} onClick={() => toggleTheme(th.id)} className="flex items-center justify-between p-3 rounded-lg text-left transition-all"
@@ -287,6 +303,7 @@ function DashboardPermissions({ departments, setDepartments, users }: {
             )
           })}
         </div>
+        )}
       </div>
     </div>
   )

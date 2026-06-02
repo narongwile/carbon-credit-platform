@@ -2,9 +2,10 @@
 
 import { useState } from 'react'
 import { organizations } from '@/lib/mockData'
-import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels } from '@/lib/orgData'
+import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
+import { getOrgThemeGrants } from '@/lib/orgThemes'
 import type { Organization } from '@/types'
-import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users } from 'lucide-react'
+import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette } from 'lucide-react'
 import clsx from 'clsx'
 
 function StatusBadge({ status }: { status: string }) {
@@ -119,6 +120,11 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
 
   const toggleFeature = (id: string) => setFeatures((prev) => ({ ...prev, [id]: !prev[id] }))
 
+  // Per-org dashboard theme grants — super admin only.
+  const [grantedThemes, setGrantedThemes] = useState<string[]>(getOrgThemeGrants(org.id))
+  const toggleTheme = (id: string) =>
+    setGrantedThemes((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -199,6 +205,31 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+
+          {/* Dashboard themes — super admin managed (per organization) */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <Palette size={13} className="text-indigo-400" />
+              <label className="text-xs text-slate-400 uppercase tracking-wider">Dashboard Themes</label>
+              <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.12)' }}>SUPER ADMIN ONLY</span>
+            </div>
+            <p className="text-[11px] text-slate-500 mb-2">Themes granted here become available for this organization&apos;s admins to assign to departments.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {dashboardThemes.map((th) => {
+                const on = grantedThemes.includes(th.id)
+                return (
+                  <button key={th.id} onClick={() => toggleTheme(th.id)} className="flex items-center justify-between p-3 rounded-lg text-left transition-all"
+                    style={{ background: '#0a0e1a', border: `1px solid ${on ? th.accent : '#1e2433'}` }}>
+                    <div className="min-w-0">
+                      <div className="text-sm text-slate-200">{th.name}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{th.description}</div>
+                    </div>
+                    {on ? <ToggleRight size={22} style={{ color: th.accent }} /> : <ToggleLeft size={22} className="text-slate-600" />}
+                  </button>
+                )
+              })}
             </div>
           </div>
 
