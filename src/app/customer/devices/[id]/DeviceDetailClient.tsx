@@ -4,13 +4,12 @@ import { useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { managedDevices, defaultNotificationChannels, eventProblems } from '@/lib/orgData'
-import type { NotificationChannelConfig } from '@/types/org'
+import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
+import FixDashboard from '@/components/device/FixDashboard'
+import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
-} from 'recharts'
-import {
-  ArrowLeft, Activity, Upload, Download, FileText, Mail, FileSpreadsheet,
-  ToggleLeft, ToggleRight, Wifi, WifiOff, Save, Check,
+  ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet,
+  ToggleLeft, ToggleRight, Wifi, WifiOff, Save, Check, LayoutGrid, Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -20,12 +19,8 @@ const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
 function genHistory(seed: number) {
   const out: { time: string; value: number }[] = []
-  const now = Date.now()
-  let v = seed
-  for (let i = 96; i >= 0; i--) {
-    v += (Math.random() - 0.5) * 1.5
-    out.push({ time: new Date(now - i * 15 * 60 * 1000).toISOString().slice(5, 16).replace('T', ' '), value: +v.toFixed(1) })
-  }
+  const now = Date.now(); let v = seed
+  for (let i = 96; i >= 0; i--) { v += (Math.random() - 0.5) * 1.5; out.push({ time: new Date(now - i * 15 * 60 * 1000).toISOString().slice(5, 16).replace('T', ' '), value: +v.toFixed(1) }) }
   return out
 }
 
@@ -37,8 +32,9 @@ const PDF_HISTORY = [
 export default function DeviceDetailClient() {
   const params = useParams()
   const id = String(params?.id ?? '')
-  const device = managedDevices.find((d) => d.id === id) ?? managedDevices[0]
+  const device: ManagedDevice = managedDevices.find((d) => d.id === id) ?? managedDevices[0]
 
+  const [view, setView] = useState<'fix' | 'freestyle'>(device.theme)
   const baseTemp = useMemo(() => parseFloat(device.lastValue ?? '5') || 5, [device])
   const history = useMemo(() => genHistory(baseTemp), [baseTemp])
 
@@ -52,72 +48,46 @@ export default function DeviceDetailClient() {
 
   const toggleChannel = (cid: string) => setChannels((c) => c.map((x) => (x.id === cid ? { ...x, enabled: !x.enabled } : x)))
   const saveSetting = async () => { await new Promise((r) => setTimeout(r, 300)); setSavedSetting(true); setTimeout(() => setSavedSetting(false), 2000) }
-
   const status = device.status === 'online' ? 'NORMAL' : 'OFFLINE'
 
   return (
     <div className="p-6 space-y-5">
-      <Link href="/customer/devices" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white">
-        <ArrowLeft size={15} /> Back to devices
-      </Link>
+      {/* Header */}
+      <div className="flex flex-wrap items-center gap-3">
+        <Link href="/customer/devices" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white">
+          <ArrowLeft size={15} /> Back
+        </Link>
+        <span className="text-base font-bold text-white">{device.name}</span>
+        <span className={clsx('flex items-center gap-1 text-xs font-medium', device.status === 'online' ? 'text-green-400' : 'text-slate-500')}>
+          {device.status === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />} {status}
+        </span>
+        <span className="text-xs text-slate-500">{device.location}</span>
 
-      {/* Individual device (FIX): picture, status, last value */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <div className="rounded-xl p-5 flex flex-col items-center justify-center text-center" style={surface}>
-          <div className="w-full h-32 rounded-lg flex items-center justify-center mb-3" style={inset}>
-            <Activity size={40} className="text-slate-700" />
-          </div>
-          <div className="text-sm font-bold text-white">{device.name}</div>
-          <div className="text-xs text-slate-500">{device.deviceType} · {device.serial}</div>
-        </div>
-        <div className="rounded-xl p-5 flex flex-col justify-center" style={surface}>
-          <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Status</div>
-          <div className={clsx('flex items-center gap-2 text-lg font-bold', device.status === 'online' ? 'text-green-400' : 'text-slate-500')}>
-            {device.status === 'online' ? <Wifi size={18} /> : <WifiOff size={18} />} {status}
-          </div>
-          <div className="text-xs text-slate-500 mt-2">{device.location}</div>
-        </div>
-        <div className="rounded-xl p-5 flex flex-col justify-center" style={surface}>
-          <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Last Data Value</div>
-          <div className="text-3xl font-extrabold text-white tabular-nums">{device.lastValue ?? '—'}</div>
-          <div className="text-xs text-slate-500 mt-2">Updated just now</div>
+        {/* Theme preview toggle */}
+        <div className="ml-auto flex items-center gap-1 p-1 rounded-lg" style={inset}>
+          <button onClick={() => setView('fix')} className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold', view === 'fix' ? 'text-white' : 'text-slate-500')} style={view === 'fix' ? { background: '#6366f1' } : {}}>
+            <LayoutGrid size={13} /> FIX
+          </button>
+          <button onClick={() => setView('freestyle')} className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold', view === 'freestyle' ? 'text-white' : 'text-slate-500')} style={view === 'freestyle' ? { background: '#f55f3e' } : {}}>
+            <Sparkles size={13} /> Free Style
+          </button>
         </div>
       </div>
-
-      {/* Graph: date time selected */}
-      <div className="rounded-xl p-5" style={surface}>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h3 className="text-sm font-semibold text-white">Performance Graph</h3>
-          <div className="flex items-center gap-2">
-            <input type="date" value={range.start} onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))}
-              className="rounded-lg px-2.5 py-1.5 text-xs text-white outline-none" style={inset} />
-            <span className="text-slate-600 text-xs">to</span>
-            <input type="date" value={range.end} onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))}
-              className="rounded-lg px-2.5 py-1.5 text-xs text-white outline-none" style={inset} />
-          </div>
-        </div>
-        <div className="h-64">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={history} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-              <XAxis dataKey="time" stroke="#64748b" fontSize={10} minTickGap={40} tickLine={false} />
-              <YAxis stroke="#64748b" fontSize={11} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ background: '#0a0e1a', border: '1px solid #1e2433', borderRadius: 8, color: '#fff' }} />
-              <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
+      <div className="text-[11px] text-slate-600 -mt-3">
+        {view === device.theme ? 'Showing this device’s configured dashboard.' : 'Previewing alternate theme (device default: ' + device.theme.toUpperCase() + ').'}
       </div>
 
-      {/* Sub-feature row */}
+      {/* Dashboard (distinct per theme) */}
+      {view === 'fix' ? <FixDashboard device={device} /> : <FreestyleDashboard device={device} />}
+
+      {/* Common viewer tools */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Alarm log + event selection */}
         <div className="rounded-xl p-5 space-y-3" style={surface}>
           <h3 className="text-sm font-semibold text-white">Alarm Log</h3>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Event Selection</label>
-            <select value={selectedEvent} onChange={(e) => setSelectedEvent(e.target.value)}
-              className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+            <select value={selectedEvent} onChange={(e) => setSelectedEvent(e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
               {eventProblems.map((ev) => <option key={ev.id} value={ev.id}>{ev.label}</option>)}
             </select>
           </div>
