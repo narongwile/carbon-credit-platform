@@ -1,6 +1,6 @@
 import React from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { RefrigerationNode, RefrigerationHistory } from '../../api/mockRefrigerationData';
+import { RefrigerationNode, RefrigerationHistory } from '@/lib/mockRefrigerationData';
 import ControlPanel from './ControlPanel';
 import AnalyticsChart from './AnalyticsChart';
 import KpiCards from './KpiCards';

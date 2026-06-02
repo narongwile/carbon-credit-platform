@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefrigerationHistory } from '../../api/mockRefrigerationData';
+import { RefrigerationHistory } from '@/lib/mockRefrigerationData';
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface Props {

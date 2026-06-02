@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefrigerationNode } from '../../api/mockRefrigerationData';
+import { RefrigerationNode } from '@/lib/mockRefrigerationData';
 import { ChevronDown, Download, BarChart2 } from 'lucide-react';
 
 interface Props {
