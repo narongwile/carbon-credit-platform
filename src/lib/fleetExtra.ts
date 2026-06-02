@@ -48,7 +48,7 @@ export const cellularLinks: CellularLink[] = [
 ]
 
 export const loraPeers: LoraPeer[] = [
-  { id: 'lp-1', interfaceId: 'if-bb1-ble', devaddr: '26011A2B', spreadingFactor: 'SF9', freqBand: 'AS923', lastSeenAt: new Date().toISOString(), lastRssiDbm: -98 },
+  { id: 'lp-1', interfaceId: 'if-bb1-lora', devaddr: '26011A2B', spreadingFactor: 'SF9', freqBand: 'AS923', lastSeenAt: new Date().toISOString(), lastRssiDbm: -98 },
 ]
 
 export const getFirmwareByDevice = (deviceId: string) => deviceFirmwareHistory.filter((f) => f.deviceId === deviceId)

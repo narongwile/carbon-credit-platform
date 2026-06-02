@@ -116,7 +116,7 @@ export interface FleetDevice {
 export interface DeviceInterface {
   id: string
   deviceId: string
-  kind: 'can' | 'rs485' | 'i2c' | 'gpio_di' | 'gpio_do' | 'ct' | 'lora' | 'cellular'
+  kind: 'can' | 'rs485' | 'i2c' | 'gpio_di' | 'gpio_do' | 'ct' | 'lora' | 'cellular' | 'gnss' | 'wifi'
   label: string
   status: 'up' | 'down'
 }

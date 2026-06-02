@@ -16,6 +16,7 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const kindColor: Record<string, string> = {
   can: '#6366f1', rs485: '#06b6d4', i2c: '#22c55e', gpio_di: '#a78bfa',
   gpio_do: '#a78bfa', ct: '#fbbf24', lora: '#f59e0b', cellular: '#ef4444',
+  gnss: '#22c55e', wifi: '#6366f1',
 }
 
 const fwResult: Record<string, { color: string; icon: React.ReactNode }> = {
