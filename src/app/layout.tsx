@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import ToasterProvider from '@/components/ToasterProvider'
 
 export const metadata: Metadata = {
   title: 'ONEOPS — Unified Operations Platform',
@@ -23,6 +24,7 @@ export default function RootLayout({
         />
       </head>
       <body className="font-sans antialiased" style={{ background: '#0a0e1a', color: 'white' }}>
+        <ToasterProvider />
         {children}
       </body>
     </html>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react';
+import { useMqttTelemetry } from '@/hooks/useMqttTelemetry';
 
 export interface RefrigerationNode {
   id: string;
@@ -67,12 +68,27 @@ const MOCK_HISTORY = MOCK_NODES.reduce((acc, node) => {
 
 export function useRefrigerationData() {
   const [nodes, setNodes] = useState<RefrigerationNode[]>(MOCK_NODES);
-  
+
+  // Real-time MQTT->WebSocket telemetry (overrides matching node when live)
+  const { telemetry, isConnected } = useMqttTelemetry();
+
+  useEffect(() => {
+    if (telemetry) {
+      setNodes(current => current.map(node =>
+        node.id === telemetry.id
+          ? { ...node, temperature: telemetry.temperature, doorOpen: telemetry.doorOpen, online: true }
+          : node,
+      ));
+    }
+  }, [telemetry]);
+
   // Simulate live real-time updates every 5 seconds (compressor fluctuations)
+  // for any node not driven by a live MQTT feed.
   useEffect(() => {
     const interval = setInterval(() => {
-      setNodes(current => 
+      setNodes(current =>
         current.map(node => {
+          if (telemetry && node.id === telemetry.id) return node; // live-driven
           // Normal nodes fluctuate small amounts. High temp nodes fluctuate more.
           const variance = (Math.random() - 0.5) * (node.temperature > 6 ? 0.8 : 0.4);
           let newTemp = node.temperature + variance;
@@ -82,11 +98,12 @@ export function useRefrigerationData() {
       );
     }, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [telemetry]);
 
-  return { 
-    nodes, 
+  return {
+    nodes,
     threshold: 6, // Global default threshold matching the image
+    isConnected,
     getHistory: (nodeId: string) => MOCK_HISTORY[nodeId] || []
   };
 }

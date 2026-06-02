@@ -11,7 +11,7 @@ import { useRefrigerationData } from '@/lib/mockRefrigerationData'
 // provisionable sensor-type modules (see src/lib/platforms.ts).
 export default function RefrigerationModule() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const { nodes, threshold, getHistory } = useRefrigerationData()
+  const { nodes, threshold, getHistory, isConnected } = useRefrigerationData()
   const [localThreshold, setLocalThreshold] = useState(threshold)
 
   return (
@@ -27,9 +27,9 @@ export default function RefrigerationModule() {
             <p className="text-xs text-slate-500">Cold-chain temperature & door monitoring</p>
           </div>
         </div>
-        <div className="flex items-center text-emerald-400 text-sm font-bold tracking-wide">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 mr-2.5 shadow-[0_0_10px_rgba(52,211,153,0.8)] animate-pulse" />
-          System Online
+        <div className={`flex items-center text-sm font-bold tracking-wide ${isConnected ? 'text-emerald-400' : 'text-slate-400'}`}>
+          <span className={`w-2.5 h-2.5 rounded-full mr-2.5 ${isConnected ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)] animate-pulse' : 'bg-slate-500'}`} />
+          {isConnected ? 'MQTT Live' : 'Simulated (no bridge)'}
         </div>
       </header>
 

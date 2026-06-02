@@ -5,9 +5,10 @@ import { useAppStore } from '@/lib/store'
 import { fleetDevices, deviceInterfaces, sites } from '@/lib/fleetData'
 import { deviceFirmwareHistory, cellularLinks, loraPeers, getFirmwareByDevice, getCellularByDevice } from '@/lib/fleetExtra'
 import {
-  Cpu, Wifi, WifiOff, Battery, Plug, Radio, Signal, History, ChevronRight, CheckCircle, RotateCcw, XCircle,
+  Cpu, Wifi, WifiOff, Battery, Plug, Radio, Signal, History, ChevronRight, CheckCircle, RotateCcw, XCircle, Stethoscope,
 } from 'lucide-react'
 import clsx from 'clsx'
+import SensorDetailsModal from '@/components/SensorDetailsModal'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -30,6 +31,7 @@ export default function FleetPage() {
   const devices = fleetDevices.filter((d) => d.orgId === orgId)
   const [activeId, setActiveId] = useState(devices[0]?.id ?? '')
   const active = devices.find((d) => d.id === activeId)
+  const [showDiag, setShowDiag] = useState(false)
 
   const ifaces = active ? deviceInterfaces.filter((i) => i.deviceId === active.id) : []
   const fw = active ? getFirmwareByDevice(active.id) : []
@@ -76,7 +78,12 @@ export default function FleetPage() {
                   <div className="text-base font-bold text-white">{active.hardwareModel}</div>
                   <div className="text-xs text-slate-500 font-mono">chip {active.chipId} · {active.mac}</div>
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase" style={{ color: '#4ade80', background: 'rgba(74,222,128,0.12)' }}>{active.provisioningState}</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowDiag(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                    <Stethoscope size={13} /> Diagnostics
+                  </button>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase" style={{ color: '#4ade80', background: 'rgba(74,222,128,0.12)' }}>{active.provisioningState}</span>
+                </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[['Firmware', active.firmwareVersion], ['Battery', `${active.batteryPct}%`], ['Status', active.status], ['Site', siteName(active.siteId)]].map(([k, v]) => (
@@ -148,6 +155,8 @@ export default function FleetPage() {
           </div>
         )}
       </div>
+
+      <SensorDetailsModal isOpen={showDiag} onClose={() => setShowDiag(false)} device={active ?? null} signalDbm={cell?.lastRssiDbm ?? -65} />
     </div>
   )
 }
