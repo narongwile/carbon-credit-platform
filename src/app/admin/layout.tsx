@@ -10,7 +10,7 @@ import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck
+  Search, Database, ShieldCheck, Droplet
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -21,6 +21,7 @@ const NAV = [
   { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid },
   { href: '/admin/trends', label: 'Trends', icon: TrendingUp },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer },
+  { href: '/admin/bloodbox', label: 'BloodBOX', icon: Droplet },
   { href: '/admin/users', label: 'User Management', icon: Users },
   { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
   { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu },

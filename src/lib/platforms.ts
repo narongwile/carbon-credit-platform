@@ -76,9 +76,9 @@ export const PLATFORM_TEMPLATES: PlatformTemplate[] = [
       'Medical cold-storage monitoring for blood banks and vaccine fridges. Tracks temperature, humidity and inventory with regulated audit trails.',
     icon: 'Droplet',
     accent: '#ef4444',
-    metrics: ['Temperature (°C)', 'Humidity (%RH)', 'Inventory Units', 'Excursion Time'],
-    moduleRoute: '',
-    status: 'scaffold',
+    metrics: ['Temperature (°C)', 'Transit ETA', 'Indoor Floor (BLE/Barometer)', 'Excursion Time'],
+    moduleRoute: '/admin/bloodbox',
+    status: 'live',
     features: [
       { name: 'Cold Storage Monitoring', category: 'core', defaultEnabled: true },
       { name: 'Inventory Tracking', category: 'inventory', defaultEnabled: false },
