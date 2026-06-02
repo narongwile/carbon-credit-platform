@@ -10,7 +10,7 @@ import clsx from 'clsx'
 
 const NAV = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
-  { href: '/customer/map', label: 'Device Location', icon: Map },
+  { href: '/customer/map', label: 'Live Sensor Map', icon: Map },
   { href: '/customer/devices', label: 'Devices', icon: HardDrive },
   { href: '/customer/alarms', label: 'Alarms', icon: Bell },
   { href: '/customer/reports', label: 'Reports', icon: FileBarChart },

@@ -9,14 +9,15 @@ import { useRealtimeData } from '@/lib/realtime'
 import {
   Zap, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
-  Users, HardDrive, BellRing, UserCircle, Building2, Cpu
+  Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid
 } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { href: '/admin/sites', label: 'Sites (Unified)', icon: Building2 },
-  { href: '/admin/map', label: 'Map View', icon: Map },
+  { href: '/admin/map', label: 'Live Sensor Map', icon: Map },
+  { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid },
   { href: '/admin/trends', label: 'Trends', icon: TrendingUp },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer },
   { href: '/admin/users', label: 'User Management', icon: Users },
