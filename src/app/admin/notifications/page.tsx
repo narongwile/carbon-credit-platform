@@ -2,9 +2,8 @@
 
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import {
-  managedDevices, defaultNotificationChannels, eventProblems, getDevicesByOrg,
-} from '@/lib/orgData'
+import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
+import { managedDevicesFromFleet } from '@/lib/fleetData'
 import type { NotificationChannelConfig } from '@/types/org'
 import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check } from 'lucide-react'
 import clsx from 'clsx'
@@ -23,7 +22,7 @@ const channelIcon = {
 export default function AlarmNotificationPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
-  const devices = getDevicesByOrg(orgId).length ? getDevicesByOrg(orgId) : managedDevices
+  const devices = managedDevicesFromFleet(orgId)
 
   const [scope, setScope] = useState<'all' | string>('all')
   const [limits, setLimits] = useState({ low: 2, high: 8 })

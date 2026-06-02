@@ -8,9 +8,10 @@ import {
   type PlatformType,
 } from '@/lib/platforms'
 import { organizations } from '@/lib/mockData'
+import { getSitesByOrg } from '@/lib/fleetData'
 import {
   Thermometer, Droplet, Zap, Plus, X, Check, ChevronLeft, ChevronRight,
-  ToggleLeft, ToggleRight, Building2, Layers, CircleCheck, ArrowRight, Boxes,
+  ToggleLeft, ToggleRight, Building2, Layers, CircleCheck, ArrowRight, Boxes, MapPin,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -33,6 +34,9 @@ type WizardForm = {
   country: string
   city: string
   licenseTier: 'basic' | 'professional' | 'enterprise'
+  siteMode: 'existing' | 'new'
+  siteId: string
+  siteName: string
   features: Record<string, boolean>
 }
 
@@ -50,8 +54,13 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
     country: 'Thailand',
     city: '',
     licenseTier: 'professional',
+    siteMode: 'existing',
+    siteId: '',
+    siteName: '',
     features: {},
   })
+
+  const orgSites = useMemo(() => getSitesByOrg(form.orgId), [form.orgId])
 
   const template = useMemo(
     () => PLATFORM_TEMPLATES.find((p) => p.id === form.platform) ?? null,
@@ -66,15 +75,22 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
     }))
   }
 
+  const useExistingSite = form.customerMode === 'existing' && form.siteMode === 'existing' && orgSites.length > 0
+  const siteChosen = useExistingSite ? !!form.siteId : form.siteName.trim().length > 1
+
   const canNext =
     step === 0 ? !!form.platform
-    : step === 1 ? (form.customerMode === 'existing' ? !!form.orgId : form.orgName.trim().length > 1)
+    : step === 1 ? ((form.customerMode === 'existing' ? !!form.orgId : form.orgName.trim().length > 1) && siteChosen)
     : true
 
   const customerLabel =
     form.customerMode === 'existing'
       ? organizations.find((o) => o.id === form.orgId)?.name ?? '—'
       : form.orgName || '—'
+
+  const siteLabel = useExistingSite
+    ? orgSites.find((s) => s.id === form.siteId)?.name ?? '—'
+    : form.siteName || '—'
 
   const enabledCount = Object.values(form.features).filter(Boolean).length
 
@@ -222,6 +238,39 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
                       </div>
                     </div>
                   )}
+
+                  {/* Target site + domain */}
+                  <div className="pt-1">
+                    <label className="flex items-center gap-1.5 text-xs text-slate-400 mb-1.5 uppercase tracking-wider"><MapPin size={12} /> Target Site</label>
+                    {form.customerMode === 'existing' && orgSites.length > 0 && (
+                      <div className="flex gap-2 mb-2">
+                        {(['existing', 'new'] as const).map((m) => (
+                          <button key={m} onClick={() => setForm((f) => ({ ...f, siteMode: m }))}
+                            className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all', form.siteMode === m ? 'text-white' : 'text-slate-500')}
+                            style={form.siteMode === m ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : { background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                            {m === 'existing' ? 'Existing site' : 'New site'}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {useExistingSite ? (
+                      <select value={form.siteId} onChange={(e) => setForm((f) => ({ ...f, siteId: e.target.value }))}
+                        className="w-full rounded-lg px-4 py-3 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                        <option value="">Select a site…</option>
+                        {orgSites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    ) : (
+                      <input value={form.siteName} onChange={(e) => setForm((f) => ({ ...f, siteName: e.target.value }))}
+                        placeholder="New site name (e.g. Main Substation)"
+                        className="w-full rounded-lg px-4 py-3 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
+                    )}
+                    {template && (
+                      <div className="mt-2 flex items-center gap-2 text-xs">
+                        <span className="text-slate-500">Provisioned domain:</span>
+                        <span className="px-2 py-0.5 rounded-full font-medium" style={{ color: template.accent, background: `${template.accent}1f` }}>{template.shortName} · {template.sensorType}</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -253,6 +302,7 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
                 <div className="space-y-3">
                   <ReviewRow icon={<PlatformIcon name={template.icon} color={template.accent} size={16} />} label="Platform" value={template.name} sub={template.sensorType} />
                   <ReviewRow icon={<Building2 size={16} className="text-indigo-400" />} label="Customer" value={customerLabel} sub={form.customerMode === 'new' ? `${form.licenseTier} · ${form.city || '—'}, ${form.country}` : 'Existing organization'} />
+                  <ReviewRow icon={<MapPin size={16} className="text-cyan-400" />} label="Target Site" value={siteLabel} sub={useExistingSite ? 'Existing site' : 'New site will be created'} />
                   <ReviewRow icon={<ToggleRight size={16} className="text-green-400" />} label="Features Enabled" value={`${enabledCount} of ${template.features.length}`} sub={template.features.filter((_, i) => form.features[`${template.id}-f${i + 1}`]).map((f) => f.name).join(', ') || 'None'} />
                 </div>
               )}

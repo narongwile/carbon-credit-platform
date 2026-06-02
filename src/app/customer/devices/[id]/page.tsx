@@ -1,9 +1,9 @@
 // Server Component — generateStaticParams for static export
-import { managedDevices } from '@/lib/orgData'
+import { allManagedDevices } from '@/lib/fleetData'
 import DeviceDetailClient from './DeviceDetailClient'
 
 export function generateStaticParams() {
-  return managedDevices.map((d) => ({ id: d.id }))
+  return allManagedDevices().map((d) => ({ id: d.id }))
 }
 
 export default function DeviceDetailPage() {

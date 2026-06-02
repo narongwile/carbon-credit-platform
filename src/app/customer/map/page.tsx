@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
-import { managedDevices } from '@/lib/orgData'
+import { managedDevicesFromFleet } from '@/lib/fleetData'
 import { MapPin, Navigation } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -11,9 +11,7 @@ const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 // Lightweight device-location map (no external tiles in static export):
 // a schematic plot of all devices with selectable markers.
 export default function CustomerMapPage() {
-  const devices = managedDevices.filter((d) => d.orgId === 'org-1').length
-    ? managedDevices.filter((d) => d.orgId === 'org-1')
-    : managedDevices
+  const devices = managedDevicesFromFleet('org-1')
   const [active, setActive] = useState(devices[0]?.id ?? '')
 
   // deterministic pseudo positions

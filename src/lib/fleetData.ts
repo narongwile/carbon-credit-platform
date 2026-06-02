@@ -102,3 +102,48 @@ export function getSiteOperations(siteId: string): SiteOperations {
     },
   }
 }
+
+// ---------------------------------------------------------------------------
+// Adapter: project fleet hosts onto the ManagedDevice view-model used by the
+// Admin Device Management and Customer Devices UIs. This is the single source
+// of truth so those screens, the multi-domain Sites page, and the fleet ERD
+// all stay consistent.
+// ---------------------------------------------------------------------------
+import type { ManagedDevice } from '@/types/org'
+
+const DOMAIN_DEFAULTS = {
+  transformer: { deviceType: 'Power Transformer', theme: 'fix' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-dd' } as Record<string, string> },
+  carbonNode: { deviceType: 'Refrigeration Logger', theme: 'fix' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-dd' } as Record<string, string> },
+  bloodBox: { deviceType: 'BloodBOX Cold Storage', theme: 'freestyle' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-ee' } as Record<string, string> },
+}
+
+function hostToDevice(h: SensorHost): ManagedDevice {
+  const d = DOMAIN_DEFAULTS[h.domain]
+  const site = sites.find((s) => s.id === h.siteId)
+  const lastValue =
+    h.domain === 'transformer' ? '68.4°C'
+    : h.domain === 'carbonNode' ? `${h.targetMaxC}°C`
+    : '4.6°C'
+  const serial = h.domain === 'transformer' ? h.serial : h.domain === 'bloodBox' ? h.boxCode : h.id.toUpperCase()
+  const dept = d.dept[h.siteId]
+  return {
+    id: h.id,
+    orgId: h.orgId,
+    name: h.name,
+    serial,
+    deviceType: d.deviceType,
+    domain: h.domain,
+    siteId: h.siteId,
+    location: site?.name ?? h.siteId,
+    theme: d.theme,
+    departmentIds: dept ? [dept] : [],
+    status: h.status === 'OFFLINE' ? 'offline' : 'online',
+    lastValue,
+  }
+}
+
+export const managedDevicesFromFleet = (orgId: string): ManagedDevice[] =>
+  getHostsByOrg(orgId).map(hostToDevice)
+
+/** All hosts across every org, projected as devices (for static params etc). */
+export const allManagedDevices = (): ManagedDevice[] => hosts.map(hostToDevice)

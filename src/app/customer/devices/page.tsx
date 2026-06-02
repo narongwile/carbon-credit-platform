@@ -1,17 +1,15 @@
 'use client'
 
 import Link from 'next/link'
-import { managedDevices } from '@/lib/orgData'
+import { managedDevicesFromFleet } from '@/lib/fleetData'
 import { Activity, Wifi, WifiOff, ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 
 export default function CustomerDevicesPage() {
-  // Viewer sees org-1 devices (their organization)
-  const devices = managedDevices.filter((d) => d.orgId === 'org-1').length
-    ? managedDevices.filter((d) => d.orgId === 'org-1')
-    : managedDevices
+  // Viewer sees their organization's devices (org-1)
+  const devices = managedDevicesFromFleet('org-1')
 
   return (
     <div className="p-6 space-y-5">

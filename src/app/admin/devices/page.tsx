@@ -2,7 +2,9 @@
 
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { managedDevices as seedDevices, getDepartmentsByOrg } from '@/lib/orgData'
+import { getDepartmentsByOrg } from '@/lib/orgData'
+import { managedDevicesFromFleet, getSitesByOrg } from '@/lib/fleetData'
+import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
 import { HardDrive, Plus, Trash2, X, Wifi, WifiOff, MapPin } from 'lucide-react'
 import clsx from 'clsx'
@@ -15,8 +17,9 @@ export default function DeviceManagementPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const departments = getDepartmentsByOrg(orgId)
+  const orgSites = getSitesByOrg(orgId)
 
-  const [devices, setDevices] = useState<ManagedDevice[]>(seedDevices.filter((d) => d.orgId === orgId))
+  const [devices, setDevices] = useState<ManagedDevice[]>(managedDevicesFromFleet(orgId))
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ManagedDevice | null>(null)
 
@@ -42,7 +45,7 @@ export default function DeviceManagementPage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
-              {['Device', 'Serial', 'Type', 'Location', 'Theme', 'Departments', 'Status', ''].map((h) => (
+              {['Device', 'Serial', 'Domain', 'Location', 'Theme', 'Departments', 'Status', ''].map((h) => (
                 <th key={h} className="py-3 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>
               ))}
             </tr>
@@ -57,7 +60,13 @@ export default function DeviceManagementPage() {
                   </div>
                 </td>
                 <td className="py-3 px-4 font-mono text-xs text-slate-400">{d.serial}</td>
-                <td className="py-3 px-4 text-slate-400">{d.deviceType}</td>
+                <td className="py-3 px-4">
+                  {d.domain ? (
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: DOMAIN_META[d.domain].accent, background: `${DOMAIN_META[d.domain].accent}1f` }}>
+                      {DOMAIN_META[d.domain].platform}
+                    </span>
+                  ) : <span className="text-slate-400 text-xs">{d.deviceType}</span>}
+                </td>
                 <td className="py-3 px-4 text-slate-400"><span className="flex items-center gap-1"><MapPin size={11} className="text-slate-600" />{d.location}</span></td>
                 <td className="py-3 px-4">
                   <span className="text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ color: d.theme === 'fix' ? '#22c55e' : '#a78bfa', background: d.theme === 'fix' ? 'rgba(34,197,94,0.12)' : 'rgba(167,139,250,0.12)' }}>{d.theme === 'fix' ? 'FIX' : 'Free Style'}</span>
@@ -82,6 +91,7 @@ export default function DeviceManagementPage() {
           device={editing}
           orgId={orgId}
           departments={departments}
+          sites={orgSites}
           onClose={() => setShowModal(false)}
           onSave={(d) => { upsert(d); setShowModal(false) }}
         />
@@ -90,18 +100,26 @@ export default function DeviceManagementPage() {
   )
 }
 
-function DeviceModal({ device, orgId, departments, onClose, onSave }: {
+const DOMAIN_DEVICE_TYPE: Record<SensorDomain, string> = {
+  transformer: 'Power Transformer',
+  carbonNode: 'Refrigeration Logger',
+  bloodBox: 'BloodBOX Cold Storage',
+}
+
+function DeviceModal({ device, orgId, departments, sites, onClose, onSave }: {
   device: ManagedDevice | null
   orgId: string
   departments: { id: string; name: string }[]
+  sites: { id: string; name: string }[]
   onClose: () => void
   onSave: (d: ManagedDevice) => void
 }) {
   const [form, setForm] = useState<ManagedDevice>(
-    device ?? { id: `dev-${Date.now()}`, orgId, name: '', serial: '', deviceType: 'Refrigeration Logger', location: '', theme: 'fix', departmentIds: [], status: 'online' }
+    device ?? { id: `dev-${Date.now()}`, orgId, name: '', serial: '', deviceType: 'Refrigeration Logger', domain: 'carbonNode', siteId: sites[0]?.id, location: sites[0]?.name ?? '', theme: 'fix', departmentIds: [], status: 'online' }
   )
   const toggleDept = (id: string) =>
     setForm((f) => ({ ...f, departmentIds: f.departmentIds.includes(id) ? f.departmentIds.filter((d) => d !== id) : [...f.departmentIds, id] }))
+  const pickDomain = (dm: SensorDomain) => setForm((f) => ({ ...f, domain: dm, deviceType: DOMAIN_DEVICE_TYPE[dm] }))
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
@@ -114,8 +132,25 @@ function DeviceModal({ device, orgId, departments, onClose, onSave }: {
           <div className="grid grid-cols-2 gap-3">
             <Field label="Device Name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
             <Field label="Serial / MAC" value={form.serial} onChange={(v) => setForm((f) => ({ ...f, serial: v }))} />
-            <Field label="Device Type" value={form.deviceType} onChange={(v) => setForm((f) => ({ ...f, deviceType: v }))} />
-            <Field label="Location" value={form.location} onChange={(v) => setForm((f) => ({ ...f, location: v }))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Sensor Domain</label>
+            <div className="flex gap-2">
+              {(['carbonNode', 'bloodBox', 'transformer'] as SensorDomain[]).map((dm) => (
+                <button key={dm} onClick={() => pickDomain(dm)}
+                  className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold transition-all', form.domain === dm ? 'text-white' : 'text-slate-500')}
+                  style={form.domain === dm ? { background: `${DOMAIN_META[dm].accent}33`, border: `1px solid ${DOMAIN_META[dm].accent}` } : inset}>
+                  {DOMAIN_META[dm].platform}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Site</label>
+            <select value={form.siteId ?? ''} onChange={(e) => setForm((f) => ({ ...f, siteId: e.target.value, location: sites.find((s) => s.id === e.target.value)?.name ?? f.location }))}
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+              {sites.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Dashboard Theme</label>

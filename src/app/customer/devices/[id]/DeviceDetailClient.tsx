@@ -3,8 +3,11 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { managedDevices, defaultNotificationChannels, eventProblems } from '@/lib/orgData'
+import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
+import { allManagedDevices } from '@/lib/fleetData'
 import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
+
+const managedDevices = allManagedDevices()
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import {

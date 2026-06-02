@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { getDepartmentsByOrg, getDevicesByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
+import { getDepartmentsByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
+import { managedDevicesFromFleet } from '@/lib/fleetData'
 import type { ReportSchedule, ReportSequence } from '@/types/org'
 import { FileBarChart, Download, Clock, CheckCircle, CalendarClock, Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
 import clsx from 'clsx'
@@ -24,7 +25,7 @@ export default function ReportsPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const departments = getDepartmentsByOrg(orgId)
-  const devices = getDevicesByOrg(orgId)
+  const devices = managedDevicesFromFleet(orgId)
 
   const [selected, setSelected] = useState<string[]>([])
   const [format, setFormat] = useState<'PDF' | 'XLSX' | 'CSV'>('PDF')
