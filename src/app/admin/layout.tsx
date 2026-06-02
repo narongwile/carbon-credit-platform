@@ -8,7 +8,8 @@ import { useAppStore } from '@/lib/store'
 import { useRealtimeData } from '@/lib/realtime'
 import {
   Zap, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
-  FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer
+  FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
+  Users, HardDrive, BellRing, UserCircle
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -17,9 +18,13 @@ const NAV = [
   { href: '/admin/map', label: 'Map View', icon: Map },
   { href: '/admin/trends', label: 'Trends', icon: TrendingUp },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer },
+  { href: '/admin/users', label: 'User Management', icon: Users },
+  { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
+  { href: '/admin/notifications', label: 'Alarm & Notify', icon: BellRing },
   { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: true },
   { href: '/admin/events', label: 'Events', icon: Calendar },
   { href: '/admin/reports', label: 'Reports', icon: FileBarChart },
+  { href: '/admin/profile', label: 'Profile', icon: UserCircle },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
 ]
 

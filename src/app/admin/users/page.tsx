@@ -1,0 +1,367 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import { useAppStore } from '@/lib/store'
+import {
+  departments as seedDepartments,
+  managedUsers as seedUsers,
+  dashboardThemes,
+  roleLabels,
+} from '@/lib/orgData'
+import type { Department, ManagedUser, ManagedRole } from '@/types/org'
+import {
+  Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check,
+  ToggleLeft, ToggleRight, Pencil,
+} from 'lucide-react'
+import clsx from 'clsx'
+
+type Tab = 'departments' | 'users' | 'roles' | 'permissions'
+
+const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
+  { id: 'departments', label: 'Departments', icon: Building2 },
+  { id: 'users', label: 'Users', icon: Users },
+  { id: 'roles', label: 'User Roles', icon: ShieldCheck },
+  { id: 'permissions', label: 'Dashboard View Permission', icon: Palette },
+]
+
+const ROLES: ManagedRole[] = ['admin', 'editor', 'viewer']
+
+const roleColor: Record<ManagedRole, { color: string; bg: string }> = {
+  admin: { color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  editor: { color: '#06b6d4', bg: 'rgba(6,182,212,0.12)' },
+  viewer: { color: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
+}
+
+const surface = { background: '#0d1117', border: '1px solid #1e2433' }
+const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
+const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
+
+export default function UserManagementPage() {
+  const { selectedOrgId } = useAppStore()
+  const orgId = selectedOrgId || 'org-1'
+
+  const [tab, setTab] = useState<Tab>('departments')
+  const [departments, setDepartments] = useState<Department[]>(seedDepartments.filter((d) => d.orgId === orgId))
+  const [users, setUsers] = useState<ManagedUser[]>(seedUsers.filter((u) => u.orgId === orgId))
+
+  const deptName = (id: string) => departments.find((d) => d.id === id)?.name ?? '—'
+
+  // ----- Departments -----
+  const [newDept, setNewDept] = useState('')
+  const addDept = () => {
+    if (!newDept.trim()) return
+    setDepartments((d) => [...d, { id: `dept-${Date.now()}`, orgId, name: newDept.trim(), themeIds: ['th-overview'] }])
+    setNewDept('')
+  }
+  const removeDept = (id: string) => {
+    setDepartments((d) => d.filter((x) => x.id !== id))
+    setUsers((u) => u.map((x) => ({ ...x, departmentIds: x.departmentIds.filter((dd) => dd !== id) })))
+  }
+
+  // ----- Users -----
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
+  const [showNewUser, setShowNewUser] = useState(false)
+
+  const upsertUser = (u: ManagedUser) => {
+    setUsers((prev) => (prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]))
+  }
+  const removeUser = (id: string) => setUsers((u) => u.filter((x) => x.id !== id))
+
+  return (
+    <div className="p-6 space-y-5">
+      <div>
+        <h1 className="text-xl font-bold text-white">User Management</h1>
+        <p className="text-sm text-slate-500 mt-0.5">Departments, users, roles and dashboard view permissions</p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 rounded-lg w-fit" style={inset}>
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={clsx('flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all', tab === t.id ? 'text-white' : 'text-slate-500 hover:text-slate-300')}
+            style={tab === t.id ? { background: '#6366f1' } : {}}
+          >
+            <t.icon size={14} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* DEPARTMENTS */}
+      {tab === 'departments' && (
+        <div className="space-y-4">
+          <div className="flex gap-2 max-w-md">
+            <input
+              value={newDept}
+              onChange={(e) => setNewDept(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addDept()}
+              placeholder="New department name…"
+              className="flex-1 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inset}
+            />
+            <button onClick={addDept} className="flex items-center gap-1.5 px-4 rounded-lg text-sm font-medium text-white" style={gradient}>
+              <Plus size={15} /> Create
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {departments.map((d) => {
+              const members = users.filter((u) => u.departmentIds.includes(d.id))
+              return (
+                <div key={d.id} className="rounded-xl p-4" style={surface}>
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.12)' }}>
+                        <Building2 size={15} className="text-indigo-400" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-white">{d.name}</div>
+                        <div className="text-xs text-slate-500">{members.length} member{members.length === 1 ? '' : 's'} · {d.themeIds.length} view{d.themeIds.length === 1 ? '' : 's'}</div>
+                      </div>
+                    </div>
+                    <button onClick={() => removeDept(d.id)} className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/5">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {members.length ? members.map((m) => (
+                      <span key={m.id} className="text-[10px] px-2 py-0.5 rounded-md text-slate-300" style={inset}>{m.name}</span>
+                    )) : <span className="text-xs text-slate-600">No users assigned</span>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* USERS */}
+      {tab === 'users' && (
+        <div className="space-y-3">
+          <div className="flex justify-end">
+            <button onClick={() => setShowNewUser(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}>
+              <Plus size={15} /> New User
+            </button>
+          </div>
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+                  {['User', 'Username', 'Role', 'Departments', 'Status', ''].map((h) => (
+                    <th key={h} className="py-3 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody style={{ background: '#0d1117' }}>
+                {users.map((u) => (
+                  <tr key={u.id} style={{ borderBottom: '1px solid #1e2433' }}>
+                    <td className="py-3 px-4">
+                      <div className="text-white font-medium">{u.name}</div>
+                      <div className="text-xs text-slate-500">{u.email}</div>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400 font-mono text-xs">{u.username}</td>
+                    <td className="py-3 px-4">
+                      <span className="text-xs px-2 py-0.5 rounded-full font-medium capitalize" style={roleColor[u.role]}>{roleLabels[u.role]}</span>
+                    </td>
+                    <td className="py-3 px-4 text-slate-400 text-xs">
+                      {u.departmentIds.length ? u.departmentIds.map(deptName).join(', ') : <span className="text-slate-600">org-level</span>}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={clsx('text-xs font-medium capitalize', u.status === 'active' ? 'text-green-400' : u.status === 'invited' ? 'text-amber-400' : 'text-slate-500')}>{u.status}</span>
+                    </td>
+                    <td className="py-3 px-4 text-right whitespace-nowrap">
+                      <button onClick={() => setEditingUser(u)} className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-white/5"><Pencil size={13} /></button>
+                      <button onClick={() => removeUser(u.id)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/5"><Trash2 size={13} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ROLES */}
+      {tab === 'roles' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {ROLES.map((r) => {
+            const count = users.filter((u) => u.role === r).length
+            const perms: Record<ManagedRole, string[]> = {
+              admin: ['Manage departments & users', 'Assign roles & organize', 'Configure devices & alarms', 'Full dashboard access'],
+              editor: ['Edit device settings', 'Acknowledge alarms', 'Export & schedule reports', 'View all assigned dashboards'],
+              viewer: ['Read-only dashboards', 'Acknowledge alarms', 'View & export device graphs', 'Receive notifications'],
+            }
+            return (
+              <div key={r} className="rounded-xl p-5" style={surface}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-bold capitalize px-2.5 py-1 rounded-full" style={roleColor[r]}>{roleLabels[r]}</span>
+                  <span className="text-xs text-slate-500">{count} user{count === 1 ? '' : 's'}</span>
+                </div>
+                <ul className="space-y-1.5">
+                  {perms[r].map((p) => (
+                    <li key={p} className="flex items-center gap-2 text-xs text-slate-400"><Check size={12} className="text-indigo-400 flex-shrink-0" /> {p}</li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* PERMISSIONS */}
+      {tab === 'permissions' && (
+        <DashboardPermissions departments={departments} setDepartments={setDepartments} users={users} />
+      )}
+
+      {(editingUser || showNewUser) && (
+        <UserModal
+          user={editingUser}
+          departments={departments}
+          orgId={orgId}
+          onClose={() => { setEditingUser(null); setShowNewUser(false) }}
+          onSave={(u) => { upsertUser(u); setEditingUser(null); setShowNewUser(false) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ---- Dashboard View Permission tab ----------------------------------------
+function DashboardPermissions({ departments, setDepartments, users }: {
+  departments: Department[]
+  setDepartments: React.Dispatch<React.SetStateAction<Department[]>>
+  users: ManagedUser[]
+}) {
+  const [selectedDept, setSelectedDept] = useState(departments[0]?.id ?? '')
+  const dept = departments.find((d) => d.id === selectedDept)
+
+  const toggleTheme = (themeId: string) => {
+    setDepartments((prev) => prev.map((d) => d.id !== selectedDept ? d : {
+      ...d,
+      themeIds: d.themeIds.includes(themeId) ? d.themeIds.filter((t) => t !== themeId) : [...d.themeIds, themeId],
+    }))
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* department + users in department selection */}
+      <div className="rounded-xl p-4" style={surface}>
+        <h3 className="text-sm font-semibold text-white mb-3">Department</h3>
+        <div className="space-y-1.5">
+          {departments.map((d) => (
+            <button key={d.id} onClick={() => setSelectedDept(d.id)}
+              className={clsx('w-full text-left px-3 py-2 rounded-lg text-sm transition-all', selectedDept === d.id ? 'text-white' : 'text-slate-400 hover:bg-white/5')}
+              style={selectedDept === d.id ? { background: 'rgba(99,102,241,0.15)' } : {}}>
+              {d.name}
+            </button>
+          ))}
+        </div>
+        {dept && (
+          <div className="mt-4 pt-3" style={{ borderTop: '1px solid #1e2433' }}>
+            <div className="text-xs text-slate-500 mb-2 uppercase tracking-wider">Users in department</div>
+            <div className="flex flex-wrap gap-1.5">
+              {users.filter((u) => u.departmentIds.includes(dept.id)).map((u) => (
+                <span key={u.id} className="text-[10px] px-2 py-0.5 rounded-md text-slate-300" style={inset}>{u.name}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* theme selection (multiple) */}
+      <div className="rounded-xl p-4 lg:col-span-2" style={surface}>
+        <h3 className="text-sm font-semibold text-white mb-1">Dashboard Themes <span className="text-slate-500 font-normal">(select multiple)</span></h3>
+        <p className="text-xs text-slate-500 mb-3">Themes enabled here become visible to every user in {dept?.name ?? 'this department'}.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {dashboardThemes.map((th) => {
+            const on = dept?.themeIds.includes(th.id)
+            return (
+              <button key={th.id} onClick={() => toggleTheme(th.id)} className="flex items-center justify-between p-3 rounded-lg text-left transition-all"
+                style={{ background: '#0a0e1a', border: `1px solid ${on ? th.accent : '#1e2433'}` }}>
+                <div className="min-w-0">
+                  <div className="text-sm text-slate-200">{th.name}</div>
+                  <div className="text-[11px] text-slate-500 truncate">{th.description}</div>
+                </div>
+                {on ? <ToggleRight size={22} style={{ color: th.accent }} /> : <ToggleLeft size={22} className="text-slate-600" />}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- User create/edit modal ------------------------------------------------
+function UserModal({ user, departments, orgId, onClose, onSave }: {
+  user: ManagedUser | null
+  departments: Department[]
+  orgId: string
+  onClose: () => void
+  onSave: (u: ManagedUser) => void
+}) {
+  const [form, setForm] = useState<ManagedUser>(
+    user ?? { id: `u-${Date.now()}`, orgId, name: '', username: '', email: '', role: 'viewer', departmentIds: [], status: 'invited' }
+  )
+  const toggleDept = (id: string) =>
+    setForm((f) => ({ ...f, departmentIds: f.departmentIds.includes(id) ? f.departmentIds.filter((d) => d !== id) : [...f.departmentIds, id] }))
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+      <div className="w-full max-w-lg rounded-2xl" style={surface}>
+        <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid #1e2433' }}>
+          <h2 className="text-base font-bold text-white">{user ? 'Edit User' : 'New User'}</h2>
+          <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <LabeledInput label="Full Name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
+            <LabeledInput label="Username" value={form.username} onChange={(v) => setForm((f) => ({ ...f, username: v }))} />
+          </div>
+          <LabeledInput label="Email" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} />
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Role (assign roll)</label>
+            <div className="flex gap-2">
+              {ROLES.map((r) => (
+                <button key={r} onClick={() => setForm((f) => ({ ...f, role: r }))}
+                  className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold capitalize transition-all', form.role === r ? 'text-white' : 'text-slate-500')}
+                  style={form.role === r ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>
+                  {roleLabels[r]}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Assign Departments (organize)</label>
+            <div className="flex flex-wrap gap-2">
+              {departments.map((d) => {
+                const on = form.departmentIds.includes(d.id)
+                return (
+                  <button key={d.id} onClick={() => toggleDept(d.id)}
+                    className={clsx('px-3 py-1.5 rounded-lg text-xs transition-all', on ? 'text-white' : 'text-slate-400')}
+                    style={on ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>
+                    {d.name}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
+          <button onClick={() => onSave(form)} className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white" style={gradient}>Save</button>
+          <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function LabeledInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">{label}</label>
+      <input value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+    </div>
+  )
+}

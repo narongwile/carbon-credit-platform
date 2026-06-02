@@ -5,13 +5,16 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
-import { Zap, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight } from 'lucide-react'
+import { Zap, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
+  { href: '/customer/map', label: 'Device Location', icon: Map },
+  { href: '/customer/devices', label: 'Devices', icon: HardDrive },
   { href: '/customer/alarms', label: 'Alarms', icon: Bell },
   { href: '/customer/reports', label: 'Reports', icon: FileBarChart },
+  { href: '/customer/profile', label: 'Profile', icon: UserCircle },
 ]
 
 function RealtimeProvider({ children }: { children: React.ReactNode }) {
