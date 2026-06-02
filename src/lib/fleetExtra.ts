@@ -45,6 +45,8 @@ export const deviceFirmwareHistory: DeviceFirmwareHistory[] = [
 
 export const cellularLinks: CellularLink[] = [
   { deviceId: 'dev-tr1', imei: '356938035643809', iccid: '8966032820000123456', apn: 'iot.true.th', operatorMccMnc: '52000', lastRssiDbm: -71, lastBand: 'LTE B3', dataUsedMb: 184.2, simStatus: 'active' },
+  // BloodBOX GNSS module carries a 4G SIM — internet fallback when WiFi drops.
+  { deviceId: 'dev-bb1', imei: '356938035699001', iccid: '8966032820000987654', apn: 'iot.ais.th', operatorMccMnc: '52003', lastRssiDbm: -83, lastBand: 'LTE B8', dataUsedMb: 92.6, simStatus: 'active' },
 ]
 
 export const loraPeers: LoraPeer[] = [

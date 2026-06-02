@@ -81,8 +81,9 @@ export const deviceInterfaces: DeviceInterface[] = [
   { id: 'if-tr1-rs485', deviceId: 'dev-tr1', kind: 'rs485', label: 'RS485-A', status: 'up' },
   { id: 'if-cn1-i2c', deviceId: 'dev-cn1', kind: 'i2c', label: 'I2C-0', status: 'up' },
   { id: 'if-bb1-lora', deviceId: 'dev-bb1', kind: 'lora', label: 'LoRaWAN', status: 'up' },
-  { id: 'if-bb1-gnss', deviceId: 'dev-bb1', kind: 'gnss', label: 'GNSS', status: 'up' },
-  { id: 'if-bb1-wifi', deviceId: 'dev-bb1', kind: 'wifi', label: 'WiFi RTT', status: 'up' },
+  { id: 'if-bb1-gnss', deviceId: 'dev-bb1', kind: 'gnss', label: 'GNSS (4G SIM module)', status: 'up' },
+  { id: 'if-bb1-wifi', deviceId: 'dev-bb1', kind: 'wifi', label: 'WiFi RTT (primary)', status: 'up' },
+  { id: 'if-bb1-cell', deviceId: 'dev-bb1', kind: 'cellular', label: '4G LTE (fallback)', status: 'up' },
 ]
 
 // Selectors ----------------------------------------------------------------

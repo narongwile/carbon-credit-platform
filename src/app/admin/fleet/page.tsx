@@ -78,6 +78,11 @@ export default function FleetPage() {
                 <div>
                   <div className="text-base font-bold text-white">{active.hardwareModel}</div>
                   <div className="text-xs text-slate-500 font-mono">chip {active.chipId} · {active.mac}</div>
+                  {ifaces.some((i) => i.kind === 'wifi') && ifaces.some((i) => i.kind === 'cellular') && (
+                    <span className="inline-flex items-center gap-1.5 mt-1.5 text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}>
+                      <Wifi size={10} /> WiFi primary → <Signal size={10} /> 4G fallback
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setShowDiag(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>

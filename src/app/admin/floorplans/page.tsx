@@ -91,7 +91,7 @@ export default function FloorPlansPage() {
             <span className="text-[10px] text-slate-600">{p.accuracy}</span>
           </span>
         ))}
-        <span className="ml-auto text-[10px] text-slate-600">ESP32 · LoRaWAN + GNSS + WiFi (BLE/Barometer indoor)</span>
+        <span className="ml-auto text-[10px] text-slate-600">ESP32 · GNSS+4G SIM · WiFi primary → 4G fallback · BLE/Barometer indoor</span>
       </div>
 
       {/* Floor selector + upload */}

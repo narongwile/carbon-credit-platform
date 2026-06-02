@@ -135,7 +135,7 @@ function TransitView({ sorted, selected, onSelect }: { sorted: BloodBoxTransit[]
             </div>
           </div>
           <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1px solid #1e2433' }}>
-            <span className="flex items-center gap-1.5 text-[11px] text-slate-500"><Signal size={11} className="text-emerald-400" /> เชื่อมต่อล่าสุด: {selected.lastConnection} ({selected.signal4g})</span>
+            <span className="flex items-center gap-1.5 text-[11px] text-slate-500"><Signal size={11} className="text-emerald-400" /> WiFi → 4G สำรอง (GNSS SIM) · {selected.signal4g} · ล่าสุด {selected.lastConnection}</span>
             <button className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300">ดูประวัติอุณหภูมิแบบเต็ม →</button>
           </div>
         </div>
