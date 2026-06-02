@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { organizations } from '@/lib/mockData'
+import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels } from '@/lib/orgData'
 import type { Organization } from '@/types'
-import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight } from 'lucide-react'
+import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users } from 'lucide-react'
 import clsx from 'clsx'
 
 function StatusBadge({ status }: { status: string }) {
@@ -31,6 +32,81 @@ function LicenseBadge({ tier }: { tier: string }) {
     <span className="text-xs px-2 py-0.5 rounded-full font-medium capitalize" style={{ color: s.color, background: s.bg }}>
       {tier}
     </span>
+  )
+}
+
+function RoleIcon({ role }: { role: string }) {
+  if (role === 'admin') return <Shield size={12} className="text-violet-400" />
+  if (role === 'editor') return <Eye size={12} className="text-cyan-400" />
+  return <User size={12} className="text-green-400" />
+}
+
+// Read-only org -> admin -> department (view) -> users tree for the superadmin.
+function OrgHierarchy({ orgId }: { orgId: string }) {
+  const departments = getDepartmentsByOrg(orgId)
+  const users = getUsersByOrg(orgId)
+  const admins = users.filter((u) => u.role === 'admin')
+  const branch = { borderLeft: '1px solid #1e2433' }
+
+  if (!departments.length && !users.length) {
+    return (
+      <div>
+        <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Organization Hierarchy</label>
+        <p className="text-xs text-slate-600">No departments or users provisioned for this organization yet.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Organization Hierarchy</label>
+      <div className="rounded-xl p-4 space-y-3" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+        {/* Admins (org level) */}
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.15)' }}>
+            <Building2 size={13} className="text-indigo-400" />
+          </div>
+          <span className="text-sm font-semibold text-white">admin</span>
+          <div className="flex flex-wrap gap-1.5 ml-1">
+            {admins.length ? admins.map((a) => (
+              <span key={a.id} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md text-slate-200" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+                <RoleIcon role={a.role} /> {a.name}
+              </span>
+            )) : <span className="text-[11px] text-slate-600">no admins</span>}
+          </div>
+        </div>
+
+        {/* Departments with views and members */}
+        <div className="pl-3 ml-3 space-y-3" style={branch}>
+          {departments.map((d) => {
+            const members = users.filter((u) => u.departmentIds.includes(d.id))
+            const views = d.themeIds.map((t) => getThemeById(t)?.name ?? t)
+            return (
+              <div key={d.id} className="space-y-1.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="w-6 h-6 rounded-md flex items-center justify-center" style={{ background: 'rgba(6,182,212,0.12)' }}>
+                    <Users size={13} className="text-cyan-400" />
+                  </div>
+                  <span className="text-sm font-medium text-white">{d.name}</span>
+                  <span className="text-[10px] text-slate-500">view:</span>
+                  {views.map((v) => (
+                    <span key={v} className="text-[10px] px-1.5 py-0.5 rounded text-indigo-300" style={{ background: 'rgba(99,102,241,0.1)' }}>{v}</span>
+                  ))}
+                </div>
+                <div className="pl-3 ml-3 flex flex-wrap gap-1.5" style={branch}>
+                  {members.length ? members.map((m) => (
+                    <span key={m.id} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md text-slate-300" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+                      <RoleIcon role={m.role} /> {m.name}
+                      <span className="text-slate-600">· {roleLabels[m.role]}</span>
+                    </span>
+                  )) : <span className="text-[11px] text-slate-600">no users</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -125,6 +201,9 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
               ))}
             </div>
           </div>
+
+          {/* Organization hierarchy: admin -> department (view) -> users */}
+          <OrgHierarchy orgId={org.id} />
 
           {/* Actions */}
           <div className="flex gap-3 pt-2">
