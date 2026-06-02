@@ -1,4 +1,6 @@
 import type { Organization, Transformer, Alarm, AuditLog, PlatformStats, TrendPoint } from '@/types'
+import { hosts, sites } from './fleetData'
+import type { TransformerHost } from '@/types/fleet'
 
 function generateHistory(baseValue: number, variance: number, points: number = 96): TrendPoint[] {
   const history: TrendPoint[] = []
@@ -73,7 +75,7 @@ export const organizations: Organization[] = [
     city: 'Chonburi',
     lat: 13.3611,
     lng: 100.9847,
-    transformerCount: 5,
+    transformerCount: 3,
     status: 'active',
     licenseTier: 'professional',
     contactEmail: 'ops@factory-alpha.com',
@@ -120,7 +122,7 @@ export const organizations: Organization[] = [
     city: 'Singapore',
     lat: 1.3521,
     lng: 103.8198,
-    transformerCount: 5,
+    transformerCount: 3,
     status: 'active',
     licenseTier: 'enterprise',
     contactEmail: 'systems@industrial-corp.sg',
@@ -161,25 +163,33 @@ export const organizations: Organization[] = [
   },
 ]
 
-function makeTransformer(id: string, name: string, orgId: string, location: string, lat: number, lng: number, status: 'NORMAL' | 'WARNING' | 'CRITICAL', healthIndex: number): Transformer {
+// Build a rich Transformer (with digital-twin sensors) from a canonical fleet
+// transformer host. The fleet host is the single source of truth for identity,
+// org, site, rating and status; this only synthesizes the sensor telemetry.
+function makeTransformer(host: TransformerHost): Transformer {
+  const status = host.status === 'OFFLINE' ? 'NORMAL' : host.status
   const isWarning = status === 'WARNING'
   const isCritical = status === 'CRITICAL'
+  const site = sites.find((s) => s.id === host.siteId)
+  // deterministic small offset per host so map pins don't overlap
+  const seed = host.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+  const jitter = ((seed % 20) - 10) / 5000
 
   return {
-    id,
-    name,
-    orgId,
-    location,
-    lat,
-    lng,
+    id: host.id,
+    name: host.name,
+    orgId: host.orgId,
+    location: site ? site.name : host.siteId,
+    lat: (site?.lat ?? 13.7) + jitter,
+    lng: (site?.lng ?? 100.5) + jitter,
     status,
-    healthIndex,
-    kva: [1000, 1500, 2000, 2500, 3000][Math.floor(Math.random() * 5)],
-    voltage: ['11kV/0.4kV', '22kV/0.4kV', '33kV/11kV', '115kV/22kV'][Math.floor(Math.random() * 4)],
-    manufacturer: ['ABB', 'Siemens', 'Schneider Electric', 'GE', 'Mitsubishi'][Math.floor(Math.random() * 5)],
-    installDate: `201${Math.floor(Math.random() * 9)}-0${Math.floor(Math.random() * 9) + 1}-15`,
-    model: `TR-${Math.floor(Math.random() * 9000) + 1000}`,
-    serialNumber: `SN${Math.floor(Math.random() * 900000) + 100000}`,
+    healthIndex: host.healthIndex,
+    kva: host.kva,
+    voltage: host.voltage,
+    manufacturer: ['ABB', 'Siemens', 'Schneider Electric', 'GE', 'Mitsubishi'][seed % 5],
+    installDate: `201${seed % 9}-0${(seed % 9) + 1}-15`,
+    model: host.model,
+    serialNumber: host.serial,
     lastUpdated: new Date().toISOString(),
     sensors: {
       oilTemperature: {
@@ -252,172 +262,45 @@ function makeTransformer(id: string, name: string, orgId: string, location: stri
   }
 }
 
-export const transformers: Transformer[] = [
-  makeTransformer('t1', 'TR-001', 'org-1', 'Building A - Main Substation', 13.6512, 100.4960, 'NORMAL', 92),
-  makeTransformer('t2', 'TR-002', 'org-1', 'Building B - Distribution', 13.6515, 100.4965, 'WARNING', 73),
-  makeTransformer('t3', 'TR-003', 'org-1', 'Building C - Lab Power', 13.6508, 100.4970, 'NORMAL', 88),
-  makeTransformer('t4', 'TR-004', 'org-1', 'Campus North Gate', 13.6520, 100.4955, 'CRITICAL', 45),
-  makeTransformer('t5', 'TR-005', 'org-1', 'Data Center UPS', 13.6505, 100.4975, 'NORMAL', 96),
-  makeTransformer('t6', 'TR-006', 'org-2', 'Production Line A', 13.3611, 100.9840, 'NORMAL', 84),
-  makeTransformer('t7', 'TR-007', 'org-2', 'Production Line B', 13.3615, 100.9850, 'WARNING', 68),
-  makeTransformer('t8', 'TR-008', 'org-2', 'Warehouse Power', 13.3605, 100.9845, 'NORMAL', 91),
-  makeTransformer('t9', 'TR-009', 'org-2', 'Office Complex', 13.3620, 100.9835, 'NORMAL', 87),
-  makeTransformer('t10', 'TR-010', 'org-2', 'Utility Room', 13.3600, 100.9855, 'NORMAL', 79),
-  makeTransformer('t11', 'TR-011', 'org-3', 'Main Grid Substation', 1.3521, 103.8190, 'NORMAL', 94),
-  makeTransformer('t12', 'TR-012', 'org-3', 'Plant 1 - HV Section', 1.3525, 103.8200, 'WARNING', 71),
-  makeTransformer('t13', 'TR-013', 'org-3', 'Plant 2 - Distribution', 1.3515, 103.8195, 'NORMAL', 89),
-  makeTransformer('t14', 'TR-014', 'org-3', 'Control Room Power', 1.3530, 103.8185, 'NORMAL', 82),
-  makeTransformer('t15', 'TR-015', 'org-3', 'Emergency Backup', 1.3510, 103.8205, 'NORMAL', 97),
-]
+// Single source of truth: derive the rich transformer list from fleet hosts.
+export const transformers: Transformer[] = hosts
+  .filter((h): h is TransformerHost => h.domain === 'transformer')
+  .map(makeTransformer)
 
-export const alarms: Alarm[] = [
-  {
-    id: 'a1',
-    transformerId: 't4',
-    transformerName: 'TR-004',
-    orgId: 'org-1',
-    severity: 'CRITICAL',
-    message: 'Oil Temperature exceeded critical threshold (92.1°C > 95°C)',
-    sensor: 'Oil Temperature',
-    value: 92.1,
-    unit: '°C',
-    threshold: 95,
-    timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
-    acknowledged: false,
-  },
-  {
-    id: 'a2',
-    transformerId: 't4',
-    transformerName: 'TR-004',
-    orgId: 'org-1',
-    severity: 'CRITICAL',
-    message: 'Oil Level critically low (55% < 60%)',
-    sensor: 'Oil Level',
-    value: 55,
-    unit: '%',
-    threshold: 60,
-    timestamp: new Date(Date.now() - 22 * 60000).toISOString(),
-    acknowledged: false,
-  },
-  {
-    id: 'a3',
-    transformerId: 't2',
-    transformerName: 'TR-002',
-    orgId: 'org-1',
-    severity: 'WARNING',
-    message: 'Hydrogen gas concentration elevated (145 ppm > 150 ppm warning)',
-    sensor: 'Hydrogen H2',
-    value: 145,
-    unit: 'ppm',
-    threshold: 150,
-    timestamp: new Date(Date.now() - 45 * 60000).toISOString(),
-    acknowledged: true,
-    acknowledgedBy: 'admin',
-    acknowledgedAt: new Date(Date.now() - 30 * 60000).toISOString(),
-  },
-  {
-    id: 'a4',
-    transformerId: 't7',
-    transformerName: 'TR-007',
-    orgId: 'org-2',
-    severity: 'WARNING',
-    message: 'Load approaching maximum rated capacity (85%)',
-    sensor: 'Load',
-    value: 85,
-    unit: '%',
-    threshold: 80,
-    timestamp: new Date(Date.now() - 60 * 60000).toISOString(),
-    acknowledged: false,
-  },
-  {
-    id: 'a5',
-    transformerId: 't12',
-    transformerName: 'TR-012',
-    orgId: 'org-3',
-    severity: 'WARNING',
-    message: 'Moisture content elevated in transformer oil (28 ppm > 25 ppm)',
-    sensor: 'Moisture',
-    value: 28,
-    unit: 'ppm',
-    threshold: 25,
-    timestamp: new Date(Date.now() - 2 * 3600000).toISOString(),
-    acknowledged: false,
-  },
-  {
-    id: 'a6',
-    transformerId: 't1',
-    transformerName: 'TR-001',
-    orgId: 'org-1',
-    severity: 'INFO',
-    message: 'Scheduled maintenance due in 7 days',
-    sensor: 'System',
-    value: 0,
-    unit: '',
-    threshold: 0,
-    timestamp: new Date(Date.now() - 6 * 3600000).toISOString(),
-    acknowledged: true,
-    acknowledgedBy: 'admin',
-    acknowledgedAt: new Date(Date.now() - 5 * 3600000).toISOString(),
-  },
-  {
-    id: 'a7',
-    transformerId: 't4',
-    transformerName: 'TR-004',
-    orgId: 'org-1',
-    severity: 'CRITICAL',
-    message: 'Hydrogen concentration critical level detected (210 ppm > 300 ppm threshold)',
-    sensor: 'Hydrogen H2',
-    value: 210,
-    unit: 'ppm',
-    threshold: 300,
-    timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
-    acknowledged: false,
-  },
-  {
-    id: 'a8',
-    transformerId: 't2',
-    transformerName: 'TR-002',
-    orgId: 'org-1',
-    severity: 'WARNING',
-    message: 'Oil temperature rising trend detected over last 2 hours',
-    sensor: 'Oil Temperature',
-    value: 82,
-    unit: '°C',
-    threshold: 80,
-    timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
-    acknowledged: false,
-  },
-  {
-    id: 'a9',
-    transformerId: 't6',
-    transformerName: 'TR-006',
-    orgId: 'org-2',
-    severity: 'INFO',
-    message: 'Communication signal strength reduced - check antenna',
-    sensor: 'System',
-    value: 0,
-    unit: '',
-    threshold: 0,
-    timestamp: new Date(Date.now() - 4 * 3600000).toISOString(),
-    acknowledged: true,
-    acknowledgedBy: 'ops_team',
-    acknowledgedAt: new Date(Date.now() - 3.5 * 3600000).toISOString(),
-  },
-  {
-    id: 'a10',
-    transformerId: 't7',
-    transformerName: 'TR-007',
-    orgId: 'org-2',
-    severity: 'WARNING',
-    message: 'Oil temperature above warning threshold (82°C > 80°C)',
-    sensor: 'Oil Temperature',
-    value: 82,
-    unit: '°C',
-    threshold: 80,
-    timestamp: new Date(Date.now() - 3 * 3600000).toISOString(),
-    acknowledged: false,
-  },
-]
+// Generate alarms from any non-NORMAL transformer host — single source of truth.
+type AlarmKey = 'oilTemp' | 'hydrogen' | 'oilLevel'
+const ALARM_CFG: Record<AlarmKey, { sensor: string; unit: string; msg: (v: number) => string }> = {
+  oilTemp: { sensor: 'Oil Temperature', unit: '°C', msg: (v) => `Oil Temperature exceeded critical threshold (${v}°C)` },
+  hydrogen: { sensor: 'Hydrogen H2', unit: 'ppm', msg: (v) => `Dissolved hydrogen rising above warning level (${v} ppm)` },
+  oilLevel: { sensor: 'Oil Level', unit: '%', msg: (v) => `Oil level critically low (${v}%)` },
+}
+const sensorOf = (t: Transformer, key: AlarmKey) =>
+  key === 'oilTemp' ? t.sensors.oilTemperature : key === 'hydrogen' ? t.sensors.hydrogen : t.sensors.oilLevel
+
+export const alarms: Alarm[] = transformers.flatMap((t, ti) => {
+  const out: Alarm[] = []
+  const add = (severity: 'CRITICAL' | 'WARNING', key: AlarmKey) => {
+    const s = sensorOf(t, key)
+    const cfg = ALARM_CFG[key]
+    out.push({
+      id: `a-${t.id}-${out.length + 1}`,
+      transformerId: t.id,
+      transformerName: t.name,
+      orgId: t.orgId,
+      severity,
+      message: cfg.msg(s.value),
+      sensor: cfg.sensor,
+      value: s.value,
+      unit: cfg.unit,
+      threshold: severity === 'CRITICAL' ? s.threshold.critical : s.threshold.warning,
+      timestamp: new Date(Date.now() - (ti * 13 + out.length * 7 + 5) * 60000).toISOString(),
+      acknowledged: false,
+    })
+  }
+  if (t.status === 'CRITICAL') { add('CRITICAL', 'oilTemp'); add('CRITICAL', 'oilLevel') }
+  else if (t.status === 'WARNING') { add('WARNING', 'hydrogen') }
+  return out
+})
 
 export const auditLogs: AuditLog[] = [
   {

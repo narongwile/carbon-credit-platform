@@ -3,7 +3,7 @@
 // Derived from fleet hosts; spread across Thai provinces for a realistic map.
 // ---------------------------------------------------------------------------
 
-import { hosts } from '@/lib/fleetData'
+import { hosts, sites } from '@/lib/fleetData'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 
 export type NodeHealth = 'healthy' | 'warning' | 'critical'
@@ -50,19 +50,25 @@ function metric(h: (typeof hosts)[number]): { label: string; value: string } {
 export function getGeoNodes(orgId?: string): GeoNode[] {
   const list = orgId ? hosts.filter((h) => h.orgId === orgId) : hosts
   return list.map((h, i) => {
-    const [lat, lng, city] = CITIES[i % CITIES.length]
-    const jitter = (n: number) => (((i * 37 + n * 13) % 100) / 100 - 0.5) * 0.6
+    // Place each node at its real site coordinates (best-practice geo mapping),
+    // falling back to a spread of Thai cities if a site has no coordinates.
+    const site = sites.find((s) => s.id === h.siteId)
+    const fallback = CITIES[i % CITIES.length]
+    const baseLat = site?.lat ?? fallback[0]
+    const baseLng = site?.lng ?? fallback[1]
+    const label = site?.name ?? fallback[2]
+    const jitter = (n: number) => (((i * 37 + n * 13) % 100) / 100 - 0.5) * 0.05
     const m = metric(h)
     return {
       id: h.id,
       orgId: h.orgId,
-      name: `${h.name} (${city})`,
+      name: `${h.name} · ${label}`,
       domain: h.domain,
       platform: DOMAIN_META[h.domain].platform,
       accent: DOMAIN_META[h.domain].accent,
       health: healthFor(h.status),
-      lat: lat + jitter(1),
-      lng: lng + jitter(2),
+      lat: baseLat + jitter(1),
+      lng: baseLng + jitter(2),
       metricLabel: m.label,
       metricValue: m.value,
       updated: `${(i % 9) + 1} mins ago`,

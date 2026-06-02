@@ -14,6 +14,7 @@ export const sites: Site[] = [
   { id: 'site-1a', orgId: 'org-1', name: 'KMUTT Main Substation', address: '126 Pracha Uthit Rd, Bangkok', lat: 13.6512, lng: 100.4964 },
   { id: 'site-1b', orgId: 'org-1', name: 'KMUTT Cold Storage Wing', address: '126 Pracha Uthit Rd, Bangkok', lat: 13.6518, lng: 100.4971 },
   { id: 'site-2a', orgId: 'org-2', name: 'Factory Alpha Plant', address: 'Amata City, Chonburi', lat: 13.3611, lng: 100.9847 },
+  { id: 'site-3a', orgId: 'org-3', name: 'Industrial Corp HQ', address: 'Jurong, Singapore', lat: 1.3521, lng: 103.8198 },
 ]
 
 export const sensorTypes: SensorType[] = [
@@ -35,6 +36,8 @@ export const hosts: SensorHost[] = [
 
   // --- org-1 / site-1b ---
   { id: 'tr-003', orgId: 'org-1', siteId: 'site-1b', name: 'TR-003', domain: 'transformer', status: 'NORMAL', sensorCount: 6, model: 'TR-6787', serial: 'SN100240', kva: 2000, voltage: '22kV/0.4kV', healthIndex: 88, openAlarms: 0 },
+  { id: 'tr-004', orgId: 'org-1', siteId: 'site-1a', name: 'TR-004', domain: 'transformer', status: 'CRITICAL', sensorCount: 6, model: 'TR-9001', serial: 'SN100241', kva: 3000, voltage: '33kV/11kV', healthIndex: 45, openAlarms: 2 },
+  { id: 'tr-005', orgId: 'org-1', siteId: 'site-1b', name: 'TR-005', domain: 'transformer', status: 'NORMAL', sensorCount: 6, model: 'TR-5512', serial: 'SN100242', kva: 1500, voltage: '11kV/0.4kV', healthIndex: 96, openAlarms: 0 },
   { id: 'cn-02', orgId: 'org-1', siteId: 'site-1b', name: 'Freezer B1', domain: 'carbonNode', status: 'CRITICAL', sensorCount: 2, cabinetZone: 'Zone B', targetMinC: -20, targetMaxC: -15, refrigerantType: 'R-404A', co2eSavedKg: 2630, creditsIssued: 21 },
   { id: 'cn-03', orgId: 'org-1', siteId: 'site-1b', name: 'Cold Room B2', domain: 'carbonNode', status: 'NORMAL', sensorCount: 2, cabinetZone: 'Zone B', targetMinC: 2, targetMaxC: 8, refrigerantType: 'R-134a', co2eSavedKg: 1410, creditsIssued: 11 },
   { id: 'bb-02', orgId: 'org-1', siteId: 'site-1b', name: 'BloodBOX B', domain: 'bloodBox', status: 'WARNING', sensorCount: 3, boxCode: 'BB-B-002', setLowC: 2, setHighC: 6, floor: 'Floor 2', excursions: 1, inTransit: true },
@@ -42,9 +45,22 @@ export const hosts: SensorHost[] = [
 
   // --- org-2 / site-2a ---
   { id: 'tr-101', orgId: 'org-2', siteId: 'site-2a', name: 'TR-101', domain: 'transformer', status: 'CRITICAL', sensorCount: 6, model: 'TR-9001', serial: 'SN200110', kva: 3000, voltage: '33kV/11kV', healthIndex: 58, openAlarms: 3 },
+  { id: 'tr-102', orgId: 'org-2', siteId: 'site-2a', name: 'TR-102', domain: 'transformer', status: 'WARNING', sensorCount: 6, model: 'TR-6787', serial: 'SN200111', kva: 2500, voltage: '22kV/0.4kV', healthIndex: 68, openAlarms: 1 },
+  { id: 'tr-103', orgId: 'org-2', siteId: 'site-2a', name: 'TR-103', domain: 'transformer', status: 'NORMAL', sensorCount: 6, model: 'TR-5512', serial: 'SN200112', kva: 1500, voltage: '11kV/0.4kV', healthIndex: 91, openAlarms: 0 },
   { id: 'cn-101', orgId: 'org-2', siteId: 'site-2a', name: 'Plant Cold Store', domain: 'carbonNode', status: 'NORMAL', sensorCount: 2, cabinetZone: 'Dock', targetMinC: 0, targetMaxC: 5, refrigerantType: 'R-290', co2eSavedKg: 3120, creditsIssued: 26 },
   { id: 'bb-101', orgId: 'org-2', siteId: 'site-2a', name: 'BloodBOX P1', domain: 'bloodBox', status: 'NORMAL', sensorCount: 3, boxCode: 'BB-P-101', setLowC: 2, setHighC: 6, floor: 'Floor 1', excursions: 0, inTransit: false },
+
+  // --- org-3 / site-3a (Industrial Corp — multi-domain enterprise) ---
+  { id: 'tr-301', orgId: 'org-3', siteId: 'site-3a', name: 'TR-301', domain: 'transformer', status: 'NORMAL', sensorCount: 6, model: 'TR-9001', serial: 'SN300110', kva: 3000, voltage: '115kV/22kV', healthIndex: 94, openAlarms: 0 },
+  { id: 'tr-302', orgId: 'org-3', siteId: 'site-3a', name: 'TR-302', domain: 'transformer', status: 'WARNING', sensorCount: 6, model: 'TR-6787', serial: 'SN300111', kva: 2500, voltage: '33kV/11kV', healthIndex: 71, openAlarms: 1 },
+  { id: 'tr-303', orgId: 'org-3', siteId: 'site-3a', name: 'TR-303', domain: 'transformer', status: 'NORMAL', sensorCount: 6, model: 'TR-5512', serial: 'SN300112', kva: 2000, voltage: '22kV/0.4kV', healthIndex: 89, openAlarms: 0 },
+  { id: 'cn-301', orgId: 'org-3', siteId: 'site-3a', name: 'Plant 1 Cold Store', domain: 'carbonNode', status: 'NORMAL', sensorCount: 2, cabinetZone: 'Plant 1', targetMinC: 2, targetMaxC: 8, refrigerantType: 'R-134a', co2eSavedKg: 2450, creditsIssued: 19 },
+  { id: 'bb-301', orgId: 'org-3', siteId: 'site-3a', name: 'BloodBOX S1', domain: 'bloodBox', status: 'NORMAL', sensorCount: 3, boxCode: 'BB-S-301', setLowC: 2, setHighC: 6, floor: 'Floor 1', excursions: 0, inTransit: false },
 ]
+
+/** Canonical transformer host ids (single source of truth for transformer pages). */
+export const getTransformerHostIds = (): string[] =>
+  hosts.filter((h) => h.domain === 'transformer').map((h) => h.id)
 
 // A representative slice of sensors (base) — each bound to exactly one host.
 export const sensors: Sensor[] = [

@@ -1,9 +1,10 @@
 // Server Component — required for generateStaticParams (static export)
 import TransformerDetailClient from './TransformerDetailClient'
+import { getTransformerHostIds } from '@/lib/fleetData'
 
-// Pre-generate all 15 transformer pages at build time
+// Pre-generate a detail page for every canonical fleet transformer host
 export function generateStaticParams() {
-  return Array.from({ length: 15 }, (_, i) => ({ id: `t${i + 1}` }))
+  return getTransformerHostIds().map((id) => ({ id }))
 }
 
 export default function TransformerDetailPage() {
