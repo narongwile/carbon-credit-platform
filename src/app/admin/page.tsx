@@ -4,6 +4,8 @@ import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
 import { getGeoNodes } from '@/lib/geoNodes'
+import { getHostsByOrg } from '@/lib/fleetData'
+import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock } from 'lucide-react'
@@ -108,51 +110,71 @@ function TransformerCard({ transformer }: { transformer: Transformer }) {
   )
 }
 
-function OverviewTab() {
-  const { selectedOrgId, getTransformersByOrg, getAlarmsByOrg } = useAppStore()
-  const transformers = getTransformersByOrg(selectedOrgId)
-  const alarms = getAlarmsByOrg(selectedOrgId)
+function statusColorH(s: string) {
+  return s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280'
+}
+function hostMetric(h: SensorHost): string {
+  if (h.domain === 'transformer') return `Health ${h.healthIndex}`
+  if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} cr`
+  return `set ${h.setLowC}–${h.setHighC}°C`
+}
+function HostCard({ host, href }: { host: SensorHost; href: string }) {
+  const meta = DOMAIN_META[host.domain]
+  return (
+    <Link href={href}>
+      <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: statusColorH(host.status), boxShadow: `0 0 6px ${statusColorH(host.status)}` }} />
+            <div className="text-sm font-bold text-white">{host.name}</div>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-slate-400">{hostMetric(host)}</span>
+          <span className="text-[10px] text-slate-600">{host.sensorCount} sensors</span>
+        </div>
+      </div>
+    </Link>
+  )
+}
 
-  const normal = transformers.filter((t) => t.status === 'NORMAL').length
-  const warning = transformers.filter((t) => t.status === 'WARNING').length
-  const critical = transformers.filter((t) => t.status === 'CRITICAL').length
+function OverviewTab() {
+  const { selectedOrgId, getAlarmsByOrg } = useAppStore()
+  const orgId = selectedOrgId || 'org-1'
+  const hosts = getHostsByOrg(orgId)
+  const alarms = getAlarmsByOrg(orgId)
+
+  const byDomain = (d: SensorDomain) => hosts.filter((h) => h.domain === d)
+  const normal = hosts.filter((h) => h.status === 'NORMAL').length
+  const warning = hosts.filter((h) => h.status === 'WARNING').length
+  const critical = hosts.filter((h) => h.status === 'CRITICAL' || h.status === 'OFFLINE').length
   const unacked = alarms.filter((a) => !a.acknowledged).length
+  const totalSensors = hosts.reduce((a, h) => a + h.sensorCount, 0)
+  const moduleRoute: Record<SensorDomain, string> = { transformer: '', carbonNode: '/admin/refrigeration', bloodBox: '/admin/bloodbox' }
 
   return (
-    <div className="p-5 space-y-5">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-white">Transformer Overview</h1>
-          <p className="text-sm text-slate-500">All transformers in your organization</p>
+          <h2 className="text-lg font-bold text-white">All Devices Overview</h2>
+          <p className="text-sm text-slate-500">Every sensor across every product in your organization</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs">
-            <CheckCircle size={12} className="text-green-400" />
-            <span className="text-slate-400">{normal} Normal</span>
-          </div>
-          {warning > 0 && (
-            <div className="flex items-center gap-1.5 text-xs">
-              <AlertTriangle size={12} className="text-amber-400" />
-              <span className="text-slate-400">{warning} Warning</span>
-            </div>
-          )}
-          {critical > 0 && (
-            <div className="flex items-center gap-1.5 text-xs">
-              <XCircle size={12} className="text-red-400" />
-              <span className="text-red-400 font-semibold">{critical} Critical</span>
-            </div>
-          )}
+          <div className="flex items-center gap-1.5 text-xs"><CheckCircle size={12} className="text-green-400" /><span className="text-slate-400">{normal} Normal</span></div>
+          {warning > 0 && <div className="flex items-center gap-1.5 text-xs"><AlertTriangle size={12} className="text-amber-400" /><span className="text-slate-400">{warning} Warning</span></div>}
+          {critical > 0 && <div className="flex items-center gap-1.5 text-xs"><XCircle size={12} className="text-red-400" /><span className="text-red-400 font-semibold">{critical} Critical</span></div>}
         </div>
       </div>
 
       {/* Summary stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'Total Transformers', value: transformers.length, color: '#6366f1' },
-          { label: 'Online', value: normal + warning + critical, color: '#4ade80' },
+          { label: 'Total Devices', value: hosts.length, color: '#6366f1' },
+          { label: 'Total Sensors', value: totalSensors, color: '#06b6d4' },
+          { label: 'Products', value: new Set(hosts.map((h) => h.domain)).size, color: '#a78bfa' },
           { label: 'Active Alarms', value: unacked, color: unacked > 0 ? '#ef4444' : '#4ade80' },
-          { label: 'Avg Health Index', value: Math.round(transformers.reduce((a, t) => a + t.healthIndex, 0) / transformers.length), color: '#06b6d4' },
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <div className="text-xs text-slate-500 mb-1">{stat.label}</div>
@@ -161,12 +183,22 @@ function OverviewTab() {
         ))}
       </div>
 
-      {/* Transformer grid */}
-      <div className="grid grid-cols-3 xl:grid-cols-4 gap-3">
-        {transformers.map((t) => (
-          <TransformerCard key={t.id} transformer={t} />
-        ))}
-      </div>
+      {/* Per-product device sections (all products the org has) */}
+      {(['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).map((d) => {
+        const list = byDomain(d)
+        if (!list.length) return null
+        const meta = DOMAIN_META[d]
+        return (
+          <div key={d} className="space-y-2">
+            <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+              {list.map((h) => (
+                <HostCard key={h.id} host={h} href={d === 'transformer' ? `/admin/transformers/${h.id}` : moduleRoute[d]} />
+              ))}
+            </div>
+          </div>
+        )
+      })}
 
       {/* Recent alarms */}
       {unacked > 0 && (

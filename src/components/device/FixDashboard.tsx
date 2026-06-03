@@ -1,13 +1,32 @@
 'use client'
 
 import { useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import type { ManagedDevice } from '@/types/org'
+import type { Transformer } from '@/types'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
   Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi,
 } from 'lucide-react'
+
+const Fridge3D = dynamic(() => import('@/components/twin/Fridge3D'), { ssr: false, loading: () => <TwinLoading /> })
+const BloodBox3D = dynamic(() => import('@/components/twin/BloodBox3D'), { ssr: false, loading: () => <TwinLoading /> })
+const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false, loading: () => <TwinLoading /> })
+
+function TwinLoading() {
+  return <div className="w-full h-full flex items-center justify-center text-xs text-slate-600">Loading 3D digital twin…</div>
+}
+
+// Picks the right 3D digital twin for the device's product domain.
+function DeviceTwin({ device }: { device: ManagedDevice }) {
+  const temp = parseFloat(device.lastValue ?? '') || 4.2
+  if (device.domain === 'carbonNode') return <Fridge3D device={{ name: device.name, temperature: temp, doorOpen: false, threshold: 8 }} />
+  if (device.domain === 'bloodBox') return <BloodBox3D device={{ name: device.name, temperature: temp, battery: 85, lidOpen: false, threshold: 6 }} />
+  if (device.domain === 'transformer') return <Transformer3D transformer={{ id: device.id } as Transformer} />
+  return <div className="w-full h-full flex items-center justify-center text-slate-600"><Activity size={36} className="opacity-30" /></div>
+}
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -125,14 +144,10 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
         })}
       </div>
 
-      {/* Center: status + trend */}
+      {/* Center: 3D digital twin + trend */}
       <div className="lg:col-span-5 space-y-4">
-        <div className="rounded-xl p-5 flex flex-col items-center justify-center text-center h-48" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-2" style={{ background: 'rgba(99,102,241,0.15)' }}>
-            <Activity size={30} className="text-indigo-400" />
-          </div>
-          <div className="text-base font-bold text-white">{device.name}</div>
-          <div className="text-xs text-slate-500">{device.deviceType} · {device.location}</div>
+        <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
+          <DeviceTwin device={device} />
         </div>
         <div className="rounded-xl p-5" style={surface}>
           <div className="text-sm font-semibold text-white mb-3">Performance · last 24h</div>
