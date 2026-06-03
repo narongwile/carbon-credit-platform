@@ -27,6 +27,7 @@ spec:
       containers:
         - name: mysql
           args:
+          - --default-time-zone=+07:00
           - --innodb-buffer-pool-size=1610612736
           - --innodb-redo-log-capacity=268435456
           - --max-connections=150
