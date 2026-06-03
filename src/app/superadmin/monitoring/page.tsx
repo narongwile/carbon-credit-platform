@@ -23,9 +23,9 @@ function metric(h: SensorHost): string {
   return `set ${h.setLowC}–${h.setHighC}°C · ${h.excursions} excursions`
 }
 function monitorRoute(h: SensorHost): string {
+  // transformer keeps its dedicated rich twin; others use the shared node twin
   if (h.domain === 'transformer') return `/admin/transformers/${h.id}`
-  if (h.domain === 'carbonNode') return '/admin/refrigeration'
-  return '/admin/bloodbox'
+  return `/admin/nodes/${h.id}`
 }
 
 export default function SuperAdminMonitoringPage() {

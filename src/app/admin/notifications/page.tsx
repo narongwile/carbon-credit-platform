@@ -26,6 +26,7 @@ export default function AlarmNotificationPage() {
   const devices = managedDevicesFromFleet(orgId)
 
   const [scope, setScope] = useState<'all' | string>('all')
+  const [deptScope, setDeptScope] = useState<'all' | string>('all')
   const [limits, setLimits] = useState({ low: 2, high: 8 })
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [events, setEvents] = useState<string[]>(['ev-temp-high', 'ev-door-open', 'ev-offline'])
@@ -54,9 +55,12 @@ export default function AlarmNotificationPage() {
 
   return (
     <div className="p-6 space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-white">Alarm &amp; Notification Management</h1>
-        <p className="text-sm text-slate-500 mt-0.5">High / low alarm limits, notification channels and event selection</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white">Alarm &amp; Notification Management</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Advanced org-wide rules — applies across every department in your organization</p>
+        </div>
+        <span className="text-[10px] px-2.5 py-1 rounded-full font-bold mt-1" style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.12)' }}>ADMIN · ALL DEPARTMENTS</span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -67,13 +71,23 @@ export default function AlarmNotificationPage() {
             <h3 className="text-sm font-semibold text-white">Alarm Setting (high / low)</h3>
           </div>
 
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply to</label>
-            <select value={scope} onChange={(e) => setScope(e.target.value)}
-              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-              <option value="all">All devices ({devices.length})</option>
-              {devices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Target department</label>
+              <select value={deptScope} onChange={(e) => setDeptScope(e.target.value)}
+                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+                <option value="all">All departments</option>
+                {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply to device</label>
+              <select value={scope} onChange={(e) => setScope(e.target.value)}
+                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+                <option value="all">All devices ({devices.length})</option>
+                {devices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
