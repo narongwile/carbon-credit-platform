@@ -55,7 +55,8 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { alarms, selectedOrgId, setSelectedOrgId } = useAppStore()
+  const { alarms, selectedOrgId, setSelectedOrgId, orgLogos } = useAppStore()
+  const orgLogo = orgLogos[selectedOrgId]
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
 
   useEffect(() => {
@@ -81,8 +82,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {/* Logo */}
           <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
             <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                <Boxes size={14} className="text-white" />
+              <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: orgLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                {orgLogo ? <img src={orgLogo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
               </div>
               <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
             </div>

@@ -11,9 +11,12 @@ interface AppState {
   realtimeEnabled: boolean
   /** The acting viewer (customer portal) — drives department-based access. */
   viewerUserId: string
+  /** Per-organization uploaded logo (data URL), keyed by orgId. */
+  orgLogos: Record<string, string>
 
   setUser: (user: User | null) => void
   setViewerUserId: (id: string) => void
+  setOrgLogo: (orgId: string, dataUrl: string) => void
   setSelectedOrgId: (orgId: string) => void
   setSelectedTransformerId: (id: string | null) => void
   updateTransformerSensor: (transformerId: string, sensorKey: string, value: number) => void
@@ -32,9 +35,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedTransformerId: null,
   realtimeEnabled: true,
   viewerUserId: 'u-cc',
+  orgLogos: {},
 
   setUser: (user) => set({ user }),
   setViewerUserId: (id) => set({ viewerUserId: id }),
+  setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
   setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),
   setSelectedTransformerId: (id) => set({ selectedTransformerId: id }),
   toggleRealtime: () => set((s) => ({ realtimeEnabled: !s.realtimeEnabled })),

@@ -1,13 +1,24 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { Save } from 'lucide-react'
+import { organizations } from '@/lib/mockData'
+import { Save, Upload, Trash2, Building2 } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 export default function SettingsPage() {
-  const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime } = useAppStore()
+  const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo } = useAppStore()
   const transformers = getTransformersByOrg(selectedOrgId)
   const [selectedId, setSelectedId] = useState(transformers[0]?.id || '')
+  const logoRef = useRef<HTMLInputElement>(null)
+  const orgName = organizations.find((o) => o.id === selectedOrgId)?.name ?? 'Organization'
+  const currentLogo = orgLogos[selectedOrgId]
+  const onLogo = (file?: File) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => { setOrgLogo(selectedOrgId, String(reader.result)); toast.success('Organization logo updated') }
+    reader.readAsDataURL(file)
+  }
   const [thresholds, setThresholds] = useState({
     oilTempWarn: 80,
     oilTempCrit: 95,
@@ -38,7 +49,30 @@ export default function SettingsPage() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-white">Settings</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Configure transformer thresholds and system preferences</p>
+        <p className="text-sm text-slate-500 mt-0.5">Organization branding, thresholds and system preferences</p>
+      </div>
+
+      {/* Organization logo */}
+      <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+        <h3 className="text-sm font-semibold text-white mb-1">Organization Logo</h3>
+        <p className="text-[11px] text-slate-500 mb-4">Upload your organization&apos;s logo. It appears in the sidebar for {orgName}.</p>
+        <div className="flex items-center gap-5">
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0" style={{ background: currentLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: '1px solid #1e2433' }}>
+            {currentLogo ? <img src={currentLogo} alt="logo" className="w-full h-full object-contain" /> : <Building2 size={30} className="text-white" />}
+          </div>
+          <div className="flex flex-col gap-2">
+            <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => onLogo(e.target.files?.[0])} />
+            <button onClick={() => logoRef.current?.click()} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+              <Upload size={15} /> {currentLogo ? 'Change Logo' : 'Upload Logo'}
+            </button>
+            {currentLogo && (
+              <button onClick={() => { setOrgLogo(selectedOrgId, ''); toast.success('Logo removed') }} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-red-400" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                <Trash2 size={14} /> Remove
+              </button>
+            )}
+            <span className="text-[10px] text-slate-600">PNG / SVG / JPG · square works best</span>
+          </div>
+        </div>
       </div>
 
       <div className="grid grid-cols-3 gap-6">
