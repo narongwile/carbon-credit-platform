@@ -34,6 +34,13 @@ export interface ManagedUser {
   /** A user can belong to multiple departments. */
   departmentIds: string[]
   status: 'active' | 'invited' | 'disabled'
+  /**
+   * Per-user product-access override, keyed by sensor domain. Absent domain =
+   * inherit from the user's department(s). An explicit value can only RESTRICT
+   * (it is capped by the department grant): 'none' blocks, 'view'/'manage' lower
+   * the level if the department allows more.
+   */
+  productAccess?: Record<string, 'none' | 'view' | 'manage'>
 }
 
 export interface ManagedDevice {

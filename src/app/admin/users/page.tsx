@@ -245,7 +245,7 @@ export default function UserManagementPage() {
 
       {/* PRODUCT ACCESS */}
       {tab === 'products' && (
-        <ProductAccess orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} />
+        <ProductAccess orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} setUsers={setUsers} />
       )}
 
       {/* EVENT CATALOG */}
@@ -350,13 +350,17 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
 
 // ---- Product Access per department -----------------------------------------
 // Admin assigns which licensed products each department's users can See / Manage.
-function ProductAccess({ orgId, departments, setDepartments, users }: {
+const ACCESS_RANK: Record<'none' | 'view' | 'manage', number> = { none: 0, view: 1, manage: 2 }
+
+function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: {
   orgId: string
   departments: Department[]
   setDepartments: React.Dispatch<React.SetStateAction<Department[]>>
   users: ManagedUser[]
+  setUsers: React.Dispatch<React.SetStateAction<ManagedUser[]>>
 }) {
   const domains = licensedDomains(orgId)
+  const [scope, setScope] = useState<'dept' | 'user'>('dept')
 
   const setAccess = (deptId: string, domain: SensorDomain, level: 'none' | 'view' | 'manage') => {
     setDepartments((prev) => prev.map((d) => {
@@ -368,11 +372,37 @@ function ProductAccess({ orgId, departments, setDepartments, users }: {
     }))
   }
 
+  // department-derived level for a user (from local state)
+  const deptLevel = (u: ManagedUser, domain: SensorDomain): 'none' | 'view' | 'manage' => {
+    let best: 'none' | 'view' | 'manage' = 'none'
+    for (const d of departments.filter((x) => u.departmentIds.includes(x.id))) {
+      const l = d.productAccess?.[domain]
+      if (l && ACCESS_RANK[l] > ACCESS_RANK[best]) best = l
+    }
+    return best
+  }
+  const effectiveLevel = (u: ManagedUser, domain: SensorDomain): 'none' | 'view' | 'manage' => {
+    const dl = deptLevel(u, domain)
+    const ov = u.productAccess?.[domain]
+    if (ov === undefined) return dl
+    return ACCESS_RANK[ov] < ACCESS_RANK[dl] ? ov : dl
+  }
+  const setUserAccess = (userId: string, domain: SensorDomain, value: 'inherit' | 'none' | 'view' | 'manage') => {
+    setUsers((prev) => prev.map((u) => {
+      if (u.id !== userId) return u
+      const pa = { ...(u.productAccess ?? {}) }
+      if (value === 'inherit') delete pa[domain]
+      else pa[domain] = value
+      return { ...u, productAccess: pa }
+    }))
+  }
+
   const LEVELS = [
     { id: 'none', label: 'None', icon: Ban, color: '#475569' },
     { id: 'view', label: 'View', icon: Eye, color: '#06b6d4' },
     { id: 'manage', label: 'Manage', icon: Settings2, color: '#22c55e' },
   ] as const
+  const levelColor = (l: string) => (l === 'manage' ? '#22c55e' : l === 'view' ? '#06b6d4' : '#475569')
 
   if (!domains.length) {
     return <div className="rounded-xl p-4 text-sm text-slate-500" style={inset}>This organization has no licensed products yet.</div>
@@ -380,53 +410,113 @@ function ProductAccess({ orgId, departments, setDepartments, users }: {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-slate-500">
-        Choose which licensed products each department can access. <span className="text-cyan-400">View</span> = users can open the monitoring view; <span className="text-green-400">Manage</span> = view &amp; control. Applies to every user in the department.
-      </p>
-      <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-        <table className="w-full text-sm">
-          <thead>
-            <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
-              <th className="py-3 px-4 text-left text-xs text-slate-500 font-medium">Department</th>
-              {domains.map((d) => (
-                <th key={d} className="py-3 px-4 text-left text-xs font-medium" style={{ color: DOMAIN_META[d].accent }}>{DOMAIN_META[d].platform}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody style={{ background: '#0d1117' }}>
-            {departments.map((dept) => {
-              const members = users.filter((u) => u.departmentIds.includes(dept.id)).length
-              return (
-                <tr key={dept.id} style={{ borderBottom: '1px solid #1e2433' }}>
-                  <td className="py-3 px-4">
-                    <div className="text-white font-medium">{dept.name}</div>
-                    <div className="text-[10px] text-slate-600">{members} user{members === 1 ? '' : 's'}</div>
-                  </td>
-                  {domains.map((domain) => {
-                    const current = dept.productAccess?.[domain] ?? 'none'
-                    return (
-                      <td key={domain} className="py-3 px-4">
-                        <div className="flex gap-1">
-                          {LEVELS.map((lv) => {
-                            const on = current === lv.id
-                            return (
-                              <button key={lv.id} onClick={() => setAccess(dept.id, domain, lv.id)} title={lv.label}
-                                className={clsx('flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all', on ? 'text-white' : 'text-slate-500')}
-                                style={on ? { background: `${lv.color}26`, border: `1px solid ${lv.color}` } : { background: '#0a0e1a', border: '1px solid #1e2433' }}>
-                                <lv.icon size={11} /> {lv.label}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </td>
-                    )
-                  })}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+      {/* scope toggle */}
+      <div className="flex gap-1 p-1 rounded-lg w-fit" style={inset}>
+        {(['dept', 'user'] as const).map((s) => (
+          <button key={s} onClick={() => setScope(s)}
+            className={clsx('px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all', scope === s ? 'text-white' : 'text-slate-500')}
+            style={scope === s ? { background: '#6366f1' } : {}}>
+            {s === 'dept' ? 'By Department' : 'By User'}
+          </button>
+        ))}
       </div>
+
+      {scope === 'dept' ? (
+        <>
+          <p className="text-xs text-slate-500">
+            Which licensed products each department can access. <span className="text-cyan-400">View</span> = open monitoring; <span className="text-green-400">Manage</span> = view &amp; control. Applies to every user in the department.
+          </p>
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+                  <th className="py-3 px-4 text-left text-xs text-slate-500 font-medium">Department</th>
+                  {domains.map((d) => (
+                    <th key={d} className="py-3 px-4 text-left text-xs font-medium" style={{ color: DOMAIN_META[d].accent }}>{DOMAIN_META[d].platform}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody style={{ background: '#0d1117' }}>
+                {departments.map((dept) => {
+                  const members = users.filter((u) => u.departmentIds.includes(dept.id)).length
+                  return (
+                    <tr key={dept.id} style={{ borderBottom: '1px solid #1e2433' }}>
+                      <td className="py-3 px-4">
+                        <div className="text-white font-medium">{dept.name}</div>
+                        <div className="text-[10px] text-slate-600">{members} user{members === 1 ? '' : 's'}</div>
+                      </td>
+                      {domains.map((domain) => {
+                        const current = dept.productAccess?.[domain] ?? 'none'
+                        return (
+                          <td key={domain} className="py-3 px-4">
+                            <div className="flex gap-1">
+                              {LEVELS.map((lv) => {
+                                const on = current === lv.id
+                                return (
+                                  <button key={lv.id} onClick={() => setAccess(dept.id, domain, lv.id)} title={lv.label}
+                                    className={clsx('flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all', on ? 'text-white' : 'text-slate-500')}
+                                    style={on ? { background: `${lv.color}26`, border: `1px solid ${lv.color}` } : { background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                                    <lv.icon size={11} /> {lv.label}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-slate-500">
+            Restrict access per individual user. <span className="text-slate-300">Inherit</span> uses the department grant; an explicit value can only <span className="text-amber-400">narrow</span> it (never exceed the department). The <span className="text-slate-300">effective</span> level is shown below each choice.
+          </p>
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+                  <th className="py-3 px-4 text-left text-xs text-slate-500 font-medium">User</th>
+                  {domains.map((d) => (
+                    <th key={d} className="py-3 px-4 text-left text-xs font-medium" style={{ color: DOMAIN_META[d].accent }}>{DOMAIN_META[d].platform}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody style={{ background: '#0d1117' }}>
+                {users.filter((u) => u.role !== 'admin').map((u) => (
+                  <tr key={u.id} style={{ borderBottom: '1px solid #1e2433' }}>
+                    <td className="py-3 px-4">
+                      <div className="text-white font-medium">{u.name}</div>
+                      <div className="text-[10px] text-slate-600">{u.departmentIds.map((id) => departments.find((d) => d.id === id)?.name).filter(Boolean).join(', ') || 'no dept'}</div>
+                    </td>
+                    {domains.map((domain) => {
+                      const ov = u.productAccess?.[domain] ?? 'inherit'
+                      const eff = effectiveLevel(u, domain)
+                      const dl = deptLevel(u, domain)
+                      return (
+                        <td key={domain} className="py-3 px-4">
+                          <select value={ov} onChange={(e) => setUserAccess(u.id, domain, e.target.value as 'inherit' | 'none' | 'view' | 'manage')}
+                            className="rounded-md px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500" style={inset}>
+                            <option value="inherit">Inherit (dept: {dl})</option>
+                            <option value="none">None</option>
+                            <option value="view">View</option>
+                            <option value="manage">Manage</option>
+                          </select>
+                          <div className="text-[10px] mt-1 font-medium" style={{ color: levelColor(eff) }}>→ {eff}</div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -42,7 +42,7 @@ export const managedUsers: ManagedUser[] = [
   { id: 'u-aa', orgId: 'org-1', name: 'User AA', username: 'aa', email: 'aa@org-a.io', role: 'admin', departmentIds: [], status: 'active' },
   { id: 'u-bb', orgId: 'org-1', name: 'User BB', username: 'bb', email: 'bb@org-a.io', role: 'admin', departmentIds: [], status: 'active' },
   { id: 'u-cc', orgId: 'org-1', name: 'User CC', username: 'cc', email: 'cc@org-a.io', role: 'viewer', departmentIds: ['dept-bb'], status: 'active' },
-  { id: 'u-dd', orgId: 'org-1', name: 'User DD', username: 'dd', email: 'dd@org-a.io', role: 'viewer', departmentIds: ['dept-bb'], status: 'active' },
+  { id: 'u-dd', orgId: 'org-1', name: 'User DD', username: 'dd', email: 'dd@org-a.io', role: 'viewer', departmentIds: ['dept-bb'], status: 'active', productAccess: { transformer: 'view' } },
   { id: 'u-ee', orgId: 'org-1', name: 'User EE', username: 'ee', email: 'ee@org-a.io', role: 'viewer', departmentIds: ['dept-cc'], status: 'active' },
   { id: 'u-ff', orgId: 'org-1', name: 'User FF', username: 'ff', email: 'ff@org-a.io', role: 'editor', departmentIds: ['dept-cc'], status: 'active' },
   { id: 'u-gg', orgId: 'org-1', name: 'User GG', username: 'gg', email: 'gg@org-a.io', role: 'viewer', departmentIds: ['dept-cc'], status: 'invited' },
