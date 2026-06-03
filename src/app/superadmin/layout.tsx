@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import {
   Boxes, Globe, Building2, ShieldCheck, ScrollText, Layers, Palette,
-  Puzzle, LifeBuoy, LogOut, Activity, ChevronRight,
+  Puzzle, LifeBuoy, LogOut, Activity, ChevronRight, MonitorDot,
   TrendingUp, Upload, AlertTriangle
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -14,6 +14,7 @@ import clsx from 'clsx'
 const NAV = [
   { href: '/superadmin', label: 'Global Overview', icon: Globe, exact: true },
   { href: '/superadmin/organizations', label: 'Organizations', icon: Building2 },
+  { href: '/superadmin/monitoring', label: 'Sensor Monitoring', icon: MonitorDot },
   { href: '/superadmin/platforms', label: 'Platform Catalog', icon: Layers },
   { href: '/superadmin/themes', label: 'Dashboard Themes', icon: Palette },
   { href: '/superadmin/entitlements', label: 'Feature Entitlements', icon: ShieldCheck },

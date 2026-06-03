@@ -29,12 +29,12 @@ export const roleLabels: Record<string, string> = {
 }
 
 export const departments: Department[] = [
-  // Org A — Refrigeration Datalogger
-  { id: 'dept-bb', orgId: 'org-1', name: 'Department bb', themeIds: ['th-overview', 'th-fix', 'th-refrig'] },
-  { id: 'dept-cc', orgId: 'org-1', name: 'Department cc', themeIds: ['th-overview', 'th-map'] },
-  // Org B — Transformer
-  { id: 'dept-dd', orgId: 'org-2', name: 'Department dd', themeIds: ['th-overview', 'th-twin'] },
-  { id: 'dept-ee', orgId: 'org-2', name: 'Department ee', themeIds: ['th-overview', 'th-free', 'th-map'] },
+  // Org A — transformer + carbonNode (refrigeration) licensed
+  { id: 'dept-bb', orgId: 'org-1', name: 'Department bb', themeIds: ['th-overview', 'th-fix', 'th-refrig'], productAccess: { transformer: 'manage', carbonNode: 'view' } },
+  { id: 'dept-cc', orgId: 'org-1', name: 'Department cc', themeIds: ['th-overview', 'th-map'], productAccess: { carbonNode: 'manage' } },
+  // Org B — transformer + bloodBox licensed
+  { id: 'dept-dd', orgId: 'org-2', name: 'Department dd', themeIds: ['th-overview', 'th-twin'], productAccess: { transformer: 'manage', bloodBox: 'view' } },
+  { id: 'dept-ee', orgId: 'org-2', name: 'Department ee', themeIds: ['th-overview', 'th-free', 'th-map'], productAccess: { bloodBox: 'manage' } },
 ]
 
 export const managedUsers: ManagedUser[] = [

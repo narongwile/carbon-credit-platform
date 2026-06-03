@@ -16,6 +16,12 @@ export interface Department {
   name: string
   /** Dashboard theme ids this department is permitted to view. */
   themeIds: string[]
+  /**
+   * Per-product access for this department's users, keyed by sensor domain
+   * ('transformer' | 'carbonNode' | 'bloodBox'). Absent = no access.
+   * 'view' = can see the monitoring view; 'manage' = can see & manage.
+   */
+  productAccess?: Record<string, 'view' | 'manage'>
 }
 
 export interface ManagedUser {

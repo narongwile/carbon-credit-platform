@@ -9,20 +9,23 @@ import {
   roleLabels,
 } from '@/lib/orgData'
 import { getOrgThemeGrants } from '@/lib/orgThemes'
+import { licensedDomains } from '@/lib/entitlements'
+import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole } from '@/types/org'
 import {
-  Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check,
-  ToggleLeft, ToggleRight, Pencil,
+  Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check, Boxes,
+  ToggleLeft, ToggleRight, Pencil, Eye, Settings2, Ban,
 } from 'lucide-react'
 import clsx from 'clsx'
 
-type Tab = 'departments' | 'users' | 'roles' | 'permissions'
+type Tab = 'departments' | 'users' | 'roles' | 'permissions' | 'products'
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'departments', label: 'Departments', icon: Building2 },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'roles', label: 'User Roles', icon: ShieldCheck },
   { id: 'permissions', label: 'Dashboard View Permission', icon: Palette },
+  { id: 'products', label: 'Product Access', icon: Boxes },
 ]
 
 const ROLES: ManagedRole[] = ['admin', 'editor', 'viewer']
@@ -214,6 +217,11 @@ export default function UserManagementPage() {
         <DashboardPermissions orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} />
       )}
 
+      {/* PRODUCT ACCESS */}
+      {tab === 'products' && (
+        <ProductAccess orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} />
+      )}
+
       {(editingUser || showNewUser) && (
         <UserModal
           user={editingUser}
@@ -304,6 +312,89 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
           })}
         </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ---- Product Access per department -----------------------------------------
+// Admin assigns which licensed products each department's users can See / Manage.
+function ProductAccess({ orgId, departments, setDepartments, users }: {
+  orgId: string
+  departments: Department[]
+  setDepartments: React.Dispatch<React.SetStateAction<Department[]>>
+  users: ManagedUser[]
+}) {
+  const domains = licensedDomains(orgId)
+
+  const setAccess = (deptId: string, domain: SensorDomain, level: 'none' | 'view' | 'manage') => {
+    setDepartments((prev) => prev.map((d) => {
+      if (d.id !== deptId) return d
+      const pa = { ...(d.productAccess ?? {}) }
+      if (level === 'none') delete pa[domain]
+      else pa[domain] = level
+      return { ...d, productAccess: pa }
+    }))
+  }
+
+  const LEVELS = [
+    { id: 'none', label: 'None', icon: Ban, color: '#475569' },
+    { id: 'view', label: 'View', icon: Eye, color: '#06b6d4' },
+    { id: 'manage', label: 'Manage', icon: Settings2, color: '#22c55e' },
+  ] as const
+
+  if (!domains.length) {
+    return <div className="rounded-xl p-4 text-sm text-slate-500" style={inset}>This organization has no licensed products yet.</div>
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-slate-500">
+        Choose which licensed products each department can access. <span className="text-cyan-400">View</span> = users can open the monitoring view; <span className="text-green-400">Manage</span> = view &amp; control. Applies to every user in the department.
+      </p>
+      <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+        <table className="w-full text-sm">
+          <thead>
+            <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+              <th className="py-3 px-4 text-left text-xs text-slate-500 font-medium">Department</th>
+              {domains.map((d) => (
+                <th key={d} className="py-3 px-4 text-left text-xs font-medium" style={{ color: DOMAIN_META[d].accent }}>{DOMAIN_META[d].platform}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody style={{ background: '#0d1117' }}>
+            {departments.map((dept) => {
+              const members = users.filter((u) => u.departmentIds.includes(dept.id)).length
+              return (
+                <tr key={dept.id} style={{ borderBottom: '1px solid #1e2433' }}>
+                  <td className="py-3 px-4">
+                    <div className="text-white font-medium">{dept.name}</div>
+                    <div className="text-[10px] text-slate-600">{members} user{members === 1 ? '' : 's'}</div>
+                  </td>
+                  {domains.map((domain) => {
+                    const current = dept.productAccess?.[domain] ?? 'none'
+                    return (
+                      <td key={domain} className="py-3 px-4">
+                        <div className="flex gap-1">
+                          {LEVELS.map((lv) => {
+                            const on = current === lv.id
+                            return (
+                              <button key={lv.id} onClick={() => setAccess(dept.id, domain, lv.id)} title={lv.label}
+                                className={clsx('flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all', on ? 'text-white' : 'text-slate-500')}
+                                style={on ? { background: `${lv.color}26`, border: `1px solid ${lv.color}` } : { background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                                <lv.icon size={11} /> {lv.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )
