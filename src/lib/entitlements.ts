@@ -32,11 +32,17 @@ export function isPlatformLicensed(orgId: string, platform: PlatformType): boole
 export const isDomainLicensed = (orgId: string, domain: SensorDomain) =>
   isPlatformLicensed(orgId, DOMAIN_TO_PLATFORM[domain])
 
-/** Is a named feature enabled on any platform the org is licensed for? */
+/**
+ * Is a named feature available to the org?
+ * Policy: every feature within a LICENSED product is available — owning the
+ * product grants all of its features. Access is gated by product license only;
+ * the per-feature toggle no longer restricts access (features of unlicensed
+ * products remain unavailable).
+ */
 export function isFeatureEnabled(orgId: string, featureName: string): boolean {
   const org = getOrg(orgId)
   if (!org) return false
-  return org.platforms.some((p) => p.licensed && p.features.some((f) => f.name === featureName && f.enabled))
+  return org.platforms.some((p) => p.licensed && p.features.some((f) => f.name === featureName))
 }
 
 /** Sensor domains the org is licensed for. */
