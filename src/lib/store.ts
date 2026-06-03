@@ -9,8 +9,11 @@ interface AppState {
   selectedOrgId: string
   selectedTransformerId: string | null
   realtimeEnabled: boolean
+  /** The acting viewer (customer portal) — drives department-based access. */
+  viewerUserId: string
 
   setUser: (user: User | null) => void
+  setViewerUserId: (id: string) => void
   setSelectedOrgId: (orgId: string) => void
   setSelectedTransformerId: (id: string | null) => void
   updateTransformerSensor: (transformerId: string, sensorKey: string, value: number) => void
@@ -28,8 +31,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedOrgId: 'org-1',
   selectedTransformerId: null,
   realtimeEnabled: true,
+  viewerUserId: 'u-cc',
 
   setUser: (user) => set({ user }),
+  setViewerUserId: (id) => set({ viewerUserId: id }),
   setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),
   setSelectedTransformerId: (id) => set({ selectedTransformerId: id }),
   toggleRealtime: () => set((s) => ({ realtimeEnabled: !s.realtimeEnabled })),

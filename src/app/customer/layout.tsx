@@ -5,6 +5,9 @@ import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
+import { useAppStore } from '@/lib/store'
+import { getUsersByOrg, roleLabels } from '@/lib/orgData'
+import { viewerDepartments } from '@/lib/viewer'
 import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -25,6 +28,9 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
+  const { viewerUserId, setViewerUserId } = useAppStore()
+  const orgUsers = getUsersByOrg('org-1').filter((u) => u.role !== 'admin')
+  const depts = viewerDepartments(viewerUserId)
 
   useEffect(() => {
     const session = getSession()
@@ -50,6 +56,20 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
               <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
             </div>
             <div className="text-[10px] text-slate-600 ml-9">Customer Portal</div>
+            {/* Acting viewer — drives department-based access */}
+            <select
+              value={viewerUserId}
+              onChange={(e) => setViewerUserId(e.target.value)}
+              className="w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500"
+              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+            >
+              {orgUsers.map((u) => (
+                <option key={u.id} value={u.id}>{u.name} · {roleLabels[u.role]}</option>
+              ))}
+            </select>
+            <div className="text-[10px] text-slate-600 mt-1 ml-0.5 truncate">
+              {depts.length ? depts.map((d) => d.name).join(', ') : 'No department'}
+            </div>
           </div>
 
           <nav className="flex-1 px-2.5 py-3 space-y-0.5">

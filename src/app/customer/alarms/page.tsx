@@ -3,12 +3,14 @@
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { eventProblems } from '@/lib/orgData'
+import { viewerEventProblems } from '@/lib/viewer'
 import { AlertTriangle, XCircle, Info, Clock, Check } from 'lucide-react'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 export default function CustomerAlarmsPage() {
-  const { alarms, acknowledgeAlarm } = useAppStore()
+  const { alarms, acknowledgeAlarm, viewerUserId } = useAppStore()
+  const evProblems = viewerEventProblems(viewerUserId).length ? viewerEventProblems(viewerUserId) : eventProblems
   const [event, setEvent] = useState('all')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -29,7 +31,7 @@ export default function CustomerAlarmsPage() {
           <select value={event} onChange={(e) => setEvent(e.target.value)}
             className="rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <option value="all">All events</option>
-            {eventProblems.map((ev) => <option key={ev.id} value={ev.id}>{ev.label}</option>)}
+            {evProblems.map((ev) => <option key={ev.id} value={ev.id}>{ev.label}</option>)}
           </select>
         </div>
         <div>

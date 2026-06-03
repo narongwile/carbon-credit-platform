@@ -2,11 +2,15 @@
 
 import dynamic from 'next/dynamic'
 import { getGeoNodes } from '@/lib/geoNodes'
+import { useAppStore } from '@/lib/store'
+import { viewerDomains } from '@/lib/viewer'
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 export default function CustomerMapPage() {
-  const nodes = getGeoNodes('org-1')
+  const { viewerUserId } = useAppStore()
+  const allowed = viewerDomains(viewerUserId)
+  const nodes = getGeoNodes('org-1').filter((n) => allowed.includes(n.domain))
 
   return (
     <div className="p-6 space-y-5">

@@ -84,6 +84,46 @@ export const eventProblems: EventProblem[] = [
   { id: 'ev-other', label: 'Other / Manual Note' },
 ]
 
+// Per-department event-problem catalogs. Each department in a customer org keeps
+// its OWN list of problem types; the viewer's detailed-monitoring event log
+// dropdown is populated from the user's department list.
+export const departmentEventProblems: Record<string, EventProblem[]> = {
+  // org-1 · dept-bb (transformer focus)
+  'dept-bb': [
+    { id: 'ev-bb-oiltemp', label: 'Oil Temperature High', departmentId: 'dept-bb' },
+    { id: 'ev-bb-h2', label: 'Hydrogen (H₂) Rising', departmentId: 'dept-bb' },
+    { id: 'ev-bb-load', label: 'Overload', departmentId: 'dept-bb' },
+    { id: 'ev-bb-offline', label: 'Device Offline', departmentId: 'dept-bb' },
+    { id: 'ev-bb-other', label: 'Other / Manual Note', departmentId: 'dept-bb' },
+  ],
+  // org-1 · dept-cc (refrigeration focus)
+  'dept-cc': [
+    { id: 'ev-cc-temphigh', label: 'Temperature High', departmentId: 'dept-cc' },
+    { id: 'ev-cc-door', label: 'Door Left Open', departmentId: 'dept-cc' },
+    { id: 'ev-cc-defrost', label: 'Defrost Failure', departmentId: 'dept-cc' },
+    { id: 'ev-cc-power', label: 'Power Loss', departmentId: 'dept-cc' },
+    { id: 'ev-cc-other', label: 'Other / Manual Note', departmentId: 'dept-cc' },
+  ],
+  // org-2 · dept-dd (transformer focus)
+  'dept-dd': [
+    { id: 'ev-dd-oiltemp', label: 'Oil Temperature High', departmentId: 'dept-dd' },
+    { id: 'ev-dd-moisture', label: 'Moisture High', departmentId: 'dept-dd' },
+    { id: 'ev-dd-offline', label: 'Device Offline', departmentId: 'dept-dd' },
+    { id: 'ev-dd-other', label: 'Other / Manual Note', departmentId: 'dept-dd' },
+  ],
+  // org-2 · dept-ee (bloodbox focus)
+  'dept-ee': [
+    { id: 'ev-ee-excursion', label: 'Temperature Excursion', departmentId: 'dept-ee' },
+    { id: 'ev-ee-battery', label: 'Battery Low', departmentId: 'dept-ee' },
+    { id: 'ev-ee-lid', label: 'Lid Opened in Transit', departmentId: 'dept-ee' },
+    { id: 'ev-ee-signal', label: 'Signal Lost', departmentId: 'dept-ee' },
+    { id: 'ev-ee-other', label: 'Other / Manual Note', departmentId: 'dept-ee' },
+  ],
+}
+
+export const getEventProblemsByDept = (deptId: string): EventProblem[] =>
+  departmentEventProblems[deptId] ?? eventProblems
+
 export const reportSchedules: ReportSchedule[] = [
   { id: 'rs-1', name: 'Daily Cold-Chain Summary', scope: 'department', scopeId: 'dept-bb', sequence: 'daily', format: 'PDF', enabled: true },
   { id: 'rs-2', name: 'Weekly Transformer Health', scope: 'department', scopeId: 'dept-dd', sequence: 'weekly', format: 'XLSX', enabled: true },

@@ -91,4 +91,6 @@ export interface ReportSchedule {
 export interface EventProblem {
   id: string
   label: string
+  /** The department this problem list belongs to (per-department event catalog). */
+  departmentId?: string
 }
