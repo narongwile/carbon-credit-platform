@@ -55,10 +55,17 @@ export default function UserManagementPage() {
 
   // ----- Departments -----
   const [newDept, setNewDept] = useState('')
+  const [editingDeptId, setEditingDeptId] = useState<string | null>(null)
+  const [editingDeptName, setEditingDeptName] = useState('')
   const addDept = () => {
     if (!newDept.trim()) return
     setDepartments((d) => [...d, { id: `dept-${Date.now()}`, orgId, name: newDept.trim(), themeIds: ['th-overview'] }])
     setNewDept('')
+  }
+  const renameDept = (id: string, name: string) => {
+    if (!name.trim()) return
+    setDepartments((d) => d.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)))
+    setEditingDeptId(null); setEditingDeptName('')
   }
   const removeDept = (id: string) => {
     setDepartments((d) => d.filter((x) => x.id !== id))
@@ -117,18 +124,34 @@ export default function UserManagementPage() {
               return (
                 <div key={d.id} className="rounded-xl p-4" style={surface}>
                   <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.12)' }}>
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(99,102,241,0.12)' }}>
                         <Building2 size={15} className="text-indigo-400" />
                       </div>
-                      <div>
-                        <div className="text-sm font-semibold text-white">{d.name}</div>
-                        <div className="text-xs text-slate-500">{members.length} member{members.length === 1 ? '' : 's'} · {d.themeIds.length} view{d.themeIds.length === 1 ? '' : 's'}</div>
-                      </div>
+                      {editingDeptId === d.id ? (
+                        <div className="flex items-center gap-1.5 flex-1">
+                          <input value={editingDeptName} onChange={(e) => setEditingDeptName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && renameDept(d.id, editingDeptName)} autoFocus
+                            className="flex-1 min-w-0 rounded-md px-2 py-1 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500" style={inset} />
+                          <button onClick={() => renameDept(d.id, editingDeptName)} className="p-1 rounded-md text-green-400 hover:bg-green-500/10"><Check size={14} /></button>
+                          <button onClick={() => setEditingDeptId(null)} className="p-1 rounded-md text-slate-500 hover:bg-white/5"><X size={14} /></button>
+                        </div>
+                      ) : (
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-white truncate">{d.name}</div>
+                          <div className="text-xs text-slate-500">{members.length} member{members.length === 1 ? '' : 's'} · {d.themeIds.length} view{d.themeIds.length === 1 ? '' : 's'}</div>
+                        </div>
+                      )}
                     </div>
-                    <button onClick={() => removeDept(d.id)} className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/5">
-                      <Trash2 size={14} />
-                    </button>
+                    {editingDeptId !== d.id && (
+                      <div className="flex items-center flex-shrink-0">
+                        <button onClick={() => { setEditingDeptId(d.id); setEditingDeptName(d.name) }} className="p-1.5 rounded-lg text-slate-600 hover:text-indigo-400 hover:bg-white/5">
+                          <Pencil size={13} />
+                        </button>
+                        <button onClick={() => removeDept(d.id)} className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/5">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {members.length ? members.map((m) => (
