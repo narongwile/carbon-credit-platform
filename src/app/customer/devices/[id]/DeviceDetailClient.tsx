@@ -1,20 +1,21 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
 import { allManagedDevices } from '@/lib/fleetData'
 import { useAppStore } from '@/lib/store'
-import { viewerEventProblems, viewerCanManage, viewerCanAccess } from '@/lib/viewer'
+import { viewerEventProblems, viewerCanManage, viewerCanAccess, viewerDepartments, getViewerUser } from '@/lib/viewer'
 import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import {
-  ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet,
+  ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users,
   ToggleLeft, ToggleRight, Wifi, WifiOff, Save, Check, LayoutGrid, Sparkles, Lock, Eye,
 } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 
 const managedDevices = allManagedDevices()
 
@@ -29,23 +30,26 @@ function genHistory(seed: number) {
   return out
 }
 
-const PDF_HISTORY = [
-  { name: 'Calibration_Cert_2026Q1.pdf', date: '2026-03-12', size: '420 KB' },
-  { name: 'Maintenance_Log_Feb.pdf', date: '2026-02-28', size: '1.2 MB' },
-]
-
 export default function DeviceDetailClient() {
   const params = useParams()
   const id = String(params?.id ?? '')
   const device: ManagedDevice = managedDevices.find((d) => d.id === id) ?? managedDevices[0]
 
   // Viewer -> department -> product access
-  const { viewerUserId } = useAppStore()
+  const { viewerUserId, documents, addDocument, removeDocument } = useAppStore()
   const domain = device.domain
   const canAccess = !domain || viewerCanAccess(viewerUserId, domain)
   const canManage = !domain || viewerCanManage(viewerUserId, domain)
   const deptEvents = viewerEventProblems(viewerUserId)
   const evProblems = deptEvents.length ? deptEvents : eventProblems
+
+  // viewer identity + department(s) for document scoping & email export
+  const me = getViewerUser(viewerUserId)
+  const myDepts = viewerDepartments(viewerUserId)
+  const myDeptIds = myDepts.map((d) => d.id)
+  const primaryDept = myDepts[0]
+  // documents for THIS node, visible only to the viewer's department(s)
+  const nodeDocs = documents.filter((d) => d.nodeId === id && myDeptIds.includes(d.departmentId))
 
   const [view, setView] = useState<'fix' | 'freestyle'>(device.theme)
   const baseTemp = useMemo(() => parseFloat(device.lastValue ?? '5') || 5, [device])
@@ -54,9 +58,64 @@ export default function DeviceDetailClient() {
   const [range, setRange] = useState({ start: '2026-05-01', end: '2026-06-01' })
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [limits, setLimits] = useState({ low: 2, high: 8 })
-  const [email, setEmail] = useState('viewer@customer.com')
+  const [email, setEmail] = useState(me?.email ?? 'viewer@customer.com')
   const [savedSetting, setSavedSetting] = useState(false)
   const [exported, setExported] = useState('')
+  const docRef = useRef<HTMLInputElement>(null)
+
+  // --- Department document upload / download -----
+  const uploadDoc = (file?: File) => {
+    if (!file) return
+    if (!primaryDept) { toast.error('You are not in a department'); return }
+    const reader = new FileReader()
+    reader.onload = () => {
+      addDocument({
+        id: `doc-${Date.now()}`, nodeId: id, departmentId: primaryDept.id,
+        name: file.name, size: `${(file.size / 1024).toFixed(0)} KB`,
+        date: new Date().toLocaleString(), uploadedBy: me?.name ?? 'user',
+        dataUrl: String(reader.result),
+      })
+      toast.success(`Uploaded to ${primaryDept.name}`)
+    }
+    reader.readAsDataURL(file)
+  }
+  const downloadDoc = (d: { name: string; dataUrl: string }) => {
+    const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  }
+
+  // --- Export node detail (date range) -> CSV / PDF / email -----
+  const rangeRows = useMemo(() => history.map((h, i) => ({
+    time: `${range.start} ${String(6 + (i % 18)).padStart(2, '0')}:00`, value: h.value,
+    status: h.value > limits.high ? 'HIGH' : h.value < limits.low ? 'LOW' : 'OK',
+  })), [history, range, limits])
+
+  const exportCSV = () => {
+    const header = 'Time,Value,Status'
+    const rows = rangeRows.map((r) => `${r.time},${r.value},${r.status}`)
+    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+    a.download = `${device.name.replace(/\s+/g, '_')}_${range.start}_${range.end}.csv`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+    setExported('csv'); toast.success('CSV downloaded')
+  }
+  const exportPDF = async () => {
+    const { jsPDF } = await import('jspdf')
+    const autoTable = (await import('jspdf-autotable')).default
+    const doc = new jsPDF()
+    doc.setFontSize(16); doc.setTextColor(99, 102, 241)
+    doc.text(`Node Report — ${device.name}`, 14, 18)
+    doc.setFontSize(10); doc.setTextColor(90, 90, 90)
+    doc.text(`Serial: ${device.serial}  ·  ${device.location}`, 14, 26)
+    doc.text(`Range: ${range.start} → ${range.end}  ·  Last value: ${device.lastValue ?? '—'}`, 14, 32)
+    autoTable(doc, { startY: 40, head: [['Time', 'Value', 'Status']], body: rangeRows.slice(0, 40).map((r) => [r.time, String(r.value), r.status]), theme: 'striped', headStyles: { fillColor: [99, 102, 241] } })
+    doc.save(`${device.name.replace(/\s+/g, '_')}_${range.start}_${range.end}.pdf`)
+    setExported('pdf'); toast.success('PDF downloaded')
+  }
+  const sendEmail = () => {
+    if (!email) { toast.error('Enter an email'); return }
+    setExported('email'); toast.success(`Node detail (${range.start}→${range.end}) sent to ${email}`)
+  }
 
   // Event log rows (over/under threshold) with per-row event + acknowledge state
   const logRows = useMemo(
@@ -165,52 +224,56 @@ export default function DeviceDetailClient() {
           </div>
         </div>
 
-        {canManage ? (<>
-        {/* PDF upload / download */}
+        {/* Department documents — upload/download, visible only within your department */}
         <div className="rounded-xl p-5 space-y-3" style={surface}>
-          <h3 className="text-sm font-semibold text-white">PDF File Log</h3>
-          <div className="flex items-center gap-2">
-            <input type="date" className="rounded-lg px-2.5 py-2 text-xs text-white outline-none" style={inset} defaultValue="2026-06-01" />
-            <label className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white cursor-pointer" style={gradient}>
-              <Upload size={14} /> Upload PDF
-              <input type="file" accept="application/pdf" className="hidden" />
-            </label>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Documents</h3>
+            <span className="flex items-center gap-1 text-[10px] text-slate-500"><Users size={11} /> {primaryDept?.name ?? 'no department'} only</span>
           </div>
+          <label className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-white cursor-pointer" style={gradient}>
+            <Upload size={14} /> Upload Document
+            <input ref={docRef} type="file" className="hidden" onChange={(e) => { uploadDoc(e.target.files?.[0]); if (docRef.current) docRef.current.value = '' }} />
+          </label>
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
             <table className="w-full text-xs">
-              <thead><tr style={{ background: '#0a0e1a' }}>{['File', 'Date', 'Size', ''].map((h) => <th key={h} className="text-left py-2 px-3 text-slate-500 font-medium">{h}</th>)}</tr></thead>
+              <thead><tr style={{ background: '#0a0e1a' }}>{['File', 'By', 'Size', ''].map((h) => <th key={h} className="text-left py-2 px-3 text-slate-500 font-medium">{h}</th>)}</tr></thead>
               <tbody>
-                {PDF_HISTORY.map((f) => (
-                  <tr key={f.name} style={{ borderTop: '1px solid #1e2433' }}>
-                    <td className="py-2 px-3 text-slate-300 flex items-center gap-1.5"><FileText size={12} className="text-indigo-400" />{f.name}</td>
-                    <td className="py-2 px-3 text-slate-500">{f.date}</td>
+                {nodeDocs.length ? nodeDocs.map((f) => (
+                  <tr key={f.id} style={{ borderTop: '1px solid #1e2433' }}>
+                    <td className="py-2 px-3 text-slate-300 flex items-center gap-1.5"><FileText size={12} className="text-indigo-400" /><span className="truncate max-w-[120px]">{f.name}</span></td>
+                    <td className="py-2 px-3 text-slate-500">{f.uploadedBy}</td>
                     <td className="py-2 px-3 text-slate-500">{f.size}</td>
-                    <td className="py-2 px-3 text-right"><button className="text-indigo-400 hover:text-indigo-300"><Download size={13} /></button></td>
+                    <td className="py-2 px-3 text-right whitespace-nowrap">
+                      <button onClick={() => downloadDoc(f)} className="text-indigo-400 hover:text-indigo-300 mr-2"><Download size={13} /></button>
+                      <button onClick={() => removeDocument(f.id)} className="text-slate-600 hover:text-red-400"><Trash2 size={12} /></button>
+                    </td>
                   </tr>
-                ))}
+                )) : <tr><td colSpan={4} className="py-4 text-center text-slate-600">No documents shared in your department yet.</td></tr>}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Export data */}
+        {/* Export node detail — date range -> CSV / PDF / email to the user */}
         <div className="rounded-xl p-5 space-y-3" style={surface}>
-          <h3 className="text-sm font-semibold text-white">Export Data</h3>
+          <h3 className="text-sm font-semibold text-white">Export Node Detail</h3>
           <div className="flex items-center gap-2">
             <input type="date" value={range.start} onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))} className="flex-1 rounded-lg px-2.5 py-2 text-xs text-white outline-none" style={inset} />
             <span className="text-slate-600 text-xs">to</span>
             <input type="date" value={range.end} onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))} className="flex-1 rounded-lg px-2.5 py-2 text-xs text-white outline-none" style={inset} />
           </div>
           <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Send to email" className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
-          <div className="flex gap-2">
-            <button onClick={() => setExported('email')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-white" style={gradient}><Mail size={13} /> Send Email</button>
-            <button onClick={() => setExported('csv')} className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-300" style={inset}><FileSpreadsheet size={13} /> .CSV File</button>
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={sendEmail} className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs font-medium text-white" style={gradient}><Mail size={13} /> Email</button>
+            <button onClick={exportCSV} className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs font-medium text-slate-300" style={inset}><FileSpreadsheet size={13} /> CSV</button>
+            <button onClick={exportPDF} className="flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs font-medium text-slate-300" style={inset}><FileText size={13} /> PDF</button>
           </div>
-          {exported && <p className="text-xs text-green-400 flex items-center gap-1"><Check size={12} /> {exported === 'email' ? `Export queued to ${email}` : 'CSV download started'}</p>}
+          {exported && <p className="text-xs text-green-400 flex items-center gap-1"><Check size={12} /> {exported === 'email' ? `Sent to ${email}` : `${exported.toUpperCase()} downloaded`}</p>}
         </div>
 
-        {/* Alarm / notification setting */}
-        <div className="rounded-xl p-5 space-y-3" style={surface}>
+        {/* Alarm / notification setting — manage only */}
+        {canManage ? (
+        <div className="rounded-xl p-5 space-y-3 lg:col-span-2" style={surface}>
           <h3 className="text-sm font-semibold text-white">Alarm / Notification Setting</h3>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -236,9 +299,9 @@ export default function DeviceDetailClient() {
             <Save size={14} /> {savedSetting ? 'Saved!' : 'Save Setting'}
           </button>
         </div>
-        </>) : (
+        ) : (
           <div className="lg:col-span-2 rounded-xl p-4 text-sm text-slate-500 flex items-center gap-2" style={inset}>
-            <Eye size={15} /> View-only access — managing alarm limits, notifications, exports and PDF uploads requires <span className="text-slate-300">Manage</span> permission from your organization admin.
+            <Eye size={15} /> View-only access — changing alarm limits &amp; notification channels requires <span className="text-slate-300">Manage</span> permission. (Documents &amp; export are available to all department members.)
           </div>
         )}
       </div>

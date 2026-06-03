@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Transformer, Alarm, User } from '@/types'
+import type { NodeDocument } from '@/types/org'
 import { transformers as initialTransformers, alarms as initialAlarms } from './mockData'
 
 interface AppState {
@@ -13,10 +14,14 @@ interface AppState {
   viewerUserId: string
   /** Per-organization uploaded logo (data URL), keyed by orgId. */
   orgLogos: Record<string, string>
+  /** Node documents, scoped/visible per department. */
+  documents: NodeDocument[]
 
   setUser: (user: User | null) => void
   setViewerUserId: (id: string) => void
   setOrgLogo: (orgId: string, dataUrl: string) => void
+  addDocument: (doc: NodeDocument) => void
+  removeDocument: (id: string) => void
   setSelectedOrgId: (orgId: string) => void
   setSelectedTransformerId: (id: string | null) => void
   updateTransformerSensor: (transformerId: string, sensorKey: string, value: number) => void
@@ -36,10 +41,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   realtimeEnabled: true,
   viewerUserId: 'u-cc',
   orgLogos: {},
+  documents: [],
 
   setUser: (user) => set({ user }),
   setViewerUserId: (id) => set({ viewerUserId: id }),
   setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
+  addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
+  removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
   setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),
   setSelectedTransformerId: (id) => set({ selectedTransformerId: id }),
   toggleRealtime: () => set((s) => ({ realtimeEnabled: !s.realtimeEnabled })),

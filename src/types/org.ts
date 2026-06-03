@@ -101,3 +101,15 @@ export interface EventProblem {
   /** The department this problem list belongs to (per-department event catalog). */
   departmentId?: string
 }
+
+// A document attached to a sensor node, visible only to the uploader's department.
+export interface NodeDocument {
+  id: string
+  nodeId: string
+  departmentId: string
+  name: string
+  size: string
+  date: string
+  uploadedBy: string
+  dataUrl: string
+}
