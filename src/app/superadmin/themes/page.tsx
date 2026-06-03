@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { dashboardThemes as seed } from '@/lib/orgData'
 import { PLATFORM_TEMPLATES } from '@/lib/platforms'
 import type { DashboardTheme } from '@/types/org'
-import { Palette, Plus, Trash2, LayoutGrid } from 'lucide-react'
+import { Palette, Plus, Trash2, LayoutGrid, Box, ToggleLeft, ToggleRight, Thermometer, Droplet, Zap } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -15,9 +15,23 @@ const platformName: Record<string, string> = {
   ...Object.fromEntries(PLATFORM_TEMPLATES.map((p) => [p.id, p.name])),
 }
 
+const PLATFORM_ICON: Record<string, React.ElementType> = { Thermometer, Droplet, Zap }
+
+// 3D-visualization product templates, provisioned per sensor type.
+const THREED_TEMPLATES: Record<string, { template: string; note: string }> = {
+  refrigerationDataLogger: { template: 'Cold-Chain Node 3D', note: 'Animated fridge/freezer node with temp & door state' },
+  bloodBox: { template: 'BloodBOX Indoor 3D', note: 'Building cross-section + box position (BLE/Barometer)' },
+  eternityTransformers: { template: 'Transformer Digital Twin', note: 'Interactive 3D transformer with DGA hotspots' },
+}
+
 export default function ThemesPage() {
   const [themes, setThemes] = useState<DashboardTheme[]>(seed)
   const [draft, setDraft] = useState({ name: '', description: '', platformType: 'shared' })
+  // which sensor-type 3D templates are provisioned
+  const [provisioned, setProvisioned] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(PLATFORM_TEMPLATES.map((p) => [p.id, true])),
+  )
+  const toggle3d = (id: string) => setProvisioned((p) => ({ ...p, [id]: !p[id] }))
 
   const add = () => {
     if (!draft.name.trim()) return
@@ -30,7 +44,32 @@ export default function ThemesPage() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-white">Dashboard Theme Management</h1>
-        <p className="text-sm text-slate-500 mt-1">Define dashboard themes that admins can grant to departments as view permissions</p>
+        <p className="text-sm text-slate-500 mt-1">Define dashboard themes and provision 3D-visualization product templates per sensor type</p>
+      </div>
+
+      {/* 3D visualization product templates, provisioned by sensor type */}
+      <div className="rounded-xl p-5" style={surface}>
+        <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2"><Box size={15} className="text-indigo-400" /> 3D Visualization Product Templates</h3>
+        <p className="text-[11px] text-slate-500 mb-4">Provision a 3D-visualize product template for each sensor type — used by tenants of that product.</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {PLATFORM_TEMPLATES.map((p) => {
+            const Icon = PLATFORM_ICON[p.icon] ?? Box
+            const t3d = THREED_TEMPLATES[p.id]
+            const on = provisioned[p.id]
+            return (
+              <div key={p.id} className="rounded-xl p-4" style={{ background: '#0a0e1a', border: `1px solid ${on ? p.accent : '#1e2433'}` }}>
+                <div className="flex items-start justify-between mb-2">
+                  <span className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: `${p.accent}1f` }}><Icon size={16} style={{ color: p.accent }} /></span>
+                  <button onClick={() => toggle3d(p.id)}>{on ? <ToggleRight size={24} className="text-indigo-400" /> : <ToggleLeft size={24} className="text-slate-600" />}</button>
+                </div>
+                <div className="text-sm font-bold text-white">{t3d?.template ?? '3D Template'}</div>
+                <div className="text-[11px] mt-0.5" style={{ color: p.accent }}>{p.sensorType}</div>
+                <div className="text-[11px] text-slate-500 mt-2 leading-relaxed">{t3d?.note}</div>
+                <div className="text-[10px] mt-2 font-bold uppercase tracking-wider" style={{ color: on ? '#4ade80' : '#6b7280' }}>{on ? 'Provisioned' : 'Not provisioned'}</div>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* Create */}
