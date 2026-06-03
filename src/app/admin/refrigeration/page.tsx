@@ -5,6 +5,7 @@ import {
   Thermometer, DoorOpen, DoorClosed, CheckCircle, AlertTriangle, XCircle, Leaf, Snowflake,
 } from 'lucide-react'
 import NodeDetail from '@/components/refrigeration/NodeDetail'
+import EntitlementGuard from '@/components/EntitlementGuard'
 import { useRefrigerationData, type RefrigerationNode } from '@/lib/mockRefrigerationData'
 
 // Refrigeration Overview — the CarbonBOX / RefrigerationDataLogger product's
@@ -73,7 +74,7 @@ function NodeCard({ node, threshold, onClick }: { node: RefrigerationNode; thres
   )
 }
 
-export default function RefrigerationOverview() {
+function RefrigerationOverview() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const { nodes, threshold, getHistory, isConnected } = useRefrigerationData()
   const [localThreshold, setLocalThreshold] = useState(threshold)
@@ -174,5 +175,13 @@ export default function RefrigerationOverview() {
         </div>
       )}
     </div>
+  )
+}
+
+export default function RefrigerationPage() {
+  return (
+    <EntitlementGuard platform="refrigerationDataLogger" name="Refrigeration">
+      <RefrigerationOverview />
+    </EntitlementGuard>
   )
 }

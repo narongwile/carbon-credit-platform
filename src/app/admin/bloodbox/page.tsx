@@ -9,6 +9,7 @@ import clsx from 'clsx'
 import {
   bloodBoxTransits, buildingFloors, getJourney, isExcursion, type BloodBoxTransit,
 } from '@/lib/bloodboxData'
+import EntitlementGuard from '@/components/EntitlementGuard'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -21,7 +22,7 @@ function Spark({ data, color }: { data: number[]; color: string }) {
   return <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}><polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
 }
 
-export default function BloodBoxModule() {
+function BloodBoxModule() {
   const [tab, setTab] = useState<'transit' | 'indoor'>('transit')
   const [selectedId, setSelectedId] = useState(bloodBoxTransits[0].id)
   const selected = bloodBoxTransits.find((t) => t.id === selectedId)!
@@ -224,5 +225,13 @@ function IndoorView({ selected }: { selected: BloodBoxTransit }) {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function BloodBoxPage() {
+  return (
+    <EntitlementGuard platform="bloodBox" name="BloodBOX">
+      <BloodBoxModule />
+    </EntitlementGuard>
   )
 }

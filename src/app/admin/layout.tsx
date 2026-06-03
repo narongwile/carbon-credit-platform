@@ -1,11 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
 import { useRealtimeData } from '@/lib/realtime'
+import { isEntitled, type Entitlement } from '@/lib/entitlements'
+import { organizations } from '@/lib/mockData'
 import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
@@ -14,20 +16,29 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 
-const NAV = [
+interface NavItem {
+  href: string
+  label: string
+  icon: React.ElementType
+  exact?: boolean
+  badge?: boolean
+  requires?: Entitlement
+}
+
+const NAV: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { href: '/admin/sites', label: 'Sites (Unified)', icon: Building2 },
   { href: '/admin/map', label: 'Live Sensor Map', icon: Map },
   { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid },
-  { href: '/admin/trends', label: 'Trends', icon: TrendingUp },
-  { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer },
-  { href: '/admin/bloodbox', label: 'BloodBOX', icon: Droplet },
+  { href: '/admin/trends', label: 'Trends', icon: TrendingUp, requires: { platform: 'eternityTransformers' } },
+  { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer, requires: { platform: 'refrigerationDataLogger' } },
+  { href: '/admin/bloodbox', label: 'BloodBOX', icon: Droplet, requires: { platform: 'bloodBox' } },
   { href: '/admin/users', label: 'User Management', icon: Users },
   { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
   { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu },
-  { href: '/admin/ai-search', label: 'AI Search', icon: Search },
-  { href: '/admin/sql', label: 'SQL AI', icon: Database },
-  { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck },
+  { href: '/admin/ai-search', label: 'AI Search', icon: Search, requires: { feature: 'AI Predictive Diagnostics' } },
+  { href: '/admin/sql', label: 'SQL AI', icon: Database, requires: { feature: 'Historical Analytics' } },
+  { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/notifications', label: 'Alarm & Notify', icon: BellRing },
   { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: true },
   { href: '/admin/events', label: 'Events', icon: Calendar },
@@ -44,22 +55,15 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { alarms, selectedOrgId } = useAppStore()
-  const [orgName, setOrgName] = useState('Loading...')
+  const { alarms, selectedOrgId, setSelectedOrgId } = useAppStore()
+  const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
 
   useEffect(() => {
     const session = getSession()
     if (!session || (session.role !== 'admin' && session.role !== 'superadmin')) {
       router.replace('/')
-      return
     }
-    const orgs: Record<string, string> = {
-      'org-1': 'KMUTT University',
-      'org-2': 'Factory Alpha Industries',
-      'org-3': 'Industrial Corp Ltd',
-    }
-    setOrgName(orgs[session.orgId || selectedOrgId] || 'Organization')
-  }, [router, selectedOrgId])
+  }, [router])
 
   const unackedAlarms = alarms.filter((a) => !a.acknowledged && a.orgId === selectedOrgId)
   const criticalCount = unackedAlarms.filter((a) => a.severity === 'CRITICAL').length
@@ -82,12 +86,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </div>
               <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
             </div>
-            <div className="text-[10px] text-slate-500 truncate mt-0.5 ml-9">{orgName}</div>
+            {/* Tenant switcher — drives entitlement gating */}
+            <select
+              value={selectedOrgId}
+              onChange={(e) => setSelectedOrgId(e.target.value)}
+              className="w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500"
+              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+            >
+              {organizations.map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* Nav */}
           <nav className="flex-1 px-2.5 py-3 space-y-0.5 overflow-y-auto">
-            {NAV.map((item) => {
+            {visibleNav.map((item) => {
               const active = isActive(item.href, item.exact)
               const badgeCount = item.badge ? criticalCount : 0
               return (
