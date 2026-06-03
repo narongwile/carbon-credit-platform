@@ -151,7 +151,6 @@ function OverviewTab() {
   const critical = hosts.filter((h) => h.status === 'CRITICAL' || h.status === 'OFFLINE').length
   const unacked = alarms.filter((a) => !a.acknowledged).length
   const totalSensors = hosts.reduce((a, h) => a + h.sensorCount, 0)
-  const moduleRoute: Record<SensorDomain, string> = { transformer: '', carbonNode: '/admin/refrigeration', bloodBox: '/admin/bloodbox' }
 
   return (
     <div className="space-y-5">
@@ -193,7 +192,7 @@ function OverviewTab() {
             <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} href={d === 'transformer' ? `/admin/transformers/${h.id}` : moduleRoute[d]} />
+                <HostCard key={h.id} host={h} href={d === 'transformer' ? `/admin/transformers/${h.id}` : `/admin/nodes/${h.id}`} />
               ))}
             </div>
           </div>

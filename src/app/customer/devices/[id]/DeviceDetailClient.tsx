@@ -11,7 +11,7 @@ import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import {
-  ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users,
+  ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users, Bell,
   ToggleLeft, ToggleRight, Wifi, WifiOff, Save, Check, LayoutGrid, Sparkles, Lock, Eye,
 } from 'lucide-react'
 import clsx from 'clsx'
@@ -271,10 +271,12 @@ export default function DeviceDetailClient() {
           {exported && <p className="text-xs text-green-400 flex items-center gap-1"><Check size={12} /> {exported === 'email' ? `Sent to ${email}` : `${exported.toUpperCase()} downloaded`}</p>}
         </div>
 
-        {/* Alarm / notification setting — manage only */}
-        {canManage ? (
+        {/* Personal alarm / notification — every viewer can set this; alerts ONLY this user */}
         <div className="rounded-xl p-5 space-y-3 lg:col-span-2" style={surface}>
-          <h3 className="text-sm font-semibold text-white">Alarm / Notification Setting</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">My Alert Settings</h3>
+            <span className="text-[10px] text-slate-500 flex items-center gap-1"><Bell size={11} /> personal — alerts only you · {email}</span>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[10px] text-blue-400 mb-1 uppercase tracking-wider">Lower limit</label>
@@ -296,12 +298,12 @@ export default function DeviceDetailClient() {
             ))}
           </div>
           <button onClick={saveSetting} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={savedSetting ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
-            <Save size={14} /> {savedSetting ? 'Saved!' : 'Save Setting'}
+            <Save size={14} /> {savedSetting ? 'Saved!' : 'Save My Alert'}
           </button>
         </div>
-        ) : (
-          <div className="lg:col-span-2 rounded-xl p-4 text-sm text-slate-500 flex items-center gap-2" style={inset}>
-            <Eye size={15} /> View-only access — changing alarm limits &amp; notification channels requires <span className="text-slate-300">Manage</span> permission. (Documents &amp; export are available to all department members.)
+        {!canManage && (
+          <div className="lg:col-span-2 rounded-lg px-3 py-2 text-[11px] text-slate-500 flex items-center gap-2" style={inset}>
+            <Eye size={13} /> You have view access — your alert settings here are personal. Org-wide alarm rules are configured by your admin.
           </div>
         )}
       </div>
