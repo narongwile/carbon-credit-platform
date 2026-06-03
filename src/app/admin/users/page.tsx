@@ -7,18 +7,20 @@ import {
   managedUsers as seedUsers,
   dashboardThemes,
   roleLabels,
+  getEventProblemsByDept,
 } from '@/lib/orgData'
 import { getOrgThemeGrants } from '@/lib/orgThemes'
 import { licensedDomains } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
-import type { Department, ManagedUser, ManagedRole } from '@/types/org'
+import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
   Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check, Boxes,
-  ToggleLeft, ToggleRight, Pencil, Eye, Settings2, Ban,
+  ToggleLeft, ToggleRight, Pencil, Eye, Settings2, Ban, ListChecks,
 } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 
-type Tab = 'departments' | 'users' | 'roles' | 'permissions' | 'products'
+type Tab = 'departments' | 'users' | 'roles' | 'permissions' | 'products' | 'events'
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'departments', label: 'Departments', icon: Building2 },
@@ -26,6 +28,7 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'roles', label: 'User Roles', icon: ShieldCheck },
   { id: 'permissions', label: 'Dashboard View Permission', icon: Palette },
   { id: 'products', label: 'Product Access', icon: Boxes },
+  { id: 'events', label: 'Event Catalog', icon: ListChecks },
 ]
 
 const ROLES: ManagedRole[] = ['admin', 'editor', 'viewer']
@@ -222,6 +225,11 @@ export default function UserManagementPage() {
         <ProductAccess orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} />
       )}
 
+      {/* EVENT CATALOG */}
+      {tab === 'events' && (
+        <EventCatalog departments={departments} />
+      )}
+
       {(editingUser || showNewUser) && (
         <UserModal
           user={editingUser}
@@ -395,6 +403,89 @@ function ProductAccess({ orgId, departments, setDepartments, users }: {
             })}
           </tbody>
         </table>
+      </div>
+    </div>
+  )
+}
+
+// ---- Per-department Event Catalog (CRUD) -----------------------------------
+// Admin manages each department's own eventProblem list — the catalog that
+// populates the viewer's detailed-monitoring event dropdown.
+function EventCatalog({ departments }: { departments: Department[] }) {
+  const [selectedDept, setSelectedDept] = useState(departments[0]?.id ?? '')
+  const [catalog, setCatalog] = useState<Record<string, EventProblem[]>>(
+    () => Object.fromEntries(departments.map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
+  )
+  const [draft, setDraft] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingLabel, setEditingLabel] = useState('')
+
+  const list = catalog[selectedDept] ?? []
+  const update = (next: EventProblem[]) => setCatalog((c) => ({ ...c, [selectedDept]: next }))
+
+  const add = () => {
+    if (!draft.trim()) return
+    update([...list, { id: `ev-${selectedDept}-${Date.now()}`, label: draft.trim(), departmentId: selectedDept }])
+    setDraft(''); toast.success('Event added')
+  }
+  const remove = (id: string) => { update(list.filter((e) => e.id !== id)); toast.success('Event removed') }
+  const startEdit = (e: EventProblem) => { setEditingId(e.id); setEditingLabel(e.label) }
+  const saveEdit = () => {
+    if (!editingLabel.trim()) return
+    update(list.map((e) => (e.id === editingId ? { ...e, label: editingLabel.trim() } : e)))
+    setEditingId(null); setEditingLabel(''); toast.success('Event updated')
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Department picker */}
+      <div className="rounded-xl p-4" style={surface}>
+        <h3 className="text-sm font-semibold text-white mb-3">Department</h3>
+        <div className="space-y-1.5">
+          {departments.map((d) => (
+            <button key={d.id} onClick={() => setSelectedDept(d.id)}
+              className={clsx('w-full text-left px-3 py-2 rounded-lg text-sm transition-all', selectedDept === d.id ? 'text-white' : 'text-slate-400 hover:bg-white/5')}
+              style={selectedDept === d.id ? { background: 'rgba(99,102,241,0.15)' } : {}}>
+              {d.name}
+              <span className="text-[10px] text-slate-600 ml-1.5">{(catalog[d.id] ?? []).length}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Event list CRUD */}
+      <div className="rounded-xl p-5 lg:col-span-2 space-y-3" style={surface}>
+        <h3 className="text-sm font-semibold text-white">Event Problem Catalog</h3>
+        <p className="text-[11px] text-slate-500">These problem types appear in the event-log dropdown for users in this department.</p>
+
+        <div className="flex gap-2">
+          <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()}
+            placeholder="New event problem…"
+            className="flex-1 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+          <button onClick={add} className="flex items-center gap-1.5 px-4 rounded-lg text-sm font-medium text-white" style={gradient}><Plus size={15} /> Add</button>
+        </div>
+
+        <div className="space-y-1.5">
+          {list.map((e) => (
+            <div key={e.id} className="flex items-center gap-2 p-2.5 rounded-lg" style={inset}>
+              {editingId === e.id ? (
+                <>
+                  <input value={editingLabel} onChange={(ev) => setEditingLabel(ev.target.value)} onKeyDown={(ev) => ev.key === 'Enter' && saveEdit()}
+                    className="flex-1 rounded-md px-2 py-1 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500" style={{ background: '#0d1117', border: '1px solid #1e2433' }} autoFocus />
+                  <button onClick={saveEdit} className="p-1.5 rounded-md text-green-400 hover:bg-green-500/10"><Check size={14} /></button>
+                  <button onClick={() => setEditingId(null)} className="p-1.5 rounded-md text-slate-500 hover:bg-white/5"><X size={14} /></button>
+                </>
+              ) : (
+                <>
+                  <span className="flex-1 text-sm text-slate-200">{e.label}</span>
+                  <button onClick={() => startEdit(e)} className="p-1.5 rounded-md text-slate-500 hover:text-indigo-400 hover:bg-white/5"><Pencil size={13} /></button>
+                  <button onClick={() => remove(e.id)} className="p-1.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-red-500/5"><Trash2 size={13} /></button>
+                </>
+              )}
+            </div>
+          ))}
+          {list.length === 0 && <p className="text-xs text-slate-600 py-2">No event problems yet — add one above.</p>}
+        </div>
       </div>
     </div>
   )
