@@ -10,6 +10,7 @@ import { viewerEventProblems, viewerCanManage, viewerCanAccess, viewerDepartment
 import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
+import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import {
   ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users, Bell,
   ToggleLeft, ToggleRight, Wifi, WifiOff, Save, Check, LayoutGrid, Sparkles, Lock, Eye,
@@ -277,16 +278,7 @@ export default function DeviceDetailClient() {
             <h3 className="text-sm font-semibold text-white">My Alert Settings</h3>
             <span className="text-[10px] text-slate-500 flex items-center gap-1"><Bell size={11} /> personal — alerts only you · {email}</span>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] text-blue-400 mb-1 uppercase tracking-wider">Lower limit</label>
-              <input type="number" value={limits.low} onChange={(e) => setLimits((l) => ({ ...l, low: +e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-            </div>
-            <div>
-              <label className="block text-[10px] text-red-400 mb-1 uppercase tracking-wider">Upper limit</label>
-              <input type="number" value={limits.high} onChange={(e) => setLimits((l) => ({ ...l, high: +e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-            </div>
-          </div>
+          <AlarmParamConfig domain={device.domain} />
           <div className="space-y-1.5">
             {channels.map((ch) => (
               <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>
