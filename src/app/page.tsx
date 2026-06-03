@@ -176,6 +176,12 @@ export default function LoginPage() {
             </button>
           </div>
 
+          {/* Register / forgot password */}
+          <div className="flex items-center justify-between mt-4 text-xs">
+            <a href="/forgot/" className="text-slate-500 hover:text-indigo-400 transition-colors">Forgot password?</a>
+            <a href="/register/" className="text-slate-400 hover:text-white transition-colors">Create an account →</a>
+          </div>
+
           {/* Demo hints */}
           <div className="mt-6 pt-5" style={{ borderTop: '1px solid #1e2433' }}>
             <p className="text-xs text-slate-600 mb-3 text-center uppercase tracking-wider">Demo Credentials</p>

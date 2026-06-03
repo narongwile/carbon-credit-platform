@@ -2,11 +2,12 @@
 
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
+import { defaultNotificationChannels, eventProblems, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
-import type { NotificationChannelConfig } from '@/types/org'
-import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check } from 'lucide-react'
+import type { NotificationChannelConfig, EventProblem } from '@/types/org'
+import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check, ListChecks, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -29,6 +30,21 @@ export default function AlarmNotificationPage() {
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [events, setEvents] = useState<string[]>(['ev-temp-high', 'ev-door-open', 'ev-offline'])
   const [saved, setSaved] = useState(false)
+
+  // Create Event in each department (per-department eventProblem catalog)
+  const orgDepts = getDepartmentsByOrg(orgId)
+  const [deptId, setDeptId] = useState(orgDepts[0]?.id ?? '')
+  const [deptEvents, setDeptEvents] = useState<Record<string, EventProblem[]>>(
+    () => Object.fromEntries(orgDepts.map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
+  )
+  const [newEvent, setNewEvent] = useState('')
+  const deptList = deptEvents[deptId] ?? []
+  const addDeptEvent = () => {
+    if (!newEvent.trim()) return
+    setDeptEvents((c) => ({ ...c, [deptId]: [...(c[deptId] ?? []), { id: `ev-${deptId}-${Date.now()}`, label: newEvent.trim(), departmentId: deptId }] }))
+    setNewEvent(''); toast.success('Event added to department')
+  }
+  const removeDeptEvent = (id: string) => { setDeptEvents((c) => ({ ...c, [deptId]: (c[deptId] ?? []).filter((e) => e.id !== id) })); toast.success('Event removed') }
 
   const toggleChannel = (id: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
   const setTarget = (id: string, target: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, target } : x)))
@@ -119,6 +135,28 @@ export default function AlarmNotificationPage() {
                 </div>
               )
             })}
+          </div>
+        </div>
+
+        {/* Create Event in each department */}
+        <div className="rounded-xl p-5 space-y-3 lg:col-span-2" style={surface}>
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ListChecks size={15} className="text-indigo-400" /> Create Event in each department</h3>
+          <p className="text-[11px] text-slate-500">Per-department event-problem catalog — populates the viewer&apos;s event-log dropdown for users in that department.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={deptId} onChange={(e) => setDeptId(e.target.value)} className="rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+              {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <input value={newEvent} onChange={(e) => setNewEvent(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDeptEvent()} placeholder="New event problem…"
+              className="flex-1 min-w-[180px] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+            <button onClick={addDeptEvent} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}><Plus size={15} /> Add</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {deptList.length ? deptList.map((e) => (
+              <span key={e.id} className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg text-slate-200" style={inset}>
+                {e.label}
+                <button onClick={() => removeDeptEvent(e.id)} className="text-slate-500 hover:text-red-400"><Trash2 size={12} /></button>
+              </span>
+            )) : <span className="text-xs text-slate-600">No events yet for this department.</span>}
           </div>
         </div>
       </div>

@@ -1,9 +1,15 @@
 'use client'
 
+import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
+import { getGeoNodes } from '@/lib/geoNodes'
 import Link from 'next/link'
-import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity } from 'lucide-react'
+import clsx from 'clsx'
+import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock } from 'lucide-react'
 import type { Transformer } from '@/types'
+
+const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 function StatusDot({ status }: { status: string }) {
   const colors = {
@@ -102,7 +108,7 @@ function TransformerCard({ transformer }: { transformer: Transformer }) {
   )
 }
 
-export default function AdminDashboard() {
+function OverviewTab() {
   const { selectedOrgId, getTransformersByOrg, getAlarmsByOrg } = useAppStore()
   const transformers = getTransformersByOrg(selectedOrgId)
   const alarms = getAlarmsByOrg(selectedOrgId)
@@ -202,6 +208,72 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// --- Alarm tab ---------------------------------------------------------------
+function AlarmTab() {
+  const { alarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
+  const orgAlarms = alarms.filter((a) => a.orgId === selectedOrgId)
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-bold text-white">All-device Alarms</h2>
+        <span className="text-xs text-slate-500">{orgAlarms.filter((a) => !a.acknowledged).length} open</span>
+      </div>
+      {orgAlarms.length ? orgAlarms.map((a) => {
+        const c = a.severity === 'CRITICAL' ? '#ef4444' : a.severity === 'WARNING' ? '#fbbf24' : '#60a5fa'
+        return (
+          <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: `${c}14`, border: `1px solid ${c}33`, opacity: a.acknowledged ? 0.6 : 1 }}>
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c }} />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm text-slate-200 truncate">{a.message}</div>
+              <div className="text-xs text-slate-600">{a.transformerName}</div>
+            </div>
+            <span className="flex items-center gap-1 text-xs text-slate-500"><Clock size={10} />{new Date(a.timestamp).toLocaleTimeString()}</span>
+            <span className="text-xs font-bold" style={{ color: c }}>{a.severity}</span>
+            {a.acknowledged
+              ? <span className="text-[10px] text-green-400 bg-green-400/10 px-2 py-1 rounded-full">ACK</span>
+              : <button onClick={() => acknowledgeAlarm(a.id, 'admin')} className="text-xs font-medium text-white px-3 py-1.5 rounded-lg" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>Acknowledge</button>}
+          </div>
+        )
+      }) : <div className="rounded-xl p-6 text-center text-slate-600 text-sm" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>No alarms.</div>}
+    </div>
+  )
+}
+
+// --- Dashboard (Overall) with tabs ------------------------------------------
+const DASH_TABS = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'location', label: 'Device Location', icon: MapIcon },
+  { id: 'alarm', label: 'Alarm', icon: Bell },
+] as const
+
+export default function AdminDashboardPage() {
+  const { selectedOrgId } = useAppStore()
+  const [tab, setTab] = useState<'overview' | 'location' | 'alarm'>('overview')
+  const nodes = getGeoNodes(selectedOrgId || 'org-1')
+
+  return (
+    <div className="p-5 space-y-5">
+      <div>
+        <h1 className="text-xl font-bold text-white">Dashboard</h1>
+        <p className="text-sm text-slate-500">Overall view across all devices · เห็นทั้งหมด ทุก devices</p>
+      </div>
+      <div className="flex gap-1 p-1 rounded-lg w-fit" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+        {DASH_TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={clsx('flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all', tab === t.id ? 'text-white' : 'text-slate-500')}
+            style={tab === t.id ? { background: '#6366f1' } : {}}>
+            <t.icon size={14} /> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'overview' && <OverviewTab />}
+      {tab === 'location' && <LiveSensorMap nodes={nodes} height="62vh" />}
+      {tab === 'alarm' && <AlarmTab />}
     </div>
   )
 }
