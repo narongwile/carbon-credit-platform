@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefrigerationNode } from '../../api/mockRefrigerationData';
+import { RefrigerationNode } from '@/lib/mockRefrigerationData';
 import { Wifi, DoorOpen, DoorClosed } from 'lucide-react';
 
 interface Props {

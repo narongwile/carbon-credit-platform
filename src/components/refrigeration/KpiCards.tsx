@@ -1,5 +1,5 @@
 import React from 'react';
-import { RefrigerationHistory, RefrigerationNode } from '../../api/mockRefrigerationData';
+import { RefrigerationHistory, RefrigerationNode } from '@/lib/mockRefrigerationData';
 import { Settings } from 'lucide-react';
 
 interface Props {
