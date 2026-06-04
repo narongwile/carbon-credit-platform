@@ -1,0 +1,87 @@
+# THERM Expertise — WordPress stack
+# Run:  cp .env.example .env  &&  docker compose up -d  &&  ./scripts/provision.sh
+#
+# Services:
+#   db        — MySQL 8 database
+#   wordpress — WordPress + Apache, with the custom "thermexpertise" theme mounted
+#   wpcli     — WP-CLI helper (used by scripts/provision.sh; no long-running process)
+#   phpmyadmin (optional, profile "tools") — database UI
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: thex_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  wordpress:
+    # WordPress release is pinned via .env (WP_IMAGE). The project targets the
+    # "7.0" line; override WP_IMAGE in .env to track a specific tag.
+    image: ${WP_IMAGE}
+    container_name: thex_wordpress
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${WP_PORT}:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: wp_
+      WORDPRESS_DEBUG: ${WP_DEBUG}
+    volumes:
+      - wp_core:/var/www/html
+      # Mount only our custom theme so WordPress core stays managed by the image.
+      - ./wordpress/wp-content/themes/thermexpertise:/var/www/html/wp-content/themes/thermexpertise
+      - ./config/uploads.ini:/usr/local/etc/php/conf.d/uploads.ini:ro
+
+  wpcli:
+    image: wordpress:cli-php8.2
+    container_name: thex_wpcli
+    depends_on:
+      db:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - wp_core:/var/www/html
+      - ./wordpress/wp-content/themes/thermexpertise:/var/www/html/wp-content/themes/thermexpertise
+    entrypoint: ["tail", "-f", "/dev/null"]
+
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: thex_pma
+    profiles: ["tools"]
+    restart: unless-stopped
+    depends_on:
+      - db
+    ports:
+      - "${PMA_PORT}:80"
+    environment:
+      PMA_HOST: db
+      PMA_USER: ${MYSQL_USER}
+      PMA_PASSWORD: ${MYSQL_PASSWORD}
+
+volumes:
+  db_data:
+  wp_core:

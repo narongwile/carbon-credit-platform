@@ -1,0 +1,17 @@
+/*
+Theme Name: Therm Expertise
+Theme URI: https://thermexpertise.co.th
+Author: Therm Expertise Co., Ltd.
+Author URI: https://thermexpertise.co.th
+Description: Corporate theme for THERM Expertise Co., Ltd. (THEX) — a WordPress migration of the company's Wix website. Professional engineering consultancy: Steam & Compressed Air System Optimization, Energy Management, IoT, MEP, Smart Aquaponic Farm, Carbon Footprint and Training.
+Version: 7.0.0
+Requires at least: 6.0
+Tested up to: 7.0
+Requires PHP: 8.0
+License: GNU General Public License v2 or later
+License URI: http://www.gnu.org/licenses/gpl-2.0.html
+Text Domain: thermexpertise
+*/
+
+/* Main styles live in assets/css/main.css (enqueued from functions.php).
+   This file only carries the required WordPress theme header. */
