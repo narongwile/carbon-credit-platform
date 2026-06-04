@@ -1,0 +1,173 @@
+# ============================================================
+# WordPress — Bitnami chart values
+# Chart: oci://registry-1.docker.io/bitnamicharts/wordpress
+# Pre-existing secret: wordpress-credentials
+#   keys: wordpress-password, mariadb-password, mariadb-root-password
+# Public URL: https://${DOMAIN}
+#
+# ThermExpertise customisation (migrated from Wix):
+#   * branding -> wordpressBlogName / blogdesc
+#   * custom theme injected at runtime via an initContainer that sparse-clones
+#     the theme from this repo into wp-content/themes (no image build needed)
+#   * postStart hook activates the theme + sets branding on already-installed
+#     sites (the current default install)
+# ============================================================
+wordpressUsername: admin
+wordpressEmail: admin@thermexpertise.com
+wordpressBlogName: "ThermExpertise"
+existingSecret: wordpress-credentials
+
+# Use chart-default image tags (pinned in Chart.yaml). Do not override with stale
+# tags — Bitnami prunes old docker.io/bitnami/* revisions and pulls will fail.
+
+replicaCount: 1
+
+service:
+  type: NodePort
+  ports:
+    http: 80
+  nodePorts:
+    http: 30088            # http://VPS_IP:30088
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 10Gi
+  accessModes: [ReadWriteOnce]
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hostname: thermexpertise.com
+  tls: true
+  selfSigned: false
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  extraTls:
+    - hosts: [thermexpertise.com, www.thermexpertise.com]
+      secretName: wordpress-tls
+  extraHosts:
+    - name: www.thermexpertise.com
+      path: /
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 1001
+containerSecurityContext:
+  enabled: true
+  runAsUser: 1001
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+# ------------------------------------------------------------
+# Custom theme injection (GitOps, no custom image / registry).
+# An initContainer sparse-clones only infra/wordpress/themes/thermexpertise
+# from this repo into a shared emptyDir, which is then overlaid onto
+# wp-content/themes/thermexpertise in the WordPress container.
+# Re-runs on every pod start, so the live theme always matches Git.
+# ------------------------------------------------------------
+extraVolumes:
+  - name: custom-theme
+    emptyDir: {}
+  - name: theme-workdir
+    emptyDir: {}
+
+extraVolumeMounts:
+  - name: custom-theme
+    mountPath: /bitnami/wordpress/wp-content/themes/thermexpertise
+    subPath: thermexpertise
+
+initContainers:
+  - name: fetch-theme
+    image: alpine/git:2.45.2
+    securityContext:
+      runAsUser: 0          # write the emptyDir, then world-read for uid 1001
+    env:
+      # Override via --set if the theme lives elsewhere / on another branch.
+      - name: THEME_REPO
+        value: https://gitlab.com/narongwile/carbon-credit-platform.git
+      - name: THEME_REF
+        value: main
+      - name: THEME_PATH
+        value: infra/wordpress/themes/thermexpertise
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        rm -rf /work/* /themes/thermexpertise
+        cd /work
+        git clone --depth 1 --filter=blob:none --sparse \
+          --branch "$THEME_REF" "$THEME_REPO" repo
+        cd repo
+        git sparse-checkout set "$THEME_PATH"
+        mkdir -p /themes/thermexpertise
+        cp -a "$THEME_PATH/." /themes/thermexpertise/
+        chmod -R a+rX /themes/thermexpertise
+        echo "theme synced:" && ls -la /themes/thermexpertise
+    volumeMounts:
+      - name: custom-theme
+        mountPath: /themes
+      - name: theme-workdir
+        mountPath: /work
+
+# ------------------------------------------------------------
+# Activate the theme + set branding on first boot of an already-installed
+# site (the current default WordPress). Idempotent; always exits 0 so a
+# transient failure never crash-loops the pod.
+# ------------------------------------------------------------
+lifecycleHooks:
+  postStart:
+    exec:
+      command:
+        - /bin/bash
+        - -ec
+        - |
+          export PATH="$PATH:/opt/bitnami/wp-cli/bin"
+          WP="--path=/bitnami/wordpress --skip-themes --skip-plugins"
+          for i in $(seq 1 60); do
+            if wp core is-installed $WP 2>/dev/null; then
+              wp theme activate thermexpertise $WP 2>/dev/null || true
+              wp option update blogname "ThermExpertise" $WP 2>/dev/null || true
+              wp option update blogdescription "Thermography & Thermal Imaging Experts" $WP 2>/dev/null || true
+              break
+            fi
+            sleep 5
+          done
+          exit 0
+
+# Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
+# to avoid coupling site lifecycle to platform DB).
+mariadb:
+  enabled: true
+  architecture: standalone
+  auth:
+    existingSecret: wordpress-credentials   # uses mariadb-password / mariadb-root-password
+    database: wordpress
+    username: wordpress
+  primary:
+    persistence:
+      enabled: true
+      storageClass: local-path
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 192Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+metrics:
+  enabled: false
