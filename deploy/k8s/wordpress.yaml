@@ -1,0 +1,108 @@
+# WordPress 7.0 (custom image with the ThermExpertise theme baked in).
+# Deployment + Service + PVC for persisted uploads (wp-content/uploads).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-uploads
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+spec:
+  selector:
+    app.kubernetes.io/name: wordpress
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+spec:
+  replicas: 1                      # uploads PVC is RWO — keep at 1 (or move media to S3)
+  strategy:
+    type: Recreate                 # avoid two pods fighting over the RWO volume
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wordpress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wordpress
+    spec:
+      securityContext:
+        fsGroup: 33                 # www-data — write access to the uploads PVC
+      containers:
+        - name: wordpress
+          # Overridden by kustomization images: -> ghcr.io/.../thermexpertise-wordpress:7.0
+          image: thermexpertise/wordpress:7.0
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: mariadb-0.mariadb:3306
+            - name: WORDPRESS_DB_NAME
+              valueFrom:
+                secretKeyRef: { name: wordpress-db, key: MYSQL_DATABASE }
+            - name: WORDPRESS_DB_USER
+              valueFrom:
+                secretKeyRef: { name: wordpress-db, key: MYSQL_USER }
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: wordpress-db, key: MYSQL_PASSWORD }
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                define('WP_HOME', getenv('WORDPRESS_SITE_URL'));
+                define('WP_SITEURL', getenv('WORDPRESS_SITE_URL'));
+                define('FS_METHOD', 'direct');
+            - name: WORDPRESS_SITE_URL
+              value: "https://thermexpertise.example.com"   # TODO: real hostname
+          volumeMounts:
+            - name: uploads
+              mountPath: /var/www/html/wp-content/uploads
+            - name: php-config
+              mountPath: /usr/local/etc/php/conf.d/uploads.ini
+              subPath: uploads.ini
+          readinessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /wp-login.php
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: wordpress-uploads
+        - name: php-config
+          configMap:
+            name: wordpress-php-config

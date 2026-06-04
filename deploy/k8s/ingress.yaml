@@ -1,0 +1,26 @@
+# Traefik ingress (k3s ships Traefik as the default ingress controller).
+# For TLS, install cert-manager and uncomment the tls block + annotation.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wordpress
+  annotations:
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure,web
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: thermexpertise.example.com        # TODO: real hostname / DNS
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: wordpress
+                port:
+                  number: 80
+  # tls:
+  #   - hosts:
+  #       - thermexpertise.example.com
+  #     secretName: thermexpertise-tls
