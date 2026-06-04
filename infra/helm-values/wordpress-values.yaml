@@ -4,10 +4,17 @@
 # Pre-existing secret: wordpress-credentials
 #   keys: wordpress-password, mariadb-password, mariadb-root-password
 # Public URL: https://${DOMAIN}
+#
+# ThermExpertise customisation (migrated from Wix):
+#   * branding -> wordpressBlogName / blogdesc
+#   * custom theme injected at runtime via an initContainer that sparse-clones
+#     the theme from this repo into wp-content/themes (no image build needed)
+#   * postStart hook activates the theme + sets branding on already-installed
+#     sites (the current default install)
 # ============================================================
 wordpressUsername: admin
 wordpressEmail: admin@thermexpertise.com
-wordpressBlogName: "Carbon Credit Platform"
+wordpressBlogName: "ThermExpertise"
 existingSecret: wordpress-credentials
 
 # Use chart-default image tags (pinned in Chart.yaml). Do not override with stale
@@ -63,6 +70,82 @@ containerSecurityContext:
   allowPrivilegeEscalation: false
   capabilities:
     drop: [ALL]
+
+# ------------------------------------------------------------
+# Custom theme injection (GitOps, no custom image / registry).
+# An initContainer sparse-clones only infra/wordpress/themes/thermexpertise
+# from this repo into a shared emptyDir, which is then overlaid onto
+# wp-content/themes/thermexpertise in the WordPress container.
+# Re-runs on every pod start, so the live theme always matches Git.
+# ------------------------------------------------------------
+extraVolumes:
+  - name: custom-theme
+    emptyDir: {}
+  - name: theme-workdir
+    emptyDir: {}
+
+extraVolumeMounts:
+  - name: custom-theme
+    mountPath: /bitnami/wordpress/wp-content/themes/thermexpertise
+    subPath: thermexpertise
+
+initContainers:
+  - name: fetch-theme
+    image: alpine/git:2.45.2
+    securityContext:
+      runAsUser: 0          # write the emptyDir, then world-read for uid 1001
+    env:
+      # Override via --set if the theme lives elsewhere / on another branch.
+      - name: THEME_REPO
+        value: https://gitlab.com/narongwile/carbon-credit-platform.git
+      - name: THEME_REF
+        value: main
+      - name: THEME_PATH
+        value: infra/wordpress/themes/thermexpertise
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        rm -rf /work/* /themes/thermexpertise
+        cd /work
+        git clone --depth 1 --filter=blob:none --sparse \
+          --branch "$THEME_REF" "$THEME_REPO" repo
+        cd repo
+        git sparse-checkout set "$THEME_PATH"
+        mkdir -p /themes/thermexpertise
+        cp -a "$THEME_PATH/." /themes/thermexpertise/
+        chmod -R a+rX /themes/thermexpertise
+        echo "theme synced:" && ls -la /themes/thermexpertise
+    volumeMounts:
+      - name: custom-theme
+        mountPath: /themes
+      - name: theme-workdir
+        mountPath: /work
+
+# ------------------------------------------------------------
+# Activate the theme + set branding on first boot of an already-installed
+# site (the current default WordPress). Idempotent; always exits 0 so a
+# transient failure never crash-loops the pod.
+# ------------------------------------------------------------
+lifecycleHooks:
+  postStart:
+    exec:
+      command:
+        - /bin/bash
+        - -ec
+        - |
+          export PATH="$PATH:/opt/bitnami/wp-cli/bin"
+          WP="--path=/bitnami/wordpress --skip-themes --skip-plugins"
+          for i in $(seq 1 60); do
+            if wp core is-installed $WP 2>/dev/null; then
+              wp theme activate thermexpertise $WP 2>/dev/null || true
+              wp option update blogname "ThermExpertise" $WP 2>/dev/null || true
+              wp option update blogdescription "Thermography & Thermal Imaging Experts" $WP 2>/dev/null || true
+              break
+            fi
+            sleep 5
+          done
+          exit 0
 
 # Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
 # to avoid coupling site lifecycle to platform DB).
