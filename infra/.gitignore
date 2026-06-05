@@ -1,0 +1,8 @@
+# Local environment & secrets
+.env
+
+# WordPress runtime data (created by Docker volumes, not tracked)
+wordpress/wp-content/uploads/
+wordpress/wp-content/upgrade/
+wordpress/wp-content/cache/
+*.log
