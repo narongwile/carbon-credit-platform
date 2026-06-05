@@ -1,17 +1,17 @@
 /*
-Theme Name: ThermExpertise
-Theme URI: https://thermexpertise.example.com
-Author: ThermExpertise / migrated from Wix
-Description: Custom WordPress 7.0 theme for the ThermExpertise (THEX) thermography / thermal-imaging inspection company. Migrated from thermexpertisethex.wixsite.com. Designed to run on k3s and deployed via Argo CD (GitOps).
-Version: 1.0.0
-Requires at least: 6.5
+Theme Name: Therm Expertise
+Theme URI: https://thermexpertise.co.th
+Author: Therm Expertise Co., Ltd.
+Author URI: https://thermexpertise.co.th
+Description: Corporate theme for THERM Expertise Co., Ltd. (THEX) — a WordPress migration of the company's Wix website. Professional engineering consultancy: Steam & Compressed Air System Optimization, Energy Management, IoT, MEP, Smart Aquaponic Farm, Carbon Footprint and Training.
+Version: 7.0.0
+Requires at least: 6.0
 Tested up to: 7.0
-Requires PHP: 8.1
-License: GPL-2.0-or-later
-License URI: https://www.gnu.org/licenses/gpl-2.0.html
+Requires PHP: 8.0
+License: GNU General Public License v2 or later
+License URI: http://www.gnu.org/licenses/gpl-2.0.html
 Text Domain: thermexpertise
-Tags: business, thermography, services, custom-colors, custom-menu, featured-images, translation-ready
 */
 
-/* Base typography + design tokens live in assets/css/main.css (enqueued in
-   functions.php). This file is required by WordPress for theme metadata. */
+/* Main styles live in assets/css/main.css (enqueued from functions.php).
+   This file only carries the required WordPress theme header. */
