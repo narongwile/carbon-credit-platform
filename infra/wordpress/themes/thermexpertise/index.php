@@ -1,51 +1,39 @@
 <?php
 /**
- * Fallback index / blog listing template.
+ * Main fallback template (blog/archive listing).
  *
- * @package ThermExpertise
+ * @package thermexpertise
  */
 
 get_header();
 ?>
 
+<section class="page-hero">
+	<div class="container">
+		<h1><?php is_home() ? bloginfo( 'name' ) : the_archive_title(); ?></h1>
+	</div>
+</section>
+
 <section class="section">
 	<div class="container">
 		<?php if ( have_posts() ) : ?>
-			<header class="section__head">
-				<h1 class="section__title">
-					<?php
-					if ( is_home() && ! is_front_page() ) {
-						single_post_title();
-					} else {
-						esc_html_e( 'Latest', 'thermexpertise' );
-					}
-					?>
-				</h1>
-			</header>
-
-			<div class="card-grid">
+			<div class="services">
 				<?php
 				while ( have_posts() ) :
 					the_post();
 					?>
-					<article <?php post_class( 'card' ); ?>>
-						<?php if ( has_post_thumbnail() ) : ?>
-							<a class="card__media" href="<?php the_permalink(); ?>"><?php the_post_thumbnail( 'medium_large' ); ?></a>
-						<?php endif; ?>
-						<h2 class="card__title"><a href="<?php the_permalink(); ?>"><?php the_title(); ?></a></h2>
-						<div class="card__desc"><?php the_excerpt(); ?></div>
+					<article class="service-card">
+						<h3><a href="<?php the_permalink(); ?>"><?php the_title(); ?></a></h3>
+						<p><?php echo esc_html( wp_trim_words( get_the_excerpt(), 28 ) ); ?></p>
+						<a class="btn btn--outline" href="<?php the_permalink(); ?>"><?php esc_html_e( 'Read more', 'thermexpertise' ); ?></a>
 					</article>
 					<?php
 				endwhile;
 				?>
 			</div>
-
-			<div class="pagination">
-				<?php the_posts_pagination( array( 'mid_size' => 2 ) ); ?>
-			</div>
-
+			<div style="margin-top:40px;text-align:center"><?php the_posts_pagination(); ?></div>
 		<?php else : ?>
-			<p><?php esc_html_e( 'Nothing here yet.', 'thermexpertise' ); ?></p>
+			<p style="text-align:center"><?php esc_html_e( 'Nothing found.', 'thermexpertise' ); ?></p>
 		<?php endif; ?>
 	</div>
 </section>

@@ -1,34 +1,26 @@
 {
   "$schema": "https://schemas.wp.org/trunk/theme.json",
-  "version": 3,
+  "version": 2,
   "settings": {
     "appearanceTools": true,
-    "layout": { "contentSize": "760px", "wideSize": "1140px" },
+    "layout": { "contentSize": "820px", "wideSize": "1180px" },
     "color": {
-      "custom": true,
       "palette": [
-        { "slug": "background", "color": "#0b1220", "name": "Background" },
-        { "slug": "surface", "color": "#16213b", "name": "Surface" },
-        { "slug": "text", "color": "#e8eef7", "name": "Text" },
-        { "slug": "muted", "color": "#9fb0c8", "name": "Muted" },
-        { "slug": "accent", "color": "#ff6a3d", "name": "Thermal Orange" },
-        { "slug": "accent-2", "color": "#ffd166", "name": "Amber" }
+        { "slug": "navy",   "color": "#0b2545", "name": "Navy" },
+        { "slug": "steel",  "color": "#134074", "name": "Steel Blue" },
+        { "slug": "accent", "color": "#ff7a18", "name": "Industrial Orange" },
+        { "slug": "teal",   "color": "#2ec4b6", "name": "Teal" },
+        { "slug": "ink",    "color": "#1f2933", "name": "Ink" },
+        { "slug": "muted",  "color": "#5b6b7b", "name": "Muted" },
+        { "slug": "soft",   "color": "#f5f7fa", "name": "Soft Background" },
+        { "slug": "white",  "color": "#ffffff", "name": "White" }
       ]
     },
     "typography": {
-      "fluid": true,
       "fontFamilies": [
-        { "slug": "sans", "name": "Inter", "fontFamily": "Inter, system-ui, sans-serif" },
-        { "slug": "head", "name": "Sora", "fontFamily": "Sora, Inter, sans-serif" }
+        { "slug": "body", "name": "Body", "fontFamily": "Inter, 'Noto Sans Thai', system-ui, sans-serif" },
+        { "slug": "head", "name": "Heading", "fontFamily": "Poppins, 'Noto Sans Thai', sans-serif" }
       ]
-    }
-  },
-  "styles": {
-    "color": { "background": "var(--wp--preset--color--background)", "text": "var(--wp--preset--color--text)" },
-    "typography": { "fontFamily": "var(--wp--preset--font-family--sans)", "lineHeight": "1.65" },
-    "elements": {
-      "link": { "color": { "text": "var(--wp--preset--color--accent)" } },
-      "heading": { "typography": { "fontFamily": "var(--wp--preset--font-family--head)" } }
     }
   }
 }

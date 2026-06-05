@@ -9,12 +9,12 @@
 #   * branding -> wordpressBlogName / blogdesc
 #   * custom theme injected at runtime via an initContainer that sparse-clones
 #     the theme from this repo into wp-content/themes (no image build needed)
-#   * postStart hook activates the theme + sets branding on already-installed
-#     sites (the current default install)
+#   * postStart hook activates the theme, sets branding, and provisions the
+#     pages / primary menu / static front page (mirrors scripts/provision.sh)
 # ============================================================
 wordpressUsername: admin
-wordpressEmail: admin@thermexpertise.com
-wordpressBlogName: "ThermExpertise"
+wordpressEmail: thermexpertise.thex@gmail.com
+wordpressBlogName: "THERM Expertise Co., Ltd."
 existingSecret: wordpress-credentials
 
 # Use chart-default image tags (pinned in Chart.yaml). Do not override with stale
@@ -135,16 +135,48 @@ lifecycleHooks:
         - -ec
         - |
           export PATH="$PATH:/opt/bitnami/wp-cli/bin"
-          WP="--path=/bitnami/wordpress --skip-themes --skip-plugins"
-          for i in $(seq 1 60); do
-            if wp core is-installed $WP 2>/dev/null; then
-              wp theme activate thermexpertise $WP 2>/dev/null || true
-              wp option update blogname "ThermExpertise" $WP 2>/dev/null || true
-              wp option update blogdescription "Thermography & Thermal Imaging Experts" $WP 2>/dev/null || true
-              break
-            fi
-            sleep 5
+          P="--path=/bitnami/wordpress"
+
+          # Wait until Bitnami has installed WordPress core (first boot).
+          for i in $(seq 1 60); do wp core is-installed $P 2>/dev/null && break; sleep 5; done
+          wp core is-installed $P 2>/dev/null || exit 0
+
+          # Branding + permalinks (mirrors infra/scripts/provision.sh).
+          wp theme activate thermexpertise $P || true
+          wp option update blogname "THERM Expertise Co., Ltd." $P || true
+          wp option update blogdescription "Engineering Solutions for Your Business" $P || true
+          wp option update timezone_string "Asia/Bangkok" $P || true
+          wp rewrite structure '/%postname%/' --hard $P || true
+
+          # Idempotent page creation -> prints existing or new page ID.
+          ensure_page() {
+            local id
+            id=$(wp post list --post_type=page --name="$2" --field=ID --format=ids $P 2>/dev/null | head -n1)
+            [ -z "$id" ] && id=$(wp post create --post_type=page --post_status=publish \
+              --post_title="$1" --post_name="$2" --post_content="$3" --porcelain $P)
+            echo "$id"
+          }
+          HOME=$(ensure_page  "Home"     "home"     "<!-- Rendered by the theme front-page.php -->")
+          ABOUT=$(ensure_page "About Us" "about"    "Therm Expertise Co., Ltd. (THEX) was established in 2021 by expert engineers with 10+ years of consulting experience.")
+          SERV=$(ensure_page  "Services" "services" "We offer a range of services to meet your needs.")
+          PROD=$(ensure_page  "Products" "products" "Product of THEX.")
+          CONT=$(ensure_page  "Contact"  "contact"  "For inquiries, please contact us.")
+
+          # Static front page.
+          wp option update show_on_front page $P || true
+          wp option update page_on_front "$HOME" $P || true
+
+          # Primary navigation menu (idempotent: rebuild items each run).
+          wp menu list --fields=name --format=csv $P 2>/dev/null | grep -q "Primary" || wp menu create "Primary" $P || true
+          for it in $(wp menu item list "Primary" --field=db_id $P 2>/dev/null); do
+            wp menu item delete "$it" $P >/dev/null 2>&1 || true
           done
+          for pair in "$HOME:Home" "$ABOUT:About Us" "$SERV:Services" "$PROD:Products" "$CONT:Contact"; do
+            wp menu item add-post "Primary" "${pair%%:*}" --title="${pair#*:}" $P >/dev/null 2>&1 || true
+          done
+          wp menu location assign "Primary" primary $P || true
+
+          wp rewrite flush --hard $P || true
           exit 0
 
 # Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
