@@ -135,11 +135,19 @@ lifecycleHooks:
         - -ec
         - |
           export PATH="$PATH:/opt/bitnami/wp-cli/bin"
-          P="--path=/bitnami/wordpress"
 
-          # Wait until Bitnami has installed WordPress core (first boot).
-          for i in $(seq 1 60); do wp core is-installed $P 2>/dev/null && break; sleep 5; done
-          wp core is-installed $P 2>/dev/null || exit 0
+          # Locate the WordPress core install. In this Bitnami image the core
+          # lives at /opt/bitnami/wordpress; /bitnami/wordpress holds only the
+          # persisted wp-content. Auto-detect so the path is always correct.
+          WP_DIR=""
+          for i in $(seq 1 60); do
+            for d in /opt/bitnami/wordpress /bitnami/wordpress; do
+              if wp core is-installed --path="$d" 2>/dev/null; then WP_DIR="$d"; break 2; fi
+            done
+            sleep 5
+          done
+          [ -z "$WP_DIR" ] && exit 0
+          P="--path=$WP_DIR"
 
           # Branding + permalinks (mirrors infra/scripts/provision.sh).
           wp theme activate thermexpertise $P || true
