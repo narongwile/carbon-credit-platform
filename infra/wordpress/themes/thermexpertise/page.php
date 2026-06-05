@@ -1,8 +1,8 @@
 <?php
 /**
- * Single page template (About, Services, etc.).
+ * Generic page template (fallback for pages without a slug-specific template).
  *
- * @package ThermExpertise
+ * @package thermexpertise
  */
 
 get_header();
@@ -10,19 +10,26 @@ get_header();
 while ( have_posts() ) :
 	the_post();
 	?>
-	<article <?php post_class( 'page' ); ?>>
-		<header class="page__hero">
-			<div class="container">
-				<h1 class="page__title"><?php the_title(); ?></h1>
-			</div>
-		</header>
-		<div class="container page__body entry-content">
-			<?php
-			the_content();
-			wp_link_pages();
-			?>
+	<section class="page-hero">
+		<div class="container">
+			<div class="breadcrumb"><a href="<?php echo esc_url( home_url( '/' ) ); ?>"><?php esc_html_e( 'Home', 'thermexpertise' ); ?></a> &nbsp;/&nbsp; <?php the_title(); ?></div>
+			<h1><?php the_title(); ?></h1>
 		</div>
-	</article>
+	</section>
+
+	<section class="section">
+		<div class="container">
+			<article class="entry">
+				<?php
+				if ( has_post_thumbnail() ) {
+					the_post_thumbnail( 'large' );
+				}
+				the_content();
+				wp_link_pages();
+				?>
+			</article>
+		</div>
+	</section>
 	<?php
 endwhile;
 
