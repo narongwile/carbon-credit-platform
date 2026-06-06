@@ -17,8 +17,27 @@ wordpressEmail: thermexpertise.thex@gmail.com
 wordpressBlogName: "THERM Expertise Co., Ltd."
 existingSecret: wordpress-credentials
 
-# Use chart-default image tags (pinned in Chart.yaml). Do not override with stale
-# tags — Bitnami prunes old docker.io/bitnami/* revisions and pulls will fail.
+# ------------------------------------------------------------
+# Image pinning (Bitnami "Secure Images" migration, Aug 2025).
+# The chart is pinned to 25.0.5 (see argocd/platform-stack/wordpress.yaml).
+# Bitnami removed the old docker.io/bitnami/* tags and the new :latest secure
+# image has a broken first-boot flow (skips `wp config create` -> "wp-config.php
+# not found"). We redirect every image to the archived docker.io/bitnamilegacy/*
+# tags and allow them past the chart's image-verification guard.
+# ------------------------------------------------------------
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/wordpress
+  tag: 6.8.2-debian-12-r2
+volumePermissions:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
+    tag: 12-debian-12-r49
 
 replicaCount: 1
 
@@ -145,6 +164,10 @@ initContainers:
 mariadb:
   enabled: true
   architecture: standalone
+  # Redirect to the archived legacy image (see image-pinning note at top).
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mariadb
   auth:
     existingSecret: wordpress-credentials   # uses mariadb-password / mariadb-root-password
     database: wordpress
