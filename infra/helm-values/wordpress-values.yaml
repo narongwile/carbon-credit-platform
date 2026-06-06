@@ -100,63 +100,18 @@ containerSecurityContext:
     drop: [ALL]
 
 # ------------------------------------------------------------
-# Custom theme injection (GitOps, no custom image / registry).
-# An initContainer sparse-clones only infra/wordpress/themes/thermexpertise
-# from this repo into a shared emptyDir, which is then overlaid onto
-# wp-content/themes/thermexpertise in the WordPress container.
-# Re-runs on every pod start, so the live theme always matches Git.
-# ------------------------------------------------------------
-extraVolumes:
-  - name: custom-theme
-    emptyDir: {}
-  - name: theme-workdir
-    emptyDir: {}
-
-extraVolumeMounts:
-  - name: custom-theme
-    mountPath: /bitnami/wordpress/wp-content/themes/thermexpertise
-    subPath: thermexpertise
-
-initContainers:
-  - name: fetch-theme
-    image: alpine/git:2.45.2
-    securityContext:
-      runAsUser: 0          # write the emptyDir, then world-read for uid 1001
-    env:
-      # Override via --set if the theme lives elsewhere / on another branch.
-      - name: THEME_REPO
-        value: https://gitlab.com/narongwile/carbon-credit-platform.git
-      - name: THEME_REF
-        value: main
-      - name: THEME_PATH
-        value: infra/wordpress/themes/thermexpertise
-    command:
-      - /bin/sh
-      - -ec
-      - |
-        rm -rf /work/* /themes/thermexpertise
-        cd /work
-        git clone --depth 1 --filter=blob:none --sparse \
-          --branch "$THEME_REF" "$THEME_REPO" repo
-        cd repo
-        git sparse-checkout set "$THEME_PATH"
-        mkdir -p /themes/thermexpertise
-        cp -a "$THEME_PATH/." /themes/thermexpertise/
-        chmod -R a+rX /themes/thermexpertise
-        echo "theme synced:" && ls -la /themes/thermexpertise
-    volumeMounts:
-      - name: custom-theme
-        mountPath: /themes
-      - name: theme-workdir
-        mountPath: /work
-
-# ------------------------------------------------------------
-# NOTE: site provisioning (theme activation, pages, primary menu, static
-# front page) is persistent DB state on the PVC, so it is done ONCE via
-# infra/scripts/provision.sh (or a manual wp-cli run), NOT on every pod
-# start. A postStart hook is intentionally avoided here: a non-zero
-# postStart makes Kubernetes kill the container (CrashLoopBackOff). The
-# initContainer above keeps the theme files in sync on every start.
+# NOTE: the custom theme is NOT injected via a volume mount here.
+# Mounting an emptyDir at /bitnami/wordpress/wp-content/themes/thermexpertise
+# made Kubernetes pre-create the wp-content/themes dirs on the PVC, so on first
+# boot Bitnami saw a non-empty volume, assumed WordPress was already installed,
+# skipped `wp config create`, and crashed with "wp-config.php not found".
+#
+# Instead WordPress installs cleanly into an empty PVC, then the theme + site
+# provisioning are applied ONCE (they persist on the PVC):
+#   THEME=infra/wordpress/themes/thermexpertise
+#   kubectl -n web cp "$THEME" <wp-pod>:/bitnami/wordpress/wp-content/themes/thermexpertise -c wordpress
+#   kubectl -n web exec <wp-pod> -c wordpress -- wp theme activate thermexpertise --path=/bitnami/wordpress
+#   ...then create pages / primary menu / static front page (see scripts/provision.sh)
 # ------------------------------------------------------------
 
 # Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
