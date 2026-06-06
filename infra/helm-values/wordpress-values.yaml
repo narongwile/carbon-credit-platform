@@ -54,11 +54,20 @@ ingress:
 
 resources:
   requests:
-    cpu: 50m
-    memory: 256Mi
+    cpu: 100m
+    memory: 512Mi
   limits:
-    cpu: 500m
-    memory: 768Mi
+    cpu: 1000m
+    memory: 1536Mi
+
+# Extra env for the WordPress container.
+#   BITNAMI_DEBUG    -> verbose setup output so the failing step is visible
+#   PHP_MEMORY_LIMIT -> headroom for wp-cli during setup (avoid PHP OOM fatal)
+extraEnvVars:
+  - name: BITNAMI_DEBUG
+    value: "true"
+  - name: PHP_MEMORY_LIMIT
+    value: "768M"
 
 podSecurityContext:
   enabled: true
