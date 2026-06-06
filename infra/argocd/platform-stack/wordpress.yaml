@@ -20,7 +20,7 @@ spec:
   sources:
     - repoURL: registry-1.docker.io/bitnamicharts
       chart: wordpress
-      targetRevision: "*"    # latest — old versions reference deleted Docker Hub tags
+      targetRevision: "25.0.5"   # pinned: last chart before Bitnami "Secure Images" (Aug 2025) broke the WordPress setup flow. Images redirected to bitnamilegacy in the values file.
       helm:
         releaseName: wordpress
         valueFiles:
