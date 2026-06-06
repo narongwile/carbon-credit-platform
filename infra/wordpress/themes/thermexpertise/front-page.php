@@ -34,24 +34,36 @@ get_header();
 	<div class="container">
 		<div class="features">
 			<div class="feature">
-				<div class="feature__icon"><?php echo thex_icon( 'steam' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-				<h3><?php esc_html_e( 'Industrial Services', 'thermexpertise' ); ?></h3>
-				<p><?php esc_html_e( 'Steam optimization, compressed air, energy management and manufacturing improvement.', 'thermexpertise' ); ?></p>
+				<img src="<?php echo esc_url( get_theme_file_uri( 'assets/img/industrial_services_1780742871432.png' ) ); ?>" alt="Industrial Services" class="feature__img">
+				<div class="feature__content">
+					<div class="feature__icon"><?php echo thex_icon( 'steam' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+					<h3><?php esc_html_e( 'Industrial Services', 'thermexpertise' ); ?></h3>
+					<p><?php esc_html_e( 'Steam optimization, compressed air, energy management and manufacturing improvement.', 'thermexpertise' ); ?></p>
+				</div>
 			</div>
 			<div class="feature">
-				<div class="feature__icon"><?php echo thex_icon( 'farm' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-				<h3><?php esc_html_e( 'Aquaponic & Smart Farm', 'thermexpertise' ); ?></h3>
-				<p><?php esc_html_e( 'Sustainable agricultural technology powered by IoT integration.', 'thermexpertise' ); ?></p>
+				<img src="<?php echo esc_url( get_theme_file_uri( 'assets/img/aquaponic_smart_farm_1780742891814.png' ) ); ?>" alt="Aquaponic & Smart Farm" class="feature__img">
+				<div class="feature__content">
+					<div class="feature__icon"><?php echo thex_icon( 'farm' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+					<h3><?php esc_html_e( 'Aquaponic & Smart Farm', 'thermexpertise' ); ?></h3>
+					<p><?php esc_html_e( 'Sustainable agricultural technology powered by IoT integration.', 'thermexpertise' ); ?></p>
+				</div>
 			</div>
 			<div class="feature">
-				<div class="feature__icon"><?php echo thex_icon( 'training' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-				<h3><?php esc_html_e( 'Training Programs', 'thermexpertise' ); ?></h3>
-				<p><?php esc_html_e( 'Professional development across industrial and energy sectors.', 'thermexpertise' ); ?></p>
+				<img src="<?php echo esc_url( get_theme_file_uri( 'assets/img/training_programs_1780742914463.png' ) ); ?>" alt="Training Programs" class="feature__img">
+				<div class="feature__content">
+					<div class="feature__icon"><?php echo thex_icon( 'training' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+					<h3><?php esc_html_e( 'Training Programs', 'thermexpertise' ); ?></h3>
+					<p><?php esc_html_e( 'Professional development across industrial and energy sectors.', 'thermexpertise' ); ?></p>
+				</div>
 			</div>
 			<div class="feature">
-				<div class="feature__icon"><?php echo thex_icon( 'iot' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-				<h3><?php esc_html_e( 'IoT & Engineering', 'thermexpertise' ); ?></h3>
-				<p><?php esc_html_e( 'Data-driven platforms to predict and prevent manufacturing issues.', 'thermexpertise' ); ?></p>
+				<img src="<?php echo esc_url( get_theme_file_uri( 'assets/img/iot_engineering_1780742938931.png' ) ); ?>" alt="IoT & Engineering" class="feature__img">
+				<div class="feature__content">
+					<div class="feature__icon"><?php echo thex_icon( 'iot' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+					<h3><?php esc_html_e( 'IoT & Engineering', 'thermexpertise' ); ?></h3>
+					<p><?php esc_html_e( 'Data-driven platforms to predict and prevent manufacturing issues.', 'thermexpertise' ); ?></p>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -116,7 +128,15 @@ get_header();
 		</div>
 		<div class="clients">
 			<?php foreach ( $clients as $c ) : ?>
-				<div class="client-chip"><?php echo esc_html( $c['name'] ); ?><span><?php echo esc_html( $c['sub'] ); ?></span></div>
+				<div class="client-chip">
+					<?php if ( ! empty( $c['logo'] ) ) : ?>
+						<img class="client-chip__logo" src="<?php echo esc_url( $c['logo'] ); ?>" alt="<?php echo esc_attr( $c['name'] ); ?>">
+					<?php endif; ?>
+					<div class="client-chip__text">
+						<strong><?php echo esc_html( $c['name'] ); ?></strong>
+						<span><?php echo esc_html( $c['sub'] ); ?></span>
+					</div>
+				</div>
 			<?php endforeach; ?>
 		</div>
 	</div>

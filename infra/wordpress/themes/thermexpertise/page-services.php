@@ -20,20 +20,27 @@ get_header();
 
 <section class="section">
 	<div class="container">
-		<div class="services">
+		<div class="service-rows">
 			<?php foreach ( $services as $i => $svc ) : ?>
-				<article class="service-card">
-					<span class="num"><?php echo esc_html( sprintf( '%02d', $i + 1 ) ); ?></span>
-					<div class="icon"><?php echo thex_icon( $svc['icon'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
-					<h3><?php echo esc_html( $svc['title'] ); ?></h3>
-					<p><?php echo esc_html( $svc['desc'] ); ?></p>
-					<?php if ( ! empty( $svc['items'] ) ) : ?>
-						<ul>
-							<?php foreach ( $svc['items'] as $item ) : ?>
-								<li><?php echo esc_html( $item ); ?></li>
-							<?php endforeach; ?>
-						</ul>
-					<?php endif; ?>
+				<article class="service-row">
+					<div class="service-row__content">
+						<div class="icon"><?php echo thex_icon( $svc['icon'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></div>
+						<h2><?php echo esc_html( $svc['title'] ); ?></h2>
+						<p class="service-row__desc"><?php echo esc_html( $svc['desc'] ); ?></p>
+						<?php if ( ! empty( $svc['items'] ) ) : ?>
+							<ul>
+								<?php foreach ( $svc['items'] as $item ) : ?>
+									<li><?php echo esc_html( $item ); ?></li>
+								<?php endforeach; ?>
+							</ul>
+						<?php endif; ?>
+						<p class="service-row__note"><em>Project descriptions are tailored to meet the specific requirements of each project.</em></p>
+					</div>
+					<div class="service-row__media">
+						<?php if ( ! empty( $svc['image'] ) ) : ?>
+							<img src="<?php echo esc_url( $svc['image'] ); ?>" alt="<?php echo esc_attr( $svc['title'] ); ?>">
+						<?php endif; ?>
+					</div>
 				</article>
 			<?php endforeach; ?>
 		</div>

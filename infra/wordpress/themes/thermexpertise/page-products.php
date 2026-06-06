@@ -24,7 +24,11 @@ get_header();
 			<?php foreach ( $products as $p ) : ?>
 				<article class="product-card">
 					<div class="product-card__media">
-						<?php echo thex_icon( 'box' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						<?php if ( ! empty( $p['image'] ) ) : ?>
+							<img src="<?php echo esc_url( $p['image'] ); ?>" alt="<?php echo esc_attr( $p['name'] ); ?>" class="product-card__image" style="width:100%;height:100%;object-fit:cover;">
+						<?php else : ?>
+							<?php echo thex_icon( 'box' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+						<?php endif; ?>
 						<span class="model" style="position:absolute;bottom:14px;left:18px"><?php echo esc_html( $p['model'] ); ?></span>
 					</div>
 					<div class="product-card__body">
