@@ -132,59 +132,65 @@ lifecycleHooks:
     exec:
       command:
         - /bin/bash
-        - -ec
+        - -c
         - |
-          export PATH="$PATH:/opt/bitnami/wp-cli/bin"
+          # Provision in the background and return 0 immediately. A postStart
+          # hook that exits non-zero makes Kubernetes KILL the container, so we
+          # must never let a slow/failed wp-cli step crash-loop the pod. No
+          # 'set -e'; every step is best-effort.
+          (
+            export PATH="$PATH:/opt/bitnami/wp-cli/bin"
 
-          # Locate the WordPress core install. In this Bitnami image the core
-          # lives at /opt/bitnami/wordpress; /bitnami/wordpress holds only the
-          # persisted wp-content. Auto-detect so the path is always correct.
-          WP_DIR=""
-          for i in $(seq 1 60); do
-            for d in /opt/bitnami/wordpress /bitnami/wordpress; do
-              if wp core is-installed --path="$d" 2>/dev/null; then WP_DIR="$d"; break 2; fi
+            # Locate the WordPress core install. In this Bitnami image the core
+            # lives at /opt/bitnami/wordpress; /bitnami/wordpress holds only the
+            # persisted wp-content. Wait for first-boot setup to finish.
+            WP_DIR=""
+            for i in $(seq 1 60); do
+              for d in /opt/bitnami/wordpress /bitnami/wordpress; do
+                wp core is-installed --path="$d" 2>/dev/null && WP_DIR="$d" && break 2
+              done
+              sleep 5
             done
-            sleep 5
-          done
-          [ -z "$WP_DIR" ] && exit 0
-          P="--path=$WP_DIR"
+            [ -n "$WP_DIR" ] || exit 0
+            P="--path=$WP_DIR"
 
-          # Branding + permalinks (mirrors infra/scripts/provision.sh).
-          wp theme activate thermexpertise $P || true
-          wp option update blogname "THERM Expertise Co., Ltd." $P || true
-          wp option update blogdescription "Engineering Solutions for Your Business" $P || true
-          wp option update timezone_string "Asia/Bangkok" $P || true
-          wp rewrite structure '/%postname%/' --hard $P || true
+            # Branding + permalinks (mirrors infra/scripts/provision.sh).
+            wp theme activate thermexpertise $P || true
+            wp option update blogname "THERM Expertise Co., Ltd." $P || true
+            wp option update blogdescription "Engineering Solutions for Your Business" $P || true
+            wp option update timezone_string "Asia/Bangkok" $P || true
+            wp rewrite structure '/%postname%/' --hard $P || true
 
-          # Idempotent page creation -> prints existing or new page ID.
-          ensure_page() {
-            local id
-            id=$(wp post list --post_type=page --name="$2" --field=ID --format=ids $P 2>/dev/null | head -n1)
-            [ -z "$id" ] && id=$(wp post create --post_type=page --post_status=publish \
-              --post_title="$1" --post_name="$2" --post_content="$3" --porcelain $P)
-            echo "$id"
-          }
-          HOME=$(ensure_page  "Home"     "home"     "<!-- Rendered by the theme front-page.php -->")
-          ABOUT=$(ensure_page "About Us" "about"    "Therm Expertise Co., Ltd. (THEX) was established in 2021 by expert engineers with 10+ years of consulting experience.")
-          SERV=$(ensure_page  "Services" "services" "We offer a range of services to meet your needs.")
-          PROD=$(ensure_page  "Products" "products" "Product of THEX.")
-          CONT=$(ensure_page  "Contact"  "contact"  "For inquiries, please contact us.")
+            # Idempotent page creation -> prints existing or new page ID.
+            ensure_page() {
+              local id
+              id=$(wp post list --post_type=page --name="$2" --field=ID --format=ids $P 2>/dev/null | head -n1)
+              [ -n "$id" ] || id=$(wp post create --post_type=page --post_status=publish \
+                --post_title="$1" --post_name="$2" --post_content="$3" --porcelain $P 2>/dev/null)
+              echo "$id"
+            }
+            HOME=$(ensure_page  "Home"     "home"     "<!-- Rendered by the theme front-page.php -->")
+            ABOUT=$(ensure_page "About Us" "about"    "Therm Expertise Co., Ltd. (THEX) was established in 2021 by expert engineers with 10+ years of consulting experience.")
+            SERV=$(ensure_page  "Services" "services" "We offer a range of services to meet your needs.")
+            PROD=$(ensure_page  "Products" "products" "Product of THEX.")
+            CONT=$(ensure_page  "Contact"  "contact"  "For inquiries, please contact us.")
 
-          # Static front page.
-          wp option update show_on_front page $P || true
-          wp option update page_on_front "$HOME" $P || true
+            # Static front page.
+            wp option update show_on_front page $P || true
+            [ -n "$HOME" ] && wp option update page_on_front "$HOME" $P || true
 
-          # Primary navigation menu (idempotent: rebuild items each run).
-          wp menu list --fields=name --format=csv $P 2>/dev/null | grep -q "Primary" || wp menu create "Primary" $P || true
-          for it in $(wp menu item list "Primary" --field=db_id $P 2>/dev/null); do
-            wp menu item delete "$it" $P >/dev/null 2>&1 || true
-          done
-          for pair in "$HOME:Home" "$ABOUT:About Us" "$SERV:Services" "$PROD:Products" "$CONT:Contact"; do
-            wp menu item add-post "Primary" "${pair%%:*}" --title="${pair#*:}" $P >/dev/null 2>&1 || true
-          done
-          wp menu location assign "Primary" primary $P || true
+            # Primary navigation menu (idempotent: rebuild items each run).
+            wp menu list --fields=name --format=csv $P 2>/dev/null | grep -q "Primary" || wp menu create "Primary" $P || true
+            for it in $(wp menu item list "Primary" --field=db_id $P 2>/dev/null); do
+              wp menu item delete "$it" $P >/dev/null 2>&1 || true
+            done
+            for pair in "$HOME:Home" "$ABOUT:About Us" "$SERV:Services" "$PROD:Products" "$CONT:Contact"; do
+              [ -n "${pair%%:*}" ] && wp menu item add-post "Primary" "${pair%%:*}" --title="${pair#*:}" $P >/dev/null 2>&1 || true
+            done
+            wp menu location assign "Primary" primary $P || true
 
-          wp rewrite flush --hard $P || true
+            wp rewrite flush --hard $P || true
+          ) >/tmp/thex-provision.log 2>&1 &
           exit 0
 
 # Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
