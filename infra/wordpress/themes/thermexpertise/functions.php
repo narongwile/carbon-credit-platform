@@ -179,8 +179,8 @@ function thex_services() {
  */
 function thex_products() {
 	return array(
-		array( 'model' => 'MD0001M',  'name' => 'Model MD0001M',  'desc' => 'Engineering instrument from the THEX product line.', 'soon' => false, 'image' => get_theme_file_uri( 'assets/img/media__1780742578911.png' ) ),
-		array( 'model' => 'MD0001XL', 'name' => 'Model MD0001XL', 'desc' => 'Extended-capacity variant of the THEX MD series.',     'soon' => false, 'image' => get_theme_file_uri( 'assets/img/media__1780742575321.png' ) ),
+		array( 'model' => 'MD0001M',  'name' => 'Model MD0001M',  'desc' => 'Engineering instrument from the THEX product line.', 'soon' => false, 'image' => get_theme_file_uri( 'assets/img/MD0001M.png' ) ),
+		array( 'model' => 'MD0001XL', 'name' => 'Model MD0001XL', 'desc' => 'Extended-capacity variant of the THEX MD series.',     'soon' => false, 'image' => get_theme_file_uri( 'assets/img/MD0001XL.png' ) ),
 		array( 'model' => 'MD0001ST', 'name' => 'Model MD0001ST', 'desc' => 'Standard configuration of the THEX MD series.',          'soon' => false ),
 		array( 'model' => '04',       'name' => 'Product 04',      'desc' => 'Detail is coming soon…', 'soon' => true ),
 		array( 'model' => '05',       'name' => 'Product 05',      'desc' => 'Detail is coming soon…', 'soon' => true ),
