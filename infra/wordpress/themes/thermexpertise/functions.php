@@ -118,48 +118,56 @@ function thex_services() {
 			'title' => 'Steam & Compressed Air Optimization',
 			'desc'  => 'Survey, measurement and engineering–economic analysis to fine-tune and implement efficient utility systems.',
 			'items' => array( 'System survey & measurement', 'Engineering & economic analysis', 'Smart steam & compressed air', 'Chiller & cooling tower service' ),
+			'image' => 'https://static.wixstatic.com/media/b4b13b_806dd9aa62c849208aaea34de595ecb6~mv2.jpg'
 		),
 		array(
 			'icon'  => 'iot',
 			'title' => 'IoT for Smart Industrial',
 			'desc'  => 'An advanced platform that combines data analytics, IoT and engineering to control, predict and prevent manufacturing issues.',
 			'items' => array( 'Data analytics platform', 'Predictive monitoring', 'Process control & alerts' ),
+			'image' => 'https://static.wixstatic.com/media/b4b13b_ca2b14f7b0c2476b92630e93de93ce38~mv2.jpg'
 		),
 		array(
 			'icon'  => 'energy',
 			'title' => 'Energy Management & Optimization',
 			'desc'  => 'End-to-end energy management improvement from measurement through ENPI analysis to project delivery.',
 			'items' => array( 'Survey & measurement', 'ENPI & energy cost analysis', 'Improvement prescriptions', 'Project management' ),
+			'image' => 'https://static.wixstatic.com/media/11062b_f9d77382ab5d4b7d9f065a6b31eea1d8~mv2.jpeg'
 		),
 		array(
 			'icon'  => 'check',
 			'title' => 'Manufacturing & Productivity',
 			'desc'  => 'Process design and optimization to raise productivity, cut waste and embed lean culture.',
 			'items' => array( 'Lean Six Sigma / Kaizen', 'VSM · OEE · TPS', 'Waste & resource reduction' ),
+			'image' => 'https://static.wixstatic.com/media/11062b_d94583815ffe476a935bd4028ab4b52c~mv2.jpg'
 		),
 		array(
 			'icon'  => 'rnd',
 			'title' => 'Special Project: R&D',
 			'desc'  => 'Custom engineering R&D — thermal machines, pressure vessels, automation concepts and medical devices.',
 			'items' => array( 'Thermal machine & pressure vessel design', 'Machine modification, jigs, automation', 'Medical devices & assistive equipment' ),
+			'image' => 'https://static.wixstatic.com/media/b4b13b_551378b8fdf94acca6aac2919ce48e9d~mv2.jpg'
 		),
 		array(
 			'icon'  => 'training',
 			'title' => 'Training Courses',
 			'desc'  => 'Internationally recognized training delivered by certified expert engineers (UNIDO / TGO).',
 			'items' => array( 'CFP · CFO · LCA · SBTi', 'SSO & CaSO (UNIDO)', 'Applied Thermodynamics', 'Automation & Robotics basics' ),
+			'image' => 'https://static.wixstatic.com/media/b4b13b_a17e549c926e4394b31b036b65bb1e67~mv2.jpg'
 		),
 		array(
 			'icon'  => 'mep',
 			'title' => 'MEP System',
 			'desc'  => 'Full MEP design & installation — from cooling-load calculation and DWG drawings to fire and electrical systems.',
 			'items' => array( 'HVAC & ventilation sizing', 'Plumbing & fire protection', 'Electrical, data, CCTV & access' ),
+			'image' => 'https://static.wixstatic.com/media/7d3e670a1e4947c5bcef3d410fe4c9a6.jpg'
 		),
 		array(
 			'icon'  => 'farm',
 			'title' => 'Smart Aquaponic Farm',
 			'desc'  => 'Comprehensive design and full-service smart aquaponic systems integrating IoT for sustainable agriculture.',
 			'items' => array( 'Smart farm & aquaponic design', 'IoT integration', 'Sustainable agriculture' ),
+			'image' => 'https://static.wixstatic.com/media/b4b13b_a8be5a2faeb54464b13622d3b98d2f5a~mv2.jpg'
 		),
 	);
 }
@@ -171,8 +179,8 @@ function thex_services() {
  */
 function thex_products() {
 	return array(
-		array( 'model' => 'MD0001M',  'name' => 'Model MD0001M',  'desc' => 'Engineering instrument from the THEX product line.', 'soon' => false ),
-		array( 'model' => 'MD0001XL', 'name' => 'Model MD0001XL', 'desc' => 'Extended-capacity variant of the THEX MD series.',     'soon' => false ),
+		array( 'model' => 'MD0001M',  'name' => 'Model MD0001M',  'desc' => 'Engineering instrument from the THEX product line.', 'soon' => false, 'image' => get_theme_file_uri( 'assets/img/media__1780742578911.png' ) ),
+		array( 'model' => 'MD0001XL', 'name' => 'Model MD0001XL', 'desc' => 'Extended-capacity variant of the THEX MD series.',     'soon' => false, 'image' => get_theme_file_uri( 'assets/img/media__1780742575321.png' ) ),
 		array( 'model' => 'MD0001ST', 'name' => 'Model MD0001ST', 'desc' => 'Standard configuration of the THEX MD series.',          'soon' => false ),
 		array( 'model' => '04',       'name' => 'Product 04',      'desc' => 'Detail is coming soon…', 'soon' => true ),
 		array( 'model' => '05',       'name' => 'Product 05',      'desc' => 'Detail is coming soon…', 'soon' => true ),
@@ -187,12 +195,14 @@ function thex_products() {
  */
 function thex_clients() {
 	return array(
-		array( 'name' => 'KMUTT', 'sub' => "King Mongkut's University of Technology Thonburi" ),
-		array( 'name' => 'EEI',   'sub' => 'Electrical & Electronics Institute' ),
-		array( 'name' => 'TED',   'sub' => 'Thai Engineering Development' ),
-		array( 'name' => 'NSTDA', 'sub' => 'สวทช. — National Science & Technology Development Agency' ),
-		array( 'name' => 'UNIDO', 'sub' => 'Certification partner' ),
-		array( 'name' => 'TGO',   'sub' => 'Greenhouse Gas Management Organization' ),
+		array( 'name' => 'KMUTT', 'sub' => "King Mongkut's University of Technology Thonburi", 'logo' => 'https://static.wixstatic.com/media/b4b13b_5f08c148754b4d6aacbb159d040f17f2~mv2.png' ),
+		array( 'name' => 'EEI',   'sub' => 'Electrical & Electronics Institute', 'logo' => 'https://static.wixstatic.com/media/b4b13b_0ebe17823cf34eeba27cf6c8b6fc1518~mv2.jpg' ),
+		array( 'name' => 'TED FUND',   'sub' => 'Thai Engineering Development', 'logo' => 'https://static.wixstatic.com/media/b4b13b_9a57ac8b357e4eb1accaaa09b18628cd~mv2.png' ),
+		array( 'name' => 'NSTDA', 'sub' => 'สวทช. — National Science & Technology Development Agency', 'logo' => 'https://static.wixstatic.com/media/b4b13b_e16684f442e54c159186cfade68e5047~mv2.png' ),
+		array( 'name' => 'SMART ENERGY', 'sub' => 'Smart Energy Partner', 'logo' => 'https://static.wixstatic.com/media/b4b13b_1c201eb6f5a74df79965bb592f560731~mv2.png' ),
+		array( 'name' => 'AQ IoT AQUAPONIC',   'sub' => 'IoT Aquaponic System', 'logo' => 'https://static.wixstatic.com/media/b4b13b_efee30752803461d8896a070293de62f~mv2.png' ),
+		array( 'name' => 'ER SMART ENGINEER', 'sub' => 'IoT & Controller', 'logo' => 'https://static.wixstatic.com/media/b4b13b_864258b23a534651b987cca17c006c04~mv2.png' ),
+		array( 'name' => 'ORGANIC AQUAPONIC', 'sub' => 'Veggies Partner', 'logo' => 'https://static.wixstatic.com/media/b4b13b_4d461142c34848128882a033268f30bc~mv2.jpg' ),
 	);
 }
 
