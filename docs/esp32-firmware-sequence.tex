@@ -1,0 +1,614 @@
+% =====================================================================
+%  ESP32-S3 Production Firmware — Corrected MQTT Sequence (EMQX best practice)
+%  ETERNITY / ONEOPS Platform — companion to the Unified Technical Spec
+%
+%  Build:  pdflatex esp32-firmware-sequence.tex   (run twice)
+%  Pure TikZ — no external sequence-diagram package required.
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{xcolor}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,positioning,backgrounds,fit,shapes.misc}
+
+% ---------------------------------------------------------------------
+%  Palette
+% ---------------------------------------------------------------------
+\definecolor{devCol}{HTML}{2E7D32}   % ESP32 device   (green)
+\definecolor{brkCol}{HTML}{6A1B9A}   % EMQX broker    (purple)
+\definecolor{svcCol}{HTML}{1565C0}   % services       (blue)
+\definecolor{dbCol}{HTML}{00838F}    % datastore      (teal)
+\definecolor{otaCol}{HTML}{EF6C00}   % OTA / artefact (orange)
+\definecolor{usrCol}{HTML}{C62828}   % operator       (red)
+\definecolor{bandCol}{HTML}{ECEFF4}  % phase band
+\definecolor{noteCol}{HTML}{FFF8E1}  % note fill
+\definecolor{noteEdge}{HTML}{F9A825}
+
+% ---------------------------------------------------------------------
+%  Sequence-diagram engine (auto-advancing vertical cursor \YY)
+% ---------------------------------------------------------------------
+\newcommand{\msgstep}{0.70}
+\newcommand{\seqreset}{\xdef\YY{-1.30}}
+\newcommand{\adv}{\pgfmathsetmacro{\tmp}{\YY-\msgstep}\xdef\YY{\tmp}}
+\newcommand{\gap}{\pgfmathsetmacro{\tmp}{\YY-0.35}\xdef\YY{\tmp}}
+
+\tikzset{
+  head/.style={draw, rounded corners=2pt, minimum width=2.05cm, minimum height=0.66cm,
+               font=\footnotesize\bfseries, text=white, align=center},
+  lifeline/.style={densely dashed, gray!60, line width=0.5pt},
+  msg/.style={-{Stealth[length=5pt]}, line width=0.7pt},          % control packet / sync call
+  evt/.style={-{Stealth[length=5pt]}, densely dashed, line width=0.7pt, brkCol}, % broker delivery / async event
+  ret/.style={-{Triangle[open,length=5pt]}, densely dotted, gray, line width=0.6pt}, % return
+  mlbl/.style={midway, above, font=\scriptsize, inner sep=1.4pt, align=center},
+  mlblb/.style={midway, below, font=\scriptsize, inner sep=1.4pt, align=center},
+  notestyle/.style={draw=noteEdge, fill=noteCol, rounded corners=1pt, font=\scriptsize,
+                    align=left, inner sep=3pt, text width=#1},
+  band/.style={fill=bandCol, draw=gray!40, rounded corners=2pt, font=\footnotesize\bfseries\itshape,
+               text=black!75, minimum height=0.5cm, align=center},
+}
+
+% solid message:  \mO{fromX}{toX}{label}
+\newcommand{\mO}[3]{\draw[msg] (#1,\YY) -- (#2,\YY) node[mlbl]{#3};\adv}
+% solid message, label below (for tight return-direction lines)
+\newcommand{\mOb}[3]{\draw[msg] (#1,\YY) -- (#2,\YY) node[mlblb]{#3};\adv}
+% async broker delivery / event
+\newcommand{\mA}[3]{\draw[evt] (#1,\YY) -- (#2,\YY) node[mlbl,text=brkCol]{#3};\adv}
+% return / response
+\newcommand{\mR}[3]{\draw[ret] (#1,\YY) -- (#2,\YY) node[mlbl,text=gray]{#3};\adv}
+% self action:  \mS{X}{label}
+\newcommand{\mS}[2]{%
+  \draw[msg] (#1,\YY) -- ++(0.55,0) -- ++(0,-0.26) -- ++(-0.55,0);
+  \node[anchor=west,font=\scriptsize,inner sep=1.4pt] at ([xshift=17pt,yshift=-4pt]#1,\YY){#2};
+  \pgfmathsetmacro{\tmp}{\YY-0.82}\xdef\YY{\tmp}}
+% note anchored at x:  \note{x}{width}{text}
+\newcommand{\note}[3]{\node[notestyle=#2] at (#1,\YY){#3};\adv}
+% full-width phase band centred at \xmid:  \phase{text}
+\newcommand{\phase}[1]{\gap\node[band,minimum width=\bandw] at (\xmid,\YY){#1};\adv}
+
+\newcommand{\seqtitle}[1]{\textbf{#1}}
+
+% =====================================================================
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries ESP32-S3 Production Firmware}\\[2pt]
+  {\large Corrected MQTT Sequence following EMQX Broker Best Practices}\\[6pt]
+  {\small ETERNITY\,/\,ONEOPS Platform — companion to the \emph{Unified Technical Specification v1.0}}\\[2pt]
+  {\small\itshape Revised 2026-06-08}
+\end{center}
+
+\vspace{4pt}
+\hrule
+\vspace{8pt}
+
+\section*{1\quad Scope and what was corrected}
+The specification's end-to-end sequence (\S5.6/\S5.7) begins at \texttt{publish reading}
+and treats the broker as a dumb pipe. That hides the parts of the firmware contract that
+actually decide field reliability: \emph{how the device authenticates, how presence is
+tracked, how sessions and commands survive a flaky link, and how firmware is delivered
+safely}. This document redraws the lifecycle of a single production device against
+\textbf{EMQX} broker semantics (MQTT~5.0) and marks every correction.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.28}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.0cm} p{4.6cm} X@{}}
+\toprule
+\textbf{Area} & \textbf{Original spec} & \textbf{Corrected — EMQX best practice} \\
+\midrule
+Transport \& auth & shared / implicit; ``returns mTLS cert'' but no handshake shown &
+  one-time factory \emph{bootstrap} token over server-auth TLS, immediately rotated to
+  \textbf{per-device X.509 client certificate}; steady state is \textbf{mutual TLS 1.3}
+  verified by EMQX. \\
+Client identity & ``initial \texttt{device\_id}'' &
+  stable, unique \texttt{mqtt\_client\_id} bound to the certificate CN; duplicate-ID
+  takeover rejected. \\
+Authorization & not stated &
+  EMQX \textbf{ACL}: a device may only publish/subscribe under
+  \texttt{devices/\{id\}/\#} and \texttt{sensors/\{sid\}/raw}; cross-device spoofing denied. \\
+Session & not stated &
+  MQTT~5.0 \texttt{clean\_start=0} + \textbf{Session-Expiry}, so QoS~1 commands queued
+  during a brief drop are redelivered on reconnect. \\
+Presence (LWT) & \texttt{status} is ``LWT topic'', retain unspecified &
+  Will published \textbf{QoS~1, retain=1}; matching \textbf{birth} message on (re)connect
+  clears it, so late subscribers always read correct state. \\
+Config delivery & plain publish &
+  \texttt{devices/\{id\}/config} published \textbf{retain=1, QoS~1} $\Rightarrow$ device
+  gets current config the instant it subscribes. \\
+Heartbeat & QoS~0, retain=0 \checkmark &
+  kept QoS~0; \texttt{keepalive=60\,s}, EMQX dead-peer detection at $1.5\times$ keepalive. \\
+Sensor reading & QoS~1, retain=0 \checkmark &
+  kept QoS~1 (PUBACK); ingest consumes via an EMQX \textbf{shared subscription}
+  (\texttt{\$share/ingest/\dots}) for horizontal scale + back-pressure. \\
+OTA & ``upgrade to 1.4.2 from \texttt{artefact\_uri}'' &
+  \textbf{signed} artefact (SHA-256 + secure-boot), \textbf{A/B} partition, out-of-band
+  HTTPS fetch, \texttt{ota/progress} telemetry, \textbf{automatic rollback}, audit row in
+  \texttt{device\_firmware\_history}. \\
+Abuse control & none &
+  EMQX \textbf{flapping detection} + per-client message/bandwidth rate limits. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Legend.}
+\tikz[baseline=-0.5ex]{\draw[msg] (0,0)--(0.7,0);} solid = MQTT control packet / synchronous call\quad
+\tikz[baseline=-0.5ex]{\draw[evt] (0,0)--(0.7,0);} dashed = broker delivery / asynchronous event\quad
+\tikz[baseline=-0.5ex]{\draw[ret] (0,0)--(0.7,0);} dotted = return / acknowledgement.
+
+% =====================================================================
+\newpage
+\section*{2\quad Phase A — Zero-touch provisioning \& secure session bring-up}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\D{0}\def\B{3.4}\def\P{7.0}\def\M{10.4}
+  \def\xmid{5.2}\def\bandw{11.6cm}
+  \seqreset
+  % headers
+  \node[head, fill=devCol] (p0) at (\D,0) {ESP32-S3\\firmware};
+  \node[head, fill=brkCol] (p1) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p2) at (\P,0) {Provisioning\\service};
+  \node[head, fill=dbCol]  (p3) at (\M,0) {MySQL};
+
+  \phase{Bootstrap — one-time, server-auth TLS + factory token}
+  \mO{\D}{\B}{TLS handshake (server cert) + CONNECT, \texttt{clean\_start=1}, bootstrap cred}
+  \mO{\D}{\B}{PUB \texttt{provisioning/\{chip\_id\}/request} \{chip\_id, factory\_token\} QoS\,1}
+  \mA{\B}{\P}{route claim (token verified by EMQX auth hook)}
+  \mO{\P}{\M}{UPSERT \texttt{devices} row $\rightarrow$ device\_id, mac, org\_id}
+  \mR{\M}{\P}{device\_id}
+  \mO{\P}{\B}{PUB \texttt{provisioning/\{chip\_id\}/response} \{X.509 cert, client\_id, device\_id\} QoS\,1}
+  \mA{\B}{\D}{deliver response}
+  \mS{\D}{store cert + keypair in secure element / NVS}
+  \mO{\D}{\B}{DISCONNECT bootstrap session}
+
+  \phase{Steady state — mutual TLS 1.3, persistent session, birth-and-will}
+  \mO{\D}{\B}{mTLS 1.3 handshake (\textbf{client cert}) — EMQX X.509 auth + ACL bind}
+  \mO{\D}{\B}{CONNECT \{client\_id, \texttt{clean\_start=0}, session\_expiry=1h, keepalive=60s,\\ \textbf{Will:} \texttt{devices/\{id\}/status}=offline QoS\,1 retain=1\}}
+  \mR{\B}{\D}{CONNACK (session\_present)}
+  \mO{\D}{\B}{PUB \texttt{devices/\{id\}/status}=online QoS\,1 \textbf{retain=1} (birth — clears Will)}
+  \mO{\D}{\B}{SUBSCRIBE \texttt{devices/\{id\}/config}, \texttt{/cmd/+}, \texttt{/ota/cmd} QoS\,1}
+  \mA{\B}{\D}{deliver \textbf{retained} config immediately}
+
+  % lifelines
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase A — provisioning rotates a factory token into a per-device certificate, then
+the production session is established with mutual TLS, a persistent MQTT~5.0 session, and a
+retained will/birth pair so presence is never stale.}
+\end{figure}
+
+% =====================================================================
+\newpage
+\section*{3\quad Phase B — Steady-state telemetry (corrected ingestion)}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\D{0}\def\B{3.2}\def\I{6.6}\def\M{9.8}\def\A{12.6}
+  \def\xmid{6.3}\def\bandw{13.4cm}
+  \seqreset
+  \node[head, fill=devCol] (p0) at (\D,0) {ESP32-S3\\firmware};
+  \node[head, fill=brkCol] (p1) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p2) at (\I,0) {Ingest\\(Node-RED)};
+  \node[head, fill=dbCol]  (p3) at (\M,0) {MySQL};
+  \node[head, fill=usrCol] (p4) at (\A,0) {Alarm /\\Notif};
+
+  \phase{Liveness — every 30 s}
+  \mO{\D}{\B}{PUB \texttt{devices/\{id\}/heartbeat} \{rssi, batt, uptime, fw\} QoS\,0 retain=0}
+  \mA{\B}{\I}{deliver via \texttt{\$share/ingest/devices/+/heartbeat} (load-balanced)}
+  \mO{\I}{\M}{UPDATE \texttt{devices} SET last\_seen, rssi, fw\_version}
+
+  \phase{Per-sensor reading — every 1.5 s}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{value, unit, quality\} QoS\,1 retain=0}
+  \mR{\B}{\D}{PUBACK (QoS\,1 at-least-once)}
+  \mA{\B}{\I}{deliver via \texttt{\$share/ingest/\dots} shared subscription}
+  \mS{\I}{normalise + validate + rolling features (deterministic)}
+  \mO{\I}{\M}{INSERT \texttt{sensor\_readings} (canonical event)}
+  \mA{\I}{\A}{publish canonical event $\rightarrow$ alarm engine (see spec \S5.6)}
+
+  \note{6.3}{8.6cm}{\textbf{Back-pressure:} if a consumer lags, EMQX queues to the shared
+  group and applies per-client rate limits; the ingest worker keeps the MySQL write path
+  hot rather than blocking the device.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3,p4}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase B — heartbeats stay QoS~0; sensor readings stay QoS~1 with PUBACK. The single
+correction that matters for scale is consuming through an EMQX \emph{shared subscription},
+which load-balances across ingest replicas and gives the broker a place to absorb back-pressure.}
+\end{figure}
+
+% =====================================================================
+\newpage
+\section*{4\quad Phase C — Signed OTA update with A/B rollback}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\U{0}\def\B{3.0}\def\D{6.2}\def\O{9.4}\def\M{12.4}
+  \def\xmid{6.2}\def\bandw{13.0cm}
+  \seqreset
+  \node[head, fill=usrCol] (p0) at (\U,0) {Operator\\(Admin UI)};
+  \node[head, fill=brkCol] (p1) at (\B,0) {EMQX\\broker};
+  \node[head, fill=devCol] (p2) at (\D,0) {ESP32-S3\\firmware};
+  \node[head, fill=otaCol] (p3) at (\O,0) {Artefact\\store (S3)};
+  \node[head, fill=dbCol]  (p4) at (\M,0) {MySQL};
+
+  \phase{Command}
+  \mO{\U}{\B}{PUB \texttt{devices/\{id\}/ota/cmd} \{to\_version, artefact\_uri, sha256\} QoS\,1}
+  \mA{\B}{\D}{deliver ota/cmd (queued if device briefly offline)}
+
+  \phase{Fetch \& verify — out of band}
+  \mO{\D}{\O}{HTTPS GET artefact\_uri (resumable range request)}
+  \mR{\O}{\D}{firmware image stream}
+  \mS{\D}{verify SHA-256 + secure-boot signature; write \textbf{inactive} partition}
+  \mO{\D}{\B}{PUB \texttt{devices/\{id\}/ota/progress} \{pct, status\} QoS\,1}
+  \mA{\B}{\U}{progress over WebSocket}
+
+  \phase{Switch \& confirm}
+  \mS{\D}{set boot $\rightarrow$ B partition; reboot; (reconnect = birth)}
+  \mO{\D}{\B}{PUB heartbeat \{fw=1.4.2\} — new image healthy}
+  \mA{\B}{\M}{INSERT \texttt{device\_firmware\_history} result=success}
+
+  \note{6.2}{9.0cm}{\textbf{Rollback paths:} SHA/signature mismatch $\Rightarrow$ stay on
+  active partition, report \texttt{status=failed}. New image fails its boot self-test
+  $\Rightarrow$ A/B watchdog auto-reverts and reports \texttt{rolled\_back}. The active
+  firmware is never overwritten in place.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3,p4}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase C — OTA is delivered as a signed artefact fetched out of band over HTTPS,
+flashed to the inactive A/B slot, and only promoted after verification; the firmware
+version reported in the next heartbeat closes the audit loop.}
+\end{figure}
+
+% =====================================================================
+\section*{5\quad Phase D — Ungraceful disconnect (Last Will \& Testament)}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\D{0}\def\B{3.6}\def\S{7.6}\def\U{11.0}
+  \def\xmid{5.5}\def\bandw{11.8cm}
+  \seqreset
+  \node[head, fill=devCol] (p0) at (\D,0) {ESP32-S3\\firmware};
+  \node[head, fill=brkCol] (p1) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p2) at (\S,0) {Subscribers\\(UI, alarm)};
+  \node[head, fill=usrCol] (p3) at (\U,0) {Operator};
+
+  \phase{Link loss — no clean DISCONNECT}
+  \mS{\D}{power brown-out / Wi-Fi drop}
+  \mS{\B}{keepalive expires at $1.5\times60$\,s $\Rightarrow$ peer declared dead}
+  \mA{\B}{\S}{publish \textbf{Will} \texttt{devices/\{id\}/status}=offline \{reason:lwt\} QoS\,1 retain=1}
+  \mA{\S}{\U}{UI flips device to OFFLINE; alarm suppressed (expected gap)}
+  \note{4.6}{9.2cm}{Session is retained until \texttt{session\_expiry} (1\,h): QoS\,1 commands
+  (e.g.\ pending \texttt{ota/cmd}) are buffered and redelivered when the device reconnects
+  and replays its birth message.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase D — because the Will is registered at CONNECT with retain=1, presence stays
+correct without any device cooperation; the retained session keeps queued commands alive
+across the outage.}
+\end{figure}
+
+% =====================================================================
+\newpage
+\section*{6\quad Per-product telemetry — one envelope, three payload profiles}
+The phases above are deliberately product-agnostic because every device speaks the
+\emph{same} firmware contract. Temperature is transmitted by all three product lines, but it
+is only \emph{one channel} inside a product-specific set. A device emits \textbf{one
+\texttt{sensors/\{sid\}/raw} publish per channel per cycle}; the broker and ingest path are
+identical, and the meaning of each \texttt{sensor\_id} is resolved by the polymorphic
+\emph{CTI} model (\texttt{sensors.host\_fk} $\in\{$t,c,b$\}$ $\to$ exactly one of the three
+\texttt{*\_sensor\_specs} tables). What actually differs per product is the
+\emph{channel set}, units, and cadence.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.5cm} c X@{}}
+\toprule
+\textbf{Product line (host)} & \textbf{Cadence} & \textbf{Channels emitted as \texttt{sensors/\{sid\}/raw}} \\
+\midrule
+\textbf{Refrigeration} \newline Data Logger \newline (\texttt{carbonbox}, host=\texttt{c}) &
+  temp 30--60\,s; \newline door on-change &
+  \texttt{temp\_c} ($^\circ$C); \texttt{door\_state} (bool 0/1 — \emph{event}, not a scalar
+  measurement). Cold-chain min/max only. \\
+\addlinespace[2pt]
+\textbf{BloodBOX} \newline (host=\texttt{b}) &
+  temp/RH 10--30\,s; \newline GPS 1--5\,s in transit; \newline impact event-driven &
+  \texttt{temp\_c}, \texttt{rh\_pct} (humidity), \texttt{batt\_pct}, \texttt{impact\_g}
+  (shock), \texttt{gps} (lat/lng — \emph{compound}), \texttt{baro\_alt\_m} (floor/altitude).
+  Medical transit; richest payload. \\
+\addlinespace[2pt]
+\textbf{Transformer} \newline Monitoring \newline (\texttt{eternity}, host=\texttt{t}) &
+  thermal 30--60\,s; \newline DGA minutes--hours &
+  \texttt{oil\_temp\_c}, \texttt{ambient\_temp\_c}, \texttt{dga\_h2\_ppm} (dissolved
+  hydrogen), \texttt{moisture\_pct}, \texttt{oil\_level\_pct}, \texttt{load\_pct}.
+  Multi-channel DGA + thermal. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent\textbf{The deltas the generic envelope must absorb:} \texttt{door\_state} and
+\texttt{impact\_g} are boolean/event channels mapped as \texttt{value}$\in\{0,1\}$ /
+\texttt{unit=event}; \texttt{gps} is a compound channel (sent as two readings \texttt{lat},
+\texttt{lng} or one structured value); cadences span three orders of magnitude (GPS seconds
+vs.\ DGA hours). None of this changes the topic or QoS — only the channel set and the spec
+table the ingest worker joins to.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\D{0}\def\B{3.4}\def\I{6.8}\def\M{10.2}
+  \def\xmid{5.1}\def\bandw{12.0cm}
+  \seqreset
+  \node[head, fill=devCol] (p0) at (\D,0) {ESP32-S3\\(transformer)};
+  \node[head, fill=brkCol] (p1) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p2) at (\I,0) {Ingest\\(Node-RED)};
+  \node[head, fill=dbCol]  (p3) at (\M,0) {MySQL};
+
+  \phase{One publish per channel — same envelope, QoS\,1 (transformer shown)}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{oil\_temp\_c}, value, unit\} QoS\,1}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{dga\_h2\_ppm}, value, unit\} QoS\,1}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{load\_pct}, \dots\} \quad($\times$\,N channels)}
+  \mA{\B}{\I}{deliver via \texttt{\$share/ingest-eternity/+/eternity/+/sensors/+/raw}}
+  \mS{\I}{resolve \texttt{host\_fk} $\Rightarrow$ JOIN the matching \texttt{*\_sensor\_specs} (t\,|\,c\,|\,b)}
+  \mO{\I}{\M}{INSERT \texttt{sensor\_readings}, typed \& range-checked against that spec}
+
+  \note{5.1}{10.4cm}{\textbf{Same path, different channel sets:} a \emph{refrigeration} node
+  publishes \{\texttt{temp\_c}, \texttt{door\_state}\}; a \emph{BloodBOX} publishes
+  \{\texttt{temp\_c}, \texttt{rh\_pct}, \texttt{batt\_pct}, \texttt{impact\_g}, \texttt{gps},
+  \texttt{baro\_alt\_m}\}. The firmware, topic, QoS and broker config are identical — only the
+  channel list and the joined spec table change.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase B (per-product) — each device fans out one reading per channel over the single
+\texttt{sensors/\{sid\}/raw} envelope; the ingest worker resolves the polymorphic host FK and
+joins the correct per-type spec table, so a 6-channel transformer and a 2-channel fridge share
+one pipeline.}
+\end{figure}
+
+% =====================================================================
+\newpage
+\section*{7\quad Per-product topic namespace (corrected)}
+Phases A--D used the device-rooted \emph{tail} of each topic (\texttt{devices/\{id\}/\dots},
+\texttt{sensors/\{sid\}/\dots}) for legibility. The complete, ACL-enforceable form prefixes
+\textbf{every} production topic with
+\texttt{\{tenant\}/\allowbreak\{product\}/\allowbreak\{device\_id\}}, where
+\texttt{product} $\in\{$\texttt{eternity}, \texttt{carbonbox}, \texttt{bloodbox}$\}$. The
+prefix is not cosmetic — it is what lets one broker host three products without cross-talk.
+
+\paragraph{Why product belongs in the topic (EMQX best practice).}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Isolation \& ACL:} the cert CN is \texttt{\{tenant\}.\{product\}.\{device\}};
+        EMQX templates one allow rule \texttt{\$\{cn\_tenant\}/\$\{cn\_product\}/\$\{cn\_device\}/\#}
+        and denies everything else. A device physically cannot publish into another product.
+  \item \textbf{Per-product ingest pools:} each product runs its own shared-subscription group
+        (\texttt{\$share/\allowbreak ingest-eternity/\dots}), because the processing differs — DGA gas-trend
+        models, fridge door-debounce, BloodBOX GPS + excursion timers.
+  \item \textbf{Per-product schema, retention, alarm thresholds} (\S8) are keyed off the
+        \texttt{product} segment with no payload sniffing.
+  \item \textbf{Fleet analytics by wildcard:} \texttt{+/eternity/\#} = every transformer across
+        all tenants (superadmin); \texttt{acme/\#} = one tenant, all products.
+\end{itemize}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.22}
+\small
+\begin{tabularx}{\textwidth}{@{}l c c c X@{}}
+\toprule
+\textbf{Topic} & \textbf{Dir} & \textbf{QoS} & \textbf{Ret} & \textbf{Notes} \\
+\midrule
+\multicolumn{5}{@{}l}{\itshape Bootstrap listener — pre-identity, flat namespace}\\
+\texttt{provisioning/\{chip\_id\}/request}  & D$\to$B & 1 & 0 & claim with factory token \\
+\texttt{provisioning/\{chip\_id\}/response} & B$\to$D & 1 & 0 & returns X.509 cert + client\_id \\
+\addlinespace[2pt]
+\multicolumn{5}{@{}l}{\itshape Production listener — prefix \texttt{P\,=\,\{tenant\}/\{product\}/\{device\_id\}}}\\
+\texttt{P/status}              & D$\to$B & 1 & \textbf{1} & Will \emph{and} birth \\
+\texttt{P/heartbeat}           & D$\to$B & 0 & 0 & 30\,s; liveness \& fw\_version \\
+\texttt{P/sensors/\{sid\}/raw} & D$\to$B & 1 & 0 & per-channel reading; ingest via \texttt{\$share} \\
+\texttt{P/alarm/\{sid\}}       & B$\to\star$ & 1 & \textbf{1} & alarm-engine state, retained (\S9) \\
+\texttt{P/config}              & B$\to$D & 1 & \textbf{1} & retained; \textbf{per-product thresholds} (\S8) \\
+\texttt{P/cmd/\{op\}}          & B$\to$D & 1 & 0 & reboot / calibrate / set-threshold \\
+\texttt{P/ota/cmd}             & B$\to$D & 1 & 0 & signed artefact descriptor \\
+\texttt{P/ota/progress}        & D$\to$B & 1 & 0 & percent + status \\
+\bottomrule
+\end{tabularx}
+\\[3pt]
+{\footnotesize $\star$ = subscribers: UI (WebSocket bridge), notification service, and
+optionally the device itself for actuation.}
+\end{center}
+
+\paragraph{Per-product shared subscriptions \& ACL roles.}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\textbf{Role} & \textbf{Authorised topic filter} \\
+\midrule
+device (each) & pub+sub \texttt{\{tenant\}/\{product\}/\{device\}/\#} only \\
+ingest-eternity   & sub \texttt{\$share/ingest-eternity/+/eternity/+/sensors/+/raw} \\
+ingest-carbonbox  & sub \texttt{\$share/ingest-carbonbox/+/carbonbox/+/sensors/+/raw} \\
+ingest-bloodbox   & sub \texttt{\$share/ingest-bloodbox/+/bloodbox/+/sensors/+/raw} \\
+alarm-engine & pub \texttt{+/+/+/alarm/+}; \quad sub \texttt{+/+/+/sensors/+/raw} \\
+ui / notif   & sub \texttt{\{tenant\}/\#} (tenant-scoped, read-only) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% =====================================================================
+\newpage
+\section*{8\quad Per-product alarm thresholds}
+Thresholds are \textbf{not} compiled into firmware. They ship in the retained
+\texttt{P/config} payload (\S7), so the alarm engine and the device's edge fast-path share one
+source of truth and an operator can retune without an OTA. The values below are taken from the
+current product logic in \texttt{src/lib/}; rows marked \emph{(proposed)} have no hardcoded
+value yet and are filled with defensible medical/industrial defaults.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.18}
+\small
+\begin{tabularx}{\textwidth}{@{}l c r r c X@{}}
+\toprule
+\textbf{Channel} & \textbf{Unit} & \textbf{Warn} & \textbf{Crit} & \textbf{Dir} & \textbf{Guard / debounce} \\
+\midrule
+\multicolumn{6}{@{}l}{\textbf{Transformer — \texttt{eternity} (host\,=\,t)}}\\
+\texttt{oil\_temp\_c}     & $^\circ$C & 80  & 95   & $\uparrow$ & WARN after 2 consecutive readings \\
+\texttt{ambient\_temp\_c} & $^\circ$C & 40  & 50   & $\uparrow$ & \\
+\texttt{dga\_h2\_ppm}     & ppm & 150 & 300  & $\uparrow$ & slow DGA cadence; trend-aware \\
+\texttt{moisture\_ppm}    & ppm & 25  & 35   & $\uparrow$ & \\
+\texttt{oil\_level\_pct}  & \% & 70  & 60   & $\downarrow$ & \textbf{inverted} (low = bad) \\
+\texttt{load\_pct}        & \% & 80  & 95   & $\uparrow$ & \\
+\addlinespace[2pt]
+\multicolumn{6}{@{}l}{\textbf{Refrigeration — \texttt{carbonbox} (host\,=\,c)}}\\
+\texttt{temp\_c}     & $^\circ$C & 6 & 8 & $\uparrow$ & WARN $>$6 after 2 readings \\
+\texttt{door\_state} & bool & --- & open & --- & CRITICAL; corrected: debounce $>$60\,s \\
+\texttt{online}      & bool & --- & offline & --- & CRITICAL after $1.5\times$HB ($\approx$90\,s) \\
+\addlinespace[2pt]
+\multicolumn{6}{@{}l}{\textbf{BloodBOX — \texttt{bloodbox} (host\,=\,b)}}\\
+\texttt{temp\_c}    & $^\circ$C & 6 & 7 & $\uparrow$ & medical: no debounce \\
+\texttt{excursion}  & $^\circ$C & --- & $>$\,maxTempC (8) & $\uparrow$ & \textbf{per-transit} limit + excursion-time audit \\
+\texttt{rh\_pct}    & \% & 80 & 90 & $\uparrow$ & humidity \emph{(proposed)} \\
+\texttt{batt\_pct}  & \% & 40 & 20 & $\downarrow$ & low = bad \\
+\texttt{impact\_g}  & g  & --- & 3.0 & $\uparrow$ & single-sample event $\Rightarrow$ CRITICAL \\
+\texttt{lid\_state} & bool & open & --- & --- & WARNING on open \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent{\footnotesize Direction: $\uparrow$ = high value is bad, $\downarrow$ = low value is
+bad. \texttt{door\_state}/\texttt{impact\_g}/\texttt{lid\_state} are event channels (\S6).}
+
+\paragraph{Retained \texttt{P/config} threshold payloads (one per product).}
+\small
+\begin{verbatim}
+eternity:  {"product":"eternity","sample_s":30,"dga_sample_s":3600,
+  "thresholds":{
+    "oil_temp_c":   {"warn":80,"crit":95,"dir":"high","debounce_n":2},
+    "ambient_temp_c":{"warn":40,"crit":50,"dir":"high","debounce_n":2},
+    "dga_h2_ppm":   {"warn":150,"crit":300,"dir":"high"},
+    "moisture_ppm": {"warn":25,"crit":35,"dir":"high"},
+    "oil_level_pct":{"warn":70,"crit":60,"dir":"low"},
+    "load_pct":     {"warn":80,"crit":95,"dir":"high"}}}
+
+carbonbox: {"product":"carbonbox","sample_s":30,
+  "thresholds":{
+    "temp_c":     {"warn":6,"crit":8,"dir":"high","debounce_n":2},
+    "door_state": {"crit_after_s":60},
+    "online":     {"crit_after_s":90}}}
+
+bloodbox:  {"product":"bloodbox","sample_s":15,"gps_sample_s":3,
+  "thresholds":{
+    "temp_c":    {"warn":6,"crit":7,"dir":"high"},
+    "excursion": {"max_temp_c":8,"audit":true},
+    "rh_pct":    {"warn":80,"crit":90,"dir":"high"},
+    "batt_pct":  {"warn":40,"crit":20,"dir":"low"},
+    "impact_g":  {"crit":3.0,"event":true},
+    "lid_state": {"warn_on_open":true}}}
+\end{verbatim}
+\normalsize
+
+% =====================================================================
+\newpage
+\section*{9\quad Alarm semantics \& state machine per product}
+The alarm engine is the canonical owner of state; the device never decides an alarm row (it may
+only raise an \emph{edge} hint). State follows the spec \S5.5 lifecycle, with these
+per-product guard differences:
+\begin{center}
+NORMAL $\to$ WARNING $\to$ CRITICAL $\to$ ACKNOWLEDGED $\to$ ESCALATED $\to$ CLEARED
+\end{center}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.28}
+\small
+\begin{tabularx}{\textwidth}{@{}p{2.6cm} X@{}}
+\toprule
+\textbf{Product} & \textbf{Guard differences vs.\ the shared \S5.5 lifecycle} \\
+\midrule
+\textbf{eternity} & WARNING requires 2 consecutive over-threshold readings; CRITICAL is
+  immediate at $\geq$crit. \texttt{oil\_level} inverted. One alarm \emph{row per channel}; DGA
+  evaluated on a slow cadence with a rising-trend pre-empt. \\
+\textbf{carbonbox} & \texttt{door\_state}=open and \texttt{online}=offline \textbf{bypass} the
+  2-reading debounce $\Rightarrow$ immediate CRITICAL (safety). The corrected design adds a
+  60\,s door debounce so routine access does not nuisance-trip. \\
+\textbf{bloodbox} & Temperature is medical $\Rightarrow$ no debounce. The CRITICAL bound is the
+  \textbf{per-transit} \texttt{maxTempC} (mobile, default 8), tracked with an excursion-time
+  audit trail. \texttt{impact\_g} is a single-sample event; \texttt{batt\_pct} low. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\I{0}\def\E{3.4}\def\M{6.8}\def\B{9.8}\def\S{12.8}
+  \def\xmid{6.4}\def\bandw{13.6cm}
+  \seqreset
+  \node[head, fill=svcCol] (p0) at (\I,0) {Ingest\\(canonical)};
+  \node[head, fill=usrCol] (p1) at (\E,0) {Alarm\\engine};
+  \node[head, fill=dbCol]  (p2) at (\M,0) {MySQL\\(alarms)};
+  \node[head, fill=brkCol] (p3) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p4) at (\S,0) {Subscribers\\(UI/notif)};
+
+  \phase{Per-product evaluation — thresholds from retained \texttt{P/config}}
+  \mA{\I}{\E}{reading \{product, sensor\_id, channel, value\}}
+  \mS{\E}{load cached threshold set for \texttt{\{product\}} (from \texttt{P/config})}
+  \mS{\E}{apply product guard: 2-reading $|$ door-instant $|$ excursion vs \texttt{maxTempC}}
+  \mO{\E}{\M}{UPSERT \texttt{alarms} — state transition (NORMAL/WARN/CRIT)}
+  \mO{\E}{\B}{PUB \texttt{P/alarm/\{sid\}} \{severity, value, thr\} QoS\,1 retain=1}
+  \mA{\B}{\S}{deliver (UI WebSocket + notification; optional device actuator)}
+
+  \note{6.4}{11.0cm}{\textbf{Lifecycle timers (shared):} ESCALATE after 5\,min with no ACK
+  (email\,+\,SMS to on-call); CLEAR after 5\,min of sustained NORMAL. The retained
+  \texttt{alarm} topic means a late UI subscriber reads the current severity immediately —
+  the same birth/will idea applied to alarm state.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3,p4}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase E — one alarm engine, three threshold sets. The reading carries its
+\texttt{product}; the engine loads that product's thresholds and guard, transitions the
+\texttt{alarms} row per \S5.5, and republishes the result on the retained per-device
+\texttt{alarm} topic so presence-of-alarm is never stale.}
+\end{figure}
+
+\paragraph{EMQX configuration checklist.}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item Dedicated TLS listeners: a \emph{bootstrap} listener (server-auth, token) and a
+        \emph{production} listener (mutual TLS, \texttt{verify=verify\_peer},
+        \texttt{fail\_if\_no\_peer\_cert=true}).
+  \item Authentication chain: X.509 CN \texttt{\{tenant\}.\{product\}.\{device\}}
+        $\rightarrow$ \texttt{client\_id}; reject mismatched or duplicate client IDs.
+  \item Authorization (ACL) templated from the CN so each device is boxed into
+        \texttt{\{tenant\}/\allowbreak\{product\}/\allowbreak\{device\}/\#} (\S7).
+  \item One shared-subscription group \emph{per product} for ingest; alarm engine and UI on
+        their own scoped roles; never a single static subscriber.
+  \item Flapping detection + per-client rate \& bandwidth limits enabled.
+  \item Session expiry sized to the longest tolerable command-delivery gap (here 1\,h).
+\end{itemize}
+
+\end{document}
