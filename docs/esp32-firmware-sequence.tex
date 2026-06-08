@@ -373,7 +373,7 @@ table the ingest worker joins to.
   \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{oil\_temp\_c}, value, unit\} QoS\,1}
   \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{dga\_h2\_ppm}, value, unit\} QoS\,1}
   \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{load\_pct}, \dots\} \quad($\times$\,N channels)}
-  \mA{\B}{\I}{deliver via \texttt{\$share/ingest/sensors/+/raw}}
+  \mA{\B}{\I}{deliver via \texttt{\$share/ingest-eternity/+/eternity/+/sensors/+/raw}}
   \mS{\I}{resolve \texttt{host\_fk} $\Rightarrow$ JOIN the matching \texttt{*\_sensor\_specs} (t\,|\,c\,|\,b)}
   \mO{\I}{\M}{INSERT \texttt{sensor\_readings}, typed \& range-checked against that spec}
 
@@ -394,38 +394,219 @@ one pipeline.}
 
 % =====================================================================
 \newpage
-\section*{7\quad MQTT topic \& QoS contract (corrected)}
+\section*{7\quad Per-product topic namespace (corrected)}
+Phases A--D used the device-rooted \emph{tail} of each topic (\texttt{devices/\{id\}/\dots},
+\texttt{sensors/\{sid\}/\dots}) for legibility. The complete, ACL-enforceable form prefixes
+\textbf{every} production topic with
+\texttt{\{tenant\}/\allowbreak\{product\}/\allowbreak\{device\_id\}}, where
+\texttt{product} $\in\{$\texttt{eternity}, \texttt{carbonbox}, \texttt{bloodbox}$\}$. The
+prefix is not cosmetic — it is what lets one broker host three products without cross-talk.
+
+\paragraph{Why product belongs in the topic (EMQX best practice).}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Isolation \& ACL:} the cert CN is \texttt{\{tenant\}.\{product\}.\{device\}};
+        EMQX templates one allow rule \texttt{\$\{cn\_tenant\}/\$\{cn\_product\}/\$\{cn\_device\}/\#}
+        and denies everything else. A device physically cannot publish into another product.
+  \item \textbf{Per-product ingest pools:} each product runs its own shared-subscription group
+        (\texttt{\$share/\allowbreak ingest-eternity/\dots}), because the processing differs — DGA gas-trend
+        models, fridge door-debounce, BloodBOX GPS + excursion timers.
+  \item \textbf{Per-product schema, retention, alarm thresholds} (\S8) are keyed off the
+        \texttt{product} segment with no payload sniffing.
+  \item \textbf{Fleet analytics by wildcard:} \texttt{+/eternity/\#} = every transformer across
+        all tenants (superadmin); \texttt{acme/\#} = one tenant, all products.
+\end{itemize}
+
 \begin{center}
-\renewcommand{\arraystretch}{1.25}
+\renewcommand{\arraystretch}{1.22}
 \small
 \begin{tabularx}{\textwidth}{@{}l c c c X@{}}
 \toprule
-\textbf{Topic} & \textbf{Dir} & \textbf{QoS} & \textbf{Retain} & \textbf{Notes} \\
+\textbf{Topic} & \textbf{Dir} & \textbf{QoS} & \textbf{Ret} & \textbf{Notes} \\
 \midrule
-\texttt{provisioning/\{chip\_id\}/request}  & D$\to$B & 1 & 0 & bootstrap listener only \\
+\multicolumn{5}{@{}l}{\itshape Bootstrap listener — pre-identity, flat namespace}\\
+\texttt{provisioning/\{chip\_id\}/request}  & D$\to$B & 1 & 0 & claim with factory token \\
 \texttt{provisioning/\{chip\_id\}/response} & B$\to$D & 1 & 0 & returns X.509 cert + client\_id \\
-\texttt{devices/\{id\}/status}              & D$\to$B & 1 & \textbf{1} & Will \emph{and} birth on this topic \\
-\texttt{devices/\{id\}/heartbeat}           & D$\to$B & 0 & 0 & 30\,s; liveness \& fw\_version \\
-\texttt{sensors/\{sid\}/raw}                & D$\to$B & 1 & 0 & consumed via \texttt{\$share/ingest/} \\
-\texttt{devices/\{id\}/config}              & B$\to$D & 1 & \textbf{1} & retained so it is read on subscribe \\
-\texttt{devices/\{id\}/cmd/\{op\}}          & B$\to$D & 1 & 0 & reboot / calibrate / set-threshold \\
-\texttt{devices/\{id\}/ota/cmd}             & B$\to$D & 1 & 0 & signed artefact descriptor \\
-\texttt{devices/\{id\}/ota/progress}        & D$\to$B & 1 & 0 & percent + status \\
+\addlinespace[2pt]
+\multicolumn{5}{@{}l}{\itshape Production listener — prefix \texttt{P\,=\,\{tenant\}/\{product\}/\{device\_id\}}}\\
+\texttt{P/status}              & D$\to$B & 1 & \textbf{1} & Will \emph{and} birth \\
+\texttt{P/heartbeat}           & D$\to$B & 0 & 0 & 30\,s; liveness \& fw\_version \\
+\texttt{P/sensors/\{sid\}/raw} & D$\to$B & 1 & 0 & per-channel reading; ingest via \texttt{\$share} \\
+\texttt{P/alarm/\{sid\}}       & B$\to\star$ & 1 & \textbf{1} & alarm-engine state, retained (\S9) \\
+\texttt{P/config}              & B$\to$D & 1 & \textbf{1} & retained; \textbf{per-product thresholds} (\S8) \\
+\texttt{P/cmd/\{op\}}          & B$\to$D & 1 & 0 & reboot / calibrate / set-threshold \\
+\texttt{P/ota/cmd}             & B$\to$D & 1 & 0 & signed artefact descriptor \\
+\texttt{P/ota/progress}        & D$\to$B & 1 & 0 & percent + status \\
+\bottomrule
+\end{tabularx}
+\\[3pt]
+{\footnotesize $\star$ = subscribers: UI (WebSocket bridge), notification service, and
+optionally the device itself for actuation.}
+\end{center}
+
+\paragraph{Per-product shared subscriptions \& ACL roles.}
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\textbf{Role} & \textbf{Authorised topic filter} \\
+\midrule
+device (each) & pub+sub \texttt{\{tenant\}/\{product\}/\{device\}/\#} only \\
+ingest-eternity   & sub \texttt{\$share/ingest-eternity/+/eternity/+/sensors/+/raw} \\
+ingest-carbonbox  & sub \texttt{\$share/ingest-carbonbox/+/carbonbox/+/sensors/+/raw} \\
+ingest-bloodbox   & sub \texttt{\$share/ingest-bloodbox/+/bloodbox/+/sensors/+/raw} \\
+alarm-engine & pub \texttt{+/+/+/alarm/+}; \quad sub \texttt{+/+/+/sensors/+/raw} \\
+ui / notif   & sub \texttt{\{tenant\}/\#} (tenant-scoped, read-only) \\
 \bottomrule
 \end{tabularx}
 \end{center}
+
+% =====================================================================
+\newpage
+\section*{8\quad Per-product alarm thresholds}
+Thresholds are \textbf{not} compiled into firmware. They ship in the retained
+\texttt{P/config} payload (\S7), so the alarm engine and the device's edge fast-path share one
+source of truth and an operator can retune without an OTA. The values below are taken from the
+current product logic in \texttt{src/lib/}; rows marked \emph{(proposed)} have no hardcoded
+value yet and are filled with defensible medical/industrial defaults.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.18}
+\small
+\begin{tabularx}{\textwidth}{@{}l c r r c X@{}}
+\toprule
+\textbf{Channel} & \textbf{Unit} & \textbf{Warn} & \textbf{Crit} & \textbf{Dir} & \textbf{Guard / debounce} \\
+\midrule
+\multicolumn{6}{@{}l}{\textbf{Transformer — \texttt{eternity} (host\,=\,t)}}\\
+\texttt{oil\_temp\_c}     & $^\circ$C & 80  & 95   & $\uparrow$ & WARN after 2 consecutive readings \\
+\texttt{ambient\_temp\_c} & $^\circ$C & 40  & 50   & $\uparrow$ & \\
+\texttt{dga\_h2\_ppm}     & ppm & 150 & 300  & $\uparrow$ & slow DGA cadence; trend-aware \\
+\texttt{moisture\_ppm}    & ppm & 25  & 35   & $\uparrow$ & \\
+\texttt{oil\_level\_pct}  & \% & 70  & 60   & $\downarrow$ & \textbf{inverted} (low = bad) \\
+\texttt{load\_pct}        & \% & 80  & 95   & $\uparrow$ & \\
+\addlinespace[2pt]
+\multicolumn{6}{@{}l}{\textbf{Refrigeration — \texttt{carbonbox} (host\,=\,c)}}\\
+\texttt{temp\_c}     & $^\circ$C & 6 & 8 & $\uparrow$ & WARN $>$6 after 2 readings \\
+\texttt{door\_state} & bool & --- & open & --- & CRITICAL; corrected: debounce $>$60\,s \\
+\texttt{online}      & bool & --- & offline & --- & CRITICAL after $1.5\times$HB ($\approx$90\,s) \\
+\addlinespace[2pt]
+\multicolumn{6}{@{}l}{\textbf{BloodBOX — \texttt{bloodbox} (host\,=\,b)}}\\
+\texttt{temp\_c}    & $^\circ$C & 6 & 7 & $\uparrow$ & medical: no debounce \\
+\texttt{excursion}  & $^\circ$C & --- & $>$\,maxTempC (8) & $\uparrow$ & \textbf{per-transit} limit + excursion-time audit \\
+\texttt{rh\_pct}    & \% & 80 & 90 & $\uparrow$ & humidity \emph{(proposed)} \\
+\texttt{batt\_pct}  & \% & 40 & 20 & $\downarrow$ & low = bad \\
+\texttt{impact\_g}  & g  & --- & 3.0 & $\uparrow$ & single-sample event $\Rightarrow$ CRITICAL \\
+\texttt{lid\_state} & bool & open & --- & --- & WARNING on open \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent{\footnotesize Direction: $\uparrow$ = high value is bad, $\downarrow$ = low value is
+bad. \texttt{door\_state}/\texttt{impact\_g}/\texttt{lid\_state} are event channels (\S6).}
+
+\paragraph{Retained \texttt{P/config} threshold payloads (one per product).}
+\small
+\begin{verbatim}
+eternity:  {"product":"eternity","sample_s":30,"dga_sample_s":3600,
+  "thresholds":{
+    "oil_temp_c":   {"warn":80,"crit":95,"dir":"high","debounce_n":2},
+    "ambient_temp_c":{"warn":40,"crit":50,"dir":"high","debounce_n":2},
+    "dga_h2_ppm":   {"warn":150,"crit":300,"dir":"high"},
+    "moisture_ppm": {"warn":25,"crit":35,"dir":"high"},
+    "oil_level_pct":{"warn":70,"crit":60,"dir":"low"},
+    "load_pct":     {"warn":80,"crit":95,"dir":"high"}}}
+
+carbonbox: {"product":"carbonbox","sample_s":30,
+  "thresholds":{
+    "temp_c":     {"warn":6,"crit":8,"dir":"high","debounce_n":2},
+    "door_state": {"crit_after_s":60},
+    "online":     {"crit_after_s":90}}}
+
+bloodbox:  {"product":"bloodbox","sample_s":15,"gps_sample_s":3,
+  "thresholds":{
+    "temp_c":    {"warn":6,"crit":7,"dir":"high"},
+    "excursion": {"max_temp_c":8,"audit":true},
+    "rh_pct":    {"warn":80,"crit":90,"dir":"high"},
+    "batt_pct":  {"warn":40,"crit":20,"dir":"low"},
+    "impact_g":  {"crit":3.0,"event":true},
+    "lid_state": {"warn_on_open":true}}}
+\end{verbatim}
+\normalsize
+
+% =====================================================================
+\newpage
+\section*{9\quad Alarm semantics \& state machine per product}
+The alarm engine is the canonical owner of state; the device never decides an alarm row (it may
+only raise an \emph{edge} hint). State follows the spec \S5.5 lifecycle, with these
+per-product guard differences:
+\begin{center}
+NORMAL $\to$ WARNING $\to$ CRITICAL $\to$ ACKNOWLEDGED $\to$ ESCALATED $\to$ CLEARED
+\end{center}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.28}
+\small
+\begin{tabularx}{\textwidth}{@{}p{2.6cm} X@{}}
+\toprule
+\textbf{Product} & \textbf{Guard differences vs.\ the shared \S5.5 lifecycle} \\
+\midrule
+\textbf{eternity} & WARNING requires 2 consecutive over-threshold readings; CRITICAL is
+  immediate at $\geq$crit. \texttt{oil\_level} inverted. One alarm \emph{row per channel}; DGA
+  evaluated on a slow cadence with a rising-trend pre-empt. \\
+\textbf{carbonbox} & \texttt{door\_state}=open and \texttt{online}=offline \textbf{bypass} the
+  2-reading debounce $\Rightarrow$ immediate CRITICAL (safety). The corrected design adds a
+  60\,s door debounce so routine access does not nuisance-trip. \\
+\textbf{bloodbox} & Temperature is medical $\Rightarrow$ no debounce. The CRITICAL bound is the
+  \textbf{per-transit} \texttt{maxTempC} (mobile, default 8), tracked with an excursion-time
+  audit trail. \texttt{impact\_g} is a single-sample event; \texttt{batt\_pct} low. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\I{0}\def\E{3.4}\def\M{6.8}\def\B{9.8}\def\S{12.8}
+  \def\xmid{6.4}\def\bandw{13.6cm}
+  \seqreset
+  \node[head, fill=svcCol] (p0) at (\I,0) {Ingest\\(canonical)};
+  \node[head, fill=usrCol] (p1) at (\E,0) {Alarm\\engine};
+  \node[head, fill=dbCol]  (p2) at (\M,0) {MySQL\\(alarms)};
+  \node[head, fill=brkCol] (p3) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p4) at (\S,0) {Subscribers\\(UI/notif)};
+
+  \phase{Per-product evaluation — thresholds from retained \texttt{P/config}}
+  \mA{\I}{\E}{reading \{product, sensor\_id, channel, value\}}
+  \mS{\E}{load cached threshold set for \texttt{\{product\}} (from \texttt{P/config})}
+  \mS{\E}{apply product guard: 2-reading $|$ door-instant $|$ excursion vs \texttt{maxTempC}}
+  \mO{\E}{\M}{UPSERT \texttt{alarms} — state transition (NORMAL/WARN/CRIT)}
+  \mO{\E}{\B}{PUB \texttt{P/alarm/\{sid\}} \{severity, value, thr\} QoS\,1 retain=1}
+  \mA{\B}{\S}{deliver (UI WebSocket + notification; optional device actuator)}
+
+  \note{6.4}{11.0cm}{\textbf{Lifecycle timers (shared):} ESCALATE after 5\,min with no ACK
+  (email\,+\,SMS to on-call); CLEAR after 5\,min of sustained NORMAL. The retained
+  \texttt{alarm} topic means a late UI subscriber reads the current severity immediately —
+  the same birth/will idea applied to alarm state.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3,p4}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase E — one alarm engine, three threshold sets. The reading carries its
+\texttt{product}; the engine loads that product's thresholds and guard, transitions the
+\texttt{alarms} row per \S5.5, and republishes the result on the retained per-device
+\texttt{alarm} topic so presence-of-alarm is never stale.}
+\end{figure}
 
 \paragraph{EMQX configuration checklist.}
 \begin{itemize}[leftmargin=1.4em,itemsep=1pt]
   \item Dedicated TLS listeners: a \emph{bootstrap} listener (server-auth, token) and a
         \emph{production} listener (mutual TLS, \texttt{verify=verify\_peer},
         \texttt{fail\_if\_no\_peer\_cert=true}).
-  \item Authentication chain: X.509 CN $\rightarrow$ \texttt{client\_id}; reject mismatched
-        or duplicate client IDs.
-  \item Authorization (ACL) pinned to \texttt{\$\{clientid\}} so each device is boxed into
-        its own \texttt{devices/\{id\}/\#} and \texttt{sensors/\{sid\}/raw}.
-  \item Shared subscriptions (\texttt{\$share/ingest/\dots}) for every server-side consumer;
-        never a single static subscriber.
+  \item Authentication chain: X.509 CN \texttt{\{tenant\}.\{product\}.\{device\}}
+        $\rightarrow$ \texttt{client\_id}; reject mismatched or duplicate client IDs.
+  \item Authorization (ACL) templated from the CN so each device is boxed into
+        \texttt{\{tenant\}/\allowbreak\{product\}/\allowbreak\{device\}/\#} (\S7).
+  \item One shared-subscription group \emph{per product} for ingest; alarm engine and UI on
+        their own scoped roles; never a single static subscriber.
   \item Flapping detection + per-client rate \& bandwidth limits enabled.
   \item Session expiry sized to the longest tolerable command-delivery gap (here 1\,h).
 \end{itemize}

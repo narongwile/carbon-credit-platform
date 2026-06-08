@@ -17,6 +17,13 @@ It covers four phases plus the topic/QoS contract:
   different channel sets of each product line (Refrigeration `temp`/`door`; BloodBOX
   `temp`/`humidity`/`battery`/`impact`/`gps`/`altitude`; Transformer `oil_temp`/`DGA H2`/
   `moisture`/`oil_level`/`load`), resolved by the polymorphic `host_fk` → `*_sensor_specs`.
+- **Per-product topic namespace** — every production topic is prefixed with
+  `{tenant}/{product}/{device_id}` so EMQX can isolate by ACL, run one shared-subscription
+  ingest pool per product, and route by the `product` segment without payload sniffing.
+- **Per-product thresholds & alarms** — the actual warning/critical values per channel
+  (from `src/lib/`), shipped in the retained `P/config` payload, plus the alarm-engine state
+  machine (§5.5 lifecycle) with each product's guard differences (transformer 2-reading
+  debounce, refrigeration door/offline instant-critical, BloodBOX per-transit excursion).
 
 The diagrams are drawn in pure TikZ — no external sequence-diagram package is
 required, so any reasonably complete TeX Live install can build it.
