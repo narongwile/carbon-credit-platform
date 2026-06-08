@@ -312,7 +312,89 @@ across the outage.}
 \end{figure}
 
 % =====================================================================
-\section*{6\quad MQTT topic \& QoS contract (corrected)}
+\newpage
+\section*{6\quad Per-product telemetry — one envelope, three payload profiles}
+The phases above are deliberately product-agnostic because every device speaks the
+\emph{same} firmware contract. Temperature is transmitted by all three product lines, but it
+is only \emph{one channel} inside a product-specific set. A device emits \textbf{one
+\texttt{sensors/\{sid\}/raw} publish per channel per cycle}; the broker and ingest path are
+identical, and the meaning of each \texttt{sensor\_id} is resolved by the polymorphic
+\emph{CTI} model (\texttt{sensors.host\_fk} $\in\{$t,c,b$\}$ $\to$ exactly one of the three
+\texttt{*\_sensor\_specs} tables). What actually differs per product is the
+\emph{channel set}, units, and cadence.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\small
+\begin{tabularx}{\textwidth}{@{}p{3.5cm} c X@{}}
+\toprule
+\textbf{Product line (host)} & \textbf{Cadence} & \textbf{Channels emitted as \texttt{sensors/\{sid\}/raw}} \\
+\midrule
+\textbf{Refrigeration} \newline Data Logger \newline (\texttt{carbonbox}, host=\texttt{c}) &
+  temp 30--60\,s; \newline door on-change &
+  \texttt{temp\_c} ($^\circ$C); \texttt{door\_state} (bool 0/1 — \emph{event}, not a scalar
+  measurement). Cold-chain min/max only. \\
+\addlinespace[2pt]
+\textbf{BloodBOX} \newline (host=\texttt{b}) &
+  temp/RH 10--30\,s; \newline GPS 1--5\,s in transit; \newline impact event-driven &
+  \texttt{temp\_c}, \texttt{rh\_pct} (humidity), \texttt{batt\_pct}, \texttt{impact\_g}
+  (shock), \texttt{gps} (lat/lng — \emph{compound}), \texttt{baro\_alt\_m} (floor/altitude).
+  Medical transit; richest payload. \\
+\addlinespace[2pt]
+\textbf{Transformer} \newline Monitoring \newline (\texttt{eternity}, host=\texttt{t}) &
+  thermal 30--60\,s; \newline DGA minutes--hours &
+  \texttt{oil\_temp\_c}, \texttt{ambient\_temp\_c}, \texttt{dga\_h2\_ppm} (dissolved
+  hydrogen), \texttt{moisture\_pct}, \texttt{oil\_level\_pct}, \texttt{load\_pct}.
+  Multi-channel DGA + thermal. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent\textbf{The deltas the generic envelope must absorb:} \texttt{door\_state} and
+\texttt{impact\_g} are boolean/event channels mapped as \texttt{value}$\in\{0,1\}$ /
+\texttt{unit=event}; \texttt{gps} is a compound channel (sent as two readings \texttt{lat},
+\texttt{lng} or one structured value); cadences span three orders of magnitude (GPS seconds
+vs.\ DGA hours). None of this changes the topic or QoS — only the channel set and the spec
+table the ingest worker joins to.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\D{0}\def\B{3.4}\def\I{6.8}\def\M{10.2}
+  \def\xmid{5.1}\def\bandw{12.0cm}
+  \seqreset
+  \node[head, fill=devCol] (p0) at (\D,0) {ESP32-S3\\(transformer)};
+  \node[head, fill=brkCol] (p1) at (\B,0) {EMQX\\broker};
+  \node[head, fill=svcCol] (p2) at (\I,0) {Ingest\\(Node-RED)};
+  \node[head, fill=dbCol]  (p3) at (\M,0) {MySQL};
+
+  \phase{One publish per channel — same envelope, QoS\,1 (transformer shown)}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{oil\_temp\_c}, value, unit\} QoS\,1}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{dga\_h2\_ppm}, value, unit\} QoS\,1}
+  \mO{\D}{\B}{PUB \texttt{sensors/\{sid\}/raw} \{type:\texttt{load\_pct}, \dots\} \quad($\times$\,N channels)}
+  \mA{\B}{\I}{deliver via \texttt{\$share/ingest/sensors/+/raw}}
+  \mS{\I}{resolve \texttt{host\_fk} $\Rightarrow$ JOIN the matching \texttt{*\_sensor\_specs} (t\,|\,c\,|\,b)}
+  \mO{\I}{\M}{INSERT \texttt{sensor\_readings}, typed \& range-checked against that spec}
+
+  \note{5.1}{10.4cm}{\textbf{Same path, different channel sets:} a \emph{refrigeration} node
+  publishes \{\texttt{temp\_c}, \texttt{door\_state}\}; a \emph{BloodBOX} publishes
+  \{\texttt{temp\_c}, \texttt{rh\_pct}, \texttt{batt\_pct}, \texttt{impact\_g}, \texttt{gps},
+  \texttt{baro\_alt\_m}\}. The firmware, topic, QoS and broker config are identical — only the
+  channel list and the joined spec table change.}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{Phase B (per-product) — each device fans out one reading per channel over the single
+\texttt{sensors/\{sid\}/raw} envelope; the ingest worker resolves the polymorphic host FK and
+joins the correct per-type spec table, so a 6-channel transformer and a 2-channel fridge share
+one pipeline.}
+\end{figure}
+
+% =====================================================================
+\newpage
+\section*{7\quad MQTT topic \& QoS contract (corrected)}
 \begin{center}
 \renewcommand{\arraystretch}{1.25}
 \small

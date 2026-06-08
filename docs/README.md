@@ -13,6 +13,10 @@ It covers four phases plus the topic/QoS contract:
 - **Phase C** — signed OTA update with SHA-256 + secure-boot verification and
   A/B partition rollback.
 - **Phase D** — ungraceful disconnect handled by the retained Last Will.
+- **Per-product telemetry** — how the single `sensors/{sid}/raw` envelope carries the
+  different channel sets of each product line (Refrigeration `temp`/`door`; BloodBOX
+  `temp`/`humidity`/`battery`/`impact`/`gps`/`altitude`; Transformer `oil_temp`/`DGA H2`/
+  `moisture`/`oil_level`/`load`), resolved by the polymorphic `host_fk` → `*_sensor_specs`.
 
 The diagrams are drawn in pure TikZ — no external sequence-diagram package is
 required, so any reasonably complete TeX Live install can build it.
