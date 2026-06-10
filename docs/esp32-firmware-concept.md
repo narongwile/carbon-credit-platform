@@ -4,11 +4,11 @@ One firmware image runs **all three products** — `bloodBOX`, `refrigeDataLogge
 (carbonbox), `transformersMonitoring` (eternity) — on the same ESP32-S3 PCB. Behaviour is
 selected at runtime by a **product profile**, not by separate builds.
 
-Open `esp32-firmware-concept.drawio` in [draw.io](https://app.diagrams.net); it has 4 pages:
+Open `esp32-firmware-concept.drawio` in [draw.io](https://app.diagrams.net); it has 5 pages:
 **(1)** layered architecture, **(2)** boot & provisioning flow, **(3)** runtime FreeRTOS
-tasks & data flow, **(4)** per-product sensor→HAL→envelope mapping. This file is the concept
-narrative; it pairs with `esp32-firmware-sequence.*` (the MQTT/EMQX contract) and
-`esp32-pcb-functions.*` (the hardware map).
+tasks & data flow, **(4)** per-product sensor→HAL→envelope mapping, **(5)** Link Manager
+state machine. This file is the concept narrative; it pairs with `esp32-firmware-sequence.*`
+(the MQTT/EMQX contract) and `esp32-pcb-functions.*` (the hardware map).
 
 ## The one idea: a product-profile abstraction
 Everything above the driver layer is **product-agnostic**. A single profile object —
@@ -104,4 +104,28 @@ These resolve the failure modes a happy-path flow hides. Each is reflected in th
 - **DI debounce in ISR.** Digital inputs such as `door_state` are **debounced (~50 ms) and
   rate-limited in the ISR**, so a vibrating door can't flood the sample queue with spike
   events.
+
+## 6. Link Manager state machine (page 5)
+The connectivity layer is a small FSM so failover, retry, and logging are explicit rather
+than ad-hoc.
+
+| State | Meaning / entry actions |
+| --- | --- |
+| **CONNECTING** | try transports in order Wi-Fi → 4G → LoRa, each with a timeout |
+| **CONNECTED** | publish birth (retain); **drain egress queue** (Alarm QoS 1 > Telemetry); **flush error-log** to `diag/log`; heartbeat 30 s / keepalive 60 s |
+| **RECONNECTING** | quick retry on the **same** transport (short fixed delay) |
+| **BACKOFF** | **exponential backoff (cap + jitter)**, sleep timer, cycle transports — protects battery / avoids broker ban |
+| **OFFLINE** | no transport; **store-and-forward** (SD, drop-oldest), buffer error-logs in NVS ring, periodic wake to retry |
+
+**Key transitions (guard / action):**
+- `CONNECTING → CONNECTED` link+MQTT ok · `CONNECTING → BACKOFF` all transports failed / `log(err)`
+- `CONNECTED → RECONNECTING` keepalive miss \| publish fail \| link down / `log(warn)`
+- `RECONNECTING → CONNECTED` reconnect ok · `RECONNECTING → BACKOFF` retry > N / `log(err)`
+- `BACKOFF → CONNECTING` timer expires / next transport · `BACKOFF → OFFLINE` max backoff & no transport / `log(err)`
+- `OFFLINE → CONNECTING` periodic wake / retry
+
+**Error/event logging (cross-cutting).** Every failure transition writes to an **NVS ring
+buffer** `{ts, from, to, reason, transport, rssi, level}` with `level ∈ {info, warn, err}`.
+The log is **flushed to EMQX** on `…/diag/log` (QoS 1) whenever the FSM is in **CONNECTED**, so
+faults that happened while offline still reach the cloud once the link returns.
 
