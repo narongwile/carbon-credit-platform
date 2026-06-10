@@ -10,10 +10,13 @@ the ESP32-S3 PCB.
   (provisioning, mTLS, persistent session, LWT/birth, OTA), per-product telemetry envelope,
   per-product topic namespace, thresholds, and the alarm state machine.
 - **Part II — Hardware: ESP32-S3 PCB** (§10–§11): function/signal-flow map, per-product
-  sensor→interface table, GPIO/net map.
-- **Part III — Firmware concept design** (§12–§17): layered architecture, boot & provisioning
+  sensor→interface table, **offline timekeeping** (external RTC + time-source hierarchy),
+  GPIO/net map.
+- **Part III — Firmware concept design** (§12–§21): layered architecture, boot & provisioning
   flow, runtime FreeRTOS tasks & data flow, Link Manager state machine, `diag/log` schema +
-  diagnostic codes, and the robustness/fault-handling summary.
+  diagnostic codes, robustness summary, **LoRaWAN integration** (LNS path, OTAA, binary payload),
+  **End-of-Line manufacturing** (eFuse / silicon provisioning), **flash partition table**, and
+  **transport selection & hysteresis**.
 
 Every figure is drawn natively in TikZ, so the PDF needs no external images.
 

@@ -23,6 +23,9 @@ the product profile (\S12).
   \item \textbf{Field I/O} — digital inputs (DI), digital outputs (DO1/DO2 @ 12\,V), CT
         (current, ADC), TM1.
   \item \textbf{HMI / storage} — LCD (I\textsuperscript{2}C), SD card, status LEDs (GPIO47 green, GPIO48 red).
+  \item \textbf{Timekeeping} — \textbf{external RTC (DS3231}, TCXO $\pm$2\,ppm) on I\textsuperscript{2}C + CR2032 coin
+        cell — holds wall-clock across brown-out and offline windows so every SD-buffered sample and
+        alarm is auditable (\S10.1).
 \end{itemize}
 
 \begin{figure}[H]
@@ -41,7 +44,7 @@ the product profile (\S12).
   \node[periph={drvCol}{drvEdge}] (g4)   at (\lx, 0.6){4G-UART modem};
   \node[periph={drvCol}{drvEdge}] (lora) at (\lx,-0.6){LoRa E220-900};
   \node[periph={cloudCol}{cloudEdge}] (usb) at (\lx,-1.8){USB (native)};
-  \node[periph={cloudCol}{cloudEdge}] (i2c) at (\lx,-3.0){I\textsuperscript{2}C / LCD};
+  \node[periph={cloudCol}{cloudEdge}] (i2c) at (\lx,-3.0){I\textsuperscript{2}C: LCD\\\tiny + RTC DS3231};
   % right column (field I/O + HMI)
   \def\rx{6.2}
   \node[periph={crossCol}{crossEdge}] (di)  at (\rx, 3.0){Digital In (DI)};
@@ -88,6 +91,30 @@ transformersMonitoring (t) & \texttt{oil\_temp\_c}(RS485/ADC), \texttt{ambient\_
 \end{center}
 {\footnotesize Interface assignments are concept-level intent from the PCB map; confirm against
 the final sensor BOM.}
+
+\subsection*{10.1\quad Offline timekeeping (audit-grade timestamps)}
+A brown-out reboot with no Internet (4G/Wi-Fi down) would otherwise leave the device with no
+wall-clock, so SD-buffered rows and the \texttt{diag/log} (\S16) had to allow \texttt{t=null}.
+The \textbf{external RTC} closes that gap: time is seeded from the RTC at boot and \emph{disciplined}
+whenever a higher-accuracy source appears. Every persisted row carries an absolute timestamp and a
+\texttt{time\_src} tag.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}\small
+\begin{tabularx}{\textwidth}{@{}c l l X@{}}
+\toprule
+\textbf{Prio} & \textbf{Source} & \textbf{\texttt{time\_src}} & \textbf{Accuracy / when} \\
+\midrule
+1 & NTP over Wi-Fi / 4G & \texttt{ntp} & ms — whenever online \\
+2 & LoRaWAN \texttt{DeviceTimeReq} (MAC cmd) & \texttt{lorawan} & $<$\,1\,s — LoRa-only coverage (\S18) \\
+3 & External RTC DS3231 (+ coin cell) & \texttt{rtc} & $\pm$2\,ppm ($\approx\pm$1\,min/yr) — offline / post brown-out \\
+4 & Monotonic uptime only & \texttt{uptime} & relative — pre-sync (\texttt{t=null}, \texttt{up} set) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent On every higher-priority acquisition the firmware steps the system clock \emph{and writes
+it back to the DS3231}, so the RTC stays accurate for the next offline window. This makes
+\texttt{time\_src=uptime} a rare boot-race case rather than the normal offline state.
 
 \section*{11\quad GPIO / net map}
 \begin{center}
@@ -278,6 +305,8 @@ heartbeat watchdog.}
 \end{figure}
 
 \section*{15\quad Link Manager state machine}
+The FSM below governs the \emph{state} of the active link; \emph{which} transport to select and
+the anti-flapping rule that prevents needless switching are specified in \S21.
 \begin{figure}[H]
 \centering
 \resizebox{0.96\textwidth}{!}{%
@@ -335,6 +364,7 @@ Topic \texttt{\{tenant\}/\{product\}/\{device\}/diag/log} $\cdot$ QoS\,1 $\cdot$
     { "seq": 5012,              // monotonic per device (gap/dedupe)
       "t": 1733740123000,       // epoch ms, or null if pre-time-sync
       "up": 85553,              // uptime_s when logged (ALWAYS set)
+      "time_src": "rtc",        // ntp|lorawan|rtc|uptime  (see 10.1)
       "lvl": "warn",            // info|warn|err|fatal
       "code": "LINK_KEEPALIVE_MISS",
       "from": "CONNECTED", "to": "RECONNECTING",
@@ -344,8 +374,9 @@ Topic \texttt{\{tenant\}/\{product\}/\{device\}/diag/log} $\cdot$ QoS\,1 $\cdot$
   ]
 }
 \end{lstlisting}
-\noindent\textbf{Notes.} Batched on entering CONNECTED; \texttt{t} may be \texttt{null} before
-time-sync but \texttt{up} is always set, so ingest reconstructs wall time as
+\noindent\textbf{Notes.} Batched on entering CONNECTED; \texttt{t} now comes from the RTC even
+offline (\S10.1) — \texttt{time\_src} records which clock stamped it; \texttt{t=null} only on the
+rare pre-RTC boot race, where \texttt{up} still lets ingest reconstruct wall time as
 \texttt{sent\_at\,$-$\,(uptime\_s\,$-$\,up)}; \texttt{seq} gives gap detection; alarms are
 \emph{not} sent here (they use \texttt{\dots /alarm/\{sid\}}).
 
@@ -387,4 +418,204 @@ time-sync but \texttt{up} is always set, so ingest reconstructs wall time as
         \textbf{digital inputs} are debounced/rate-limited in the ISR.
   \item \textbf{Diagnostics} (\texttt{diag/log}) are flushed when CONNECTED so offline faults still
         reach the cloud; alarms stay on their own topic.
+\end{itemize}
+
+% =====================================================================
+\newpage
+\section*{18\quad LoRaWAN integration \& provisioning}
+On Wi-Fi / 4G the device speaks MQTT/mTLS to EMQX \emph{directly} (Part~I, Phase~A). Over LoRaWAN
+it cannot: the ESP32 transmits compact binary frames to a \textbf{LoRa gateway}; a
+\textbf{LoRaWAN Network Server (LNS)} — ChirpStack or The Things Network — terminates the LoRaWAN
+MAC, runs the OTAA join, de-duplicates and decrypts, then \textbf{bridges} decoded uplinks into the
+\emph{same} EMQX topic namespace. On-air confidentiality is LoRaWAN AES-128 (NwkSKey/AppSKey), not mTLS.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[every node/.style={font=\scriptsize}]
+  \tikzset{bx/.style n args={2}{draw=#2,fill=#1,rounded corners=3pt,align=center,inner sep=4pt,
+        minimum height=1.2cm,text width=2.6cm}}
+  \node[bx={hwCol}{hwEdge}] (dev){\textbf{ESP32-S3}\\LoRa MAC\\(Class A/C)};
+  \node[bx={drvCol}{drvEdge}, right=1.5cm of dev] (gw){\textbf{LoRa Gateway}\\packet forwarder};
+  \node[bx={profCol}{profEdge}, right=1.5cm of gw] (lns){\textbf{LNS}\\ChirpStack / TTN\\dedup $\cdot$ ADR $\cdot$ MAC $\cdot$ decrypt};
+  \node[bx={cloudCol}{cloudEdge}, right=1.5cm of lns] (emqx){\textbf{EMQX}\\MQTT broker};
+  \node[bx={appCol}{appEdge}, right=1.4cm of emqx] (ing){\textbf{per-product}\\ingest};
+  \draw[-{Stealth[length=5pt]}] (dev)--(gw) node[midway,above,font=\tiny,align=center]{LoRa RF\\binary, OTAA};
+  \draw[-{Stealth[length=5pt]}] (gw)--(lns) node[midway,above,font=\tiny,align=center]{UDP/IP\\BasicStation};
+  \draw[-{Stealth[length=5pt]}] (lns)--(emqx) node[midway,above,font=\tiny,align=center]{MQTT bridge\\same namespace};
+  \draw[-{Stealth[length=5pt]}] (emqx)--(ing) node[midway,above,font=\tiny]{JSON envelope};
+  \draw[-{Stealth[length=5pt]},densely dashed,profEdge] (emqx.south) -- ++(0,-0.8) -| (dev.south)
+        node[pos=0.25,below,font=\tiny]{downlink: cmd / config (Class A/C) via LNS + GW};
+\end{tikzpicture}}
+\caption{LoRaWAN data path. The gateway + LNS replace the direct MQTT/mTLS hop; the LNS bridge
+re-publishes decoded frames under \texttt{\{tenant\}/\{product\}/\{device\}/\dots} so the cloud
+side (ingest, alarm engine) is transport-agnostic.}
+\end{figure}
+
+\paragraph{OTAA credentials (injected at End-of-Line, \S19).}
+\begin{center}
+\renewcommand{\arraystretch}{1.22}\small
+\begin{tabularx}{\textwidth}{@{}l l l X@{}}
+\toprule
+\textbf{Credential} & \textbf{Source (factory)} & \textbf{Stored} & \textbf{Role} \\
+\midrule
+\texttt{DevEUI} & chip base-MAC or assigned & eFuse/NVS + label & globally-unique device id on air \\
+\texttt{JoinEUI} (AppEUI) & tenant / application id & encrypted NVS & routes the join to the right join-server \\
+\texttt{AppKey} (root) & per-device, generated at EOL & encrypted NVS (never leaves) + LNS & derives session keys at join \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent\textbf{Join (OTAA):} \texttt{JoinRequest(DevEUI, JoinEUI, DevNonce)} $\to$
+\texttt{JoinAccept} $\to$ device derives \texttt{NwkSKey}, \texttt{AppSKey}, \texttt{DevAddr}. The
+\texttt{AppKey} and the mTLS certificate are injected \emph{together} at EOL, so one device carries
+credentials for both transports.
+
+\paragraph{Binary payload (FPort-multiplexed).}
+A LoRaWAN frame is tiny (EU868: $\approx$51\,B at DR0 up to 222\,B at DR5), so JSON is impossible.
+Active channels are \textbf{batched} into one compact frame; the LNS decoder (or an EMQX rule)
+re-expands them into the per-channel canonical envelope — this reconciles the ``one PUB per channel''
+of Part~I, which applies only on IP transports.
+\begin{center}
+\renewcommand{\arraystretch}{1.18}\small
+\begin{tabularx}{\textwidth}{@{}c l c l l X@{}}
+\toprule
+\textbf{FPort} & \textbf{Message} & \textbf{Dir} & \textbf{Codec} & \textbf{Size} & \textbf{Notes} \\
+\midrule
+1  & telemetry batch (active channels) & up   & CBOR / packed C-struct & 8--30\,B & per-product channel set \\
+2  & heartbeat                         & up   & C-struct               & 6\,B     & rssi, batt, fw \\
+3  & edge alarm                        & up   & C-struct               & 5\,B     & high priority, confirmed up \\
+10 & \texttt{diag/log} (compact)        & up   & CBOR                   & 12--40\,B& subset of \S16 \\
+20 & cmd (reboot/calibrate/threshold)  & down & C-struct               & 4--12\,B & Class A/C \\
+21 & config delta (thresholds/rates)   & down & CBOR                   & 8--40\,B & not full \texttt{config} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent\textbf{Recommendation:} \textbf{CBOR} for schema-evolvable messages (telemetry, diag,
+config) and a \textbf{versioned C-struct} (first byte = schema version) for the fixed,
+size-critical ones (heartbeat, alarm). \textbf{Full OTA images are never sent over LoRa} (use
+Wi-Fi/4G, \S\,Phase~C); only small config/threshold pushes go down FPort\,21.
+
+% =====================================================================
+\newpage
+\section*{19\quad End-of-Line (EOL) manufacturing \& silicon provisioning}
+\texttt{eFuse} burning is \textbf{one-time and irreversible} — a wrong key bricks the chip. The line
+therefore generates secrets \emph{on-chip}, tests \emph{first}, and burns fuses \emph{last}.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\A{0}\def\D{3.0}\def\P{6.6}\def\M{9.8}\def\L{12.4}
+  \def\xmid{6.2}\def\bandw{13.0cm}
+  \seqreset
+  \node[head, fill=svcCol] (p0) at (\A,0) {ATE / jig\\(factory)};
+  \node[head, fill=devCol] (p1) at (\D,0) {ESP32-S3\\(DUT)};
+  \node[head, fill=svcCol] (p2) at (\P,0) {Provisioning\\API};
+  \node[head, fill=dbCol]  (p3) at (\M,0) {MySQL};
+  \node[head, fill=otaCol] (p4) at (\L,0) {LNS};
+
+  \phase{1 — Flash + on-chip key generation}
+  \mO{\A}{\D}{flash provisioning firmware (USB / JTAG)}
+  \mS{\D}{HW-RNG $\to$ generate flash-enc + NVS keys (\textbf{stay on-chip})}
+
+  \phase{2 — Functional test (fuse ONLY after pass)}
+  \mO{\A}{\D}{self-test: sensors, radios, RTC}
+  \mR{\D}{\A}{PASS}
+
+  \phase{3 — Burn eFuse (one-time, performed last)}
+  \mS{\D}{burn flash-encryption + secure-boot V2 digest; disable ROM download}
+
+  \phase{4 — Identity binding + secret injection}
+  \mO{\A}{\D}{read base-MAC + DevEUI}
+  \mR{\D}{\A}{mac, dev\_eui}
+  \mO{\A}{\P}{POST /provisioning/register \{mac, dev\_eui, product, hw\_rev\}}
+  \mO{\P}{\M}{bind mac $\leftrightarrow$ device\_id $\leftrightarrow$ dev\_eui}
+  \mA{\P}{\L}{register OTAA device (DevEUI, JoinEUI, AppKey)}
+  \mR{\P}{\A}{\{device\_id, mTLS cert+key, AppKey, client\_id\}}
+  \mO{\A}{\D}{inject cert + LoRaWAN keys $\to$ encrypted NVS}
+  \mS{\D}{final verify; serialize; print QR (device\_id, DevEUI, MAC)}
+
+  \pgfmathsetmacro{\YBOT}{\YY-0.2}
+  \foreach \p in {p0,p1,p2,p3,p4}{\draw[lifeline] (\p.south) -- (\p.south|-0,\YBOT);}
+\end{tikzpicture}}
+\caption{EOL provisioning. Keys are born on the chip and never leave it; the ATE only moves the
+\emph{public} identity (MAC, DevEUI) to the cloud and injects the per-device cert + LoRaWAN
+\texttt{AppKey}. Fuses are burned after the functional test to minimise scrap.}
+\end{figure}
+
+\paragraph{MAC $\to$ \texttt{device\_id} binding API.} \texttt{POST /api/v1/provisioning/register}
+returns \texttt{\{device\_id, tenant, mqtt\_client\_id, cert, app\_key\}} and writes the immutable
+\texttt{(mac, dev\_eui, device\_id, product, hw\_rev)} tuple to the \texttt{devices} table — the same
+row later joined by the ingest path. The cert CN is \texttt{\{tenant\}.\{product\}.\{device\}} (\S7).
+
+\paragraph{eFuse safety.} Burning is irreversible: \textbf{(a)} dry-run and verify all key digests
+before the burn; \textbf{(b)} burn as the \emph{last} step, only after every functional test passes;
+\textbf{(c)} keep the secure-boot \emph{signing} key in an HSM — only its public digest is fused,
+never on the production line.
+
+% =====================================================================
+\section*{20\quad Flash partition table (16\,MB, frozen at v1)}
+The A/B OTA scheme requires \texttt{ota\_0} and \texttt{ota\_1} to be \emph{equal-sized}; changing any
+app slot later breaks the bootloader's slot arithmetic. This table is therefore part of the spec, not
+a per-build choice.
+\begin{center}
+\renewcommand{\arraystretch}{1.18}\small
+\begin{tabularx}{\textwidth}{@{}l l l r X@{}}
+\toprule
+\textbf{Name} & \textbf{Type} & \textbf{SubType} & \textbf{Size} & \textbf{Purpose} \\
+\midrule
+\texttt{nvs\_keys} & data & nvs\_keys & 4\,KB & flash-encryption key store \\
+\texttt{otadata}   & data & ota       & 8\,KB & A/B boot selector \\
+\texttt{phy\_init} & data & phy       & 4\,KB & RF calibration \\
+\texttt{nvs}       & data & nvs       & 1\,MB & mTLS cert, LoRaWAN keys, config \\
+\texttt{factory}   & app  & factory   & 3\,MB & immutable golden-recovery image \\
+\texttt{ota\_0}    & app  & ota\_0    & 3\,MB & OTA slot A \\
+\texttt{ota\_1}    & app  & ota\_1    & 3\,MB & OTA slot B \\
+\texttt{storage}   & data & littlefs  & $\approx$5.9\,MB & ring-buffer staging before SD \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\begin{lstlisting}[style=js]
+# ESP-IDF partitions-16MB.csv  (offsets auto; app partitions 64 KB-aligned)
+# Name,     Type, SubType,  Size
+nvs_keys,   data, nvs_keys, 0x1000
+otadata,    data, ota,      0x2000
+phy_init,   data, phy,      0x1000
+nvs,        data, nvs,      0x100000
+factory,    app,  factory,  0x300000
+ota_0,      app,  ota_0,    0x300000
+ota_1,      app,  ota_1,    0x300000
+storage,    data, littlefs, 0x5F0000
+\end{lstlisting}
+\noindent If golden-recovery is not required, drop \texttt{factory} and grow \texttt{storage} by
+3\,MB — but keep \texttt{ota\_0}\,=\,\texttt{ota\_1}.
+
+% =====================================================================
+\section*{21\quad Transport selection \& hysteresis (anti-flapping)}
+The FSM (\S15) handles \emph{losing} a link; this section handles \emph{choosing} one without
+chattering. Transports are ranked by bandwidth/cost; the device commits to one and resists switching
+back up until the better link has proven stable — the link-layer analogue of the alarm 2-reading
+debounce (\S8).
+\begin{center}
+\renewcommand{\arraystretch}{1.22}\small
+\begin{tabularx}{\textwidth}{@{}l c c c X@{}}
+\toprule
+\textbf{Transport} & \textbf{Rank} & \textbf{Switch-up dwell} & \textbf{Switch-down} & \textbf{Notes} \\
+\midrule
+Wi-Fi      & 0 (preferred) & 20\,s & immediate on loss & cheapest, highest BW; full OTA here \\
+4G / LTE   & 1             & 30\,s & immediate on loss & metered; full OTA here \\
+LoRaWAN    & 2 (floor)     & ---   & n/a               & always-available fallback; binary only (\S18) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Switch-down} (to a lower rank) is \emph{immediate} on active-link loss — fast
+        failover, exactly the \texttt{BACKOFF}/\texttt{OFFLINE} paths of \S15.
+  \item \textbf{Switch-up} (back to a higher rank) only when that link has been \emph{continuously}
+        healthy for its dwell time \emph{and} no publish is in flight. Each link keeps a
+        \texttt{stable\_since}; the guard is \texttt{now $-$ stable\_since $\geq$ dwell}.
+  \item This stops a BloodBOX in transit through patchy 4G from flapping Wi-Fi/4G/LoRa every few
+        seconds and burning power + bandwidth on repeated mTLS handshakes.
+  \item The link being \emph{left} still carries the \S15 exponential backoff, so a marginal link is
+        not re-probed faster than its backoff allows.
 \end{itemize}
