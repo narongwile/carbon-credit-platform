@@ -1,40 +1,39 @@
-# ESP32-S3 firmware — corrected MQTT sequence
+# ESP32-S3 IoT Platform — unified specification
 
-`esp32-firmware-sequence.tex` redraws the ESP32-S3 production firmware lifecycle
-from the *Unified Technical Specification v1.0* as a set of UML-style sequence
-diagrams, corrected to follow **EMQX** broker best practices (MQTT 5.0).
+A single self-contained document covering the whole stack for **one firmware that runs three
+products** (`bloodBOX`, `refrigeDataLogger`/carbonbox, `transformersMonitoring`/eternity) on
+the ESP32-S3 PCB.
 
-It covers four phases plus the topic/QoS contract:
+**`esp32-platform-spec.pdf`** (build from `esp32-platform-spec.tex` + `esp32-platform-parts.tex`):
 
-- **Phase A** — zero-touch provisioning (factory token → per-device X.509 cert)
-  and secure session bring-up (mutual TLS 1.3, persistent session, birth-and-will).
-- **Phase B** — steady-state telemetry (QoS 0 heartbeat, QoS 1 sensor readings
-  consumed through an EMQX shared subscription).
-- **Phase C** — signed OTA update with SHA-256 + secure-boot verification and
-  A/B partition rollback.
-- **Phase D** — ungraceful disconnect handled by the retained Last Will.
-- **Per-product telemetry** — how the single `sensors/{sid}/raw` envelope carries the
-  different channel sets of each product line (Refrigeration `temp`/`door`; BloodBOX
-  `temp`/`humidity`/`battery`/`impact`/`gps`/`altitude`; Transformer `oil_temp`/`DGA H2`/
-  `moisture`/`oil_level`/`load`), resolved by the polymorphic `host_fk` → `*_sensor_specs`.
-- **Per-product topic namespace** — every production topic is prefixed with
-  `{tenant}/{product}/{device_id}` so EMQX can isolate by ACL, run one shared-subscription
-  ingest pool per product, and route by the `product` segment without payload sniffing.
-- **Per-product thresholds & alarms** — the actual warning/critical values per channel
-  (from `src/lib/`), shipped in the retained `P/config` payload, plus the alarm-engine state
-  machine (§5.5 lifecycle) with each product's guard differences (transformer 2-reading
-  debounce, refrigeration door/offline instant-critical, BloodBOX per-transit excursion).
+- **Part I — Cloud interface & MQTT contract** (§1–§9): corrected MQTT/EMQX sequence
+  (provisioning, mTLS, persistent session, LWT/birth, OTA), per-product telemetry envelope,
+  per-product topic namespace, thresholds, and the alarm state machine.
+- **Part II — Hardware: ESP32-S3 PCB** (§10–§11): function/signal-flow map, per-product
+  sensor→interface table, GPIO/net map.
+- **Part III — Firmware concept design** (§12–§17): layered architecture, boot & provisioning
+  flow, runtime FreeRTOS tasks & data flow, Link Manager state machine, `diag/log` schema +
+  diagnostic codes, and the robustness/fault-handling summary.
 
-The diagrams are drawn in pure TikZ — no external sequence-diagram package is
-required, so any reasonably complete TeX Live install can build it.
+Every figure is drawn natively in TikZ, so the PDF needs no external images.
 
 ## Build
 
 ```bash
-make            # -> esp32-firmware-sequence.pdf
+make            # -> esp32-platform-spec.pdf
 # or:
-pdflatex esp32-firmware-sequence.tex   # run twice
+pdflatex esp32-platform-spec.tex   # run twice (table of contents)
 ```
 
-Requires `pdflatex` with TikZ (`texlive-latex-base`, `texlive-latex-recommended`,
-`texlive-pictures`, `texlive-fonts-recommended`).
+Requires `pdflatex` with TikZ and `listings` (`texlive-latex-base`,
+`texlive-latex-recommended`, `texlive-pictures`, `texlive-fonts-recommended`,
+`texlive-latex-extra`).
+
+## Editable diagram sources (draw.io)
+
+The Part II/III figures are also maintained as editable [draw.io](https://app.diagrams.net)
+files (the PDF redraws them in TikZ):
+
+- `esp32-pcb-functions.drawio` — PCB function & signal-flow map.
+- `esp32-firmware-concept.drawio` — 5 pages: layered architecture, boot & provisioning,
+  runtime tasks, per-product mapping, Link Manager state machine + `diag/log` schema.

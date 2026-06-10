@@ -21,6 +21,46 @@
 \usepackage{float}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,calc,positioning,backgrounds,fit,shapes.misc}
+\usetikzlibrary{shapes.geometric,chains}
+\usepackage{listings}
+
+% extra palette for hardware / firmware diagrams
+\definecolor{hwCol}{HTML}{DAE8FC}\definecolor{hwEdge}{HTML}{6C8EBF}
+\definecolor{drvCol}{HTML}{D5E8D4}\definecolor{drvEdge}{HTML}{82B366}
+\definecolor{profCol}{HTML}{FFE6CC}\definecolor{profEdge}{HTML}{D79B00}
+\definecolor{appCol}{HTML}{B0E3E6}\definecolor{appEdge}{HTML}{0E8088}
+\definecolor{cloudCol}{HTML}{E1D5E7}\definecolor{cloudEdge}{HTML}{9673A6}
+\definecolor{crossCol}{HTML}{F8CECC}\definecolor{crossEdge}{HTML}{B85450}
+\definecolor{sysCol}{HTML}{FFF2CC}\definecolor{sysEdge}{HTML}{D6B656}
+\definecolor{halCol}{HTML}{F0F0F0}\definecolor{halEdge}{HTML}{8C8C8C}
+
+\tikzset{
+  layer/.style n args={3}{draw=#2, fill=#1, rounded corners=2pt, align=center,
+        font=\scriptsize, minimum height=0.9cm, text width=#3},
+  sidebar/.style n args={2}{draw=#2, fill=#1, rounded corners=2pt, align=center,
+        font=\scriptsize, text width=1.9cm},
+  periph/.style n args={2}{draw=#2, fill=#1, rounded corners=3pt, align=center,
+        font=\scriptsize, inner sep=3pt, minimum width=2.9cm, minimum height=0.8cm},
+  fproc/.style={draw=hwEdge, fill=hwCol, rounded corners=3pt, align=center,
+        font=\scriptsize, inner sep=3pt, minimum height=0.7cm, text width=3.4cm},
+  fdec/.style={draw=profEdge, fill=profCol, diamond, aspect=2.2, align=center,
+        font=\scriptsize, inner sep=1pt},
+  fterm/.style={draw=sysEdge, fill=sysCol, rounded corners=12pt, align=center,
+        font=\scriptsize\bfseries, inner sep=3pt, text width=3.2cm},
+  fsafe/.style={draw=crossEdge, fill=crossCol, rounded corners=3pt, align=center,
+        font=\scriptsize, inner sep=3pt, text width=3.4cm},
+  fback/.style={draw=sysEdge, fill=sysCol, rounded corners=3pt, align=center,
+        font=\scriptsize, inner sep=3pt, text width=3.4cm},
+  stnode/.style n args={2}{draw=#2, fill=#1, rounded corners=7pt, align=center,
+        font=\scriptsize, inner sep=4pt, minimum width=2.7cm, line width=0.8pt},
+  flow/.style={-{Stealth[length=5pt]}, font=\tiny, align=center, line width=0.6pt},
+  flowd/.style={-{Stealth[length=5pt]}, densely dashed, font=\tiny, align=center, line width=0.6pt},
+  elab/.style={font=\tiny, fill=white, inner sep=1pt, align=center},
+}
+
+\lstdefinestyle{js}{basicstyle=\ttfamily\scriptsize, breaklines=true, frame=single,
+  framesep=4pt, columns=fullflexible, keepspaces=true, showstringspaces=false,
+  backgroundcolor=\color{noteCol!35}, xleftmargin=2pt, xrightmargin=2pt}
 
 % ---------------------------------------------------------------------
 %  Palette
@@ -82,15 +122,28 @@
 \begin{document}
 
 \begin{center}
-  {\LARGE\bfseries ESP32-S3 Production Firmware}\\[2pt]
-  {\large Corrected MQTT Sequence following EMQX Broker Best Practices}\\[6pt]
-  {\small ETERNITY\,/\,ONEOPS Platform — companion to the \emph{Unified Technical Specification v1.0}}\\[2pt]
-  {\small\itshape Revised 2026-06-08}
+  {\LARGE\bfseries ESP32-S3 IoT Platform}\\[2pt]
+  {\large Unified Firmware \& Hardware Specification}\\[4pt]
+  {\normalsize One firmware for three products — bloodBOX \(\cdot\) refrigeDataLogger \(\cdot\) transformersMonitoring}\\[6pt]
+  {\small ETERNITY\,/\,ONEOPS Platform \(\cdot\) consolidates the MQTT contract, PCB function map and firmware concept}\\[2pt]
+  {\small\itshape Revised 2026-06-10}
 \end{center}
 
-\vspace{4pt}
-\hrule
-\vspace{8pt}
+\vspace{4pt}\hrule\vspace{6pt}
+
+\noindent\textbf{Document map.}\;
+\textbf{Part~I} — cloud interface \& MQTT/EMQX contract (\S1--\S9).\quad
+\textbf{Part~II} — hardware: ESP32-S3 PCB function map (\S10--\S11).\quad
+\textbf{Part~III} — firmware concept design: architecture, boot, runtime, link FSM, diagnostics (\S12--\S17).
+\\[2pt]
+Editable diagram sources live alongside this PDF as draw.io files
+(\texttt{esp32-pcb-functions.drawio}, \texttt{esp32-firmware-concept.drawio}); every figure here
+is redrawn natively so the PDF is self-contained.
+
+\vspace{8pt}\hrule\vspace{8pt}
+
+\part*{Part I\quad Cloud interface \& MQTT contract}
+\addcontentsline{toc}{part}{Part I — Cloud interface \& MQTT contract}
 
 \section*{1\quad Scope and what was corrected}
 The specification's end-to-end sequence (\S5.6/\S5.7) begins at \texttt{publish reading}
@@ -610,5 +663,7 @@ NORMAL $\to$ WARNING $\to$ CRITICAL $\to$ ACKNOWLEDGED $\to$ ESCALATED $\to$ CLE
   \item Flapping detection + per-client rate \& bandwidth limits enabled.
   \item Session expiry sized to the longest tolerable command-delivery gap (here 1\,h).
 \end{itemize}
+
+\input{esp32-platform-parts}
 
 \end{document}

@@ -1,0 +1,364 @@
+% =====================================================================
+%  Part II (Hardware) + Part III (Firmware concept)
+%  \input by esp32-platform-spec.tex
+% =====================================================================
+
+\part*{Part II\quad Hardware: ESP32-S3 PCB}
+\addcontentsline{toc}{part}{Part II — Hardware: ESP32-S3 PCB}
+
+\section*{10\quad PCB function map}
+The board is an ESP32-S3-WROOM-1 (N16R8) carrier exposing every field interface the three
+products need. One firmware drives all of them; which interfaces are \emph{active} is chosen by
+the product profile (\S12).
+
+\paragraph{Functional blocks.}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{MCU core} — ESP32-S3-WROOM-1 (N16R8): 16\,MB flash, 8\,MB PSRAM, Wi-Fi + BLE;
+        decoupling C2 10\,$\mu$F, C10/C4 0.1\,$\mu$F.
+  \item \textbf{System / boot} — Reset (\texttt{EN}, R13 10\,k$\Omega$, RST button), Boot/download
+        (\texttt{IO0}, R20 10\,k$\Omega$, PROG button), JTAG (\texttt{MTDI/MTDO/MTCK}).
+  \item \textbf{Power} — PWR 12\,V in (IN+/IN--), battery B+, rails 12\,V $\to$ 5\,V $\to$ 3.3\,V.
+  \item \textbf{Communication} — CAN (SN65HVD230, 120\,$\Omega$ term), RS-485 (MAX3485, 120\,$\Omega$ term),
+        4G-UART, LoRa E220-900, USB (native), I\textsuperscript{2}C.
+  \item \textbf{Field I/O} — digital inputs (DI), digital outputs (DO1/DO2 @ 12\,V), CT
+        (current, ADC), TM1.
+  \item \textbf{HMI / storage} — LCD (I\textsuperscript{2}C), SD card, status LEDs (GPIO47 green, GPIO48 red).
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[node distance=0pt]
+  % centre MCU
+  \node[draw=hwEdge, fill=hwCol, rounded corners=4pt, align=center, font=\scriptsize\bfseries,
+        minimum width=3.6cm, minimum height=3.8cm] (mcu)
+    {ESP32-S3\\WROOM-1 (N16R8)\\[2pt]\normalfont 16MB flash / 8MB PSRAM\\Wi-Fi + BLE\\[4pt]
+     \normalfont Power 12V$\to$5V$\to$3V3\\RST(EN)\,$\cdot$\,BOOT(IO0)\\JTAG};
+  % left column (communication)
+  \def\lx{-6.2}
+  \node[periph={drvCol}{drvEdge}] (can)  at (\lx, 3.0){CAN bus\\\tiny SN65HVD230 (120$\Omega$)};
+  \node[periph={drvCol}{drvEdge}] (rs)   at (\lx, 1.8){RS-485\\\tiny MAX3485 (120$\Omega$)};
+  \node[periph={drvCol}{drvEdge}] (g4)   at (\lx, 0.6){4G-UART modem};
+  \node[periph={drvCol}{drvEdge}] (lora) at (\lx,-0.6){LoRa E220-900};
+  \node[periph={cloudCol}{cloudEdge}] (usb) at (\lx,-1.8){USB (native)};
+  \node[periph={cloudCol}{cloudEdge}] (i2c) at (\lx,-3.0){I\textsuperscript{2}C / LCD};
+  % right column (field I/O + HMI)
+  \def\rx{6.2}
+  \node[periph={crossCol}{crossEdge}] (di)  at (\rx, 3.0){Digital In (DI)};
+  \node[periph={crossCol}{crossEdge}] (do)  at (\rx, 1.8){Digital Out\\\tiny DO1/DO2 @12V};
+  \node[periph={crossCol}{crossEdge}] (ct)  at (\rx, 0.6){CT (current)};
+  \node[periph={crossCol}{crossEdge}] (tm1) at (\rx,-0.6){TM1 (TM16xx)};
+  \node[periph={cloudCol}{cloudEdge}] (sd)  at (\rx,-1.8){SD card};
+  \node[periph={cloudCol}{cloudEdge}] (led) at (\rx,-3.0){Status LEDs};
+  % edges with GPIO labels
+  \tikzset{e/.style={-{Stealth[length=4pt]}, line width=0.5pt}}
+  \draw[e] (mcu) -- (can)  node[elab,midway]{GPIO14 TX\\GPIO13 RX};
+  \draw[e] (mcu) -- (rs)   node[elab,midway]{TX0/RX0\\+GPIO10 DE};
+  \draw[e] (mcu) -- (g4)   node[elab,midway]{UART1};
+  \draw[e] (mcu) -- (lora) node[elab,midway]{UART 43/44\\M0/M1};
+  \draw[e] (mcu) -- (usb)  node[elab,midway]{IO19/IO20};
+  \draw[e] (mcu) -- (i2c)  node[elab,midway]{SDA/SCL};
+  \draw[e] (mcu) -- (di)   node[elab,midway]{GPIO in};
+  \draw[e] (mcu) -- (do)   node[elab,midway]{GPIO 12V};
+  \draw[e] (mcu) -- (ct)   node[elab,midway]{ADC};
+  \draw[e] (mcu) -- (tm1)  node[elab,midway]{GPIO};
+  \draw[e] (mcu) -- (sd)   node[elab,midway]{nSD\_CARD};
+  \draw[e] (mcu) -- (led)  node[elab,midway]{GPIO47/48};
+\end{tikzpicture}}
+\caption{ESP32-S3 PCB — function \& signal-flow map (communication left, field-I/O \& HMI right;
+edge labels are the GPIO / signal nets).}
+\end{figure}
+
+\paragraph{Per-product sensor $\to$ interface.}
+\begin{center}
+\renewcommand{\arraystretch}{1.2}\small
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\textbf{Product} & \textbf{Channels (PCB interface)} \\
+\midrule
+bloodBOX (b) & \texttt{temp\_c}(I\textsuperscript{2}C), \texttt{rh\_pct}(I\textsuperscript{2}C), \texttt{batt\_pct}(ADC),
+  \texttt{impact\_g}(I\textsuperscript{2}C accel), \texttt{gps}(UART), \texttt{baro\_alt\_m}(I\textsuperscript{2}C) \\
+refrigeDataLogger (c) & \texttt{temp\_c}(I\textsuperscript{2}C/1-wire), \texttt{door\_state}(DI, debounced),
+  \texttt{online}(link) \\
+transformersMonitoring (t) & \texttt{oil\_temp\_c}(RS485/ADC), \texttt{ambient\_temp\_c}(I\textsuperscript{2}C),
+  \texttt{dga\_h2\_ppm}(RS485), \texttt{moisture\_ppm}(RS485), \texttt{oil\_level\_pct}(ADC),
+  \texttt{load\_pct}(CT) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+{\footnotesize Interface assignments are concept-level intent from the PCB map; confirm against
+the final sensor BOM.}
+
+\section*{11\quad GPIO / net map}
+\begin{center}
+\renewcommand{\arraystretch}{1.18}\small
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{ESP32-S3 pin} & \textbf{Net} & \textbf{Function} \\
+\midrule
+GPIO13 & \texttt{MCU\_GPIO\_13} & CAN RX (SN65 \texttt{R}) \\
+GPIO14 & \texttt{MCU\_GPIO\_14} & CAN TX (SN65 \texttt{D}) \\
+GPIO10 & \texttt{MCU\_GPIO\_10} & RS-485 \texttt{DE/RE\#} direction \\
+TXD0 \emph{(GPIO43)} & \texttt{MCU\_TX0} & RS-485 \texttt{DI} / UART0 TX \\
+RXD0 \emph{(GPIO44)} & \texttt{MCU\_RX0} & RS-485 \texttt{RO} / UART0 RX \\
+TX1 (GPIO17) / RX1 & \texttt{MCU\_TX1/RX1} & UART1 (4G / LoRa) \\
+SDA / SCL & \texttt{MCU\_SDA/SCL} & I\textsuperscript{2}C (LCD) \\
+GPIO19 / GPIO20 & \texttt{MCU\_DN(-)/DP(+)} & USB D-- / D+ \\
+GPIO42/41/40 & \texttt{MCU\_MTDI/MTDO/MTCK} & JTAG \\
+GPIO0 & \texttt{MCU\_PROG} & boot / download \\
+EN & --- & reset \\
+GPIO47 / GPIO48 & \texttt{MCU\_GPIO47/48} & green / red LED \\
+GPIO45 \emph{(inferred)} & \texttt{MCU\_nSD\_CARD} & SD card \\
+GPIO35--38, 06--12 & \texttt{MCU\_GPIO\_35..38, 06..12} & DI / DO / CT / TM1 \emph{(field I/O)} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% =====================================================================
+\part*{Part III\quad Firmware concept design}
+\addcontentsline{toc}{part}{Part III — Firmware concept design}
+
+\section*{12\quad Layered architecture (one firmware, all products)}
+Everything above the driver layer is product-agnostic. A runtime \textbf{product profile} —
+\texttt{\{product\_id, channel\_set, sample\_rates, thresholds, transport\}} loaded from the
+retained \texttt{\dots /config} payload (or NVS on first boot) — selects which drivers/channels are
+active. Adding a product = a profile + drivers; nothing above changes.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \def\W{12.6cm}
+  \node[sidebar={crossCol}{crossEdge}, minimum height=6.0cm] (sec) at (-7.4,-3.0)
+    {\textbf{SECURITY}\\[3pt]Secure boot\\Flash encryption\\mTLS X.509\\NVS-enc creds\\ACL per device};
+  \node[sidebar={sysCol}{sysEdge}, minimum height=6.0cm] (rt) at (7.4,-3.0)
+    {\textbf{RTOS +}\\\textbf{RELIABILITY}\\[3pt]FreeRTOS tasks\\Watchdog (hb)\\Brown-out\\Safe Mode\\Store-\&-forward\\A/B OTA};
+  \node[layer={cloudCol}{cloudEdge}{\W}] (l7) at (0,0)
+    {\textbf{CLOUD / EMQX (MQTT 5.0)} — provisioning $\cdot$ telemetry $\cdot$ status(LWT) $\cdot$ config $\cdot$ cmd $\cdot$ ota $\cdot$ alarm $\cdot$ per-product ingest};
+  \node[layer={drvCol}{drvEdge}{\W}, below=2mm of l7] (l6)
+    {\textbf{CONNECTIVITY} — link mgr Wi-Fi$\to$4G$\to$LoRa (+backoff) $\cdot$ MQTT5 client (mTLS, LWT/birth) $\cdot$ provisioning client};
+  \node[layer={appCol}{appEdge}{\W}, below=2mm of l6] (l5)
+    {\textbf{APPLICATION SERVICES} — sampler $\cdot$ edge alarm $\cdot$ telemetry serializer (+quality) $\cdot$ egress queue $\cdot$ config $\cdot$ OTA $\cdot$ ring buffer};
+  \node[layer={profCol}{profEdge}{\W}, below=2mm of l5, minimum height=1.05cm] (l4)
+    {\textbf{** PRODUCT PROFILE / ABSTRACTION **} (compatibility layer)\\
+     selects active drivers $\cdot$ channels $\cdot$ rates $\cdot$ thresholds};
+  \node[layer={drvCol}{drvEdge}{\W}, below=2mm of l4] (l3)
+    {\textbf{DRIVER LAYER} (+fault$\to$quality, +DI debounce) — temp $\cdot$ humidity $\cdot$ accel $\cdot$ GPS $\cdot$ baro $\cdot$ DGA $\cdot$ door $\cdot$ CT $\cdot$ relay $\cdot$ LCD $\cdot$ SD $\cdot$ 4G $\cdot$ LoRa};
+  \node[layer={halCol}{halEdge}{\W}, below=2mm of l3] (l2)
+    {\textbf{HAL / BSP} — pin-map $\cdot$ bus drivers I\textsuperscript{2}C/UART/SPI/ADC/GPIO/CAN $\cdot$ A/B partition table};
+  \node[layer={hwCol}{hwEdge}{\W}, below=2mm of l2] (l1)
+    {\textbf{HARDWARE} — ESP32-S3 + PCB (CAN $\cdot$ RS485 $\cdot$ 4G $\cdot$ LoRa $\cdot$ I\textsuperscript{2}C $\cdot$ ADC/CT $\cdot$ DI $\cdot$ DO $\cdot$ SD $\cdot$ USB $\cdot$ LEDs $\cdot$ power)};
+  \draw[-{Stealth[length=5pt]}, drvEdge] (l1.west) ++(-0.2,0) |- (l5.west);
+  \draw[-{Stealth[length=5pt]}, profEdge, densely dashed] (l4.east) ++(0.2,0) |- (l3.east)
+        node[pos=0.25,right,font=\tiny]{activate};
+  \draw[-{Stealth[length=5pt]}, drvEdge] (l6) -- (l7) node[midway,right,font=\tiny]{telemetry$\uparrow$};
+  \draw[-{Stealth[length=5pt]}, profEdge, densely dashed] (l7.east) ++(0.15,0) |- (l6.east)
+        node[pos=0.25,right,font=\tiny]{config$\downarrow$};
+\end{tikzpicture}}
+\caption{Layered firmware architecture; the highlighted product-profile layer is what makes one
+image serve three products.}
+\end{figure}
+
+\section*{13\quad Boot \& provisioning flow}
+The happy path is gated by fault checks: a hardware self-test can divert to Safe Mode, and
+provisioning / link bring-up retry with \textbf{exponential backoff (cap + jitter)} so the flow
+never reaches \texttt{MQTT connect} without a link layer.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[node distance=8mm and 10mm]
+  \node[fterm] (s0) {Power-on};
+  \node[fproc, below=of s0] (s1) {Secure boot + bootloader (A/B)};
+  \node[fproc, below=of s1] (s2) {Init HAL/BSP, mount NVS + SD};
+  \node[fdec, below=9mm of s2] (d1) {HW self-test\\OK?};
+  \node[fsafe, left=18mm of d1] (safe) {SAFE MODE / ERROR\\LED blink code $\cdot$ log NVS\\degrade $\cdot$ report-only};
+  \node[fdec, below=12mm of d1] (d2) {Provi-\\sioned?};
+  % bootstrap branch (left)
+  \node[fproc, left=22mm of d2] (b1) {BOOTSTRAP: TLS + token};
+  \node[fproc, below=of b1] (b2) {PUB provisioning request};
+  \node[fdec, below=9mm of b2] (d3) {Server\\OK?};
+  \node[fback, left=14mm of d3] (bk1) {RETRY: exp backoff (cap+jitter)};
+  \node[fproc, below=10mm of d3] (b3) {Recv cert + product\_id};
+  \node[fproc, below=of b3] (b4) {Store NVS $\to$ reboot};
+  % main spine (down)
+  \node[fproc, below=12mm of d2] (m1) {Load cert + PRODUCT PROFILE};
+  \node[fproc, below=of m1] (m2) {Init ACTIVE drivers};
+  \node[fproc, below=of m2] (m3) {Link bring-up: Wi-Fi$\to$4G$\to$LoRa};
+  \node[fdec, below=9mm of m3] (d4) {Any link\\up?};
+  \node[fback, right=20mm of d4] (bk2) {Wait / sleep + exp backoff};
+  \node[fproc, below=10mm of d4] (m4) {MQTT connect (mTLS, LWT)};
+  \node[fdec, below=9mm of m4] (d5) {MQTT\\connected?};
+  \node[fproc, below=10mm of d5] (m5) {PUB birth + SUB config/cmd/ota};
+  \node[fproc, below=of m5] (m6) {Apply retained config};
+  \node[fterm, below=of m6] (m7) {Enter RUNTIME (\S14)};
+  % edges
+  \tikzset{a/.style={-{Stealth[length=5pt]}, font=\tiny}}
+  \draw[a] (s0)--(s1); \draw[a] (s1)--(s2); \draw[a] (s2)--(d1);
+  \draw[a,crossEdge] (d1)--(safe) node[midway,above,font=\tiny]{no};
+  \draw[a,drvEdge] (d1)--(d2) node[midway,right,font=\tiny]{yes};
+  \draw[a,crossEdge] (safe.south) |- (m3.west) node[pos=0.7,above,font=\tiny]{report-only};
+  \draw[a,crossEdge] (d2)--(b1) node[midway,above,font=\tiny]{no};
+  \draw[a,drvEdge] (d2)--(m1) node[midway,right,font=\tiny]{yes};
+  \draw[a] (b1)--(b2); \draw[a] (b2)--(d3);
+  \draw[a,crossEdge] (d3)--(bk1) node[midway,above,font=\tiny]{no};
+  \draw[a,sysEdge] (bk1.north) |- (b1.west) node[pos=0.75,above,font=\tiny]{retry};
+  \draw[a,drvEdge] (d3)--(b3) node[midway,right,font=\tiny]{yes};
+  \draw[a] (b3)--(b4);
+  \draw[a,gray] (b4.south) |- ($(s1.west)+(0,-0.1)$) node[pos=0.85,below,font=\tiny]{reboot};
+  \draw[a] (m1)--(m2); \draw[a] (m2)--(m3); \draw[a] (m3)--(d4);
+  \draw[a,crossEdge] (d4)--(bk2) node[midway,above,font=\tiny]{no};
+  \draw[a,sysEdge] (bk2.north) |- (m3.east) node[pos=0.75,above,font=\tiny]{retry};
+  \draw[a,drvEdge] (d4)--(m4) node[midway,right,font=\tiny]{yes};
+  \draw[a] (m4)--(d5);
+  \draw[a,crossEdge] (d5.east) -| (bk2.south) node[pos=0.25,above,font=\tiny]{no};
+  \draw[a,drvEdge] (d5)--(m5) node[midway,right,font=\tiny]{yes};
+  \draw[a] (m5)--(m6); \draw[a] (m6)--(m7);
+\end{tikzpicture}}
+\caption{Boot \& provisioning with Safe-Mode diversion, bootstrap retry, and link/MQTT backoff loops.}
+\end{figure}
+
+\section*{14\quad Runtime tasks \& data flow}
+Sensor and alarm tasks never call publish directly. They enqueue to a single priority
+\textbf{egress queue}; \texttt{LinkMgr} is the only publisher (drains one at a time, Alarm
+QoS\,1 before Telemetry), which avoids MQTT-client races and lets the broker absorb back-pressure.
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}
+  \tikzset{tk/.style n args={2}{draw=#2, fill=#1, rounded corners=3pt, align=center,
+        font=\scriptsize, inner sep=3pt, text width=2.9cm, minimum height=1.0cm}}
+  \node[tk={drvCol}{drvEdge}] (sens) at (0,0) {\textbf{SensorTask}\\sample active channels};
+  \node[tk={halCol}{halEdge}, text width=2.0cm] (q1) at (3.1,0) {sample queue};
+  \node[tk={crossCol}{crossEdge}] (al) at (6.2,0.9) {\textbf{EdgeAlarmTask}\\threshold breach$\to$enqueue};
+  \node[tk={appCol}{appEdge}] (te) at (6.2,-0.9) {\textbf{TelemetryTask}\\envelope (+quality)};
+  \node[tk={sysCol}{sysEdge}, text width=3.0cm] (buf) at (3.1,-2.0)
+       {Ring buffer / SD\\FIFO drop-OLDEST (tele)\\NEVER drop alarms};
+  \node[tk={appCol}{appEdge}, text width=3.1cm] (eg) at (9.4,0)
+       {\textbf{EGRESS QUEUE}\\priority Alarm>Telemetry\\single consumer};
+  \node[tk={drvCol}{drvEdge}] (link) at (12.5,0) {\textbf{LinkMgr}\\failover + reconnect};
+  \node[tk={cloudCol}{cloudEdge}, text width=2.0cm] (br) at (15.2,0) {EMQX\\(mTLS)};
+  % downlink row
+  \node[tk={profCol}{profEdge}] (cfg) at (1.5,-3.8) {\textbf{ConfigTask}\\thresholds, rates};
+  \node[tk={profCol}{profEdge}] (cmd) at (4.7,-3.8) {\textbf{CmdTask}\\reboot/calibrate};
+  \node[tk={sysCol}{sysEdge}] (ota) at (7.9,-3.8) {\textbf{OTATask}\\fetch$\to$verify$\to$A/B};
+  \node[tk={crossCol}{crossEdge}, text width=3.2cm] (wdt) at (11.4,-3.8)
+       {\textbf{Watchdog (TWDT)}\\per-task heartbeat flag\\miss $\to$ targeted reset};
+  \draw[flow] (sens)--(q1); \draw[flow,crossEdge] (q1)--(al); \draw[flow,appEdge] (q1)--(te);
+  \draw[flow,crossEdge] (al)--(eg) node[elab,midway]{high}; \draw[flow,appEdge] (te)--(eg) node[elab,midway]{norm};
+  \draw[flow] (eg)--(link) node[elab,midway]{drain}; \draw[flow] (link)--(br);
+  \draw[flowd,sysEdge] (te)--(buf) node[elab,midway]{offline}; \draw[flowd,sysEdge] (buf) to[bend right=10] (eg);
+  \draw[flowd,cloudEdge] (br) to[bend right=22] (link);
+  \draw[flow] (link.south) |- (cfg.east); \draw[flow] (link.south) |- (ota.east);
+  \draw[flowd,profEdge] (cfg) to[bend left=12] (al) node[elab,pos=0.5]{thr};
+  \draw[flowd,profEdge] (cfg) to[bend left=8] (sens) node[elab,pos=0.5]{rate};
+  \foreach \t in {sens,al,te,link,ota} \draw[flowd,crossEdge] (\t.south) -- ++(0,-0.25) -- (wdt.north);
+\end{tikzpicture}}
+\caption{Runtime FreeRTOS tasks, priority egress queue, store-and-forward, downlink handlers and
+heartbeat watchdog.}
+\end{figure}
+
+\section*{15\quad Link Manager state machine}
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}
+  \node[circle, fill=black, inner sep=2.2pt] (i) at (-5.6,2.2){};
+  \node[stnode={hwCol}{hwEdge}] (cn) at (-3.2,2.2){\textbf{CONNECTING}\\\tiny Wi-Fi$\to$4G$\to$LoRa};
+  \node[stnode={drvCol}{drvEdge}, text width=3.4cm] (co) at (1.2,2.2)
+       {\textbf{CONNECTED}\\\tiny birth $\cdot$ drain egress $\cdot$ flush log $\cdot$ heartbeat};
+  \node[stnode={sysCol}{sysEdge}] (rc) at (5.6,2.2){\textbf{RECONNECTING}\\\tiny same transport};
+  \node[stnode={profCol}{profEdge}, text width=3.6cm] (bk) at (1.2,-0.6)
+       {\textbf{BACKOFF}\\\tiny exp backoff (cap+jitter)};
+  \node[stnode={crossCol}{crossEdge}, text width=3.6cm] (of) at (-3.6,-0.6)
+       {\textbf{OFFLINE}\\\tiny store-and-forward $\cdot$ buffer logs $\cdot$ wake};
+  \node[stnode={cloudCol}{cloudEdge}, text width=3.4cm] (lg) at (5.8,-0.6)
+       {\textbf{ERROR LOGGER}\\\tiny NVS ring $\to$ diag/log};
+  \tikzset{t/.style={-{Stealth[length=5pt]}, font=\tiny}}
+  \draw[t] (i)--(cn);
+  \draw[t,drvEdge] (cn)--(co) node[midway,above,font=\tiny]{link+MQTT ok};
+  \draw[t,crossEdge] (cn) to[bend right=14] (bk) node[midway,left,font=\tiny]{all failed};
+  \draw[t,profEdge] (co) to[bend left=8] (rc) node[midway,above,font=\tiny]{keepalive miss};
+  \draw[t,drvEdge] (rc) to[bend left=8] (co) node[midway,below,font=\tiny]{ok};
+  \draw[t,crossEdge] (rc) to[bend left=14] (bk) node[midway,right,font=\tiny]{retry>N};
+  \draw[t,sysEdge] (bk) to[bend right=10] (cn) node[midway,left,font=\tiny]{timer$\to$next};
+  \draw[t,crossEdge] (bk)--(of) node[midway,above,font=\tiny]{max backoff};
+  \draw[t,sysEdge] (of) to[bend left=18] (cn) node[midway,left,font=\tiny]{wake/retry};
+  \foreach \s in {cn,rc,bk,of} \draw[t,cloudEdge,densely dashed] (\s) -- (lg);
+  \draw[t,drvEdge,densely dashed] (co)--(lg) node[midway,above,font=\tiny]{flush};
+\end{tikzpicture}}
+\caption{Link Manager FSM: transport failover, backoff, and an error logger that flushes the NVS
+ring to \texttt{diag/log} when CONNECTED (so offline faults still reach the cloud).}
+\end{figure}
+
+\section*{16\quad Diagnostics: \texttt{diag/log} schema \& codes}
+Topic \texttt{\{tenant\}/\{product\}/\{device\}/diag/log} $\cdot$ QoS\,1 $\cdot$ retain=0 $\cdot$ batched flush.
+
+\begin{lstlisting}[style=js]
+{
+  "v": 1,                       // schema version
+  "device_id": "ac-fridge-0042",
+  "tenant": "acme", "product": "carbonbox",   // eternity|carbonbox|bloodbox
+  "fw": "1.4.2",
+  "boot_id": 137,               // ++ each boot (detect resets)
+  "sent_at": 1733740800000,     // wall clock at flush (epoch ms)
+  "uptime_s": 86230,
+  "dropped": 4,                 // entries lost to ring overflow
+  "events": [
+    { "seq": 5012,              // monotonic per device (gap/dedupe)
+      "t": 1733740123000,       // epoch ms, or null if pre-time-sync
+      "up": 85553,              // uptime_s when logged (ALWAYS set)
+      "lvl": "warn",            // info|warn|err|fatal
+      "code": "LINK_KEEPALIVE_MISS",
+      "from": "CONNECTED", "to": "RECONNECTING",
+      "tr": "wifi", "rssi": -78,
+      "msg": "3 keepalives missed",
+      "ctx": { "heap": 142000, "retries": 0 } }
+  ]
+}
+\end{lstlisting}
+\noindent\textbf{Notes.} Batched on entering CONNECTED; \texttt{t} may be \texttt{null} before
+time-sync but \texttt{up} is always set, so ingest reconstructs wall time as
+\texttt{sent\_at\,$-$\,(uptime\_s\,$-$\,up)}; \texttt{seq} gives gap detection; alarms are
+\emph{not} sent here (they use \texttt{\dots /alarm/\{sid\}}).
+
+\begin{center}
+\renewcommand{\arraystretch}{1.1}\footnotesize
+\begin{tabularx}{\textwidth}{@{}l l l X@{}}
+\toprule
+\textbf{code} & \textbf{lvl} & \textbf{LED blink} & \textbf{meaning} \\
+\midrule
+\texttt{HW\_SD\_FAIL} & err & 2$\times$ long & SD mount/format failed \\
+\texttt{HW\_I2C\_TIMEOUT} & err & 3$\times$ long & I\textsuperscript{2}C bus stuck $\to$ recover \\
+\texttt{SENSOR\_OPEN\_WIRE} & warn & 2$\times$ short & open/loose $\to$ \texttt{quality=error} \\
+\texttt{SENSOR\_I2C\_NACK} & warn & 2$\times$ short & no ACK $\to$ \texttt{quality=error} \\
+\texttt{SENSOR\_STALE} & warn & --- & no fresh read $\to$ \texttt{quality=stale} \\
+\texttt{PROV\_TOKEN\_FAIL} & err & 4$\times$ long & factory token rejected \\
+\texttt{LINK\_ALL\_FAILED} & err & 1\,Hz & Wi-Fi+4G+LoRa all down \\
+\texttt{LINK\_KEEPALIVE\_MISS} & warn & --- & $\to$ RECONNECTING \\
+\texttt{LINK\_OFFLINE} & err & 1\,Hz & store-and-forward active \\
+\texttt{LINK\_RESTORED} & info & --- & CONNECTED, flushing log \\
+\texttt{BUF\_OVERFLOW\_DROP} & warn & --- & ring full $\to$ drop oldest \\
+\texttt{OTA\_VERIFY\_FAIL} & err & 5$\times$ short & SHA / secure-boot mismatch \\
+\texttt{OTA\_ROLLBACK} & err & 5$\times$ short & A/B partition reverted \\
+\texttt{WDT\_RESET} & fatal & solid & task hang $\to$ targeted reset \\
+\texttt{BROWNOUT} & fatal & solid & power-dip reset \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{17\quad Robustness \& fault-handling summary}
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Safe Mode} on HW self-test failure (SD/I\textsuperscript{2}C/power): LED error code, NVS fault log,
+        skip the faulty subsystem, attempt a report-only link — never hang.
+  \item \textbf{Exponential backoff (cap + jitter)} on bootstrap, link bring-up and MQTT connect;
+        a link-fallback loop guarantees the flow never enters \texttt{MQTT connect} without a link.
+  \item \textbf{Priority egress queue} (Alarm QoS\,1 > Telemetry) with \texttt{LinkMgr} as sole
+        publisher; \textbf{ring buffer} policy is FIFO drop-oldest for telemetry, never for alarms.
+  \item \textbf{Watchdog} via per-task heartbeat flags $\to$ targeted reset of the hung task.
+  \item \textbf{Sensor faults} surface as \texttt{quality=error:<code>} (never a false \texttt{0});
+        \textbf{digital inputs} are debounced/rate-limited in the ISR.
+  \item \textbf{Diagnostics} (\texttt{diag/log}) are flushed when CONNECTED so offline faults still
+        reach the cloud; alarms stay on their own topic.
+\end{itemize}
