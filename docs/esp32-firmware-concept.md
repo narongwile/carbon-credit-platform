@@ -65,3 +65,43 @@ one pipeline. (Full contract: `esp32-firmware-sequence.*`.)
 
 > Interface assignments (I²C vs ADC vs RS485) are the concept-level intent from the PCB map;
 > confirm against the final sensor BOM before implementation.
+
+## 5. Robustness & fault handling (design decisions)
+These resolve the failure modes a happy-path flow hides. Each is reflected in the diagram.
+
+### Boot & provisioning (page 2)
+- **HW self-test → Safe Mode.** After `Init HAL/BSP, mount NVS+FATFS(SD)` a self-test gates
+  the flow. On fault (SD dead, I²C bus stuck, power rail bad) it branches to **Safe Mode /
+  Error State** instead of hanging: blink an **LED error code**, log the fault to NVS, **skip
+  the faulty subsystem**, and still attempt a *report-only* link so the error log reaches the
+  cloud when connectivity is up.
+- **Exponential backoff on bootstrap & link.** `BOOTSTRAP`/`Link bring-up` no longer assume
+  success. A `Server OK?` / `Any link up?` decision feeds a **retry with exponential backoff
+  (capped + jitter)** so a dead server or dead network can't make the device hammer/drain the
+  battery or get rate-banned.
+- **Link-fallback loop.** `Wi-Fi → 4G → LoRa` ends in `Any link up?`. If **all** fail, the
+  flow loops to **Wait / light-sleep + backoff**, then retries bring-up — it never falls
+  through into `MQTT connect` without a link layer. `MQTT connected?` likewise loops back to
+  backoff on failure.
+
+### Runtime (page 3)
+- **Central priority egress queue.** `EdgeAlarmTask` and `TelemetryTask` no longer call
+  publish directly (avoids a race if the MQTT client isn't fully thread-safe). They **enqueue**
+  to a single **Egress/Publish Queue**; **LinkMgr is the only consumer**, draining one message
+  at a time with **priority ALARM (QoS 1) > Telemetry**.
+- **Buffer-overflow policy (explicit).** Ring buffer / SD store-and-forward is **FIFO
+  drop-OLDEST** for telemetry and **never drops alarms** — stated on the diagram so the
+  behaviour under sustained offline is unambiguous.
+- **Watchdog mechanism (explicit).** Each task feeds a **heartbeat flag** to the central
+  **Watchdog (TWDT)** task; a missing flag triggers a **targeted reset** that pinpoints the
+  hung task rather than a blind reboot.
+
+### HAL & envelope (page 4)
+- **Sensor-fault → `quality`.** On read failure (open wire, loose terminal, I²C timeout/NACK)
+  the HAL emits **`quality = error:<code>`** — never a misleading `value = 0`. A stale read is
+  `quality = stale`. This lets EMQX/ingest distinguish **"real 0 °C"** from **"dead sensor"**
+  and flag bad-quality samples out of trend calculations.
+- **DI debounce in ISR.** Digital inputs such as `door_state` are **debounced (~50 ms) and
+  rate-limited in the ISR**, so a vibrating door can't flood the sample queue with spike
+  events.
+
