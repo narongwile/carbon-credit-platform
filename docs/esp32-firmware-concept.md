@@ -129,3 +129,68 @@ buffer** `{ts, from, to, reason, transport, rssi, level}` with `level ∈ {info,
 The log is **flushed to EMQX** on `…/diag/log` (QoS 1) whenever the FSM is in **CONNECTED**, so
 faults that happened while offline still reach the cloud once the link returns.
 
+### `diag/log` payload schema (v1)
+Topic `{tenant}/{product}/{device}/diag/log` · QoS 1 · retain = 0 · batched flush.
+
+```jsonc
+{
+  "v": 1,                       // schema version
+  "device_id": "ac-fridge-0042",
+  "tenant": "acme",
+  "product": "carbonbox",       // eternity | carbonbox | bloodbox
+  "fw": "1.4.2",
+  "boot_id": 137,               // ++ each boot (detect resets)
+  "sent_at": 1733740800000,     // wall clock at flush (epoch ms)
+  "uptime_s": 86230,            // device uptime at flush
+  "dropped": 4,                 // entries lost to ring overflow
+  "events": [                   // batch flushed from the NVS ring
+    {
+      "seq": 5012,              // monotonic per device (gap detect / dedupe)
+      "t": 1733740123000,       // epoch ms, or null if logged pre-time-sync
+      "up": 85553,              // uptime_s when logged (ALWAYS set)
+      "lvl": "warn",            // info | warn | err | fatal
+      "code": "LINK_KEEPALIVE_MISS",
+      "from": "CONNECTED",      // FSM state
+      "to": "RECONNECTING",
+      "tr": "wifi",             // wifi | lte | lora | none
+      "rssi": -78,
+      "msg": "3 keepalives missed",
+      "ctx": { "heap": 142000, "retries": 0 }   // optional, code-specific
+    }
+  ]
+}
+```
+
+**Design notes**
+- **Batched:** one PUB flushes many ring entries on entering `CONNECTED` (fewer round-trips).
+- **Offline-safe time:** `t` may be `null` (event logged before NTP/cell sync); `up` is
+  always present, so ingest reconstructs wall time as `sent_at − (uptime_s − up)`.
+- **`seq`** is monotonic so the broker side can detect gaps; **`dropped`** reports ring loss.
+- **Separation of concerns:** alarms go on `…/alarm/{sid}` — `diag/log` is **operational
+  health only** (link, HW, OTA, watchdog), never sensor alarms.
+
+### Diagnostic codes (with LED blink fallback)
+When offline the device signals the same fault locally via an LED blink pattern:
+
+| `code` | `lvl` | LED blink | Meaning |
+| --- | --- | --- | --- |
+| `HW_SD_FAIL` | err | 2× long | SD mount/format failed |
+| `HW_I2C_TIMEOUT` | err | 3× long | I²C bus stuck → recover |
+| `HW_SELFTEST_OK` | info | — | all buses OK |
+| `SENSOR_OPEN_WIRE` | warn | 2× short | open/loose → `quality=error` |
+| `SENSOR_I2C_NACK` | warn | 2× short | no ACK → `quality=error` |
+| `SENSOR_STALE` | warn | — | no fresh read → `quality=stale` |
+| `PROV_TOKEN_FAIL` | err | 4× long | factory token rejected |
+| `PROV_OK` | info | — | cert provisioned |
+| `LINK_ALL_FAILED` | err | 1 Hz | Wi-Fi+4G+LoRa all down |
+| `LINK_KEEPALIVE_MISS` | warn | — | → RECONNECTING |
+| `LINK_PUBLISH_FAIL` | warn | — | publish error / requeue |
+| `LINK_BACKOFF` | info | — | backoff timer armed |
+| `LINK_OFFLINE` | err | 1 Hz | store-and-forward active |
+| `LINK_RESTORED` | info | — | CONNECTED, flushing log |
+| `BUF_OVERFLOW_DROP` | warn | — | ring full → drop oldest |
+| `OTA_VERIFY_FAIL` | err | 5× short | SHA / secure-boot mismatch |
+| `OTA_ROLLBACK` | err | 5× short | A/B partition reverted |
+| `WDT_RESET` | fatal | solid | task hang → targeted reset |
+| `BROWNOUT` | fatal | solid | power-dip reset |
+
