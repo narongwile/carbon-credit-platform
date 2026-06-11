@@ -182,8 +182,10 @@ active. Adding a product = a profile + drivers; nothing above changes.
   \draw[-{Stealth[length=5pt]}, profEdge, densely dashed] (l7.east) ++(0.15,0) |- (l6.east)
         node[pos=0.25,right,font=\tiny]{config$\downarrow$};
 \end{tikzpicture}}
-\caption{Layered firmware architecture; the highlighted product-profile layer is what makes one
-image serve three products.}
+\caption{Layered firmware architecture. Solid up-arrows carry \emph{telemetry}; dashed down-arrows
+carry \emph{config/cmd/ota}; the dashed \emph{activate} arrow is the product profile selecting which
+drivers/channels are live. The highlighted profile layer is what lets one image serve three products;
+the side bars are cross-cutting concerns touching every layer.}
 \end{figure}
 
 \section*{13\quad Boot \& provisioning flow}
@@ -619,3 +621,350 @@ LoRaWAN    & 2 (floor)     & ---   & n/a               & always-available fallba
   \item The link being \emph{left} still carries the \S15 exponential backoff, so a marginal link is
         not re-probed faster than its backoff allows.
 \end{itemize}
+
+\begin{figure}[H]
+\centering
+\resizebox{0.9\textwidth}{!}{%
+\begin{tikzpicture}[x=1cm,y=1cm]
+  \draw[-{Stealth[length=5pt]}] (-0.2,0) -- (12.6,0) node[right,font=\tiny]{time};
+  % 4G availability (flaps then stabilises)
+  \node[left,font=\scriptsize] at (-0.3,1.5){4G up};
+  \foreach \a/\b in {0/1.4, 2.2/2.8, 3.6/4.1, 5/12.2}
+     {\draw[line width=3.2pt,drvEdge] (\a,1.5)--(\b,1.5);}
+  \node[font=\tiny,align=center,text=drvEdge] at (3.0,2.05){4G flaps — ignored (no switch)};
+  % dwell window
+  \draw[densely dashed,gray] (5,0)--(5,1.9); \draw[densely dashed,gray] (7.5,0)--(7.5,1.9);
+  \draw[{Stealth[length=4pt]}-{Stealth[length=4pt]},gray] (5,1.78)--(7.5,1.78)
+        node[midway,above,font=\tiny,text=black]{dwell 30 s stable};
+  % selected link
+  \node[left,font=\scriptsize] at (-0.3,0.7){selected};
+  \draw[line width=3.2pt,profEdge] (0,0.7)--(7.5,0.7) node[midway,below,font=\tiny,text=black]{LoRa (fallback)};
+  \draw[line width=3.2pt,hwEdge]   (7.5,0.7)--(12.2,0.7) node[midway,below,font=\tiny,text=black]{4G};
+  \draw[densely dotted,gray] (7.5,0.7)--(7.5,0);
+\end{tikzpicture}}
+\caption{Transport hysteresis. Early 4G blips are ignored; the device only switches up from LoRa to
+4G once 4G has been continuously healthy for the dwell window — and would switch back down the instant
+4G dropped.}
+\end{figure}
+
+% =====================================================================
+\newpage
+\section*{22\quad Memory map \& resource budget}
+The ESP32-S3-WROOM-1 (N16R8) has 512\,KB internal SRAM, 8\,MB octal PSRAM and 16\,MB flash. Stacks and
+the IDF/Wi-Fi/BLE stacks live in SRAM; large buffers go to PSRAM; flash is partitioned per \S20.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.12}\small
+\begin{tabularx}{\textwidth}{@{}l r c c X@{}}
+\toprule
+\textbf{Task} & \textbf{Stack} & \textbf{Prio} & \textbf{Core} & \textbf{Notes} \\
+\midrule
+SensorTask      & 4\,KB & 5 & 1 & per-channel drivers, ADC/I\textsuperscript{2}C \\
+EdgeAlarmTask   & 3\,KB & 6 & 1 & fast-path threshold eval \\
+TelemetryTask   & 6\,KB & 4 & 0 & CBOR/JSON serialise \\
+LinkMgr / Conn  & 8\,KB & 5 & 0 & TLS stack is heap-heavy ($\sim$45\,KB transient) \\
+LoRaWAN MAC     & 4\,KB & 6 & 0 & timing-sensitive (Class A/C) \\
+OTATask         & 8\,KB & 3 & 0 & active only during an update \\
+Config/Cmd      & 3\,KB & 4 & 0 & downlink handlers \\
+Watchdog (TWDT) & 2\,KB & 7 & 0 & highest priority, per-task heartbeats \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.12}\small
+\begin{tabularx}{\textwidth}{@{}l r r X@{}}
+\toprule
+\textbf{Product} & \textbf{PSRAM (buffers)} & \textbf{RAM ring} & \textbf{Dominant consumers} \\
+\midrule
+bloodBOX (b)               & $\approx$2.0\,MB & 64\,KB & GPS NMEA, baro, accel rolling window; large offline ring (transit) \\
+refrigeDataLogger (c)      & $\approx$0.5\,MB & 16\,KB & temp + door only; small ring \\
+transformersMonitoring (t) & $\approx$1.5\,MB & 48\,KB & DGA history, CT waveform capture \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent\textbf{Headroom rule:} keep $\geq$20\,\% free internal heap at all times; the minimum
+free-heap watermark is reported in \texttt{diag/log} \texttt{ctx.heap} (\S16) and trips a
+\texttt{LOW\_HEAP} warning before exhaustion. TLS handshakes are the worst-case transient — schedule
+them so two never overlap.
+
+% =====================================================================
+\section*{23\quad Error handling \& recovery}
+Safe Mode (\S13) is one rung of a ladder: \emph{retry $\to$ degrade $\to$ rollback $\to$ golden
+recovery $\to$ human (RMA)}. Each fault class has a defined detection point and recovery.
+\begin{center}
+\renewcommand{\arraystretch}{1.18}\small
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Class} & \textbf{Detection} & \textbf{Recovery} \\
+\midrule
+Transient bus (I\textsuperscript{2}C stuck) & timeout / NACK & 9-clock bus-recover, retry w/ backoff, \texttt{quality=error} \\
+Sensor fault (open wire) & range / plausibility & mark \texttt{quality}, exclude from alarms, keep other channels \\
+Invalid config & schema validate (\S25) & reject, keep last-known-good, log \texttt{CONFIG\_REJECTED} \\
+Task hang & missing heartbeat & TWDT targeted reset (\S14) \\
+Crash / panic & IDF panic handler & write \texttt{coredump} partition, reboot, upload via \texttt{diag} on reconnect \\
+Boot loop & RTC-mem reset counter & exponential reset backoff; after $N$ $\to$ Safe Mode / \texttt{factory} image \\
+Brown-out & BOD & flush RTC, log \texttt{BROWNOUT}, clean restart \\
+Bad OTA image & verify / boot self-test & automatic A/B rollback (\S24) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent On every boot the firmware reads \texttt{esp\_reset\_reason()} and a reset counter held in
+RTC slow memory; repeated abnormal resets escalate down the ladder rather than looping. A small
+\texttt{coredump} region (in \texttt{storage}) captures the last panic for post-mortem upload.
+
+% =====================================================================
+\section*{24\quad Over-the-Air (OTA) update — detailed}
+Extends Phase~C. OTA runs \emph{only} over Wi-Fi/4G; LoRa carries config/threshold deltas (FPort\,21),
+never images.
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Delta OTA:} yes on IP transports — the server diffs the target against the device's
+        \emph{reported running version} (\texttt{esp\_delta\_ota}/bsdiff); the device patches the
+        inactive slot, cutting the download to roughly 5--20\,\% of a full image. \textbf{Fallback to
+        full image} if the patch base mismatches or apply fails.
+  \item \textbf{Download resilience:} HTTPS resumable range requests; up to 5 retries with exponential
+        backoff. If all fail $\to$ abort, stay on the current slot, report \texttt{OTA\_DOWNLOAD\_FAIL},
+        retry next window. The active firmware is never touched until the new image is verified.
+  \item \textbf{Verify \& switch:} SHA-256 + secure-boot~V2 signature before flipping \texttt{otadata};
+        on first boot a self-test must pass or the bootloader auto-rolls back to the previous slot.
+  \item \textbf{Compatibility:} OTA descriptor carries \texttt{to\_version}, \texttt{from\_version}
+        (delta base), \texttt{sha256}, \texttt{sig}, \texttt{is\_delta}, \texttt{min\_hw\_rev},
+        \texttt{min\_config\_v} and a monotonic \texttt{anti\_rollback} counter (enforced by eFuse) so
+        an older/vulnerable image cannot be installed. A descriptor that fails any gate is rejected
+        before download.
+\end{itemize}
+
+% =====================================================================
+\section*{25\quad Configuration management}
+Config is carried on the retained \texttt{P/config} (\S7) and tagged with a schema version
+\texttt{cfg\_v}.
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Precedence (low $\to$ high):} compiled factory defaults $<$ device NVS overrides $<$
+        cloud retained config. The effective config is their merge.
+  \item \textbf{Schema evolution:} additive-only keys with safe defaults; never repurpose a key;
+        deprecate with a sunset. Devices ignore unknown keys (forward-compatible); the server tolerates
+        missing keys (backward-compatible); \texttt{cfg\_v} selects the parser.
+  \item \textbf{Delta vs full:} the cloud may push a full retained config or a \texttt{cfg} patch via
+        \texttt{cmd}; the device validates, applies \emph{atomically}, persists to NVS and acks the
+        applied \texttt{cfg\_v} in its heartbeat.
+  \item \textbf{Validate \& rollback:} range/type checks; on failure keep the last-known-good in NVS and
+        log \texttt{CONFIG\_REJECTED}. Each accepted config is stamped \texttt{\{cfg\_v, source, applied\_at\}}.
+\end{itemize}
+
+% =====================================================================
+\section*{26\quad Logging strategy}
+\begin{center}
+\renewcommand{\arraystretch}{1.15}\small
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Sink} & \textbf{Retention} & \textbf{Use} \\
+\midrule
+Serial / USB-JTAG & none & \emph{dev only} — gated out in production builds \\
+NVS ring (diag) & $N$ entries, overwrite-oldest & operational events, flushed to \texttt{diag/log} (\S16) \\
+SD rotating files & size/day-based, keep $M$ files & verbose offline buffer (telemetry + logs) \\
+Cloud \texttt{diag/log} & per-platform policy & long-term audit \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent Production default level is \textbf{WARN} (+ERR/FATAL) with an INFO ring for context; DEBUG is
+enabled only by a time-boxed remote \texttt{cmd} (avoids flash wear + bandwidth). Repeated codes are
+de-duplicated/coalesced and rate-limited. \textbf{Secrets (keys, certs, tokens) are never logged};
+\texttt{device\_id} is fine, PII is not emitted.
+
+% =====================================================================
+\section*{27\quad Testing strategy}
+\begin{center}
+\renewcommand{\arraystretch}{1.18}\small
+\begin{tabularx}{\textwidth}{@{}l X l@{}}
+\toprule
+\textbf{Level} & \textbf{Scope} & \textbf{Where / tools} \\
+\midrule
+Unit & codecs (CBOR/struct), threshold eval, FSM transitions, config merge & host native — Unity/Ceedling \\
+Integration & task interplay, MQTT contract, OTA, LoRa decode, fault injection & HIL rig + EMQX + ChirpStack sim + pytest/paho \\
+System / E2E & device $\to$ EMQX $\to$ ingest $\to$ alarm $\to$ UI & staging fleet harness \\
+Field & soak, power-cycling, RF coverage, BloodBOX transit & pilot units + canary OTA dashboards \\
+\bottomrule
+\end{tabularx}
+\end{center}
+\noindent\textbf{CI gates:} unit on every PR; integration nightly on the HW farm; \textbf{canary OTA} to
+$<$5\,\% of the fleet before full rollout, auto-rolled-back on a KPI regression (MTTA/MTTR, crash rate,
+OTA success). \textbf{Fault-injection suite:} drop link, corrupt frame, bad config, sensor open-wire and
+brown-out, each asserting the matching recovery in \S23.
+
+% =====================================================================
+\part*{Part IV\quad Appendices}
+\addcontentsline{toc}{part}{Part IV — Appendices}
+
+\section*{A\quad MQTT topic dictionary}
+Every production topic hangs off the device prefix \texttt{P = \{tenant\}/\{product\}/\{device\}};
+provisioning is the only pre-identity (flat) branch, and \texttt{\$share} is server-side only.
+
+\begin{figure}[H]
+\centering
+\resizebox{0.96\textwidth}{!}{%
+\begin{tikzpicture}[every node/.style={font=\scriptsize}]
+  \tikzset{rt/.style={draw=cloudEdge,fill=cloudCol,rounded corners=3pt,align=center,inner sep=4pt},
+           lf/.style={draw=hwEdge,fill=hwCol,rounded corners=2pt,align=left,inner sep=3pt,text width=5.2cm,font=\ttfamily\scriptsize}}
+  \node[rt] (root) {\textbf{P =}\\\textbf{\{tenant\}/}\\\textbf{\{product\}/}\\\textbf{\{device\}}};
+  \node[lf,right=2.2cm of root,yshift=3.6cm] (l1){P/status            (D->B, 1, ret)};
+  \node[lf,below=2mm of l1] (l2){P/heartbeat         (D->B, 0)};
+  \node[lf,below=2mm of l2] (l3){P/sensors/\{sid\}/raw (D->B, 1)};
+  \node[lf,below=2mm of l3] (l4){P/alarm/\{sid\}      (B->*, 1, ret)};
+  \node[lf,below=2mm of l4] (l5){P/config            (B->D, 1, ret)};
+  \node[lf,below=2mm of l5] (l6){P/cmd/\{op\}         (B->D, 1)};
+  \node[lf,below=2mm of l6] (l7){P/ota/cmd  |  P/ota/progress};
+  \node[lf,below=2mm of l7] (l8){P/diag/log          (D->B, 1)};
+  \foreach \l in {l1,l2,l3,l4,l5,l6,l7,l8} \draw[-{Stealth[length=4pt]},hwEdge] (root.east) -- (\l.west);
+  \node[lf,draw=svcCol,fill=svcCol!15,below=1.4cm of root,xshift=0.2cm,text width=6.0cm] (boot)
+       {provisioning/\{chip\_id\}/request|response  (bootstrap, pre-identity)};
+  \node[lf,draw=appEdge,fill=appCol,below=2mm of boot,text width=7.8cm] (sh)
+       {\$share/ingest-<product>/+/<product>/+/sensors/+/raw  (server)};
+\end{tikzpicture}}
+\caption{Topic hierarchy. The cloud side subscribes through \texttt{\$share} groups; the device only
+ever touches its own \texttt{P/\#} subtree (enforced by the CN-templated ACL, \S7).}
+\end{figure}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.12}\footnotesize
+\begin{tabularx}{\textwidth}{@{}l c c c l X@{}}
+\toprule
+\textbf{Topic} & \textbf{Dir} & \textbf{QoS} & \textbf{Ret} & \textbf{Codec} & \textbf{Purpose} \\
+\midrule
+\texttt{provisioning/\{chip\_id\}/request}  & D$\to$B & 1 & 0 & JSON & factory claim \\
+\texttt{provisioning/\{chip\_id\}/response} & B$\to$D & 1 & 0 & JSON & cert + client\_id \\
+\texttt{P/status}            & D$\to$B & 1 & \textbf{1} & JSON & Will + birth \\
+\texttt{P/heartbeat}         & D$\to$B & 0 & 0 & JSON/struct & liveness, fw, heap \\
+\texttt{P/sensors/\{sid\}/raw}& D$\to$B & 1 & 0 & JSON/CBOR & per-channel reading \\
+\texttt{P/alarm/\{sid\}}     & B$\to\star$ & 1 & \textbf{1} & JSON & alarm-engine state \\
+\texttt{P/config}            & B$\to$D & 1 & \textbf{1} & JSON & thresholds, profile, \texttt{cfg\_v} \\
+\texttt{P/cmd/\{op\}}        & B$\to$D & 1 & 0 & JSON/struct & reboot/calibrate/set-threshold/cfg-delta \\
+\texttt{P/ota/cmd}           & B$\to$D & 1 & 0 & JSON & OTA descriptor (\S24) \\
+\texttt{P/ota/progress}      & D$\to$B & 1 & 0 & JSON & percent + status \\
+\texttt{P/diag/log}          & D$\to$B & 1 & 0 & JSON & operational health (\S16) \\
+\texttt{\$share/ingest-<p>/\dots} & B$\to$srv & 1 & 0 & --- & load-balanced ingest \\
+\bottomrule
+\end{tabularx}
+\end{center}
+{\footnotesize Over LoRaWAN these become FPorts (\S18); the LNS bridge maps them onto the same topics.}
+
+\section*{B\quad Payload examples}
+\textbf{IP transport (Wi-Fi/4G) — JSON.}
+\begin{lstlisting}[style=js]
+# refrigeDataLogger  P/sensors/{sid}/raw  (temperature) and a door event
+{ "ts":1733740800000, "device_id":"ac-fridge-0042", "product":"carbonbox",
+  "sid":"t1", "channel":"temp_c", "value":4.2, "unit":"C", "quality":"good" }
+{ "ts":1733740805000, "device_id":"ac-fridge-0042", "product":"carbonbox",
+  "sid":"d1", "channel":"door_state", "value":1, "unit":"event", "quality":"good" }
+
+# bloodBOX  P/sensors/{sid}/raw (humidity) + P/status birth
+{ "ts":1733740801000, "device_id":"bb-7781", "product":"bloodbox",
+  "sid":"h1", "channel":"rh_pct", "value":58.0, "unit":"%", "quality":"good" }
+{ "ts":1733740999000, "device_id":"bb-7781", "product":"bloodbox",
+  "state":"online", "fw":"1.4.2", "ip":"10.20.0.5" }
+
+# transformersMonitoring  P/sensors/{sid}/raw (dissolved H2) + P/alarm/{sid}
+{ "ts":1733740802000, "device_id":"tx-09", "product":"eternity",
+  "sid":"g1", "channel":"dga_h2_ppm", "value":215, "unit":"ppm", "quality":"good" }
+{ "ts":1733740803000, "device_id":"tx-09", "product":"eternity",
+  "sid":"g1", "severity":"CRITICAL", "value":215, "thr":300, "state":"WARNING" }
+\end{lstlisting}
+\textbf{LoRaWAN — compact binary (FPort\,1 telemetry batch).} The same fridge reading as a versioned
+C-struct (little-endian) plus its CBOR equivalent:
+\begin{lstlisting}[style=js]
+# C-struct  (FPort 1)  -> 8 bytes on air
+struct {                          hex: 01 01 A4 01 00 90 D0 07
+  uint8  ver;        // 0x01
+  uint8  channel;    // 0x01 = temp_c
+  int16  value_cC;   // 0x01A4 = 420 -> 4.20 C  (centi-deg)
+  uint8  quality;    // 0x00 = good
+  uint8  door;       // 0x01
+  uint16 t_offset_s; // 0x07D0 = 2000 s since frame epoch
+}
+# CBOR equivalent (~14 B): {"v":1,"c":"temp_c","x":4.2,"q":0,"d":1}
+\end{lstlisting}
+The LNS decoder re-expands either form into the JSON envelope above before publishing to EMQX.
+
+\section*{C\quad State-machine reference}
+Two finite-state machines govern the system: the \textbf{Link Manager} (\S15, Fig.~11) and the
+\textbf{alarm lifecycle} below (the drawn form of the spec \S5.5 / \S9 rules; per-product guard
+differences are in the \S9 table).
+
+\begin{figure}[H]
+\centering
+\resizebox{0.97\textwidth}{!}{%
+\begin{tikzpicture}
+  \node[circle, fill=black, inner sep=2.2pt] (i) at (-7.6,1.7){};
+  \node[stnode={drvCol}{drvEdge}] (nm) at (-5.6,1.7){\textbf{NORMAL}};
+  \node[stnode={sysCol}{sysEdge}] (wn) at (-1.6,1.7){\textbf{WARNING}};
+  \node[stnode={crossCol}{crossEdge}] (cr) at (2.6,1.7){\textbf{CRITICAL}};
+  \node[stnode={hwCol}{hwEdge}] (ak) at (6.8,1.7){\textbf{ACKNOWLEDGED}};
+  \node[stnode={profCol}{profEdge}] (es) at (2.6,-1.7){\textbf{ESCALATED}};
+  \node[stnode={halCol}{halEdge}, double, double distance=1.3pt] (cl) at (6.8,-1.7){\textbf{CLEARED}};
+  \tikzset{t/.style={-{Stealth[length=5pt]}, font=\tiny}}
+  \draw[t] (i)--(nm);
+  \draw[t,sysEdge] (nm)--(wn);
+  \draw[t,crossEdge] (wn)--(cr);
+  \draw[t,hwEdge] (cr)--(ak);
+  \draw[t,crossEdge] (nm) to[bend left=32] (cr);
+  \draw[t,drvEdge] (wn) to[bend left=32] (nm);
+  \draw[t,profEdge] (cr)--(es);
+  \draw[t,halEdge] (ak)--(cl);
+  \draw[t,halEdge] (es)--(cl);
+  % explicit labels
+  \node[font=\tiny,text=sysEdge]   at (-3.6,2.05){$\geq$warn $\times$2 / raise};
+  \node[font=\tiny,text=crossEdge] at (0.5,2.05){$\geq$crit};
+  \node[font=\tiny,text=hwEdge]    at (4.7,2.05){operator ACK};
+  \node[font=\tiny,text=crossEdge] at (-1.6,3.15){$\geq$crit (immediate)};
+  \node[font=\tiny,text=drvEdge]   at (-3.6,0.95){value $<$ warn};
+  \node[font=\tiny,text=profEdge]  at (3.5,0.0){5\,min no ACK};
+  \node[font=\tiny,text=black]     at (7.7,0.0){5\,min NORMAL};
+  \node[font=\tiny,text=black]     at (4.7,-1.45){5\,min NORMAL};
+  \node[font=\tiny\itshape,text=gray,align=center] at (-4.0,-1.5)
+       {ACK \& ESCALATED reachable from any\\active state; CLEARED from any state\\on 5\,min sustained NORMAL};
+\end{tikzpicture}}
+\caption{Alarm lifecycle. \texttt{ACKNOWLEDGED} is an in-flight ``a human has seen this'' marker — the
+underlying fault may still be active — which lets the platform compute MTTA and MTTR independently.}
+\end{figure}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.18}\small
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Transition} & \textbf{Guard} & \textbf{Side-effect} \\
+\midrule
+NORMAL$\to$WARNING & $\geq$warn for 2 consecutive readings & INSERT alarm; toast \\
+NORMAL$\to$CRITICAL & $\geq$crit immediately & INSERT alarm (sev=CRITICAL); page on-call \\
+WARNING$\to$CRITICAL & $\geq$crit & UPDATE severity; \texttt{alarm.escalated} \\
+*$\to$ACKNOWLEDGED & authorised \texttt{ack} \& org match & set \texttt{acked\_by/at}; broadcast \\
+*$\to$ESCALATED & 5\,min elapsed, \texttt{acked\_at} NULL & notify admin (email+SMS) \\
+*$\to$CLEARED & 5\,min sustained NORMAL & set \texttt{cleared\_at}; emit \texttt{alarm.cleared} \\
+WARNING$\to$NORMAL & value $<$ warn (row still open) & no close; current status updated \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{D\quad Glossary \& acronyms}
+\begin{center}
+\renewcommand{\arraystretch}{1.1}\footnotesize
+\begin{tabularx}{\textwidth}{@{}l X l X@{}}
+\toprule
+\textbf{Term} & \textbf{Meaning} & \textbf{Term} & \textbf{Meaning} \\
+\midrule
+ADR & Adaptive Data Rate (LoRaWAN) & LNS & LoRaWAN Network Server \\
+A/B OTA & dual-slot update + rollback & LPP & Cayenne Low Power Payload \\
+AppKey & OTAA root key (per device) & LWT & Last Will \& Testament (MQTT) \\
+ATE & Automated Test Equipment & mTLS & mutual TLS (X.509 both ends) \\
+BOD & brown-out detector & MTTA/MTTR & mean time to ack / resolve \\
+CBOR & Concise Binary Object Representation & NVS & Non-Volatile Storage (ESP) \\
+CN & certificate Common Name & OTAA & Over-The-Air Activation \\
+CTI & class-table inheritance (DB) & PSRAM & pseudo-static RAM (external) \\
+DevEUI & device EUI (LoRaWAN id) & QoS & MQTT quality of service \\
+DGA & dissolved-gas analysis & RTC & real-time clock \\
+eFuse & one-time-programmable fuse & TWDT & task watchdog timer \\
+EMQX & the MQTT 5.0 broker & dwell & stable hold time before switch-up \\
+FPort & LoRaWAN application port & golden image & immutable \texttt{factory} recovery app \\
+HIL & hardware-in-the-loop test & JoinEUI & join-server EUI (AppEUI) \\
+HSM & hardware security module & littlefs & flash filesystem (ring staging) \\
+\bottomrule
+\end{tabularx}
+\end{center}
