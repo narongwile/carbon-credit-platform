@@ -1,16 +1,22 @@
 'use client'
 
-import { useState } from 'react'
-import { getAlarmSchema } from '@/lib/alarmParams'
+import { useEffect, useState } from 'react'
+import { getAlarmSchema, defaultNodeRule } from '@/lib/alarmParams'
+import { useAlarmDB } from '@/server/alarmStore'
 import type { SensorDomain } from '@/types/fleet'
-import { ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Bell, AlertTriangle } from 'lucide-react'
+import type { NodeAlarmRule } from '@/server/alarmEngine'
+import { ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Bell, AlertTriangle, Save } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 // Renders the alarm-parameter form for a product domain (driven by ALARM_SCHEMA).
-// `advanced` adds severity routing + escalation + maintenance suppression (admin).
-export default function AlarmParamConfig({ domain, advanced = false }: { domain?: SensorDomain; advanced?: boolean }) {
+// When `nodeId` is given, Save persists the rule to the alarm DB so it actually
+// drives that node's event log. `advanced` adds routing/escalation (admin).
+export default function AlarmParamConfig({ domain, advanced = false, nodeId }: { domain?: SensorDomain; advanced?: boolean; nodeId?: string }) {
   const schema = getAlarmSchema(domain)
+  const setRule = useAlarmDB((s) => s.setRule)
+  const hasHydrated = useAlarmDB((s) => s.hasHydrated)
 
   // generic low/high fallback for unknown domains
   const [generic, setGeneric] = useState({ low: 2, high: 8 })
@@ -24,6 +30,35 @@ export default function AlarmParamConfig({ domain, advanced = false }: { domain?
 
   const setVal = (key: string, field: 'warn' | 'critical' | 'rate', v: number) =>
     setVals((s) => ({ ...s, [key]: { ...s[key], [field]: v } }))
+
+  // Load a saved per-node override after hydration (avoids SSR mismatch).
+  useEffect(() => {
+    if (!nodeId || !hasHydrated) return
+    const saved = useAlarmDB.getState().rules[nodeId]
+    if (saved) {
+      setVals(Object.fromEntries(saved.params.map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])))
+      setDwell(saved.dwellMin); setHyst(saved.hysteresis)
+      if (saved.healthIndexWarn !== undefined) setHealthIdx(saved.healthIndexWarn)
+    }
+  }, [nodeId, hasHydrated])
+
+  const persist = () => {
+    if (!nodeId || !schema || !domain) return
+    const rule: NodeAlarmRule = {
+      domain,
+      params: schema.params.map((p) => ({
+        ...p,
+        warn: vals[p.key]?.warn ?? p.warn,
+        critical: vals[p.key]?.critical ?? p.critical,
+        rate: p.rate ? { ...p.rate, warn: vals[p.key]?.rate ?? p.rate.warn } : undefined,
+      })),
+      dwellMin: dwell,
+      hysteresis: hyst,
+      healthIndexWarn: schema.healthIndexWarn !== undefined ? healthIdx : undefined,
+    }
+    setRule(nodeId, rule)
+    toast.success('Alarm rules saved — event log updated')
+  }
 
   if (!schema) {
     return (
@@ -136,6 +171,12 @@ export default function AlarmParamConfig({ domain, advanced = false }: { domain?
             <input type="checkbox" checked={routing.suppress} onChange={(e) => setRouting((r) => ({ ...r, suppress: e.target.checked }))} />
           </label>
         </div>
+      )}
+
+      {nodeId && (
+        <button onClick={persist} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+          <Save size={14} /> Save Alarm Rules
+        </button>
       )}
     </div>
   )

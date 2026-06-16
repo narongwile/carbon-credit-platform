@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SensorDomain } from '@/types/fleet'
+import type { NodeAlarmRule } from '@/server/alarmEngine'
 
 export interface AlarmParam {
   key: string
@@ -69,3 +70,15 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
 
 export const getAlarmSchema = (domain?: SensorDomain): DomainAlarmSchema | null =>
   domain ? ALARM_SCHEMA[domain] : null
+
+/** Build the engine rule (NodeAlarmRule) from a domain's default schema. */
+export function defaultNodeRule(domain: SensorDomain): NodeAlarmRule {
+  const s = ALARM_SCHEMA[domain]
+  return {
+    domain,
+    params: s.params.map((p) => ({ ...p, rate: p.rate ? { ...p.rate } : undefined })),
+    dwellMin: s.dwellMin,
+    hysteresis: s.hysteresis,
+    healthIndexWarn: s.healthIndexWarn,
+  }
+}
