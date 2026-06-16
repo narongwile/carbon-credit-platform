@@ -22,7 +22,15 @@ mysql < sql/schema.sql        # create schema
 npm install && npm run dev    # or: npm run build && npm start
 ```
 Docker: `docker build -t oneops-backend .`  ·  k8s: `kubectl apply -f k8s/backend.yaml`
-Node-RED: import `node-red/flows.json`.
+
+### Node-RED — you do NOT hand-build the flow
+The flow is generated, not drawn by hand:
+```bash
+npm run flows        # regenerate node-red/flows.json (override BACKEND_URL / MQTT_HOST / MQTT_PORT / MQTT_TOPIC via env)
+```
+Then in Node-RED: **Menu → Import → select `node-red/flows.json` → Deploy**. It wires
+`telemetry/#` → normalize → `POST /api/nodes/:id/readings`, plus a debug node, an
+error catch, and a manual "Simulate reading" inject for testing without a broker.
 
 ## REST API
 | Method | Path | Purpose |

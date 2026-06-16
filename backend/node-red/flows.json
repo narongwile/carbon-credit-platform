@@ -2,7 +2,18 @@
   {
     "id": "oneops-tab",
     "type": "tab",
-    "label": "ONEOPS Telemetry → Alarm Engine"
+    "label": "ONEOPS Telemetry → Alarm Engine",
+    "disabled": false
+  },
+  {
+    "id": "mqtt-broker",
+    "type": "mqtt-broker",
+    "name": "cluster broker",
+    "broker": "mqtt.data.svc.cluster.local",
+    "port": "1883",
+    "clientid": "node-red-oneops",
+    "keepalive": "60",
+    "cleansession": true
   },
   {
     "id": "mqtt-in",
@@ -11,45 +22,118 @@
     "name": "telemetry/#",
     "topic": "telemetry/#",
     "qos": "0",
-    "broker": "broker",
-    "x": 140, "y": 120,
-    "wires": [["normalize"]]
+    "datatype": "auto-detect",
+    "broker": "mqtt-broker",
+    "x": 150,
+    "y": 120,
+    "wires": [
+      [
+        "normalize"
+      ]
+    ]
   },
   {
     "id": "normalize",
     "type": "function",
     "z": "oneops-tab",
-    "name": "normalize → {nodeId, values}",
-    "func": "// topic: telemetry/<nodeId>/<param>  payload: number\n// or JSON payload {nodeId, values, ts}\nlet out;\nif (typeof msg.payload === 'object' && msg.payload.nodeId) {\n  out = msg.payload;\n} else {\n  const p = msg.topic.split('/');\n  out = { nodeId: p[1], values: { [p[2]]: Number(msg.payload) }, ts: Date.now() };\n}\nmsg.url = 'http://oneops-backend.data.svc.cluster.local/api/nodes/' + out.nodeId + '/readings';\nmsg.method = 'POST';\nmsg.headers = { 'content-type': 'application/json' };\nmsg.payload = { values: out.values, ts: out.ts };\nreturn msg;",
+    "name": "normalize → ingest payload",
+    "func": "// Accepts either JSON {nodeId, values, ts} or topic telemetry/<nodeId>/<param> = number\nlet nodeId, values, ts = Date.now();\nif (msg.payload && typeof msg.payload === 'object' && msg.payload.nodeId) {\n  nodeId = msg.payload.nodeId; values = msg.payload.values || {}; ts = msg.payload.ts || ts;\n} else {\n  const p = (msg.topic || '').split('/');   // telemetry/<nodeId>/<param>\n  nodeId = p[1]; values = { [p[2]]: Number(msg.payload) };\n}\nif (!nodeId) { return null; }\nmsg.method = 'POST';\nmsg.url = 'http://oneops-backend.data.svc.cluster.local/api/nodes/' + nodeId + '/readings';\nmsg.headers = { 'content-type': 'application/json' };\nmsg.payload = { values, ts };\nreturn msg;",
     "outputs": 1,
-    "x": 400, "y": 120,
-    "wires": [["http-ingest", "mysql-raw"]]
+    "noerr": 0,
+    "x": 410,
+    "y": 120,
+    "wires": [
+      [
+        "http-ingest"
+      ]
+    ]
   },
   {
     "id": "http-ingest",
     "type": "http request",
     "z": "oneops-tab",
-    "name": "POST → backend ingest (evaluate+notify)",
+    "name": "POST → backend ingest (evaluate + notify)",
     "method": "use",
     "ret": "obj",
-    "x": 720, "y": 100,
-    "wires": [[]]
+    "url": "",
+    "persist": false,
+    "x": 720,
+    "y": 120,
+    "wires": [
+      [
+        "debug-ok"
+      ]
+    ]
   },
   {
-    "id": "mysql-raw",
+    "id": "debug-ok",
+    "type": "debug",
+    "z": "oneops-tab",
+    "name": "ingest result",
+    "active": true,
+    "complete": "payload",
+    "x": 990,
+    "y": 120,
+    "wires": []
+  },
+  {
+    "id": "catch",
+    "type": "catch",
+    "z": "oneops-tab",
+    "name": "errors",
+    "scope": null,
+    "x": 720,
+    "y": 200,
+    "wires": [
+      [
+        "debug-err"
+      ]
+    ]
+  },
+  {
+    "id": "debug-err",
+    "type": "debug",
+    "z": "oneops-tab",
+    "name": "error",
+    "active": true,
+    "complete": "true",
+    "x": 980,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "inject-sim",
+    "type": "inject",
+    "z": "oneops-tab",
+    "name": "Simulate reading",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "once": false,
+    "x": 160,
+    "y": 300,
+    "wires": [
+      [
+        "sim-fn"
+      ]
+    ]
+  },
+  {
+    "id": "sim-fn",
     "type": "function",
     "z": "oneops-tab",
-    "name": "(optional) write raw to MySQL",
-    "func": "// The backend already persists readings; enable a node-red-node-mysql\n// node here for an independent raw archive if desired.\nreturn null;",
+    "name": "fake tr-001 telemetry",
+    "func": "// Manual test: pretend transformer tr-001 reports a hot oil temperature\nmsg.payload = { nodeId: 'tr-001', values: { oilTemp: 96, hydrogen: 220 }, ts: Date.now() };\nreturn msg;",
     "outputs": 1,
-    "x": 700, "y": 160,
-    "wires": [[]]
-  },
-  {
-    "id": "broker",
-    "type": "mqtt-broker",
-    "name": "cluster broker",
-    "broker": "mqtt.data.svc.cluster.local",
-    "port": "1883"
+    "x": 400,
+    "y": 300,
+    "wires": [
+      [
+        "normalize"
+      ]
+    ]
   }
 ]
