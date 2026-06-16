@@ -23,5 +23,5 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "eternity_iot_platform_demo.tsx"]
+  "exclude": ["node_modules", "eternity_iot_platform_demo.tsx", "backend"]
 }

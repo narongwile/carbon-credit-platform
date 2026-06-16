@@ -9,6 +9,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
+import { api } from '@/lib/api'
 
 interface Ack { by: string; at: string }
 
@@ -19,7 +20,7 @@ interface AlarmDB {
   /** Acknowledgements keyed by event id. */
   acks: Record<string, Ack>
 
-  setRule: (nodeId: string, rule: NodeAlarmRule) => void
+  setRule: (nodeId: string, rule: NodeAlarmRule, orgId?: string) => void
   clearRule: (nodeId: string) => void
   ackEvent: (eventId: string, by: string) => void
 }
@@ -30,9 +31,15 @@ export const useAlarmDB = create<AlarmDB>()(
       hasHydrated: false,
       rules: {},
       acks: {},
-      setRule: (nodeId, rule) => set((s) => ({ rules: { ...s.rules, [nodeId]: rule } })),
+      setRule: (nodeId, rule, orgId) => {
+        set((s) => ({ rules: { ...s.rules, [nodeId]: rule } }))
+        void api.putRule(nodeId, { orgId: orgId ?? 'unknown', rule }) // best-effort sync; no-op without backend
+      },
       clearRule: (nodeId) => set((s) => { const r = { ...s.rules }; delete r[nodeId]; return { rules: r } }),
-      ackEvent: (eventId, by) => set((s) => ({ acks: { ...s.acks, [eventId]: { by, at: new Date().toISOString() } } })),
+      ackEvent: (eventId, by) => {
+        set((s) => ({ acks: { ...s.acks, [eventId]: { by, at: new Date().toISOString() } } }))
+        void api.ackEvent(eventId, { by })
+      },
     }),
     {
       name: 'oneops-alarm-db',

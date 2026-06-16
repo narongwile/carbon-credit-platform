@@ -3,9 +3,12 @@
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { defaultNotificationChannels, eventProblems, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
+import { managedDevicesFromFleet, getHostsByOrg } from '@/lib/fleetData'
 import { licensedDomains } from '@/lib/entitlements'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import { useAlarmDB } from '@/server/alarmStore'
+import { api } from '@/lib/api'
+import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig, EventProblem } from '@/types/org'
 import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check, ListChecks, Plus, Trash2 } from 'lucide-react'
@@ -30,6 +33,13 @@ export default function AlarmNotificationPage() {
 
   const orgDomains = licensedDomains(orgId)
   const [product, setProduct] = useState<SensorDomain>(orgDomains[0] ?? 'transformer')
+  const setRuleDB = useAlarmDB((s) => s.setRule)
+  const applyRuleToOrg = (rule: NodeAlarmRule) => {
+    const targets = getHostsByOrg(orgId).filter((h) => h.domain === product)
+    targets.forEach((h) => setRuleDB(h.id, rule, orgId))
+    void api.putOrgRule(orgId, { rule })
+    toast.success(`Applied to ${targets.length} ${DOMAIN_META[product].platform} node(s) across your org`)
+  }
   const [scope, setScope] = useState<'all' | string>('all')
   const [deptScope, setDeptScope] = useState<'all' | string>('all')
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
@@ -108,7 +118,7 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          <AlarmParamConfig domain={product} advanced />
+          <AlarmParamConfig domain={product} advanced orgId={orgId} onApplyAll={applyRuleToOrg} />
         </div>
 
         {/* Event selection & edit */}

@@ -1,0 +1,55 @@
+[
+  {
+    "id": "oneops-tab",
+    "type": "tab",
+    "label": "ONEOPS Telemetry → Alarm Engine"
+  },
+  {
+    "id": "mqtt-in",
+    "type": "mqtt in",
+    "z": "oneops-tab",
+    "name": "telemetry/#",
+    "topic": "telemetry/#",
+    "qos": "0",
+    "broker": "broker",
+    "x": 140, "y": 120,
+    "wires": [["normalize"]]
+  },
+  {
+    "id": "normalize",
+    "type": "function",
+    "z": "oneops-tab",
+    "name": "normalize → {nodeId, values}",
+    "func": "// topic: telemetry/<nodeId>/<param>  payload: number\n// or JSON payload {nodeId, values, ts}\nlet out;\nif (typeof msg.payload === 'object' && msg.payload.nodeId) {\n  out = msg.payload;\n} else {\n  const p = msg.topic.split('/');\n  out = { nodeId: p[1], values: { [p[2]]: Number(msg.payload) }, ts: Date.now() };\n}\nmsg.url = 'http://oneops-backend.data.svc.cluster.local/api/nodes/' + out.nodeId + '/readings';\nmsg.method = 'POST';\nmsg.headers = { 'content-type': 'application/json' };\nmsg.payload = { values: out.values, ts: out.ts };\nreturn msg;",
+    "outputs": 1,
+    "x": 400, "y": 120,
+    "wires": [["http-ingest", "mysql-raw"]]
+  },
+  {
+    "id": "http-ingest",
+    "type": "http request",
+    "z": "oneops-tab",
+    "name": "POST → backend ingest (evaluate+notify)",
+    "method": "use",
+    "ret": "obj",
+    "x": 720, "y": 100,
+    "wires": [[]]
+  },
+  {
+    "id": "mysql-raw",
+    "type": "function",
+    "z": "oneops-tab",
+    "name": "(optional) write raw to MySQL",
+    "func": "// The backend already persists readings; enable a node-red-node-mysql\n// node here for an independent raw archive if desired.\nreturn null;",
+    "outputs": 1,
+    "x": 700, "y": 160,
+    "wires": [[]]
+  },
+  {
+    "id": "broker",
+    "type": "mqtt-broker",
+    "name": "cluster broker",
+    "broker": "mqtt.data.svc.cluster.local",
+    "port": "1883"
+  }
+]

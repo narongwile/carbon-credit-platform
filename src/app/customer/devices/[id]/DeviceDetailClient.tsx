@@ -302,7 +302,7 @@ export default function DeviceDetailClient() {
             <h3 className="text-sm font-semibold text-white">My Alert Settings</h3>
             <span className="text-[10px] text-slate-500 flex items-center gap-1"><Bell size={11} /> personal — alerts only you · {email}</span>
           </div>
-          <AlarmParamConfig domain={device.domain} nodeId={id} />
+          <AlarmParamConfig domain={device.domain} nodeId={id} orgId={device.orgId} />
           <div className="space-y-1.5">
             {channels.map((ch) => (
               <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>

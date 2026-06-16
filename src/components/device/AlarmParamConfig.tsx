@@ -13,7 +13,7 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 // Renders the alarm-parameter form for a product domain (driven by ALARM_SCHEMA).
 // When `nodeId` is given, Save persists the rule to the alarm DB so it actually
 // drives that node's event log. `advanced` adds routing/escalation (admin).
-export default function AlarmParamConfig({ domain, advanced = false, nodeId }: { domain?: SensorDomain; advanced?: boolean; nodeId?: string }) {
+export default function AlarmParamConfig({ domain, advanced = false, nodeId, orgId, onApplyAll }: { domain?: SensorDomain; advanced?: boolean; nodeId?: string; orgId?: string; onApplyAll?: (rule: NodeAlarmRule) => void }) {
   const schema = getAlarmSchema(domain)
   const setRule = useAlarmDB((s) => s.setRule)
   const hasHydrated = useAlarmDB((s) => s.hasHydrated)
@@ -42,9 +42,9 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId }: {
     }
   }, [nodeId, hasHydrated])
 
-  const persist = () => {
-    if (!nodeId || !schema || !domain) return
-    const rule: NodeAlarmRule = {
+  const buildRule = (): NodeAlarmRule | null => {
+    if (!schema || !domain) return null
+    return {
       domain,
       params: schema.params.map((p) => ({
         ...p,
@@ -56,9 +56,14 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId }: {
       hysteresis: hyst,
       healthIndexWarn: schema.healthIndexWarn !== undefined ? healthIdx : undefined,
     }
-    setRule(nodeId, rule)
+  }
+  const persist = () => {
+    const rule = buildRule()
+    if (!nodeId || !rule) return
+    setRule(nodeId, rule, orgId)
     toast.success('Alarm rules saved — event log updated')
   }
+  const applyAll = () => { const rule = buildRule(); if (rule && onApplyAll) onApplyAll(rule) }
 
   if (!schema) {
     return (
@@ -176,6 +181,11 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId }: {
       {nodeId && (
         <button onClick={persist} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
           <Save size={14} /> Save Alarm Rules
+        </button>
+      )}
+      {onApplyAll && (
+        <button onClick={applyAll} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+          <Save size={14} /> Apply to all {domain ? '' : ''}org nodes
         </button>
       )}
     </div>
