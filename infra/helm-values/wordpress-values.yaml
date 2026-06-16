@@ -1,0 +1,144 @@
+# ============================================================
+# WordPress — Bitnami chart values
+# Chart: oci://registry-1.docker.io/bitnamicharts/wordpress
+# Pre-existing secret: wordpress-credentials
+#   keys: wordpress-password, mariadb-password, mariadb-root-password
+# Public URL: https://${DOMAIN}
+#
+# ThermExpertise customisation (migrated from Wix):
+#   * branding -> wordpressBlogName / blogdesc
+#   * custom theme injected at runtime via an initContainer that sparse-clones
+#     the theme from this repo into wp-content/themes (no image build needed)
+#   * postStart hook activates the theme, sets branding, and provisions the
+#     pages / primary menu / static front page (mirrors scripts/provision.sh)
+# ============================================================
+wordpressUsername: admin
+wordpressEmail: thermexpertise.thex@gmail.com
+wordpressBlogName: "THERM Expertise Co., Ltd."
+existingSecret: wordpress-credentials
+
+# ------------------------------------------------------------
+# Image pinning (Bitnami "Secure Images" migration, Aug 2025).
+# The chart is pinned to 25.0.5 (see argocd/platform-stack/wordpress.yaml).
+# Bitnami removed the old docker.io/bitnami/* tags and the new :latest secure
+# image has a broken first-boot flow (skips `wp config create` -> "wp-config.php
+# not found"). We redirect every image to the archived docker.io/bitnamilegacy/*
+# tags and allow them past the chart's image-verification guard.
+# ------------------------------------------------------------
+global:
+  security:
+    allowInsecureImages: true
+
+image:
+  registry: docker.io
+  repository: bitnamilegacy/wordpress
+  tag: 6.8.2-debian-12-r2
+  debug: true            # verbose setup logs via the chart's own BITNAMI_DEBUG env
+volumePermissions:
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/os-shell
+    tag: 12-debian-12-r49
+
+replicaCount: 1
+
+service:
+  type: NodePort
+  ports:
+    http: 80
+  nodePorts:
+    http: 30088            # http://VPS_IP:30088
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 10Gi
+  accessModes: [ReadWriteOnce]
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hostname: thermexpertise.com
+  tls: true
+  selfSigned: false
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  extraTls:
+    - hosts: [thermexpertise.com, www.thermexpertise.com]
+      secretName: wordpress-tls
+  extraHosts:
+    - name: www.thermexpertise.com
+      path: /
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 1536Mi
+
+# Extra env for the WordPress container. Do NOT add BITNAMI_DEBUG here — the
+# chart already injects it (use image.debug above); a duplicate env key breaks
+# ArgoCD's structured-merge diff ("duplicate entries for key BITNAMI_DEBUG").
+#   PHP_MEMORY_LIMIT -> headroom for wp-cli during setup (avoid PHP OOM fatal)
+extraEnvVars:
+  - name: PHP_MEMORY_LIMIT
+    value: "768M"
+
+podSecurityContext:
+  enabled: true
+  fsGroup: 1001
+containerSecurityContext:
+  enabled: true
+  runAsUser: 1001
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+# ------------------------------------------------------------
+# NOTE: the custom theme is NOT injected via a volume mount here.
+# Mounting an emptyDir at /bitnami/wordpress/wp-content/themes/thermexpertise
+# made Kubernetes pre-create the wp-content/themes dirs on the PVC, so on first
+# boot Bitnami saw a non-empty volume, assumed WordPress was already installed,
+# skipped `wp config create`, and crashed with "wp-config.php not found".
+#
+# Instead WordPress installs cleanly into an empty PVC, then the theme + site
+# provisioning are applied ONCE (they persist on the PVC):
+#   THEME=infra/wordpress/themes/thermexpertise
+#   kubectl -n web cp "$THEME" <wp-pod>:/bitnami/wordpress/wp-content/themes/thermexpertise -c wordpress
+#   kubectl -n web exec <wp-pod> -c wordpress -- wp theme activate thermexpertise --path=/bitnami/wordpress
+#   ...then create pages / primary menu / static front page (see scripts/provision.sh)
+# ------------------------------------------------------------
+
+# Bundled MariaDB (separate from MySQL in `data` namespace; WP keeps its own DB
+# to avoid coupling site lifecycle to platform DB).
+mariadb:
+  enabled: true
+  architecture: standalone
+  # Redirect to the archived legacy image (see image-pinning note at top).
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/mariadb
+  auth:
+    existingSecret: wordpress-credentials   # uses mariadb-password / mariadb-root-password
+    database: wordpress
+    username: wordpress
+  primary:
+    persistence:
+      enabled: true
+      storageClass: local-path
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 192Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+metrics:
+  enabled: false
