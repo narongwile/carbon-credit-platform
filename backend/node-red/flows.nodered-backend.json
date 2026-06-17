@@ -86,8 +86,8 @@
     "type": "function",
     "z": "be",
     "name": "ingest + evaluate + persist",
-    "func": "\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.payload = { error: 'bad input' }; return msg; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++; node.send([null, { payload: e }]);\n  }\n  msg.payload = { inserted }; node.send([msg, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
-    "outputs": 2,
+    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++; node.send([null, { payload: e }, null]);\n  }\n  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
+    "outputs": 3,
     "libs": [
       {
         "var": "mysql",
@@ -102,6 +102,9 @@
       ],
       [
         "notify"
+      ],
+      [
+        "readpost_resp"
       ]
     ]
   },
@@ -1091,5 +1094,14 @@
         "ingest"
       ]
     ]
+  },
+  {
+    "id": "readpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1360,
+    "wires": []
   }
 ]

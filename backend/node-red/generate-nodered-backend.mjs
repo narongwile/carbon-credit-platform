@@ -63,15 +63,17 @@ node.warn('ONEOPS Node-RED backend: pool + engine ready');
 `
 
 const ingestFunc = `
+const __H = { 'Access-Control-Allow-Origin': '*' };
+const __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)
 const pool = global.get('pool'); const evaluate = global.get('evaluate');
 const { nodeId, values, ts } = msg.payload || {};
-if (!pool || !evaluate || !nodeId || !values) { msg.payload = { error: 'bad input' }; return msg; }
+if (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null]); return null; }
 const taken = new Date(ts || Date.now());
 (async () => {
   for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }
   const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);
   const [mm] = await pool.query('SELECT org_id, department_id FROM nodes WHERE id=?',[nodeId]);
-  if (!rr.length || !mm.length) { msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null]); return; }
+  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null]); return; }
   const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;
   const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);
   const byTs=new Map();
@@ -83,9 +85,9 @@ const taken = new Date(ts || Date.now());
     const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;
     await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);
-    inserted++; node.send([null, { payload: e }]);
+    inserted++; node.send([null, { payload: e }, null]);
   }
-  msg.payload = { inserted }; node.send([msg, null]);
+  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null]);
 })().catch(err => { node.error(err.message, msg); });
 return null;
 `
@@ -223,7 +225,7 @@ const flow = [
   // ingest pipeline
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
   fn('normalize', 'normalize', normalizeFunc, 330, 140, [['ingest']]),
-  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify']], 2, { libs: LIBS }),
+  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], []], 3, { libs: LIBS }),
   fn('notify', 'notify (LINE/Telegram/GChat)', notifyFunc, 820, 200, [[]]),
   { id: 'dbgIngest', type: 'debug', z: 'be', name: 'ingest', active: true, complete: 'payload', x: 830, y: 140, wires: [] },
 
@@ -260,11 +262,16 @@ const flow = [
 // give every REST fn the mysql lib (handlers query the pool)
 for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb)/.test(n.id)) n.libs = LIBS
 
-// POST /readings ingest → reuse the engine ingest node
+// POST /readings ingest → reuse the engine ingest node, then reply via its
+// own http response node. ingest re-emits the original msg (req/res preserved
+// for HTTP-originated requests) on output 1, so we wire that to readpost_resp.
 const httpIngest = endpoint('readpost', 'post', '/api/nodes/:id/readings', httpIngestFunc)
-httpIngest[1].wires = [['ingest']]      // fn → ingest (engine), not a direct response
+httpIngest[1].wires = [['ingest']]      // fn → ingest (engine)
 httpIngest[1].name = 'POST /api/nodes/:id/readings'
-flow.push(httpIngest[0], httpIngest[1]) // (no response node; ingest replies via its own path)
+flow.push(...httpIngest)                 // keep the http response node (readpost_resp)
+// ingest output 3 → readings http response (only fired for HTTP-origin msgs)
+const ingestNode = flow.find((n) => n.id === 'ingest')
+ingestNode.wires = [['dbgIngest'], ['notify'], ['readpost_resp']]
 
 const out = join(dirname(fileURLToPath(import.meta.url)), 'flows.nodered-backend.json')
 writeFileSync(out, JSON.stringify(flow, null, 2) + '\n')
