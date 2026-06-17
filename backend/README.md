@@ -18,7 +18,8 @@ escalation loop: unacked CRITICAL > N min → re-dispatch (escalation)
 ## Run
 ```bash
 cp .env.example .env          # defaults already target the cluster MySQL/MQTT
-mysql < sql/schema.sql        # create schema
+mysql < sql/schema.sql        # create core schema
+mysql < sql/bloodbox.sql      # BloodBOX domain tables (run after schema.sql)
 npm install && npm run dev    # or: npm run build && npm start
 ```
 Docker: `docker build -t oneops-backend .`  ·  k8s: `kubectl apply -f k8s/backend.yaml`
@@ -54,6 +55,11 @@ unit tests / sharing with the frontend that the Express service keeps).
 | POST | `/api/events/:id/ack` | acknowledge `{ by, eventProblemId }` |
 | GET/POST | `/api/nodes/:id/readings` | read / ingest telemetry `{ values, ts }` |
 | GET/POST | `/api/nodes/:id/documents` | department-scoped documents |
+| GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
+| GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log) |
+| GET  | `/api/bloodbox/floors?orgId=` | building floors |
+| GET/POST/DELETE | `/api/bloodbox/beacons` | BLE beacon management (indoor anchors) |
+| GET/POST | `/api/bloodbox/boxes/:id/location` | current indoor location / move box |
 
 ## Frontend wiring
 Set `NEXT_PUBLIC_API_URL` (e.g. `https://api.oneops.example`). The frontend

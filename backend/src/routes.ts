@@ -4,8 +4,12 @@ import {
   getRule, putRule, nodesByOrg, eventsByNode, ackEvent, recentReadings,
 } from './repo.js'
 import { ping, pool } from './db.js'
+import { bloodboxRouter } from './bloodbox.js'
 
 export const router = Router()
+
+// ---- BloodBOX domain (transits, journey, floors, beacons, locations) -------
+router.use('/bloodbox', bloodboxRouter)
 
 router.get('/health', async (_req, res) => {
   res.json({ ok: true, db: await ping(), ts: Date.now() })
