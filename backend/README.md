@@ -21,6 +21,7 @@ cp .env.example .env          # defaults already target the cluster MySQL/MQTT
 mysql < sql/schema.sql        # create core schema (+ device_presence)
 mysql < sql/bloodbox.sql      # BloodBOX domain tables (run after schema.sql)
 mysql < sql/seed-nodes.sql    # optional: demo fleet (geo + mqtt_prefix) for /api/fleet & map
+mysql < sql/seed-tenancy.sql  # optional: demo orgs/entitlements/departments/users/access
 npm install && npm run dev    # or: npm run build && npm start
 ```
 Docker: `docker build -t oneops-backend .`  ·  k8s: `kubectl apply -f k8s/backend.yaml`
@@ -72,6 +73,16 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST | `/api/reports/schedules` | scheduled reports (cron every 15 min → CSV email) |
 | DELETE | `/api/reports/schedules/:id` | remove a schedule |
 | GET/PUT | `/api/me/config` | per-user config (configProfile); identity via `x-user-id` header |
+| GET/POST | `/api/orgs` · DELETE `/api/orgs/:id` | **superadmin**: organizations (provision) |
+| GET/PUT | `/api/orgs/:id/entitlements` | superadmin: licensed platforms per org |
+| GET/POST | `/api/orgs/:orgId/departments` · DELETE `/api/departments/:id` | **admin**: departments |
+| GET/POST | `/api/orgs/:orgId/users` · DELETE `/api/users/:id` | admin: users (role/department) |
+| GET/PUT | `/api/product-access` | admin: department/user → domain → none/view/manage |
+| POST | `/api/nodes` | superadmin: provision/modify a node (mqtt_prefix, geo) |
+
+> ⚠️ Provisioning/admin endpoints are **not yet authz-enforced** — anyone reachable
+> can call them. The role + org-scope guard lands with the JWT auth work
+> (`x-user-id`/token). Do not expose this build publicly without that layer.
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |

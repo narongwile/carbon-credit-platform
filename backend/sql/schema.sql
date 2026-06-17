@@ -84,6 +84,39 @@ CREATE TABLE IF NOT EXISTS notification_channels (
   INDEX (org_id)
 );
 
+-- Tenancy / RBAC data model (provisioned by superadmin; managed by admin).
+-- Enforcement (auth guard) lands with the JWT auth work; these are the tables.
+CREATE TABLE IF NOT EXISTS organizations (
+  id         VARCHAR(64) PRIMARY KEY,
+  name       VARCHAR(160) NOT NULL,
+  status     ENUM('active','suspended') DEFAULT 'active',
+  logo_url   TEXT,
+  created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)
+);
+
+CREATE TABLE IF NOT EXISTS departments (
+  id     VARCHAR(64) PRIMARY KEY,
+  org_id VARCHAR(64) NOT NULL,
+  name   VARCHAR(120) NOT NULL,
+  INDEX (org_id)
+);
+
+-- Platform licensing per org (presence of a row = licensed)
+CREATE TABLE IF NOT EXISTS org_entitlements (
+  org_id   VARCHAR(64) NOT NULL,
+  platform VARCHAR(40) NOT NULL,
+  PRIMARY KEY (org_id, platform)
+);
+
+-- Product access: department→domain (admin grant) and user→domain (override)
+CREATE TABLE IF NOT EXISTS product_access (
+  scope    ENUM('department','user') NOT NULL,
+  scope_id VARCHAR(64) NOT NULL,
+  domain   VARCHAR(32) NOT NULL,
+  level    ENUM('none','view','manage') NOT NULL DEFAULT 'view',
+  PRIMARY KEY (scope, scope_id, domain)
+);
+
 -- Users + per-user preferences (configProfile). Identity is the x-user-id
 -- header for now (pre-auth); swap for JWT subject when auth lands.
 CREATE TABLE IF NOT EXISTS users (

@@ -60,6 +60,29 @@ export const api = {
     req<{ user: Record<string, unknown>; prefs: Record<string, unknown> }>(`/api/me/config`, { headers: { 'x-user-id': userId } }),
   putMyConfig: (userId: string, prefs: Record<string, unknown>) =>
     req<{ ok: boolean }>(`/api/me/config`, { method: 'PUT', headers: { 'x-user-id': userId }, body: JSON.stringify({ prefs }) }),
+
+  // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
+  orgs: () => req<unknown[]>(`/api/orgs`),
+  saveOrg: (body: { id?: string; name: string; status?: string; logoUrl?: string }) =>
+    req<{ id: string }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteOrg: (id: string) => req(`/api/orgs/${id}`, { method: 'DELETE' }),
+  entitlements: (orgId: string) => req<string[]>(`/api/orgs/${orgId}/entitlements`),
+  setEntitlements: (orgId: string, platforms: string[]) =>
+    req(`/api/orgs/${orgId}/entitlements`, { method: 'PUT', body: JSON.stringify({ platforms }) }),
+  departments: (orgId: string) => req<unknown[]>(`/api/orgs/${orgId}/departments`),
+  saveDepartment: (orgId: string, body: { id?: string; name: string }) =>
+    req<{ id: string }>(`/api/orgs/${orgId}/departments`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteDepartment: (id: string) => req(`/api/departments/${id}`, { method: 'DELETE' }),
+  users: (orgId: string) => req<unknown[]>(`/api/orgs/${orgId}/users`),
+  saveUser: (orgId: string, body: { id?: string; email?: string; name: string; role?: string; departmentId?: string }) =>
+    req<{ id: string }>(`/api/orgs/${orgId}/users`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteUser: (id: string) => req(`/api/users/${id}`, { method: 'DELETE' }),
+  productAccess: (scope: 'department' | 'user', scopeId: string) =>
+    req<{ domain: string; level: string }[]>(`/api/product-access?scope=${scope}&scopeId=${encodeURIComponent(scopeId)}`),
+  setProductAccess: (body: { scope: 'department' | 'user'; scopeId: string; domain: string; level: string }) =>
+    req(`/api/product-access`, { method: 'PUT', body: JSON.stringify(body) }),
+  provisionNode: (body: { id: string; orgId: string; siteId?: string; departmentId?: string; domain: string; name: string; mqttPrefix?: string; lat?: number; lng?: number }) =>
+    req<{ id: string }>(`/api/nodes`, { method: 'POST', body: JSON.stringify(body) }),
 }
 
 export interface FleetNode {

@@ -128,6 +128,60 @@ export async function insertDeadLetter(source: string, error: string, payload: u
   })
 }
 
+// ---- Tenancy / provisioning ------------------------------------------------
+export async function listOrgs(): Promise<RowDataPacket[]> {
+  const [r] = await pool.query<RowDataPacket[]>('SELECT * FROM organizations ORDER BY name')
+  return r
+}
+export async function upsertOrg(b: { id?: string; name: string; status?: string; logoUrl?: string }): Promise<string> {
+  const id = b.id || `org-${Date.now()}`
+  await pool.query('INSERT INTO organizations (id,name,status,logo_url) VALUES (:id,:n,:s,:l) ON DUPLICATE KEY UPDATE name=:n,status=:s,logo_url=:l',
+    { id, n: b.name, s: b.status ?? 'active', l: b.logoUrl ?? null })
+  return id
+}
+export async function deleteOrg(id: string): Promise<void> { await pool.query('DELETE FROM organizations WHERE id=:id', { id }) }
+export async function getEntitlements(orgId: string): Promise<string[]> {
+  const [r] = await pool.query<RowDataPacket[]>('SELECT platform FROM org_entitlements WHERE org_id=:o', { o: orgId })
+  return r.map((x) => x.platform as string)
+}
+export async function setEntitlements(orgId: string, platforms: string[]): Promise<void> {
+  await pool.query('DELETE FROM org_entitlements WHERE org_id=:o', { o: orgId })
+  for (const p of platforms) await pool.query('INSERT IGNORE INTO org_entitlements (org_id,platform) VALUES (:o,:p)', { o: orgId, p })
+}
+export async function listDepartments(orgId: string): Promise<RowDataPacket[]> {
+  const [r] = await pool.query<RowDataPacket[]>('SELECT * FROM departments WHERE org_id=:o ORDER BY name', { o: orgId })
+  return r
+}
+export async function upsertDepartment(orgId: string, b: { id?: string; name: string }): Promise<string> {
+  const id = b.id || `dept-${Date.now()}`
+  await pool.query('INSERT INTO departments (id,org_id,name) VALUES (:id,:o,:n) ON DUPLICATE KEY UPDATE name=:n', { id, o: orgId, n: b.name })
+  return id
+}
+export async function deleteDepartment(id: string): Promise<void> { await pool.query('DELETE FROM departments WHERE id=:id', { id }) }
+export async function listUsers(orgId: string): Promise<RowDataPacket[]> {
+  const [r] = await pool.query<RowDataPacket[]>('SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=:o ORDER BY name', { o: orgId })
+  return r
+}
+export async function upsertUser(orgId: string, b: { id?: string; email?: string; name: string; role?: string; departmentId?: string }): Promise<string> {
+  const id = b.id || `u-${Date.now()}`
+  await pool.query('INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (:id,:o,:e,:n,:r,:d) ON DUPLICATE KEY UPDATE email=:e,name=:n,role=:r,department_id=:d',
+    { id, o: orgId, e: b.email ?? null, n: b.name, r: b.role ?? 'viewer', d: b.departmentId ?? null })
+  return id
+}
+export async function deleteUser(id: string): Promise<void> { await pool.query('DELETE FROM users WHERE id=:id', { id }) }
+export async function getProductAccess(scope: string, scopeId: string): Promise<RowDataPacket[]> {
+  const [r] = await pool.query<RowDataPacket[]>('SELECT domain,level FROM product_access WHERE scope=:s AND scope_id=:i', { s: scope, i: scopeId })
+  return r
+}
+export async function putProductAccess(b: { scope: string; scopeId: string; domain: string; level?: string }): Promise<void> {
+  await pool.query('INSERT INTO product_access (scope,scope_id,domain,level) VALUES (:s,:i,:d,:l) ON DUPLICATE KEY UPDATE level=:l',
+    { s: b.scope, i: b.scopeId, d: b.domain, l: b.level ?? 'view' })
+}
+export async function provisionNode(b: { id: string; orgId: string; siteId?: string; departmentId?: string; domain: string; name: string; mqttPrefix?: string; lat?: number; lng?: number }): Promise<void> {
+  await pool.query('INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng) VALUES (:id,:o,:si,:d,:dom,:n,:mp,:la,:ln) ON DUPLICATE KEY UPDATE site_id=:si,department_id=:d,domain=:dom,name=:n,mqtt_prefix=:mp,lat=:la,lng=:ln',
+    { id: b.id, o: b.orgId, si: b.siteId ?? null, d: b.departmentId ?? null, dom: b.domain, n: b.name, mp: b.mqttPrefix ?? null, la: b.lat ?? null, ln: b.lng ?? null })
+}
+
 // ---- Users + per-user config (configProfile) -------------------------------
 export async function getUser(userId: string): Promise<RowDataPacket | null> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, department_id FROM users WHERE id = :id', { id: userId })

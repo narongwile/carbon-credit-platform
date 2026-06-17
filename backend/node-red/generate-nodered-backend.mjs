@@ -517,6 +517,42 @@ const mePutFunc = CORS + `const pool=global.get('pool'); const uid=(msg.req.head
 if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'x-user-id header required'};return msg;}
 (async()=>{await pool.query("INSERT INTO user_prefs (user_id,prefs) VALUES (?,?) ON DUPLICATE KEY UPDATE prefs=VALUES(prefs)",[uid,JSON.stringify(prefs||{})]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
+// --- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
+// NOTE: not yet authz-enforced — guard lands with the JWT auth work.
+const orgsListFunc = CORS + `const pool=global.get('pool');
+(async()=>{const[r]=await pool.query("SELECT * FROM organizations ORDER BY name"); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+const orgsPostFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}
+(async()=>{const id=b.id||'org-'+Date.now(); await pool.query("INSERT INTO organizations (id,name,status,logo_url) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),status=VALUES(status),logo_url=VALUES(logo_url)",[id,b.name,b.status||'active',b.logoUrl||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+const orgsDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query("DELETE FROM organizations WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+const entGetFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{const[r]=await pool.query("SELECT platform FROM org_entitlements WHERE org_id=?",[id]); msg.headers=__CORS; msg.payload=r.map(x=>x.platform); node.send(msg);})()` + bbErr
+const entPutFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const list=(msg.payload&&msg.payload.platforms)||[];
+(async()=>{await pool.query("DELETE FROM org_entitlements WHERE org_id=?",[id]); for(const p of list){ await pool.query("INSERT IGNORE INTO org_entitlements (org_id,platform) VALUES (?,?)",[id,p]); } msg.headers=__CORS; msg.payload={ok:true,count:list.length}; node.send(msg);})()` + bbErr
+const deptListFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId;
+(async()=>{const[r]=await pool.query("SELECT * FROM departments WHERE org_id=? ORDER BY name",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+const deptPostFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};
+if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}
+(async()=>{const id=b.id||'dept-'+Date.now(); await pool.query("INSERT INTO departments (id,org_id,name) VALUES (?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)",[id,orgId,b.name]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+const deptDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query("DELETE FROM departments WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+const usrListFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId;
+(async()=>{const[r]=await pool.query("SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=? ORDER BY name",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+const usrPostFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};
+if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}
+(async()=>{const id=b.id||'u-'+Date.now(); await pool.query("INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id)",[id,orgId,b.email||null,b.name,b.role||'viewer',b.departmentId||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+const usrDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query("DELETE FROM users WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+const paGetFunc = CORS + `const pool=global.get('pool'); const q=msg.req.query||{};
+(async()=>{const[r]=await pool.query("SELECT domain,level FROM product_access WHERE scope=? AND scope_id=?",[q.scope||'department',q.scopeId||'']); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+const paPutFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.scope||!b.scopeId||!b.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'scope, scopeId, domain required'};return msg;}
+(async()=>{await pool.query("INSERT INTO product_access (scope,scope_id,domain,level) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE level=VALUES(level)",[b.scope,b.scopeId,b.domain,b.level||'view']); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+const nodeProvFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.id||!b.orgId||!b.domain||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'id, orgId, domain, name required'};return msg;}
+(async()=>{await pool.query("INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE site_id=VALUES(site_id),department_id=VALUES(department_id),domain=VALUES(domain),name=VALUES(name),mqtt_prefix=VALUES(mqtt_prefix),lat=VALUES(lat),lng=VALUES(lng)",[b.id,b.orgId,b.siteId||null,b.departmentId||null,b.domain,b.name,b.mqttPrefix||null,b.lat??null,b.lng??null]); msg.headers=__CORS; msg.payload={ok:true,id:b.id}; node.send(msg);})()` + bbErr
+
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
   { id: 'wslistener', type: 'websocket-listener', path: '/ws/telemetry', wholemsg: 'false' },
@@ -604,6 +640,22 @@ const flow = [
   ...endpoint('meget', 'get', '/api/me/config', meGetFunc),
   ...endpoint('meput', 'put', '/api/me/config', mePutFunc),
 
+  // Tenancy / provisioning (superadmin + admin; not yet authz-enforced)
+  ...endpoint('orgsget', 'get', '/api/orgs', orgsListFunc),
+  ...endpoint('orgspost', 'post', '/api/orgs', orgsPostFunc),
+  ...endpoint('entget', 'get', '/api/orgs/:id/entitlements', entGetFunc),
+  ...endpoint('entput', 'put', '/api/orgs/:id/entitlements', entPutFunc),
+  ...endpoint('deptget', 'get', '/api/orgs/:orgId/departments', deptListFunc),
+  ...endpoint('deptpost', 'post', '/api/orgs/:orgId/departments', deptPostFunc),
+  ...endpoint('usrget', 'get', '/api/orgs/:orgId/users', usrListFunc),
+  ...endpoint('usrpost', 'post', '/api/orgs/:orgId/users', usrPostFunc),
+  ...endpoint('orgsdel', 'delete', '/api/orgs/:id', orgsDelFunc),
+  ...endpoint('deptdel', 'delete', '/api/departments/:id', deptDelFunc),
+  ...endpoint('usrdel', 'delete', '/api/users/:id', usrDelFunc),
+  ...endpoint('paget', 'get', '/api/product-access', paGetFunc),
+  ...endpoint('paput', 'put', '/api/product-access', paPutFunc),
+  ...endpoint('nodeprov', 'post', '/api/nodes', nodeProvFunc),
+
   // Downlink (backend → device): config (retained) / cmd / ota
   ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc),
   ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc),
@@ -613,7 +665,8 @@ const flow = [
 ]
 
 // give every REST fn the mysql lib (handlers query the pool)
-for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb|fleet|rpt|me)/.test(n.id)) n.libs = LIBS
+// Any handler that queries the pool gets the mysql lib (skip ones with libs set).
+for (const n of flow) if (n.type === 'function' && /pool\.query|global\.get\('pool'\)/.test(n.func) && !(n.libs && n.libs.length)) n.libs = LIBS
 
 // POST /readings ingest → reuse the engine ingest node, then reply via its
 // own http response node. ingest re-emits the original msg (req/res preserved

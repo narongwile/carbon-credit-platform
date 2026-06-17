@@ -1673,6 +1673,636 @@
     "wires": []
   },
   {
+    "id": "orgsget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs",
+    "method": "get",
+    "x": 150,
+    "y": 1710,
+    "wires": [
+      [
+        "orgsget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgsget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool');\n(async()=>{const[r]=await pool.query(\"SELECT * FROM organizations ORDER BY name\"); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1710,
+    "wires": [
+      [
+        "orgsget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgsget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1710,
+    "wires": []
+  },
+  {
+    "id": "orgspost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs",
+    "method": "post",
+    "x": 150,
+    "y": 1760,
+    "wires": [
+      [
+        "orgspost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgspost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}\n(async()=>{const id=b.id||'org-'+Date.now(); await pool.query(\"INSERT INTO organizations (id,name,status,logo_url) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),status=VALUES(status),logo_url=VALUES(logo_url)\",[id,b.name,b.status||'active',b.logoUrl||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1760,
+    "wires": [
+      [
+        "orgspost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgspost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1760,
+    "wires": []
+  },
+  {
+    "id": "entget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:id/entitlements",
+    "method": "get",
+    "x": 150,
+    "y": 1810,
+    "wires": [
+      [
+        "entget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "entget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:id/entitlements",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query(\"SELECT platform FROM org_entitlements WHERE org_id=?\",[id]); msg.headers=__CORS; msg.payload=r.map(x=>x.platform); node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1810,
+    "wires": [
+      [
+        "entget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "entget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1810,
+    "wires": []
+  },
+  {
+    "id": "entput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:id/entitlements",
+    "method": "put",
+    "x": 150,
+    "y": 1860,
+    "wires": [
+      [
+        "entput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "entput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/orgs/:id/entitlements",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const list=(msg.payload&&msg.payload.platforms)||[];\n(async()=>{await pool.query(\"DELETE FROM org_entitlements WHERE org_id=?\",[id]); for(const p of list){ await pool.query(\"INSERT IGNORE INTO org_entitlements (org_id,platform) VALUES (?,?)\",[id,p]); } msg.headers=__CORS; msg.payload={ok:true,count:list.length}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1860,
+    "wires": [
+      [
+        "entput_resp"
+      ]
+    ]
+  },
+  {
+    "id": "entput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1860,
+    "wires": []
+  },
+  {
+    "id": "deptget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/departments",
+    "method": "get",
+    "x": 150,
+    "y": 1910,
+    "wires": [
+      [
+        "deptget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "deptget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/departments",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId;\n(async()=>{const[r]=await pool.query(\"SELECT * FROM departments WHERE org_id=? ORDER BY name\",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1910,
+    "wires": [
+      [
+        "deptget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "deptget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1910,
+    "wires": []
+  },
+  {
+    "id": "deptpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/departments",
+    "method": "post",
+    "x": 150,
+    "y": 1960,
+    "wires": [
+      [
+        "deptpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "deptpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/departments",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};\nif(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}\n(async()=>{const id=b.id||'dept-'+Date.now(); await pool.query(\"INSERT INTO departments (id,org_id,name) VALUES (?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)\",[id,orgId,b.name]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1960,
+    "wires": [
+      [
+        "deptpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "deptpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1960,
+    "wires": []
+  },
+  {
+    "id": "usrget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/users",
+    "method": "get",
+    "x": 150,
+    "y": 2010,
+    "wires": [
+      [
+        "usrget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "usrget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/users",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId;\n(async()=>{const[r]=await pool.query(\"SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=? ORDER BY name\",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2010,
+    "wires": [
+      [
+        "usrget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "usrget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2010,
+    "wires": []
+  },
+  {
+    "id": "usrpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/users",
+    "method": "post",
+    "x": 150,
+    "y": 2060,
+    "wires": [
+      [
+        "usrpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "usrpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/users",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};\nif(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}\n(async()=>{const id=b.id||'u-'+Date.now(); await pool.query(\"INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id)\",[id,orgId,b.email||null,b.name,b.role||'viewer',b.departmentId||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2060,
+    "wires": [
+      [
+        "usrpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "usrpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2060,
+    "wires": []
+  },
+  {
+    "id": "orgsdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2110,
+    "wires": [
+      [
+        "orgsdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgsdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/orgs/:id",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM organizations WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2110,
+    "wires": [
+      [
+        "orgsdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgsdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2110,
+    "wires": []
+  },
+  {
+    "id": "deptdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/departments/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2160,
+    "wires": [
+      [
+        "deptdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "deptdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/departments/:id",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM departments WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2160,
+    "wires": [
+      [
+        "deptdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "deptdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2160,
+    "wires": []
+  },
+  {
+    "id": "usrdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/users/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2210,
+    "wires": [
+      [
+        "usrdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "usrdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/users/:id",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM users WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2210,
+    "wires": [
+      [
+        "usrdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "usrdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2210,
+    "wires": []
+  },
+  {
+    "id": "paget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/product-access",
+    "method": "get",
+    "x": 150,
+    "y": 2260,
+    "wires": [
+      [
+        "paget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "paget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/product-access",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const q=msg.req.query||{};\n(async()=>{const[r]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope=? AND scope_id=?\",[q.scope||'department',q.scopeId||'']); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2260,
+    "wires": [
+      [
+        "paget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "paget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2260,
+    "wires": []
+  },
+  {
+    "id": "paput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/product-access",
+    "method": "put",
+    "x": 150,
+    "y": 2310,
+    "wires": [
+      [
+        "paput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "paput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/product-access",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.scope||!b.scopeId||!b.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'scope, scopeId, domain required'};return msg;}\n(async()=>{await pool.query(\"INSERT INTO product_access (scope,scope_id,domain,level) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE level=VALUES(level)\",[b.scope,b.scopeId,b.domain,b.level||'view']); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2310,
+    "wires": [
+      [
+        "paput_resp"
+      ]
+    ]
+  },
+  {
+    "id": "paput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2310,
+    "wires": []
+  },
+  {
+    "id": "nodeprov_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes",
+    "method": "post",
+    "x": 150,
+    "y": 2360,
+    "wires": [
+      [
+        "nodeprov_fn"
+      ]
+    ]
+  },
+  {
+    "id": "nodeprov_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.id||!b.orgId||!b.domain||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'id, orgId, domain, name required'};return msg;}\n(async()=>{await pool.query(\"INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE site_id=VALUES(site_id),department_id=VALUES(department_id),domain=VALUES(domain),name=VALUES(name),mqtt_prefix=VALUES(mqtt_prefix),lat=VALUES(lat),lng=VALUES(lng)\",[b.id,b.orgId,b.siteId||null,b.departmentId||null,b.domain,b.name,b.mqttPrefix||null,b.lat??null,b.lng??null]); msg.headers=__CORS; msg.payload={ok:true,id:b.id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2360,
+    "wires": [
+      [
+        "nodeprov_resp"
+      ]
+    ]
+  },
+  {
+    "id": "nodeprov_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2360,
+    "wires": []
+  },
+  {
     "id": "cfgput_in",
     "type": "http in",
     "z": "be",
@@ -1680,7 +2310,7 @@
     "url": "/api/nodes/:id/config",
     "method": "put",
     "x": 150,
-    "y": 1710,
+    "y": 2410,
     "wires": [
       [
         "cfgput_fn"
@@ -1701,7 +2331,7 @@
       }
     ],
     "x": 420,
-    "y": 1710,
+    "y": 2410,
     "wires": [
       [
         "cfgput_resp"
@@ -1717,7 +2347,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1710,
+    "y": 2410,
     "wires": []
   },
   {
@@ -1728,7 +2358,7 @@
     "url": "/api/nodes/:id/cmd",
     "method": "post",
     "x": 150,
-    "y": 1760,
+    "y": 2460,
     "wires": [
       [
         "cmdpost_fn"
@@ -1749,7 +2379,7 @@
       }
     ],
     "x": 420,
-    "y": 1760,
+    "y": 2460,
     "wires": [
       [
         "cmdpost_resp"
@@ -1765,7 +2395,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1760,
+    "y": 2460,
     "wires": []
   },
   {
@@ -1776,7 +2406,7 @@
     "url": "/api/nodes/:id/ota",
     "method": "post",
     "x": 150,
-    "y": 1810,
+    "y": 2510,
     "wires": [
       [
         "otapost_fn"
@@ -1797,7 +2427,7 @@
       }
     ],
     "x": 420,
-    "y": 1810,
+    "y": 2510,
     "wires": [
       [
         "otapost_resp"
@@ -1813,7 +2443,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1810,
+    "y": 2510,
     "wires": []
   },
   {
@@ -1824,7 +2454,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 1860,
+    "y": 2560,
     "wires": [
       [
         "cors_fn"
@@ -1840,7 +2470,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 1860,
+    "y": 2560,
     "wires": [
       [
         "cors_resp"
@@ -1853,7 +2483,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1860,
+    "y": 2560,
     "wires": []
   },
   {
@@ -1864,7 +2494,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 1910,
+    "y": 2610,
     "wires": [
       [
         "readpost_fn"
@@ -1880,7 +2510,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 1910,
+    "y": 2610,
     "wires": [
       [
         "ingest"
@@ -1893,7 +2523,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1910,
+    "y": 2610,
     "wires": []
   }
 ]

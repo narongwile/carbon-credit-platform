@@ -5,6 +5,9 @@ import {
   fleetByOrg, latestReadings, mqttPrefix,
   listSchedules, upsertSchedule, deleteSchedule,
   getUser, getPrefs, putPrefs,
+  listOrgs, upsertOrg, deleteOrg, getEntitlements, setEntitlements,
+  listDepartments, upsertDepartment, deleteDepartment,
+  listUsers, upsertUser, deleteUser, getProductAccess, putProductAccess, provisionNode,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
@@ -49,6 +52,39 @@ router.get('/fleet', async (req, res) => {
 
 router.get('/fleet/:id/latest', async (req, res) => {
   res.json(await latestReadings(req.params.id))
+})
+
+// ---- Tenancy / provisioning (superadmin + admin; not yet authz-enforced) ---
+router.get('/orgs', async (_req, res) => res.json(await listOrgs()))
+router.post('/orgs', async (req, res) => {
+  if (!req.body?.name) return res.status(400).json({ error: 'name required' })
+  res.json({ ok: true, id: await upsertOrg(req.body) })
+})
+router.delete('/orgs/:id', async (req, res) => { await deleteOrg(req.params.id); res.json({ ok: true }) })
+router.get('/orgs/:id/entitlements', async (req, res) => res.json(await getEntitlements(req.params.id)))
+router.put('/orgs/:id/entitlements', async (req, res) => { await setEntitlements(req.params.id, req.body?.platforms ?? []); res.json({ ok: true }) })
+router.get('/orgs/:orgId/departments', async (req, res) => res.json(await listDepartments(req.params.orgId)))
+router.post('/orgs/:orgId/departments', async (req, res) => {
+  if (!req.body?.name) return res.status(400).json({ error: 'name required' })
+  res.json({ ok: true, id: await upsertDepartment(req.params.orgId, req.body) })
+})
+router.delete('/departments/:id', async (req, res) => { await deleteDepartment(req.params.id); res.json({ ok: true }) })
+router.get('/orgs/:orgId/users', async (req, res) => res.json(await listUsers(req.params.orgId)))
+router.post('/orgs/:orgId/users', async (req, res) => {
+  if (!req.body?.name) return res.status(400).json({ error: 'name required' })
+  res.json({ ok: true, id: await upsertUser(req.params.orgId, req.body) })
+})
+router.delete('/users/:id', async (req, res) => { await deleteUser(req.params.id); res.json({ ok: true }) })
+router.get('/product-access', async (req, res) => res.json(await getProductAccess((req.query.scope as string) || 'department', (req.query.scopeId as string) || '')))
+router.put('/product-access', async (req, res) => {
+  const { scope, scopeId, domain } = req.body ?? {}
+  if (!scope || !scopeId || !domain) return res.status(400).json({ error: 'scope, scopeId, domain required' })
+  await putProductAccess(req.body); res.json({ ok: true })
+})
+router.post('/nodes', async (req, res) => {
+  const { id, orgId, domain, name } = req.body ?? {}
+  if (!id || !orgId || !domain || !name) return res.status(400).json({ error: 'id, orgId, domain, name required' })
+  await provisionNode(req.body); res.json({ ok: true, id })
 })
 
 // ---- Per-user config (configProfile); identity = x-user-id header ----------
