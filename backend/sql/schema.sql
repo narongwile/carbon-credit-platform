@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   department_id VARCHAR(64),
   domain        ENUM('transformer','carbonNode','bloodBox') NOT NULL,
   name          VARCHAR(120) NOT NULL,
+  mqtt_prefix   VARCHAR(255),   -- device topic prefix P (for downlink config/cmd/ota)
   INDEX (org_id), INDEX (department_id), INDEX (domain)
 );
 
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS alarm_events (
   param_key    VARCHAR(40) NOT NULL,
   param_label  VARCHAR(80) NOT NULL,
   severity     ENUM('WARNING','CRITICAL') NOT NULL,
-  kind         ENUM('threshold','rate') NOT NULL,
+  kind         ENUM('threshold','rate','offline') NOT NULL,
   value        DECIMAL(12,3) NOT NULL,
   threshold    DECIMAL(12,3) NOT NULL,
   unit         VARCHAR(16),
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS alarm_events (
   event_problem_id VARCHAR(64) NULL,
   notified     TINYINT(1) DEFAULT 0,
   escalated    TINYINT(1) DEFAULT 0,
-  INDEX (node_id), INDEX (org_id), INDEX (severity), INDEX (acknowledged_at)
+  cleared_at   DATETIME(3) NULL,
+  INDEX (node_id), INDEX (org_id), INDEX (severity), INDEX (acknowledged_at), INDEX (cleared_at)
 );
 
 -- Department-scoped node documents

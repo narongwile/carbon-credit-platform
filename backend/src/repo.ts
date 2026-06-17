@@ -30,7 +30,7 @@ export async function fleetByOrg(orgId: string, domain?: string): Promise<RowDat
     `SELECT n.id, n.name, n.domain, n.site_id, n.department_id,
             p.online, p.last_seen, p.rssi, p.fw,
             (SELECT e.severity FROM alarm_events e
-              WHERE e.node_id = n.id AND e.acknowledged_at IS NULL
+              WHERE e.node_id = n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL
               ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm
        FROM nodes n LEFT JOIN device_presence p ON p.node_id = n.id
       WHERE n.org_id = :orgId ${domain ? 'AND n.domain = :domain' : ''}
@@ -88,11 +88,31 @@ export async function ackEvent(id: string, by: string, eventProblemId?: string):
 export async function unacknowledgedCriticals(olderThanMin: number): Promise<RowDataPacket[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT * FROM alarm_events
-      WHERE severity = 'CRITICAL' AND acknowledged_at IS NULL AND escalated = 0
+      WHERE severity = 'CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL AND escalated = 0
         AND raised_at < (NOW(3) - INTERVAL :mins MINUTE)`,
     { mins: olderThanMin },
   )
   return rows
+}
+
+// ---- Auto-clear (recovery) -------------------------------------------------
+export async function openThresholdEvents(): Promise<RowDataPacket[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    "SELECT id, node_id, param_key FROM alarm_events WHERE cleared_at IS NULL AND kind IN ('threshold','rate')",
+  )
+  return rows
+}
+
+export async function recentParamValues(nodeId: string, paramKey: string, mins: number): Promise<number[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT value FROM readings WHERE node_id = :n AND param_key = :p AND taken_at > (NOW(3) - INTERVAL :m MINUTE)',
+    { n: nodeId, p: paramKey, m: mins },
+  )
+  return rows.map((r) => Number(r.value))
+}
+
+export async function clearEvent(id: string): Promise<void> {
+  await pool.query('UPDATE alarm_events SET cleared_at = NOW(3) WHERE id = :id', { id })
 }
 
 export async function markEscalated(ids: string[]): Promise<void> {

@@ -4,6 +4,7 @@ import cors from 'cors'
 import { router } from './routes.js'
 import { startMqtt } from './mqtt.js'
 import { startEscalation } from './escalation.js'
+import { startClearance } from './clearance.js'
 import { ping } from './db.js'
 
 const app = express()
@@ -18,6 +19,7 @@ async function main() {
   console.log(`[db] ${dbOk ? 'connected' : 'NOT reachable — check DB_* env'}`)
   startMqtt()
   startEscalation()
+  startClearance()
   app.listen(port, () => console.log(`[http] ONEOPS backend on :${port}`))
 }
 

@@ -150,7 +150,7 @@
     "type": "function",
     "z": "be",
     "name": "presence upsert",
-    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?,?,NOW(3),?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw)\",\n    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null]);\n})().catch(err => node.error('presence: ' + err.message));\nreturn null;\n",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?,?,NOW(3),?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw)\",\n    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null]);\n  // offline-recovery: device back online ⇒ clear any open offline alarm\n  if (e.online) await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE node_id=? AND kind='offline' AND cleared_at IS NULL\", [e.nodeId]);\n})().catch(err => node.error('presence: ' + err.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -184,7 +184,7 @@
     "type": "function",
     "z": "be",
     "name": "escalation scan",
-    "func": "\nconst pool = global.get('pool'); if(!pool) return null;\n(async()=>{\n  const [rows]=await pool.query(\"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND escalated=0 AND raised_at<(NOW(3)-INTERVAL 15 MINUTE)\");\n  for(const r of rows){ node.send({ payload: { nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'ESCALATION · '+r.param_label, kind:r.kind, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }\n  if(rows.length){ await pool.query('UPDATE alarm_events SET escalated=1 WHERE id IN (?)',[rows.map(r=>r.id)]); }\n})().catch(e=>node.error(e.message));\nreturn null;\n",
+    "func": "\nconst pool = global.get('pool'); if(!pool) return null;\n(async()=>{\n  const [rows]=await pool.query(\"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL AND escalated=0 AND raised_at<(NOW(3)-INTERVAL 15 MINUTE)\");\n  for(const r of rows){ node.send({ payload: { nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'ESCALATION · '+r.param_label, kind:r.kind, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }\n  if(rows.length){ await pool.query('UPDATE alarm_events SET escalated=1 WHERE id IN (?)',[rows.map(r=>r.id)]); }\n})().catch(e=>node.error(e.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -234,6 +234,40 @@
       [
         "notify"
       ]
+    ]
+  },
+  {
+    "id": "cleartick",
+    "type": "inject",
+    "z": "be",
+    "name": "every 60s",
+    "props": [],
+    "repeat": "60",
+    "x": 130,
+    "y": 400,
+    "wires": [
+      [
+        "clearsweep"
+      ]
+    ]
+  },
+  {
+    "id": "clearsweep",
+    "type": "function",
+    "z": "be",
+    "name": "auto-clear sweep",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);\n(async () => {\n  const [evs] = await pool.query(\"SELECT id, node_id, param_key FROM alarm_events WHERE cleared_at IS NULL AND kind IN ('threshold','rate')\");\n  for (const ev of evs) {\n    const [rr] = await pool.query(\"SELECT rule_json FROM alarm_rules WHERE node_id=?\", [ev.node_id]);\n    if (!rr.length) continue;\n    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;\n    const param = (rule.params||[]).find(p => p.key===ev.param_key);\n    if (!param) continue;\n    const hys = rule.hysteresis || 0;\n    const [rows] = await pool.query(\"SELECT value FROM readings WHERE node_id=? AND param_key=? AND taken_at > (NOW(3) - INTERVAL ? MINUTE)\", [ev.node_id, ev.param_key, CLEAR_MIN]);\n    if (!rows.length) continue;   // no fresh data ⇒ don't clear yet\n    const stillBreaching = rows.some(r => { const v = Number(r.value); return param.direction==='high' ? v >= (param.warn - hys) : v <= (param.warn + hys); });\n    if (!stillBreaching) await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?\", [ev.id]);\n  }\n})().catch(e => node.error('clear-sweep: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 400,
+    "wires": [
+      []
     ]
   },
   {
@@ -1207,7 +1241,7 @@
     "type": "function",
     "z": "be",
     "name": "GET /api/fleet",
-    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const domain=msg.req.query&&msg.req.query.domain;\n(async()=>{const sql=\"SELECT n.id,n.name,n.domain,n.site_id,n.department_id,p.online,p.last_seen,p.rssi,p.fw,\"+\n  \"(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm \"+\n  \"FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?\"+(domain?\" AND n.domain=?\":\"\")+\" ORDER BY n.domain,n.id\";\n  const a=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const domain=msg.req.query&&msg.req.query.domain;\n(async()=>{const sql=\"SELECT n.id,n.name,n.domain,n.site_id,n.department_id,p.online,p.last_seen,p.rssi,p.fw,\"+\n  \"(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm \"+\n  \"FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?\"+(domain?\" AND n.domain=?\":\"\")+\" ORDER BY n.domain,n.id\";\n  const a=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
     "outputs": 1,
     "libs": [
       {
