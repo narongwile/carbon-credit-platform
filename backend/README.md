@@ -60,7 +60,8 @@ unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST | `/api/nodes/:id/readings` | read / ingest telemetry `{ values, ts }` |
 | GET/POST | `/api/nodes/:id/documents` | department-scoped documents |
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
-| GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log) |
+| POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
+| GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |
 | GET  | `/api/bloodbox/floors?orgId=` | building floors |
 | GET/POST/DELETE | `/api/bloodbox/beacons` | BLE beacon management (indoor anchors) |
 | GET/POST | `/api/bloodbox/boxes/:id/location` | current indoor location / move box |

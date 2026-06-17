@@ -639,8 +639,8 @@
     "type": "function",
     "z": "be",
     "name": "POST /api/bloodbox/transits/:id/journey",
-    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const tid=msg.req.params.id; const b=msg.payload||{};\nif(!b.eventType||!b.signal){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'eventType and signal required'};return msg;}\n(async()=>{const id='je-'+Date.now(); await pool.query('INSERT INTO blood_box_journey_events (id,transit_id,floor_id,event_type,label,signal,lat,lng,pos_x_m,pos_y_m,temp_c,battery_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',[id,tid,b.floorId||null,b.eventType,b.label||null,b.signal,b.lat||null,b.lng||null,b.posX||null,b.posY||null,b.tempC||null,b.batteryPct||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
-    "outputs": 1,
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const tid=msg.req.params.id; const b=msg.payload||{};\nif(!b.eventType||!b.signal){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'eventType and signal required'};node.send([msg,null]);return null;}\n(async()=>{const id='je-'+Date.now(); await pool.query('INSERT INTO blood_box_journey_events (id,transit_id,floor_id,event_type,label,signal,lat,lng,pos_x_m,pos_y_m,temp_c,battery_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',[id,tid,b.floorId||null,b.eventType,b.label||null,b.signal,b.lat||null,b.lng||null,b.posX||null,b.posY||null,b.tempC||null,b.batteryPct||null]);\n  let bridge=null;\n  if(typeof b.tempC==='number'){const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[tid]); if(tr.length&&tr[0].box_id){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.batteryPct==='number')v.battery=b.batteryPct; bridge={payload:{nodeId:tr[0].box_id,values:v,ts:Date.now()}};}}\n  msg.headers=__CORS; msg.payload={ok:true,id}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;",
+    "outputs": 2,
     "libs": [
       {
         "var": "mysql",
@@ -652,6 +652,9 @@
     "wires": [
       [
         "bbjourneypost_resp"
+      ],
+      [
+        "ingest"
       ]
     ]
   },
@@ -665,6 +668,54 @@
     "wires": []
   },
   {
+    "id": "bbtemp_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/transits/:id/temp",
+    "method": "post",
+    "x": 150,
+    "y": 910,
+    "wires": [
+      [
+        "bbtemp_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbtemp_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/bloodbox/transits/:id/temp",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};\nif(typeof b.tempC!=='number'){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'tempC (number) required'};node.send([msg,null]);return null;}\n(async()=>{const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[id]);\n  if(!tr.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'transit not found'};node.send([msg,null]);return;}\n  await pool.query('UPDATE blood_box_transits SET current_temp_c=?, temp_max_c=GREATEST(COALESCE(temp_max_c,?),?) WHERE id=?',[b.tempC,b.tempC,b.tempC,id]);\n  const boxId=tr[0].box_id; let bridge=null;\n  if(boxId){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.battery==='number')v.battery=b.battery; bridge={payload:{nodeId:boxId,values:v,ts:b.ts||Date.now()}};}\n  msg.headers=__CORS; msg.payload={ok:true,bridged:boxId?'queued':'no linked node'}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 910,
+    "wires": [
+      [
+        "bbtemp_resp"
+      ],
+      [
+        "ingest"
+      ]
+    ]
+  },
+  {
+    "id": "bbtemp_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 910,
+    "wires": []
+  },
+  {
     "id": "bbtransit_in",
     "type": "http in",
     "z": "be",
@@ -672,7 +723,7 @@
     "url": "/api/bloodbox/transits/:id",
     "method": "get",
     "x": 150,
-    "y": 910,
+    "y": 960,
     "wires": [
       [
         "bbtransit_fn"
@@ -693,7 +744,7 @@
       }
     ],
     "x": 420,
-    "y": 910,
+    "y": 960,
     "wires": [
       [
         "bbtransit_resp"
@@ -706,7 +757,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 910,
+    "y": 960,
     "wires": []
   },
   {
@@ -717,7 +768,7 @@
     "url": "/api/bloodbox/transits",
     "method": "get",
     "x": 150,
-    "y": 960,
+    "y": 1010,
     "wires": [
       [
         "bbtransits_fn"
@@ -738,7 +789,7 @@
       }
     ],
     "x": 420,
-    "y": 960,
+    "y": 1010,
     "wires": [
       [
         "bbtransits_resp"
@@ -751,7 +802,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 960,
+    "y": 1010,
     "wires": []
   },
   {
@@ -762,7 +813,7 @@
     "url": "/api/bloodbox/floors",
     "method": "get",
     "x": 150,
-    "y": 1010,
+    "y": 1060,
     "wires": [
       [
         "bbfloors_fn"
@@ -783,7 +834,7 @@
       }
     ],
     "x": 420,
-    "y": 1010,
+    "y": 1060,
     "wires": [
       [
         "bbfloors_resp"
@@ -796,7 +847,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1010,
+    "y": 1060,
     "wires": []
   },
   {
@@ -807,7 +858,7 @@
     "url": "/api/bloodbox/beacons/:id",
     "method": "delete",
     "x": 150,
-    "y": 1060,
+    "y": 1110,
     "wires": [
       [
         "bbbeacondel_fn"
@@ -828,7 +879,7 @@
       }
     ],
     "x": 420,
-    "y": 1060,
+    "y": 1110,
     "wires": [
       [
         "bbbeacondel_resp"
@@ -841,7 +892,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1060,
+    "y": 1110,
     "wires": []
   },
   {
@@ -852,7 +903,7 @@
     "url": "/api/bloodbox/beacons",
     "method": "get",
     "x": 150,
-    "y": 1110,
+    "y": 1160,
     "wires": [
       [
         "bbbeaconsget_fn"
@@ -873,7 +924,7 @@
       }
     ],
     "x": 420,
-    "y": 1110,
+    "y": 1160,
     "wires": [
       [
         "bbbeaconsget_resp"
@@ -886,7 +937,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1110,
+    "y": 1160,
     "wires": []
   },
   {
@@ -897,7 +948,7 @@
     "url": "/api/bloodbox/beacons",
     "method": "post",
     "x": 150,
-    "y": 1160,
+    "y": 1210,
     "wires": [
       [
         "bbbeaconspost_fn"
@@ -918,7 +969,7 @@
       }
     ],
     "x": 420,
-    "y": 1160,
+    "y": 1210,
     "wires": [
       [
         "bbbeaconspost_resp"
@@ -931,7 +982,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1160,
+    "y": 1210,
     "wires": []
   },
   {
@@ -942,7 +993,7 @@
     "url": "/api/bloodbox/boxes/:id/location",
     "method": "get",
     "x": 150,
-    "y": 1210,
+    "y": 1260,
     "wires": [
       [
         "bblocget_fn"
@@ -963,7 +1014,7 @@
       }
     ],
     "x": 420,
-    "y": 1210,
+    "y": 1260,
     "wires": [
       [
         "bblocget_resp"
@@ -976,7 +1027,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1210,
+    "y": 1260,
     "wires": []
   },
   {
@@ -987,7 +1038,7 @@
     "url": "/api/bloodbox/boxes/:id/location",
     "method": "post",
     "x": 150,
-    "y": 1260,
+    "y": 1310,
     "wires": [
       [
         "bblocpost_fn"
@@ -1008,7 +1059,7 @@
       }
     ],
     "x": 420,
-    "y": 1260,
+    "y": 1310,
     "wires": [
       [
         "bblocpost_resp"
@@ -1021,7 +1072,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1260,
+    "y": 1310,
     "wires": []
   },
   {
@@ -1032,7 +1083,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 1310,
+    "y": 1360,
     "wires": [
       [
         "cors_fn"
@@ -1048,7 +1099,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 1310,
+    "y": 1360,
     "wires": [
       [
         "cors_resp"
@@ -1061,7 +1112,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1310,
+    "y": 1360,
     "wires": []
   },
   {
@@ -1072,7 +1123,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 1360,
+    "y": 1410,
     "wires": [
       [
         "readpost_fn"
@@ -1088,7 +1139,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 1360,
+    "y": 1410,
     "wires": [
       [
         "ingest"
@@ -1101,7 +1152,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1360,
+    "y": 1410,
     "wires": []
   }
 ]

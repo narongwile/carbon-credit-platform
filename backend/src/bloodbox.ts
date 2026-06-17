@@ -5,6 +5,7 @@
 import { Router } from 'express'
 import type { RowDataPacket } from 'mysql2'
 import { pool } from './db.js'
+import { ingest } from './ingest.js'
 
 // ---- Repo ------------------------------------------------------------------
 export async function transitsByOrg(orgId: string): Promise<RowDataPacket[]> {
@@ -111,8 +112,45 @@ export async function moveBox(boxId: string, loc: {
   })
 }
 
+// ---- Bridge: transit temperature → central alarm engine --------------------
+// A BloodBOX transit carries a temperature (and battery). To get real
+// excursion alerts during transit, we feed that reading into the SAME alarm
+// engine as every other node — keyed on the transit's linked node (box_id).
+// The box must exist in `nodes` (domain='bloodBox') with a saved rule; if it
+// is not linked/registered we skip the engine (transit row is still updated).
+export async function bridgeTransitTemp(
+  transit: RowDataPacket, tempC: number, battery?: number, ts?: number,
+): Promise<{ inserted: number } | null> {
+  const boxId = transit.box_id as string | null
+  if (!boxId || typeof tempC !== 'number' || Number.isNaN(tempC)) return null
+  // tempHigh + tempLow let the cold-chain rule alarm on both directions.
+  const values: Record<string, number> = { tempHigh: tempC, tempLow: tempC }
+  if (typeof battery === 'number') values.battery = battery
+  return ingest(boxId, values, ts)
+}
+
 // ---- Router ----------------------------------------------------------------
 export const bloodboxRouter = Router()
+
+// Report a transit telemetry sample: persist on the transit row AND bridge it
+// into the central alarm engine so excursions during transit raise events +
+// notifications like any other node.
+bloodboxRouter.post('/transits/:id/temp', async (req, res) => {
+  const { tempC, battery, ts } = req.body
+  if (typeof tempC !== 'number') return res.status(400).json({ error: 'tempC (number) required' })
+  const transit = await transitById(req.params.id)
+  if (!transit) return res.status(404).json({ error: 'transit not found' })
+  await pool.query(
+    `UPDATE blood_box_transits
+        SET current_temp_c = :t,
+            temp_max_c = GREATEST(COALESCE(temp_max_c, :t), :t),
+            status = CASE WHEN :t > COALESCE(temp_max_c, :t) THEN 'delayed' ELSE status END
+      WHERE id = :id`,
+    { t: tempC, id: req.params.id },
+  )
+  const bridged = await bridgeTransitTemp(transit, tempC, typeof battery === 'number' ? battery : undefined, ts)
+  res.json({ ok: true, bridged: bridged ?? { inserted: 0, reason: 'no linked node/rule' } })
+})
 
 bloodboxRouter.get('/transits', async (req, res) => {
   res.json(await transitsByOrg((req.query.orgId as string) || ''))
@@ -129,10 +167,16 @@ bloodboxRouter.get('/transits/:id/journey', async (req, res) => {
 })
 
 bloodboxRouter.post('/transits/:id/journey', async (req, res) => {
-  const { eventType, signal } = req.body
+  const { eventType, signal, tempC, batteryPct } = req.body
   if (!eventType || !signal) return res.status(400).json({ error: 'eventType and signal required' })
   const id = await insertJourneyEvent(req.params.id, req.body)
-  res.json({ ok: true, id })
+  // If the scan carried a temperature, bridge it into the alarm engine too.
+  let bridged: { inserted: number } | null = null
+  if (typeof tempC === 'number') {
+    const transit = await transitById(req.params.id)
+    if (transit) bridged = await bridgeTransitTemp(transit, tempC, typeof batteryPct === 'number' ? batteryPct : undefined)
+  }
+  res.json({ ok: true, id, bridged: bridged ?? undefined })
 })
 
 bloodboxRouter.get('/floors', async (req, res) => {

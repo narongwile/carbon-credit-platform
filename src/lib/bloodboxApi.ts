@@ -50,6 +50,10 @@ export const bloodboxApi = {
   journey: (transitId: string) => req<unknown[]>(`/api/bloodbox/transits/${transitId}/journey`),
   logJourney: (transitId: string, body: LogJourneyBody) =>
     req<{ id: string }>(`/api/bloodbox/transits/${transitId}/journey`, { method: 'POST', body: JSON.stringify(body) }),
+  // Report a transit temperature sample — persists + bridges into the central
+  // alarm engine so excursions during transit raise events/notifications.
+  reportTemp: (transitId: string, body: { tempC: number; battery?: number; ts?: number }) =>
+    req<{ ok: boolean; bridged: unknown }>(`/api/bloodbox/transits/${transitId}/temp`, { method: 'POST', body: JSON.stringify(body) }),
   floors: (orgId: string) => req<unknown[]>(`/api/bloodbox/floors?orgId=${encodeURIComponent(orgId)}`),
   beacons: (orgId: string, floorId?: string) =>
     req<unknown[]>(`/api/bloodbox/beacons?orgId=${encodeURIComponent(orgId)}${floorId ? `&floorId=${encodeURIComponent(floorId)}` : ''}`),
