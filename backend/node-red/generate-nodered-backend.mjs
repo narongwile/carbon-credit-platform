@@ -303,6 +303,20 @@ if(!b.orgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId req
   await pool.query('UPDATE blood_boxes SET floor_id=?,pos_x_m=?,pos_y_m=? WHERE id=?',[b.floorId||null,b.posX||null,b.posY||null,id]);
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
+// --- Generic fleet (transformer + carbonNode + bloodBox sensor nodes) -------
+// Powers the per-product overview / device-list screens from live DB instead of
+// mock data. Domain-agnostic: filter by ?domain= for one product line.
+const fleetListFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const domain=msg.req.query&&msg.req.query.domain;
+(async()=>{const sql="SELECT n.id,n.name,n.domain,n.site_id,n.department_id,p.online,p.last_seen,p.rssi,p.fw,"+
+  "(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm "+
+  "FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?"+(domain?" AND n.domain=?":"")+" ORDER BY n.domain,n.id";
+  const a=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const fleetLatestFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{const[r]=await pool.query("SELECT r1.param_key,r1.value,r1.taken_at FROM readings r1 JOIN (SELECT param_key,MAX(taken_at) mt FROM readings WHERE node_id=? GROUP BY param_key) r2 ON r1.param_key=r2.param_key AND r1.taken_at=r2.mt WHERE r1.node_id=?",[id,id]);
+  const out={}; let last=null; for(const row of r){ out[row.param_key]=Number(row.value); if(!last||row.taken_at>last) last=row.taken_at; }
+  msg.headers=__CORS; msg.payload={nodeId:id, values:out, lastReadingAt:last}; node.send(msg);})()` + bbErr
+
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 // notify node also needs nodemailer (SMTP email), like the Express service
 const NOTIFY_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'nodemailer', module: 'nodemailer' }]
@@ -377,11 +391,15 @@ const flow = [
   ...endpoint('bblocget', 'get', '/api/bloodbox/boxes/:id/location', bbLocGetFunc),
   ...endpoint('bblocpost', 'post', '/api/bloodbox/boxes/:id/location', bbLocPostFunc),
 
+  // Generic fleet read API (all products): list + latest readings
+  ...endpoint('fleetlatest', 'get', '/api/fleet/:id/latest', fleetLatestFunc),
+  ...endpoint('fleetlist', 'get', '/api/fleet', fleetListFunc),
+
   ...endpoint('cors', 'options', '/api/*', optionsFunc),
 ]
 
 // give every REST fn the mysql lib (handlers query the pool)
-for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb)/.test(n.id)) n.libs = LIBS
+for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb|fleet)/.test(n.id)) n.libs = LIBS
 
 // POST /readings ingest → reuse the engine ingest node, then reply via its
 // own http response node. ingest re-emits the original msg (req/res preserved
@@ -400,3 +418,4 @@ const types = [...new Set(flow.map((n) => n.type))]
 console.log('Generated', out, '—', flow.length, 'nodes ·', types.join(', '))
 console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:orgId/rule · GET /nodes/:id/events · POST /events/:id/ack · GET|POST /nodes/:id/readings · GET|POST /nodes/:id/documents · OPTIONS /api/*')
 console.log('BloodBOX: GET /bloodbox/transits · GET /bloodbox/transits/:id · GET|POST /bloodbox/transits/:id/journey · POST /bloodbox/transits/:id/temp (→engine bridge) · GET /bloodbox/floors · GET|POST|DELETE /bloodbox/beacons · GET|POST /bloodbox/boxes/:id/location')
+console.log('Fleet (all products): GET /fleet?orgId=&domain= · GET /fleet/:id/latest')

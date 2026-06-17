@@ -24,6 +24,36 @@ export async function nodesByOrg(orgId: string): Promise<{ id: string; domain: s
   return rows as { id: string; domain: string }[]
 }
 
+// ---- Fleet (generic, all products) ----------------------------------------
+export async function fleetByOrg(orgId: string, domain?: string): Promise<RowDataPacket[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT n.id, n.name, n.domain, n.site_id, n.department_id,
+            p.online, p.last_seen, p.rssi, p.fw,
+            (SELECT e.severity FROM alarm_events e
+              WHERE e.node_id = n.id AND e.acknowledged_at IS NULL
+              ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm
+       FROM nodes n LEFT JOIN device_presence p ON p.node_id = n.id
+      WHERE n.org_id = :orgId ${domain ? 'AND n.domain = :domain' : ''}
+      ORDER BY n.domain, n.id`,
+    { orgId, domain },
+  )
+  return rows
+}
+
+export async function latestReadings(nodeId: string): Promise<{ nodeId: string; values: Record<string, number>; lastReadingAt: string | null }> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT r1.param_key, r1.value, r1.taken_at FROM readings r1
+       JOIN (SELECT param_key, MAX(taken_at) mt FROM readings WHERE node_id = :id GROUP BY param_key) r2
+         ON r1.param_key = r2.param_key AND r1.taken_at = r2.mt
+      WHERE r1.node_id = :id`,
+    { id: nodeId },
+  )
+  const values: Record<string, number> = {}
+  let last: string | null = null
+  for (const r of rows) { values[r.param_key as string] = Number(r.value); if (!last || (r.taken_at as string) > last) last = r.taken_at as string }
+  return { nodeId, values, lastReadingAt: last }
+}
+
 // ---- Events ----------------------------------------------------------------
 export async function insertEvents(orgId: string, deptId: string | null, events: AlarmEvent[]): Promise<number> {
   if (!events.length) return 0

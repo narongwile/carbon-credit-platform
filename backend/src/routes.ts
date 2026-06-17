@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { ingest } from './ingest.js'
 import {
   getRule, putRule, nodesByOrg, eventsByNode, ackEvent, recentReadings,
+  fleetByOrg, latestReadings,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
@@ -36,6 +37,15 @@ router.put('/orgs/:orgId/rule', async (req, res) => {
   const nodes = (await nodesByOrg(req.params.orgId)).filter((n) => n.domain === rule.domain)
   for (const n of nodes) await putRule(n.id, req.params.orgId, rule, updatedBy)
   res.json({ ok: true, applied: nodes.length })
+})
+
+// ---- Fleet (generic, all products) ----------------------------------------
+router.get('/fleet', async (req, res) => {
+  res.json(await fleetByOrg((req.query.orgId as string) || '', req.query.domain as string | undefined))
+})
+
+router.get('/fleet/:id/latest', async (req, res) => {
+  res.json(await latestReadings(req.params.id))
 })
 
 // ---- Events ----------------------------------------------------------------

@@ -32,4 +32,24 @@ export const api = {
     req(`/api/events/${eventId}/ack`, { method: 'POST', body: JSON.stringify(body) }),
   ingest: (nodeId: string, values: Record<string, number>, ts?: number) =>
     req(`/api/nodes/${nodeId}/readings`, { method: 'POST', body: JSON.stringify({ values, ts }) }),
+
+  // Generic fleet (transformer / carbonNode / bloodBox) — live overview data.
+  // Returns null when the API is unset, so callers fall back to fleetData mock.
+  fleet: (orgId: string, domain?: string) =>
+    req<FleetNode[]>(`/api/fleet?orgId=${encodeURIComponent(orgId)}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`),
+  latest: (nodeId: string) =>
+    req<{ nodeId: string; values: Record<string, number>; lastReadingAt: string | null }>(`/api/fleet/${nodeId}/latest`),
+}
+
+export interface FleetNode {
+  id: string
+  name: string
+  domain: 'transformer' | 'carbonNode' | 'bloodBox'
+  site_id: string | null
+  department_id: string | null
+  online: 0 | 1 | null
+  last_seen: string | null
+  rssi: number | null
+  fw: string | null
+  alarm: 'WARNING' | 'CRITICAL' | null
 }

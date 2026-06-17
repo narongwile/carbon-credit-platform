@@ -18,8 +18,9 @@ escalation loop: unacked CRITICAL > N min → re-dispatch (escalation)
 ## Run
 ```bash
 cp .env.example .env          # defaults already target the cluster MySQL/MQTT
-mysql < sql/schema.sql        # create core schema
+mysql < sql/schema.sql        # create core schema (+ device_presence)
 mysql < sql/bloodbox.sql      # BloodBOX domain tables (run after schema.sql)
+mysql < sql/seed-nodes.sql    # optional: demo fleet so /api/fleet has data
 npm install && npm run dev    # or: npm run build && npm start
 ```
 Docker: `docker build -t oneops-backend .`  ·  k8s: `kubectl apply -f k8s/backend.yaml`
@@ -63,6 +64,8 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | POST | `/api/events/:id/ack` | acknowledge `{ by, eventProblemId }` |
 | GET/POST | `/api/nodes/:id/readings` | read / ingest telemetry `{ values, ts }` |
 | GET/POST | `/api/nodes/:id/documents` | department-scoped documents |
+| GET  | `/api/fleet?orgId=&domain=` | **fleet list (all products)** — nodes + presence + open-alarm severity (powers transformer & refrigeration overviews) |
+| GET  | `/api/fleet/:id/latest` | latest reading per channel for one node |
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |
