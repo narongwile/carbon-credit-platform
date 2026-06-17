@@ -91,7 +91,14 @@ CORS preflight requires a valid token; a per-endpoint **guard** enforces:
   config/cmd/ota downlink, report schedules. Non-superadmins are pinned to their
   `orgId` (the `:orgId` route param must match the token), so an admin cannot
   read or modify another tenant.
-- **authenticated (any role)**: reads (fleet/events/readings), me/config, bloodbox.
+- **authenticated (any role)**: me/config; bloodbox + fleet are filtered/scoped.
+- **device (node) scope**: every `/nodes/:id/*` route checks the node is in the
+  caller's org **and** within their effective product access + department; reads
+  need `view`, writes (rule/config/cmd/ota/documents) need `manage`. `GET /fleet`
+  returns only the devices the caller may see. Effective access = the user's
+  department grant **capped** by their per-user override (`none<view<manage`);
+  admin/superadmin manage their whole org. So an admin can limit each device's
+  visibility per department and per user, and no one sees another tenant's devices.
 
 Demo logins (after `seed-tenancy.sql`, password `demo1234`): `super@oneops.demo`
 (superadmin), `admin@kmutt.demo` (admin org-1), `viewer@kmutt.demo` (viewer).

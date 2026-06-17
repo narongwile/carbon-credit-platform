@@ -29,15 +29,19 @@ const ESCALATE_MIN = process.env.ESCALATE_AFTER_MIN || '15'
 // CORS preamble injected into every REST handler
 const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
 
-// Guard preamble injected into protected handlers (policy: auth|admin|super).
-// Verifies the Bearer JWT via the global guard (set in init) and enforces role +
-// org-scope; on failure it responds and short-circuits the handler.
-const GUARD = (policy) => !policy || policy === 'public' ? '' : `
+// Guard wrapper injected into protected handlers (policy: auth|admin|super|org|
+// node|node:manage). The async guard (init) verifies the Bearer JWT and enforces
+// role + org-scope + device access; the handler body runs only if it passes.
+// GUARD_OPEN wraps the body in an async fn; GUARD_CLOSE closes it.
+const GUARD_OPEN = (policy) => !policy || policy === 'public' ? '' : `
+return (async()=>{
 const __g=global.get('guard');
-const __ar=__g?__g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','${policy}',msg.req):{ok:false,code:503,error:'auth not ready'};
+const __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','${policy}',msg.req):{ok:false,code:503,error:'auth not ready'};
 if(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}
 msg.auth=__ar.auth;
 `
+const GUARD_CLOSE = (policy) => !policy || policy === 'public' ? '' : `
+})();`
 
 // --- init: MySQL pool + alarm engine into global context --------------------
 const initFunc = `
@@ -72,19 +76,46 @@ function evaluate(nodeId, rule, readings){
 }
 function mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}
 global.set('evaluate', evaluate);
-// 'jwt' is injected (functionExternalModules). Auth guard for protected handlers.
-global.set('guard', function(authHeader, policy, req){
+// Effective product access for a user (department grant capped by user override).
+global.set('accessFor', async function(userId){
+  const pool=global.get('pool'); const RANK={none:0,view:1,manage:2}; const levels={};
+  const [u]=await pool.query("SELECT org_id,role,department_id FROM users WHERE id=?",[userId]);
+  const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;
+  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}
+  else{
+    const [dr]=await pool.query("SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?",[departmentId||'']);
+    dr.forEach(r=>levels[r.domain]=r.level);
+    const [ur]=await pool.query("SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?",[userId]);
+    ur.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]<RANK[cur]) levels[r.domain]=r.level;});
+  }
+  return {orgId:u.length?u[0].org_id:'',role,departmentId,levels};
+});
+// 'jwt' is injected. Async guard: JWT + role + org-scope + device (node) access.
+global.set('guard', async function(authHeader, policy, req){
   if(policy==='public') return {ok:true,auth:null};
-  try{
-    const tok=(authHeader||'').replace(/^Bearer /,'');
-    if(!tok) return {ok:false,code:401,error:'authentication required'};
-    const claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me');
-    if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};
-    if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};
-    const oid = req.params && req.params.orgId;
-    if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};
-    return {ok:true, auth:claims};
-  }catch(e){ return {ok:false,code:401,error:'invalid token'}; }
+  let claims;
+  try{ const tok=(authHeader||'').replace(/^Bearer /,''); if(!tok) return {ok:false,code:401,error:'authentication required'};
+       claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me'); }
+  catch(e){ return {ok:false,code:401,error:'invalid token'}; }
+  if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};
+  if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};
+  const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);
+  if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};
+  if((policy==='node'||policy==='node:manage') && claims.role!=='superadmin'){
+    const pool=global.get('pool');
+    const [nm]=await pool.query("SELECT org_id,domain,department_id FROM nodes WHERE id=?",[req.params.id]);
+    if(!nm.length) return {ok:false,code:404,error:'node not found'};
+    const node=nm[0];
+    if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};
+    if(claims.role!=='admin'){
+      const acc=await global.get('accessFor')(claims.userId);
+      const lvl=acc.levels[node.domain]||'none';
+      if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};
+      if(policy==='node:manage' && lvl!=='manage') return {ok:false,code:403,error:'manage required'};
+      if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};
+    }
+  }
+  return {ok:true, auth:claims};
 });
 node.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');
 `
@@ -414,11 +445,16 @@ if(!b.orgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId req
 // --- Generic fleet (transformer + carbonNode + bloodBox sensor nodes) -------
 // Powers the per-product overview / device-list screens from live DB instead of
 // mock data. Domain-agnostic: filter by ?domain= for one product line.
-const fleetListFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const domain=msg.req.query&&msg.req.query.domain;
-(async()=>{const sql="SELECT n.id,n.name,n.domain,n.site_id,n.department_id,n.lat,n.lng,p.online,p.last_seen,p.rssi,p.fw,"+
-  "(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm "+
-  "FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?"+(domain?" AND n.domain=?":"")+" ORDER BY n.domain,n.id";
-  const a=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+const fleetListFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const domain=msg.req.query&&msg.req.query.domain;
+const orgId = au.role==='superadmin' ? ((msg.req.query&&msg.req.query.orgId)||au.orgId) : au.orgId;
+(async()=>{
+  const acc = au.role==='superadmin' ? {role:'superadmin',orgId:orgId,departmentId:null,levels:{}} : await global.get('accessFor')(au.userId);
+  const sql="SELECT n.id,n.name,n.domain,n.org_id,n.site_id,n.department_id,n.lat,n.lng,p.online,p.last_seen,p.rssi,p.fw,"+
+    "(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm "+
+    "FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?"+(domain?" AND n.domain=?":"")+" ORDER BY n.domain,n.id";
+  const args=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,args);
+  const vis=r.filter(n=>{ if(acc.role==='superadmin')return true; if(n.org_id!==acc.orgId)return false; if(acc.role==='admin')return true; const lvl=acc.levels[n.domain]||'none'; if(lvl==='none')return false; if(n.department_id && n.department_id!==acc.departmentId)return false; return true; });
+  msg.headers=__CORS; msg.payload=vis; node.send(msg);})()` + bbErr
 
 const fleetLatestFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
 (async()=>{const[r]=await pool.query("SELECT r1.param_key,r1.value,r1.taken_at FROM readings r1 JOIN (SELECT param_key,MAX(taken_at) mt FROM readings WHERE node_id=? GROUP BY param_key) r2 ON r1.param_key=r2.param_key AND r1.taken_at=r2.mt WHERE r1.node_id=?",[id,id]);
@@ -457,7 +493,7 @@ const endpoint = (idBase, method, url, handlerFunc, policy = 'auth') => {
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD(policy) + handlerFunc, 420, y, [[`${idBase}_resp`]]),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD_OPEN(policy) + handlerFunc + GUARD_CLOSE(policy), 420, y, [[`${idBase}_resp`]]),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
@@ -467,7 +503,7 @@ const bridgeEndpoint = (idBase, method, url, handlerFunc, policy = 'auth') => {
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD(policy) + handlerFunc, 420, y, [[`${idBase}_resp`], ['ingest']], 2, { libs: LIBS }),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD_OPEN(policy) + handlerFunc + GUARD_CLOSE(policy), 420, y, [[`${idBase}_resp`], ['ingest']], 2, { libs: LIBS }),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
@@ -476,7 +512,7 @@ const downlinkEndpoint = (idBase, method, url, handlerFunc, policy = 'auth') => 
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD(policy) + handlerFunc, 420, y, [[`${idBase}_resp`], ['mqttout']], 2, { libs: LIBS }),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD_OPEN(policy) + handlerFunc + GUARD_CLOSE(policy), 420, y, [[`${idBase}_resp`], ['mqttout']], 2, { libs: LIBS }),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
@@ -642,30 +678,30 @@ const flow = [
   // REST API (each endpoint = http in → fn → http response)
   ...endpoint('health', 'get', '/api/health', healthFunc, 'public'),
   ...endpoint('login', 'post', '/api/auth/login', loginFunc, 'public'),
-  ...endpoint('getrule', 'get', '/api/nodes/:id/rule', getRuleFunc),
-  ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc, 'admin'),
+  ...endpoint('getrule', 'get', '/api/nodes/:id/rule', getRuleFunc, 'node'),
+  ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc, 'node:manage'),
   ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),
-  ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc),
+  ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc, 'node'),
   ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc, 'admin'),
-  ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc),
-  ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc),
-  ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc),
+  ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc, 'node'),
+  ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc, 'node'),
+  ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc, 'node:manage'),
 
   // BloodBOX domain (ERD #4): transits, journey, floors, beacons, locations
   ...endpoint('bbjourneyget', 'get', '/api/bloodbox/transits/:id/journey', bbJourneyGetFunc),
   ...bridgeEndpoint('bbjourneypost', 'post', '/api/bloodbox/transits/:id/journey', bbJourneyPostFunc),
   ...bridgeEndpoint('bbtemp', 'post', '/api/bloodbox/transits/:id/temp', bbTempFunc),
   ...endpoint('bbtransit', 'get', '/api/bloodbox/transits/:id', bbTransitFunc),
-  ...endpoint('bbtransits', 'get', '/api/bloodbox/transits', bbTransitsFunc),
-  ...endpoint('bbfloors', 'get', '/api/bloodbox/floors', bbFloorsFunc),
+  ...endpoint('bbtransits', 'get', '/api/bloodbox/transits', bbTransitsFunc, 'org'),
+  ...endpoint('bbfloors', 'get', '/api/bloodbox/floors', bbFloorsFunc, 'org'),
   ...endpoint('bbbeacondel', 'delete', '/api/bloodbox/beacons/:id', bbBeaconDelFunc),
-  ...endpoint('bbbeaconsget', 'get', '/api/bloodbox/beacons', bbBeaconsGetFunc),
+  ...endpoint('bbbeaconsget', 'get', '/api/bloodbox/beacons', bbBeaconsGetFunc, 'org'),
   ...endpoint('bbbeaconspost', 'post', '/api/bloodbox/beacons', bbBeaconsPostFunc),
   ...endpoint('bblocget', 'get', '/api/bloodbox/boxes/:id/location', bbLocGetFunc),
   ...endpoint('bblocpost', 'post', '/api/bloodbox/boxes/:id/location', bbLocPostFunc),
 
   // Generic fleet read API (all products): list + latest readings
-  ...endpoint('fleetlatest', 'get', '/api/fleet/:id/latest', fleetLatestFunc),
+  ...endpoint('fleetlatest', 'get', '/api/fleet/:id/latest', fleetLatestFunc, 'node'),
   ...endpoint('fleetlist', 'get', '/api/fleet', fleetListFunc),
 
   // Scheduled-report CRUD (cron runs them; the scheduler lives in this flow)
@@ -694,9 +730,9 @@ const flow = [
   ...endpoint('nodeprov', 'post', '/api/nodes', nodeProvFunc, 'super'),
 
   // Downlink (backend → device): config (retained) / cmd / ota
-  ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc, 'admin'),
-  ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc, 'admin'),
-  ...downlinkEndpoint('otapost', 'post', '/api/nodes/:id/ota', otaPostFunc, 'admin'),
+  ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc, 'node:manage'),
+  ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc, 'node:manage'),
+  ...downlinkEndpoint('otapost', 'post', '/api/nodes/:id/ota', otaPostFunc, 'node:manage'),
 
   ...endpoint('cors', 'options', '/api/*', optionsFunc, 'public'),
 ]

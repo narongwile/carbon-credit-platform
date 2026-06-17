@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import type { Request, Response, NextFunction } from 'express'
+import { nodeMeta, effectiveAccess, canSeeNode } from './repo.js'
 
 const SECRET = process.env.JWT_SECRET || 'dev-secret-change-me'
 const TTL = process.env.JWT_TTL || '12h'
@@ -32,6 +33,18 @@ export const requireRole = (...roles: string[]) => (req: Request, res: Response,
   if (!req.auth) return res.status(401).json({ error: 'authentication required' })
   if (req.auth.role === 'superadmin' || roles.includes(req.auth.role)) return next()
   return res.status(403).json({ error: `requires role: ${roles.join('/')}` })
+}
+
+// Device (node) access: the :id node must be in the caller's org and within
+// their effective product access + department; write ops require 'manage'.
+export const requireNode = (write = false) => async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.auth) return res.status(401).json({ error: 'authentication required' })
+  if (req.auth.role === 'superadmin') return next()
+  const node = await nodeMeta(req.params.id)
+  if (!node) return res.status(404).json({ error: 'node not found' })
+  const access = await effectiveAccess(req.auth.userId)
+  if (!access || !canSeeNode(access, node, write)) return res.status(403).json({ error: 'no access to this device' })
+  next()
 }
 
 // Non-superadmin may only touch their own org (checks :orgId / :id route param,

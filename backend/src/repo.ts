@@ -191,6 +191,42 @@ export async function userByEmail(email: string): Promise<RowDataPacket | null> 
   const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, password_hash FROM users WHERE email = :e', { e: email })
   return rows.length ? rows[0] : null
 }
+
+// Effective product access for a user: department grant capped by the per-user
+// override (none<view<manage). admin/superadmin implicitly manage everything.
+const RANK: Record<string, number> = { none: 0, view: 1, manage: 2 }
+export interface Access { userId: string; orgId: string; role: string; departmentId: string | null; levels: Record<string, string> }
+export async function effectiveAccess(userId: string): Promise<Access | null> {
+  const u = await getUser(userId)
+  if (!u) return null
+  const role = (u.role as string) || 'viewer'
+  const departmentId = (u.department_id as string) ?? null
+  const levels: Record<string, string> = {}
+  if (role === 'admin' || role === 'superadmin') {
+    for (const d of ['transformer', 'carbonNode', 'bloodBox']) levels[d] = 'manage'
+  } else {
+    const [deptRows] = await pool.query<RowDataPacket[]>("SELECT domain, level FROM product_access WHERE scope='department' AND scope_id=:d", { d: departmentId ?? '' })
+    for (const r of deptRows) levels[r.domain as string] = r.level as string
+    const [usrRows] = await pool.query<RowDataPacket[]>("SELECT domain, level FROM product_access WHERE scope='user' AND scope_id=:u", { u: userId })
+    for (const r of usrRows) { // override caps (restricts) the department grant
+      const cur = levels[r.domain as string] ?? 'none'
+      levels[r.domain as string] = RANK[r.level as string] < RANK[cur] ? (r.level as string) : cur
+    }
+  }
+  return { userId, orgId: (u.org_id as string) || '', role, departmentId, levels }
+}
+
+// Can this access see/operate a node? (org → domain access → department → manage)
+export function canSeeNode(a: Access, node: { org_id: string; domain: string; department_id: string | null }, write = false): boolean {
+  if (a.role === 'superadmin') return true
+  if (node.org_id !== a.orgId) return false
+  if (a.role === 'admin') return true
+  const lvl = a.levels[node.domain] ?? 'none'
+  if (lvl === 'none') return false
+  if (write && lvl !== 'manage') return false
+  if (node.department_id && node.department_id !== a.departmentId) return false
+  return true
+}
 export async function getPrefs(userId: string): Promise<Record<string, unknown>> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT prefs FROM user_prefs WHERE user_id = :id', { id: userId })
   if (!rows.length) return {}

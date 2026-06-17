@@ -13,7 +13,8 @@ import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
 import { publishDownlink } from './mqtt.js'
 import { userByEmail } from './repo.js'
-import { signToken, checkPassword, requireAuth, requireRole, orgScope } from './auth.js'
+import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode } from './auth.js'
+import { effectiveAccess, canSeeNode } from './repo.js'
 
 export const router = Router()
 
@@ -38,14 +39,14 @@ router.use(requireAuth)
 // ---- BloodBOX domain (transits, journey, floors, beacons, locations) -------
 router.use('/bloodbox', bloodboxRouter)
 
-// ---- Alarm rules -----------------------------------------------------------
-router.get('/nodes/:id/rule', async (req, res) => {
+// ---- Alarm rules (device-scoped: org + product/department access) ----------
+router.get('/nodes/:id/rule', requireNode(), async (req, res) => {
   const rule = await getRule(req.params.id)
   if (!rule) return res.status(404).json({ error: 'no rule' })
   res.json(rule)
 })
 
-router.put('/nodes/:id/rule', async (req, res) => {
+router.put('/nodes/:id/rule', requireNode(true), async (req, res) => {
   const { orgId, rule, updatedBy } = req.body
   if (!orgId || !rule) return res.status(400).json({ error: 'orgId and rule required' })
   await putRule(req.params.id, orgId, rule, updatedBy)
@@ -53,7 +54,7 @@ router.put('/nodes/:id/rule', async (req, res) => {
 })
 
 // Admin "apply to all org nodes": set the same rule for every node of a domain.
-router.put('/orgs/:orgId/rule', async (req, res) => {
+router.put('/orgs/:orgId/rule', requireRole('admin'), orgScope('orgId'), async (req, res) => {
   const { rule, updatedBy } = req.body
   if (!rule?.domain) return res.status(400).json({ error: 'rule with domain required' })
   const nodes = (await nodesByOrg(req.params.orgId)).filter((n) => n.domain === rule.domain)
@@ -61,12 +62,16 @@ router.put('/orgs/:orgId/rule', async (req, res) => {
   res.json({ ok: true, applied: nodes.length })
 })
 
-// ---- Fleet (generic, all products) ----------------------------------------
+// ---- Fleet (filtered to what the caller may see) ---------------------------
 router.get('/fleet', async (req, res) => {
-  res.json(await fleetByOrg((req.query.orgId as string) || '', req.query.domain as string | undefined))
+  const access = req.auth ? await effectiveAccess(req.auth.userId) : null
+  if (!access) return res.status(401).json({ error: 'authentication required' })
+  const orgId = access.role === 'superadmin' ? ((req.query.orgId as string) || access.orgId) : access.orgId
+  const rows = await fleetByOrg(orgId, req.query.domain as string | undefined)
+  res.json(rows.filter((n) => canSeeNode(access, { org_id: n.org_id ?? orgId, domain: n.domain, department_id: n.department_id })))
 })
 
-router.get('/fleet/:id/latest', async (req, res) => {
+router.get('/fleet/:id/latest', requireNode(), async (req, res) => {
   res.json(await latestReadings(req.params.id))
 })
 
@@ -107,13 +112,13 @@ router.post('/nodes', requireRole(), async (req, res) => {
 
 // ---- Per-user config (configProfile); identity = x-user-id header ----------
 router.get('/me/config', async (req, res) => {
-  const uid = req.header('x-user-id')
-  if (!uid) return res.status(401).json({ error: 'x-user-id header required' })
+  const uid = req.auth?.userId || req.header('x-user-id')
+  if (!uid) return res.status(401).json({ error: 'authentication required' })
   res.json({ user: (await getUser(uid)) ?? { id: uid }, prefs: await getPrefs(uid) })
 })
 router.put('/me/config', async (req, res) => {
-  const uid = req.header('x-user-id')
-  if (!uid) return res.status(401).json({ error: 'x-user-id header required' })
+  const uid = req.auth?.userId || req.header('x-user-id')
+  if (!uid) return res.status(401).json({ error: 'authentication required' })
   await putPrefs(uid, req.body?.prefs ?? req.body)
   res.json({ ok: true })
 })
@@ -133,7 +138,7 @@ router.delete('/reports/schedules/:id', async (req, res) => {
 })
 
 // ---- Downlink (backend → device): config / cmd / ota -----------------------
-router.put('/nodes/:id/config', async (req, res) => {
+router.put('/nodes/:id/config', requireRole('admin'), requireNode(true), async (req, res) => {
   const prefix = await mqttPrefix(req.params.id)
   if (!prefix) return res.status(404).json({ error: 'node/mqtt_prefix not found' })
   let payload = req.body
@@ -142,7 +147,7 @@ router.put('/nodes/:id/config', async (req, res) => {
   res.json({ ok: publishDownlink(topic, payload, { qos: 1, retain: true }), topic })
 })
 
-router.post('/nodes/:id/cmd', async (req, res) => {
+router.post('/nodes/:id/cmd', requireRole('admin'), requireNode(true), async (req, res) => {
   const prefix = await mqttPrefix(req.params.id)
   if (!prefix) return res.status(404).json({ error: 'node/mqtt_prefix not found' })
   const op = (req.body?.op as string) || 'reboot'
@@ -150,7 +155,7 @@ router.post('/nodes/:id/cmd', async (req, res) => {
   res.json({ ok: publishDownlink(topic, req.body ?? {}, { qos: 1 }), topic })
 })
 
-router.post('/nodes/:id/ota', async (req, res) => {
+router.post('/nodes/:id/ota', requireRole('admin'), requireNode(true), async (req, res) => {
   const { to_version, artefact_uri } = req.body ?? {}
   if (!to_version || !artefact_uri) return res.status(400).json({ error: 'to_version and artefact_uri required' })
   const prefix = await mqttPrefix(req.params.id)
@@ -160,23 +165,23 @@ router.post('/nodes/:id/ota', async (req, res) => {
 })
 
 // ---- Events ----------------------------------------------------------------
-router.get('/nodes/:id/events', async (req, res) => {
+router.get('/nodes/:id/events', requireNode(), async (req, res) => {
   res.json(await eventsByNode(req.params.id, Number(req.query.limit || 50)))
 })
 
-router.post('/events/:id/ack', async (req, res) => {
+router.post('/events/:id/ack', requireRole('admin'), async (req, res) => {
   const { by, eventProblemId } = req.body
   await ackEvent(req.params.id, by || 'user', eventProblemId)
   res.json({ ok: true })
 })
 
 // ---- Telemetry -------------------------------------------------------------
-router.get('/nodes/:id/readings', async (req, res) => {
+router.get('/nodes/:id/readings', requireNode(), async (req, res) => {
   res.json(await recentReadings(req.params.id, Number(req.query.sinceMin || 360)))
 })
 
 // Node-RED / device telemetry ingest over HTTP (alternative to MQTT)
-router.post('/nodes/:id/readings', async (req, res) => {
+router.post('/nodes/:id/readings', requireNode(), async (req, res) => {
   const { values, ts } = req.body
   if (!values) return res.status(400).json({ error: 'values required' })
   const result = await ingest(req.params.id, values, ts)
@@ -184,7 +189,7 @@ router.post('/nodes/:id/readings', async (req, res) => {
 })
 
 // ---- Documents (department-scoped) ----------------------------------------
-router.get('/nodes/:id/documents', async (req, res) => {
+router.get('/nodes/:id/documents', requireNode(), async (req, res) => {
   const dept = req.query.departmentId as string | undefined
   const [rows] = await pool.query(
     'SELECT id, name, size, uploaded_by, created_at FROM documents WHERE node_id = :n AND department_id = :d ORDER BY created_at DESC',
@@ -193,7 +198,7 @@ router.get('/nodes/:id/documents', async (req, res) => {
   res.json(rows)
 })
 
-router.post('/nodes/:id/documents', async (req, res) => {
+router.post('/nodes/:id/documents', requireNode(true), async (req, res) => {
   const { departmentId, name, size, uploadedBy, dataBase64 } = req.body
   if (!departmentId || !name) return res.status(400).json({ error: 'departmentId and name required' })
   const id = `doc-${Date.now()}`
