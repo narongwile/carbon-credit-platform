@@ -70,27 +70,31 @@ const __H = { 'Access-Control-Allow-Origin': '*' };
 const __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)
 const pool = global.get('pool'); const evaluate = global.get('evaluate');
 const { nodeId, values, ts } = msg.payload || {};
-if (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null]); return null; }
+if (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }
 const taken = new Date(ts || Date.now());
 (async () => {
   for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }
   const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);
-  const [mm] = await pool.query('SELECT org_id, department_id FROM nodes WHERE id=?',[nodeId]);
-  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null]); return; }
+  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);
+  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }
   const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;
   const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);
   const byTs=new Map();
   for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}
   const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);
   const events = evaluate(nodeId, rule, readings);
+  const pfx = mm[0].mqtt_prefix;
   let inserted=0;
   for (const e of events){
     const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;
     await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);
-    inserted++; node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null]);
+    inserted++;
+    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity
+    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;
+    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);
   }
-  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null]);
+  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null, null]);
 })().catch(err => { node.error(err.message, msg); });
 return null;
 `
@@ -141,33 +145,40 @@ return null;
 `
 
 const normalizeFunc = `
-// Output 1 = readings (→ ingest); Output 2 = presence (→ device_presence).
+// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);
+// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress).
 // Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |
 //          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.
 const MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',
   moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
   rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };
 const p = msg.payload;
+const topo = (msg.topic||'').split('/');
+const fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;
 // --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload
 if (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {
   if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {
-    const id = p.device_id || (msg.topic||'').split('/').slice(-2,-1)[0];
+    const id = p.device_id || fromTopic(2);
     if (!id) return null;
     const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online
-    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }];
+    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }, null];
   }
-  return null;   // diag / ota-progress → not ingested
+  // diag/log or ota/progress → device_logs (Out3)
+  const isOta = p.pct!==undefined || p.status!==undefined;
+  const id = p.device_id || fromTopic(isOta ? 3 : 3);
+  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', payload: p, ts: p.ts||Date.now() } }];
+  return null;
 }
 // --- readings
 let nodeId, raw = {}, ts = Date.now();
 if (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }
 else if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }
 else if (p && typeof p==='object'){ return null; }
-else { const t=(msg.topic||'').split('/'); nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }
+else { const t=topo; nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }
 if(!nodeId) return null;
 const values = {};
 for (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }
-return [{ payload: { nodeId, values, ts } }, null];
+return [{ payload: { nodeId, values, ts } }, null, null];
 `
 
 // Presence upsert: heartbeat/status keep device_presence fresh (last_seen, online).
@@ -189,7 +200,7 @@ const clearSweepFunc = `
 const pool = global.get('pool'); if (!pool) return null;
 const CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);
 (async () => {
-  const [evs] = await pool.query("SELECT id, node_id, param_key FROM alarm_events WHERE cleared_at IS NULL AND kind IN ('threshold','rate')");
+  const [evs] = await pool.query("SELECT e.id, e.node_id, e.param_key, n.mqtt_prefix FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.cleared_at IS NULL AND e.kind IN ('threshold','rate')");
   for (const ev of evs) {
     const [rr] = await pool.query("SELECT rule_json FROM alarm_rules WHERE node_id=?", [ev.node_id]);
     if (!rr.length) continue;
@@ -200,9 +211,49 @@ const CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);
     const [rows] = await pool.query("SELECT value FROM readings WHERE node_id=? AND param_key=? AND taken_at > (NOW(3) - INTERVAL ? MINUTE)", [ev.node_id, ev.param_key, CLEAR_MIN]);
     if (!rows.length) continue;   // no fresh data ⇒ don't clear yet
     const stillBreaching = rows.some(r => { const v = Number(r.value); return param.direction==='high' ? v >= (param.warn - hys) : v <= (param.warn + hys); });
-    if (!stillBreaching) await pool.query("UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?", [ev.id]);
+    if (!stillBreaching) {
+      await pool.query("UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?", [ev.id]);
+      // §9: clear the retained alarm topic so subscribers see NORMAL
+      if (ev.mqtt_prefix) node.send({ topic: ev.mqtt_prefix+'/alarm/'+ev.param_key, payload: { sid:ev.param_key, state:'NORMAL', ts:Date.now() }, qos:1, retain:true });
+    }
   }
 })().catch(e => node.error('clear-sweep: ' + e.message));
+return null;
+`
+
+// Device logs: store P/diag/log + P/ota/progress (observability).
+const devlogFunc = `
+const pool = global.get('pool'); const e = msg.payload;
+if (!pool || !e || !e.nodeId) return null;
+(async () => {
+  await pool.query("INSERT INTO device_logs (node_id, kind, level, payload, ts) VALUES (?,?,?,?,NOW(3))",
+    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), JSON.stringify(e.payload||{})]);
+})().catch(err => node.error('devlog: ' + err.message));
+return null;
+`
+
+// Dead-letter: the global catch node routes any node error here for persistence.
+const deadLetterFunc = `
+const pool = global.get('pool');
+const err = msg.error || {}; const src = (err.source && err.source.id) || 'unknown';
+if (pool) pool.query("INSERT INTO dead_letter (source, error, payload) VALUES (?,?,?)",
+  [String(src).slice(0,120), String(err.message||'').slice(0,500), JSON.stringify(msg.payload||null)]).catch(()=>{});
+node.warn('dead-letter from ' + src + ': ' + (err.message||''));
+return null;
+`
+
+// Retention: roll raw readings into hourly buckets, then purge raw older than N days.
+const retentionFunc = `
+const pool = global.get('pool'); if (!pool) return null;
+const DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);
+(async () => {
+  await pool.query("INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max) " +
+    "SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, COUNT(*), AVG(value), MIN(value), MAX(value) " +
+    "FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key, bucket " +
+    "ON DUPLICATE KEY UPDATE n=VALUES(n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)", [DAYS]);
+  const [res] = await pool.query("DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY)", [DAYS]);
+  if (res.affectedRows) node.warn('retention: rolled up + purged ' + res.affectedRows + ' raw readings');
+})().catch(e => node.error('retention: ' + e.message));
 return null;
 `
 
@@ -406,13 +457,23 @@ const flow = [
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
   // downlink publisher: topic/qos/retain taken from each msg (config/cmd/ota)
   { id: 'mqttout', type: 'mqtt out', z: 'be', name: 'downlink', topic: '', qos: '', retain: '', broker: 'mqttbroker', x: 980, y: 470, wires: [] },
-  fn('normalize', 'normalize (readings | presence)', normalizeFunc, 330, 140, [['ingest'], ['presence']], 2),
-  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], []], 3, { libs: LIBS }),
+  fn('normalize', 'normalize (readings | presence | logs)', normalizeFunc, 330, 140, [['ingest'], ['presence'], ['devlog']], 3),
+  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], [], ['mqttout']], 4, { libs: LIBS }),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
   { id: 'dbgIngest', type: 'debug', z: 'be', name: 'ingest', active: true, complete: 'payload', x: 830, y: 140, wires: [] },
 
   // presence: heartbeat/status → device_presence (last_seen, online)
   fn('presence', 'presence upsert', presenceFunc, 560, 80, [[]], 1, { libs: LIBS }),
+  // device logs: P/diag/log + P/ota/progress → device_logs
+  fn('devlog', 'device log store', devlogFunc, 560, 20, [[]], 1, { libs: LIBS }),
+
+  // global error catch → dead-letter (persist + warn); robustness
+  { id: 'catchall', type: 'catch', z: 'be', name: 'catch all', scope: null, uncaught: false, x: 130, y: 540, wires: [['deadletter']] },
+  fn('deadletter', 'dead-letter', deadLetterFunc, 350, 540, [[]], 1, { libs: LIBS }),
+
+  // retention: hourly rollup + purge of raw readings
+  { id: 'rettick', type: 'inject', z: 'be', name: 'hourly', props: [], repeat: '3600', x: 130, y: 600, wires: [['retention']] },
+  fn('retention', 'readings retention', retentionFunc, 350, 600, [[]], 1, { libs: LIBS }),
 
   // escalation loop
   { id: 'esctick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 260, wires: [['escalate']] },
@@ -424,7 +485,7 @@ const flow = [
 
   // auto-clear sweep: close events whose param returned to NORMAL (spec §9)
   { id: 'cleartick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 400, wires: [['clearsweep']] },
-  fn('clearsweep', 'auto-clear sweep', clearSweepFunc, 350, 400, [[]], 1, { libs: LIBS }),
+  fn('clearsweep', 'auto-clear sweep', clearSweepFunc, 350, 400, [['mqttout']], 1, { libs: LIBS }),
 
   // REST API (each endpoint = http in → fn → http response)
   ...endpoint('health', 'get', '/api/health', healthFunc),
@@ -474,7 +535,7 @@ httpIngest[1].name = 'POST /api/nodes/:id/readings'
 flow.push(...httpIngest)                 // keep the http response node (readpost_resp)
 // ingest output 3 → readings http response (only fired for HTTP-origin msgs)
 const ingestNode = flow.find((n) => n.id === 'ingest')
-ingestNode.wires = [['dbgIngest'], ['notify'], ['readpost_resp']]
+ingestNode.wires = [['dbgIngest'], ['notify'], ['readpost_resp'], ['mqttout']]
 
 const out = join(dirname(fileURLToPath(import.meta.url)), 'flows.nodered-backend.json')
 writeFileSync(out, JSON.stringify(flow, null, 2) + '\n')

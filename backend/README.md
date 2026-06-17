@@ -76,6 +76,19 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST/DELETE | `/api/bloodbox/beacons` | BLE beacon management (indoor anchors) |
 | GET/POST | `/api/bloodbox/boxes/:id/location` | current indoor location / move box |
 
+## Robustness
+- **Global error catch → dead-letter:** the Node-RED `catch` node (and the
+  Express error middleware + `unhandledRejection` net) persist failures to the
+  `dead_letter` table instead of losing them.
+- **Data retention:** an hourly job rolls raw `readings` older than
+  `READINGS_RETENTION_DAYS` (default 30) into hourly `readings_rollup` buckets,
+  then purges the raw rows so the table stays lean.
+- **Device logs:** `P/diag/log` and `P/ota/progress` are stored in `device_logs`
+  (Node-RED flow; the `normalize` node routes them on a 3rd output).
+- **Retained alarm echo (spec §9):** when an event is raised it is republished
+  to `P/alarm/{paramKey}` (QoS 1, retain) so late UI subscribers / device
+  actuators read current severity; the auto-clear sweep republishes `NORMAL`.
+
 ## Presence / offline detection
 The ESP32 `P/status` (birth/will) and `P/heartbeat` messages are routed by the
 Node-RED `normalize` node to a **presence** handler that upserts `device_presence`

@@ -82,9 +82,9 @@
     "id": "normalize",
     "type": "function",
     "z": "be",
-    "name": "normalize (readings | presence)",
-    "func": "\n// Output 1 = readings (→ ingest); Output 2 = presence (→ device_presence).\n// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |\n//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nconst p = msg.payload;\n// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload\nif (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {\n  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {\n    const id = p.device_id || (msg.topic||'').split('/').slice(-2,-1)[0];\n    if (!id) return null;\n    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online\n    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }];\n  }\n  return null;   // diag / ota-progress → not ingested\n}\n// --- readings\nlet nodeId, raw = {}, ts = Date.now();\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }\nelse if (p && typeof p==='object'){ return null; }\nelse { const t=(msg.topic||'').split('/'); nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\nconst values = {};\nfor (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }\nreturn [{ payload: { nodeId, values, ts } }, null];\n",
-    "outputs": 2,
+    "name": "normalize (readings | presence | logs)",
+    "func": "\n// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);\n// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress).\n// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |\n//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nconst p = msg.payload;\nconst topo = (msg.topic||'').split('/');\nconst fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;\n// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload\nif (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {\n  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {\n    const id = p.device_id || fromTopic(2);\n    if (!id) return null;\n    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online\n    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }, null];\n  }\n  // diag/log or ota/progress → device_logs (Out3)\n  const isOta = p.pct!==undefined || p.status!==undefined;\n  const id = p.device_id || fromTopic(isOta ? 3 : 3);\n  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', payload: p, ts: p.ts||Date.now() } }];\n  return null;\n}\n// --- readings\nlet nodeId, raw = {}, ts = Date.now();\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }\nelse if (p && typeof p==='object'){ return null; }\nelse { const t=topo; nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\nconst values = {};\nfor (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }\nreturn [{ payload: { nodeId, values, ts } }, null, null];\n",
+    "outputs": 3,
     "libs": [],
     "x": 330,
     "y": 140,
@@ -94,6 +94,9 @@
       ],
       [
         "presence"
+      ],
+      [
+        "devlog"
       ]
     ]
   },
@@ -102,8 +105,8 @@
     "type": "function",
     "z": "be",
     "name": "ingest + evaluate + persist",
-    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++; node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null]);\n  }\n  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
-    "outputs": 3,
+    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  const pfx = mm[0].mqtt_prefix;\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++;\n    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity\n    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;\n    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);\n  }\n  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
+    "outputs": 4,
     "libs": [
       {
         "var": "mysql",
@@ -121,6 +124,9 @@
       ],
       [
         "readpost_resp"
+      ],
+      [
+        "mqttout"
       ]
     ]
   },
@@ -173,6 +179,93 @@
     ],
     "x": 560,
     "y": 80,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "devlog",
+    "type": "function",
+    "z": "be",
+    "name": "device log store",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_logs (node_id, kind, level, payload, ts) VALUES (?,?,?,?,NOW(3))\",\n    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), JSON.stringify(e.payload||{})]);\n})().catch(err => node.error('devlog: ' + err.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 560,
+    "y": 20,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "catchall",
+    "type": "catch",
+    "z": "be",
+    "name": "catch all",
+    "scope": null,
+    "uncaught": false,
+    "x": 130,
+    "y": 540,
+    "wires": [
+      [
+        "deadletter"
+      ]
+    ]
+  },
+  {
+    "id": "deadletter",
+    "type": "function",
+    "z": "be",
+    "name": "dead-letter",
+    "func": "\nconst pool = global.get('pool');\nconst err = msg.error || {}; const src = (err.source && err.source.id) || 'unknown';\nif (pool) pool.query(\"INSERT INTO dead_letter (source, error, payload) VALUES (?,?,?)\",\n  [String(src).slice(0,120), String(err.message||'').slice(0,500), JSON.stringify(msg.payload||null)]).catch(()=>{});\nnode.warn('dead-letter from ' + src + ': ' + (err.message||''));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 540,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rettick",
+    "type": "inject",
+    "z": "be",
+    "name": "hourly",
+    "props": [],
+    "repeat": "3600",
+    "x": 130,
+    "y": 600,
+    "wires": [
+      [
+        "retention"
+      ]
+    ]
+  },
+  {
+    "id": "retention",
+    "type": "function",
+    "z": "be",
+    "name": "readings retention",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);\n(async () => {\n  await pool.query(\"INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max) \" +\n    \"SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, COUNT(*), AVG(value), MIN(value), MAX(value) \" +\n    \"FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key, bucket \" +\n    \"ON DUPLICATE KEY UPDATE n=VALUES(n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)\", [DAYS]);\n  const [res] = await pool.query(\"DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY)\", [DAYS]);\n  if (res.affectedRows) node.warn('retention: rolled up + purged ' + res.affectedRows + ' raw readings');\n})().catch(e => node.error('retention: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 600,
     "wires": [
       []
     ]
@@ -269,7 +362,7 @@
     "type": "function",
     "z": "be",
     "name": "auto-clear sweep",
-    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);\n(async () => {\n  const [evs] = await pool.query(\"SELECT id, node_id, param_key FROM alarm_events WHERE cleared_at IS NULL AND kind IN ('threshold','rate')\");\n  for (const ev of evs) {\n    const [rr] = await pool.query(\"SELECT rule_json FROM alarm_rules WHERE node_id=?\", [ev.node_id]);\n    if (!rr.length) continue;\n    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;\n    const param = (rule.params||[]).find(p => p.key===ev.param_key);\n    if (!param) continue;\n    const hys = rule.hysteresis || 0;\n    const [rows] = await pool.query(\"SELECT value FROM readings WHERE node_id=? AND param_key=? AND taken_at > (NOW(3) - INTERVAL ? MINUTE)\", [ev.node_id, ev.param_key, CLEAR_MIN]);\n    if (!rows.length) continue;   // no fresh data ⇒ don't clear yet\n    const stillBreaching = rows.some(r => { const v = Number(r.value); return param.direction==='high' ? v >= (param.warn - hys) : v <= (param.warn + hys); });\n    if (!stillBreaching) await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?\", [ev.id]);\n  }\n})().catch(e => node.error('clear-sweep: ' + e.message));\nreturn null;\n",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);\n(async () => {\n  const [evs] = await pool.query(\"SELECT e.id, e.node_id, e.param_key, n.mqtt_prefix FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.cleared_at IS NULL AND e.kind IN ('threshold','rate')\");\n  for (const ev of evs) {\n    const [rr] = await pool.query(\"SELECT rule_json FROM alarm_rules WHERE node_id=?\", [ev.node_id]);\n    if (!rr.length) continue;\n    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;\n    const param = (rule.params||[]).find(p => p.key===ev.param_key);\n    if (!param) continue;\n    const hys = rule.hysteresis || 0;\n    const [rows] = await pool.query(\"SELECT value FROM readings WHERE node_id=? AND param_key=? AND taken_at > (NOW(3) - INTERVAL ? MINUTE)\", [ev.node_id, ev.param_key, CLEAR_MIN]);\n    if (!rows.length) continue;   // no fresh data ⇒ don't clear yet\n    const stillBreaching = rows.some(r => { const v = Number(r.value); return param.direction==='high' ? v >= (param.warn - hys) : v <= (param.warn + hys); });\n    if (!stillBreaching) {\n      await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?\", [ev.id]);\n      // §9: clear the retained alarm topic so subscribers see NORMAL\n      if (ev.mqtt_prefix) node.send({ topic: ev.mqtt_prefix+'/alarm/'+ev.param_key, payload: { sid:ev.param_key, state:'NORMAL', ts:Date.now() }, qos:1, retain:true });\n    }\n  }\n})().catch(e => node.error('clear-sweep: ' + e.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -280,7 +373,9 @@
     "x": 350,
     "y": 400,
     "wires": [
-      []
+      [
+        "mqttout"
+      ]
     ]
   },
   {

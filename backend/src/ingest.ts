@@ -1,9 +1,10 @@
 import type { RowDataPacket } from 'mysql2'
 import { evaluate, type Reading, type AlarmEvent } from './engine.js'
 import {
-  insertReading, getRule, recentReadings, nodeMeta, existingEventIds, insertEvents, channelsFor,
+  insertReading, getRule, recentReadings, nodeMeta, existingEventIds, insertEvents, channelsFor, mqttPrefix,
 } from './repo.js'
 import { dispatch, type Channel } from './notify/index.js'
+import { publishDownlink } from './mqtt.js'
 
 function groupReadings(rows: RowDataPacket[]): Reading[] {
   const byTs = new Map<number, Reading>()
@@ -37,6 +38,12 @@ export async function ingest(nodeId: string, values: Record<string, number>, ts?
   if (!fresh.length) return { inserted: 0 }
 
   await insertEvents(meta.org_id, meta.department_id, fresh)
+
+  // §9: retained per-device alarm echo so late subscribers / actuators read current state
+  const prefix = await mqttPrefix(nodeId)
+  if (prefix) for (const e of fresh) {
+    publishDownlink(`${prefix}/alarm/${e.paramKey}`, { sid: e.paramKey, severity: e.severity, value: e.value, thr: e.threshold, state: e.severity, ts: e.ts }, { qos: 1, retain: true })
+  }
 
   const channels = await channelsFor(meta.org_id, meta.department_id)
   const cfgs = channels.map((c) => ({ channel: c.channel as Channel, target: c.target as string, min_severity: c.min_severity as 'WARNING' | 'CRITICAL' }))

@@ -121,6 +121,26 @@ export async function mqttPrefix(nodeId: string): Promise<string | null> {
   return rows.length ? ((rows[0].mqtt_prefix as string) ?? null) : null
 }
 
+// ---- Robustness: dead-letter + retention -----------------------------------
+export async function insertDeadLetter(source: string, error: string, payload: unknown): Promise<void> {
+  await pool.query('INSERT INTO dead_letter (source, error, payload) VALUES (:s, :e, :p)', {
+    s: source.slice(0, 120), e: error.slice(0, 500), p: payload == null ? null : JSON.stringify(payload),
+  })
+}
+
+export async function rollupAndPurgeReadings(retentionDays: number): Promise<number> {
+  await pool.query(
+    `INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max)
+       SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000'), COUNT(*), AVG(value), MIN(value), MAX(value)
+         FROM readings WHERE taken_at < (NOW(3) - INTERVAL :d DAY)
+        GROUP BY node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000')
+     ON DUPLICATE KEY UPDATE n=VALUES(n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)`,
+    { d: retentionDays },
+  )
+  const [res] = await pool.query<ResultSetHeader>('DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL :d DAY)', { d: retentionDays })
+  return res.affectedRows
+}
+
 export async function markEscalated(ids: string[]): Promise<void> {
   if (!ids.length) return
   await pool.query('UPDATE alarm_events SET escalated = 1 WHERE id IN (?)', [ids])
