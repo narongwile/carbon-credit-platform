@@ -38,3 +38,11 @@ INSERT IGNORE INTO product_access (scope, scope_id, domain, level) VALUES
   ('department','dept-3a','bloodBox','view'),
   -- per-user override (restrict viewer to view-only transformer)
   ('user','u-view1','transformer','view');
+
+-- Event problem catalog (root causes) — transformer examples for org-1 dept-1a
+INSERT IGNORE INTO event_problems (id, org_id, department_id, domain, label) VALUES
+  ('ep-1','org-1','dept-1a','transformer','Cooling fan failure'),
+  ('ep-2','org-1','dept-1a','transformer','Overload / high demand'),
+  ('ep-3','org-1','dept-1a','transformer','Oil degradation / low level'),
+  ('ep-4','org-1','dept-1a','transformer','Sensor fault (false reading)'),
+  ('ep-5','org-1','dept-1a','transformer','Ambient heat / ventilation');

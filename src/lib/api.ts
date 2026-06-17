@@ -105,6 +105,14 @@ export const api = {
     req(`/api/product-access`, { method: 'PUT', body: JSON.stringify(body) }),
   provisionNode: (body: { id: string; orgId: string; siteId?: string; departmentId?: string; domain: string; name: string; mqttPrefix?: string; lat?: number; lng?: number }) =>
     req<{ id: string }>(`/api/nodes`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // Event problem catalog (root causes) — admin maintains, viewers read for ack.
+  eventProblems: (orgId: string, departmentId?: string, domain?: string) =>
+    req<{ id: string; label: string; department_id: string | null; domain: string | null }[]>(
+      `/api/event-problems?orgId=${encodeURIComponent(orgId)}${departmentId ? `&departmentId=${encodeURIComponent(departmentId)}` : ''}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`),
+  saveEventProblem: (body: { id?: string; orgId: string; departmentId?: string; domain?: string; label: string }) =>
+    req<{ id: string }>(`/api/event-problems`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteEventProblem: (id: string) => req(`/api/event-problems/${id}`, { method: 'DELETE' }),
 }
 
 export interface FleetNode {

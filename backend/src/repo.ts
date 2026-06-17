@@ -216,6 +216,26 @@ export async function effectiveAccess(userId: string): Promise<Access | null> {
   return { userId, orgId: (u.org_id as string) || '', role, departmentId, levels }
 }
 
+// ---- Event problem catalog (root causes) -----------------------------------
+export async function listEventProblems(orgId: string, departmentId?: string, domain?: string): Promise<RowDataPacket[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM event_problems WHERE org_id = :o
+       ${departmentId ? 'AND (department_id = :d OR department_id IS NULL)' : ''}
+       ${domain ? 'AND (domain = :dom OR domain IS NULL)' : ''} ORDER BY label`,
+    { o: orgId, d: departmentId, dom: domain },
+  )
+  return rows
+}
+export async function upsertEventProblem(b: { id?: string; orgId: string; departmentId?: string; domain?: string; label: string }): Promise<string> {
+  const id = b.id || `ep-${Date.now()}`
+  await pool.query(
+    'INSERT INTO event_problems (id,org_id,department_id,domain,label) VALUES (:id,:o,:d,:dom,:l) ON DUPLICATE KEY UPDATE department_id=:d,domain=:dom,label=:l',
+    { id, o: b.orgId, d: b.departmentId ?? null, dom: b.domain ?? null, l: b.label },
+  )
+  return id
+}
+export async function deleteEventProblem(id: string): Promise<void> { await pool.query('DELETE FROM event_problems WHERE id = :id', { id }) }
+
 // The node behind an alarm event (for ack authorization).
 export async function eventNode(eventId: string): Promise<{ org_id: string; domain: string; department_id: string | null } | null> {
   const [rows] = await pool.query<RowDataPacket[]>(

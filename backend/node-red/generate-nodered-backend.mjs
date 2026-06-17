@@ -101,13 +101,13 @@ global.set('guard', async function(authHeader, policy, req){
   if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};
   const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);
   if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};
-  if((policy==='node'||policy==='node:manage'||policy==='event:manage') && claims.role!=='superadmin'){
-    const pool=global.get('pool');
+  if((policy==='node'||policy==='node:manage'||policy==='event:view'||policy==='event:manage') && claims.role!=='superadmin'){
+    const pool=global.get('pool'); const isEvent=policy.indexOf('event:')===0; const needManage=(policy==='node:manage'||policy==='event:manage');
     let nm;
-    if(policy==='event:manage') nm=(await pool.query("SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?",[req.params.id]))[0];
+    if(isEvent) nm=(await pool.query("SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?",[req.params.id]))[0];
     else nm=(await pool.query("SELECT org_id,domain,department_id FROM nodes WHERE id=?",[req.params.id]))[0];
     if(!nm.length) return {ok:false,code:404,error:'not found'};
-    const node=nm[0]; const needManage = policy!=='node';
+    const node=nm[0];
     if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};
     if(claims.role!=='admin'){
       const acc=await global.get('accessFor')(claims.userId);
@@ -579,6 +579,18 @@ if(!b.orgId||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'
 const rptDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
 (async()=>{await pool.query("DELETE FROM report_schedules WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
+// Event problem catalog (root causes): admin maintains; viewers read for ack.
+const epListFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const q=msg.req.query||{};
+const orgId = au.role==='superadmin' ? (q.orgId||au.orgId) : au.orgId;
+(async()=>{let sql="SELECT * FROM event_problems WHERE org_id=?"; const a=[orgId]; if(q.departmentId){sql+=" AND (department_id=? OR department_id IS NULL)"; a.push(q.departmentId);} if(q.domain){sql+=" AND (domain=? OR domain IS NULL)"; a.push(q.domain);} sql+=" ORDER BY label"; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const epPostFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.orgId||!b.label){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and label required'};return msg;}
+(async()=>{const id=b.id||'ep-'+Date.now(); await pool.query("INSERT INTO event_problems (id,org_id,department_id,domain,label) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE department_id=VALUES(department_id),domain=VALUES(domain),label=VALUES(label)",[id,b.orgId,b.departmentId||null,b.domain||null,b.label]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+
+const epDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query("DELETE FROM event_problems WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
 // --- Per-user config (configProfile). Identity = x-user-id header (pre-auth) --
 const meGetFunc = CORS + `const pool=global.get('pool'); const uid=(msg.req.headers&&msg.req.headers['x-user-id'])||'';
 if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'x-user-id header required'};return msg;}
@@ -684,7 +696,7 @@ const flow = [
   ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc, 'node:manage'),
   ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),
   ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc, 'node'),
-  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc, 'event:manage'),
+  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc, 'event:view'),
   ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc, 'node'),
   ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc, 'node'),
   ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc, 'node:manage'),
@@ -710,6 +722,11 @@ const flow = [
   ...endpoint('rptlist', 'get', '/api/reports/schedules', rptListFunc),
   ...endpoint('rptpost', 'post', '/api/reports/schedules', rptPostFunc, 'admin'),
   ...endpoint('rptdel', 'delete', '/api/reports/schedules/:id', rptDelFunc, 'admin'),
+
+  // Event problem catalog (root causes)
+  ...endpoint('eplist', 'get', '/api/event-problems', epListFunc, 'auth'),
+  ...endpoint('eppost', 'post', '/api/event-problems', epPostFunc, 'admin'),
+  ...endpoint('epdel', 'delete', '/api/event-problems/:id', epDelFunc, 'admin'),
 
   // Per-user config (configProfile)
   ...endpoint('meget', 'get', '/api/me/config', meGetFunc),

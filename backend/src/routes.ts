@@ -6,6 +6,7 @@ import {
   listSchedules, upsertSchedule, deleteSchedule,
   getUser, getPrefs, putPrefs,
   listOrgs, upsertOrg, deleteOrg, getEntitlements, setEntitlements,
+  listEventProblems, upsertEventProblem, deleteEventProblem,
   listDepartments, upsertDepartment, deleteDepartment,
   listUsers, upsertUser, deleteUser, getProductAccess, putProductAccess, provisionNode,
 } from './repo.js'
@@ -13,7 +14,7 @@ import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
 import { publishDownlink } from './mqtt.js'
 import { userByEmail } from './repo.js'
-import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode, requireEventManage } from './auth.js'
+import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode, requireEvent } from './auth.js'
 import { effectiveAccess, canSeeNode } from './repo.js'
 
 export const router = Router()
@@ -169,10 +170,23 @@ router.get('/nodes/:id/events', requireNode(), async (req, res) => {
   res.json(await eventsByNode(req.params.id, Number(req.query.limit || 50)))
 })
 
-router.post('/events/:id/ack', requireEventManage, async (req, res) => {
+router.post('/events/:id/ack', requireEvent(false), async (req, res) => {
   const { by, eventProblemId } = req.body
-  await ackEvent(req.params.id, by || 'user', eventProblemId)
+  await ackEvent(req.params.id, by || req.auth?.userId || 'user', eventProblemId)
   res.json({ ok: true })
+})
+
+// ---- Event problem catalog (root causes; admin maintains, viewers read) ----
+router.get('/event-problems', async (req, res) => {
+  const orgId = req.auth?.role === 'superadmin' ? ((req.query.orgId as string) || req.auth.orgId) : (req.auth?.orgId || '')
+  res.json(await listEventProblems(orgId, req.query.departmentId as string | undefined, req.query.domain as string | undefined))
+})
+router.post('/event-problems', requireRole('admin'), orgScope(), async (req, res) => {
+  if (!req.body?.orgId || !req.body?.label) return res.status(400).json({ error: 'orgId and label required' })
+  res.json({ ok: true, id: await upsertEventProblem(req.body) })
+})
+router.delete('/event-problems/:id', requireRole('admin'), async (req, res) => {
+  await deleteEventProblem(req.params.id); res.json({ ok: true })
 })
 
 // ---- Telemetry -------------------------------------------------------------

@@ -117,6 +117,18 @@ CREATE TABLE IF NOT EXISTS product_access (
   PRIMARY KEY (scope, scope_id, domain)
 );
 
+-- Event problem catalog (root causes) — admin maintains per org/department/domain;
+-- viewers pick one when acknowledging (alarm_events.event_problem_id).
+CREATE TABLE IF NOT EXISTS event_problems (
+  id            VARCHAR(64) PRIMARY KEY,
+  org_id        VARCHAR(64) NOT NULL,
+  department_id VARCHAR(64),
+  domain        VARCHAR(32),
+  label         VARCHAR(200) NOT NULL,
+  created_at    DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  INDEX (org_id, department_id), INDEX (domain)
+);
+
 -- Users + per-user preferences (configProfile). Identity is the x-user-id
 -- header for now (pre-auth); swap for JWT subject when auth lands.
 CREATE TABLE IF NOT EXISTS users (

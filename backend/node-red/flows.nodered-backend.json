@@ -40,7 +40,7 @@
     "type": "function",
     "z": "be",
     "name": "init pool + engine + guard",
-    "func": "\n// 'mysql' is injected by functionExternalModules (declared in this node's libs).\nif (!global.get('pool')) {\n  global.set('pool', mysql.createPool({\n    host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',\n    port: Number(env.get('DB_PORT') || 3306),\n    user: env.get('DB_USER') || 'admin',\n    password: env.get('DB_PASSWORD') || 'iothub.2026',\n    database: env.get('DB_NAME') || 'iothub',\n    namedPlaceholders: true, connectionLimit: 10, timezone: 'Z',\n  }));\n}\nfunction breaches(v,l,d){return d==='high'?v>=l:v<=l;}\nfunction cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}\nfunction evaluate(nodeId, rule, readings){\n  const out=[];\n  for(const p of rule.params){\n    let active=null, run=0, prev=null;\n    for(const r of readings){\n      const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;\n      if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}\n      prev=v;\n      const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;\n      if(lvl){run++; if(run>=rule.dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }\n      else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}\n      else if(!lvl){run=0;}\n    }\n  }\n  return out.sort((a,b)=>b.ts-a.ts);\n}\nfunction mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}\nglobal.set('evaluate', evaluate);\n// Effective product access for a user (department grant capped by user override).\nglobal.set('accessFor', async function(userId){\n  const pool=global.get('pool'); const RANK={none:0,view:1,manage:2}; const levels={};\n  const [u]=await pool.query(\"SELECT org_id,role,department_id FROM users WHERE id=?\",[userId]);\n  const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;\n  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}\n  else{\n    const [dr]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?\",[departmentId||'']);\n    dr.forEach(r=>levels[r.domain]=r.level);\n    const [ur]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?\",[userId]);\n    ur.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]<RANK[cur]) levels[r.domain]=r.level;});\n  }\n  return {orgId:u.length?u[0].org_id:'',role,departmentId,levels};\n});\n// 'jwt' is injected. Async guard: JWT + role + org-scope + device (node) access.\nglobal.set('guard', async function(authHeader, policy, req){\n  if(policy==='public') return {ok:true,auth:null};\n  let claims;\n  try{ const tok=(authHeader||'').replace(/^Bearer /,''); if(!tok) return {ok:false,code:401,error:'authentication required'};\n       claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me'); }\n  catch(e){ return {ok:false,code:401,error:'invalid token'}; }\n  if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};\n  if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};\n  const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);\n  if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};\n  if((policy==='node'||policy==='node:manage'||policy==='event:manage') && claims.role!=='superadmin'){\n    const pool=global.get('pool');\n    let nm;\n    if(policy==='event:manage') nm=(await pool.query(\"SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?\",[req.params.id]))[0];\n    else nm=(await pool.query(\"SELECT org_id,domain,department_id FROM nodes WHERE id=?\",[req.params.id]))[0];\n    if(!nm.length) return {ok:false,code:404,error:'not found'};\n    const node=nm[0]; const needManage = policy!=='node';\n    if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};\n    if(claims.role!=='admin'){\n      const acc=await global.get('accessFor')(claims.userId);\n      const lvl=acc.levels[node.domain]||'none';\n      if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};\n      if(needManage && lvl!=='manage') return {ok:false,code:403,error:'manage required'};\n      if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};\n    }\n  }\n  return {ok:true, auth:claims};\n});\nnode.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');\n",
+    "func": "\n// 'mysql' is injected by functionExternalModules (declared in this node's libs).\nif (!global.get('pool')) {\n  global.set('pool', mysql.createPool({\n    host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',\n    port: Number(env.get('DB_PORT') || 3306),\n    user: env.get('DB_USER') || 'admin',\n    password: env.get('DB_PASSWORD') || 'iothub.2026',\n    database: env.get('DB_NAME') || 'iothub',\n    namedPlaceholders: true, connectionLimit: 10, timezone: 'Z',\n  }));\n}\nfunction breaches(v,l,d){return d==='high'?v>=l:v<=l;}\nfunction cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}\nfunction evaluate(nodeId, rule, readings){\n  const out=[];\n  for(const p of rule.params){\n    let active=null, run=0, prev=null;\n    for(const r of readings){\n      const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;\n      if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}\n      prev=v;\n      const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;\n      if(lvl){run++; if(run>=rule.dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }\n      else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}\n      else if(!lvl){run=0;}\n    }\n  }\n  return out.sort((a,b)=>b.ts-a.ts);\n}\nfunction mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}\nglobal.set('evaluate', evaluate);\n// Effective product access for a user (department grant capped by user override).\nglobal.set('accessFor', async function(userId){\n  const pool=global.get('pool'); const RANK={none:0,view:1,manage:2}; const levels={};\n  const [u]=await pool.query(\"SELECT org_id,role,department_id FROM users WHERE id=?\",[userId]);\n  const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;\n  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}\n  else{\n    const [dr]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?\",[departmentId||'']);\n    dr.forEach(r=>levels[r.domain]=r.level);\n    const [ur]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?\",[userId]);\n    ur.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]<RANK[cur]) levels[r.domain]=r.level;});\n  }\n  return {orgId:u.length?u[0].org_id:'',role,departmentId,levels};\n});\n// 'jwt' is injected. Async guard: JWT + role + org-scope + device (node) access.\nglobal.set('guard', async function(authHeader, policy, req){\n  if(policy==='public') return {ok:true,auth:null};\n  let claims;\n  try{ const tok=(authHeader||'').replace(/^Bearer /,''); if(!tok) return {ok:false,code:401,error:'authentication required'};\n       claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me'); }\n  catch(e){ return {ok:false,code:401,error:'invalid token'}; }\n  if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};\n  if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};\n  const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);\n  if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};\n  if((policy==='node'||policy==='node:manage'||policy==='event:view'||policy==='event:manage') && claims.role!=='superadmin'){\n    const pool=global.get('pool'); const isEvent=policy.indexOf('event:')===0; const needManage=(policy==='node:manage'||policy==='event:manage');\n    let nm;\n    if(isEvent) nm=(await pool.query(\"SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?\",[req.params.id]))[0];\n    else nm=(await pool.query(\"SELECT org_id,domain,department_id FROM nodes WHERE id=?\",[req.params.id]))[0];\n    if(!nm.length) return {ok:false,code:404,error:'not found'};\n    const node=nm[0];\n    if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};\n    if(claims.role!=='admin'){\n      const acc=await global.get('accessFor')(claims.userId);\n      const lvl=acc.levels[node.domain]||'none';\n      if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};\n      if(needManage && lvl!=='manage') return {ok:false,code:403,error:'manage required'};\n      if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};\n    }\n  }\n  return {ok:true, auth:claims};\n});\nnode.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');\n",
     "outputs": 1,
     "libs": [
       {
@@ -753,7 +753,7 @@
     "type": "function",
     "z": "be",
     "name": "POST /api/events/:id/ack",
-    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','event:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};\n(async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','event:view',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};\n(async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
     "outputs": 1,
     "libs": [
       {
@@ -1640,6 +1640,141 @@
     "wires": []
   },
   {
+    "id": "eplist_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/event-problems",
+    "method": "get",
+    "x": 150,
+    "y": 1660,
+    "wires": [
+      [
+        "eplist_fn"
+      ]
+    ]
+  },
+  {
+    "id": "eplist_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/event-problems",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const au=msg.auth||{}; const q=msg.req.query||{};\nconst orgId = au.role==='superadmin' ? (q.orgId||au.orgId) : au.orgId;\n(async()=>{let sql=\"SELECT * FROM event_problems WHERE org_id=?\"; const a=[orgId]; if(q.departmentId){sql+=\" AND (department_id=? OR department_id IS NULL)\"; a.push(q.departmentId);} if(q.domain){sql+=\" AND (domain=? OR domain IS NULL)\"; a.push(q.domain);} sql+=\" ORDER BY label\"; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1660,
+    "wires": [
+      [
+        "eplist_resp"
+      ]
+    ]
+  },
+  {
+    "id": "eplist_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1660,
+    "wires": []
+  },
+  {
+    "id": "eppost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/event-problems",
+    "method": "post",
+    "x": 150,
+    "y": 1710,
+    "wires": [
+      [
+        "eppost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "eppost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/event-problems",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.orgId||!b.label){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and label required'};return msg;}\n(async()=>{const id=b.id||'ep-'+Date.now(); await pool.query(\"INSERT INTO event_problems (id,org_id,department_id,domain,label) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE department_id=VALUES(department_id),domain=VALUES(domain),label=VALUES(label)\",[id,b.orgId,b.departmentId||null,b.domain||null,b.label]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1710,
+    "wires": [
+      [
+        "eppost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "eppost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1710,
+    "wires": []
+  },
+  {
+    "id": "epdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/event-problems/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 1760,
+    "wires": [
+      [
+        "epdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "epdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/event-problems/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM event_problems WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1760,
+    "wires": [
+      [
+        "epdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "epdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1760,
+    "wires": []
+  },
+  {
     "id": "meget_in",
     "type": "http in",
     "z": "be",
@@ -1647,7 +1782,7 @@
     "url": "/api/me/config",
     "method": "get",
     "x": 150,
-    "y": 1660,
+    "y": 1810,
     "wires": [
       [
         "meget_fn"
@@ -1668,7 +1803,7 @@
       }
     ],
     "x": 420,
-    "y": 1660,
+    "y": 1810,
     "wires": [
       [
         "meget_resp"
@@ -1681,7 +1816,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1660,
+    "y": 1810,
     "wires": []
   },
   {
@@ -1692,7 +1827,7 @@
     "url": "/api/me/config",
     "method": "put",
     "x": 150,
-    "y": 1710,
+    "y": 1860,
     "wires": [
       [
         "meput_fn"
@@ -1713,7 +1848,7 @@
       }
     ],
     "x": 420,
-    "y": 1710,
+    "y": 1860,
     "wires": [
       [
         "meput_resp"
@@ -1726,7 +1861,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1710,
+    "y": 1860,
     "wires": []
   },
   {
@@ -1737,7 +1872,7 @@
     "url": "/api/orgs",
     "method": "get",
     "x": 150,
-    "y": 1760,
+    "y": 1910,
     "wires": [
       [
         "orgsget_fn"
@@ -1758,7 +1893,7 @@
       }
     ],
     "x": 420,
-    "y": 1760,
+    "y": 1910,
     "wires": [
       [
         "orgsget_resp"
@@ -1771,7 +1906,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1760,
+    "y": 1910,
     "wires": []
   },
   {
@@ -1782,7 +1917,7 @@
     "url": "/api/orgs",
     "method": "post",
     "x": 150,
-    "y": 1810,
+    "y": 1960,
     "wires": [
       [
         "orgspost_fn"
@@ -1803,7 +1938,7 @@
       }
     ],
     "x": 420,
-    "y": 1810,
+    "y": 1960,
     "wires": [
       [
         "orgspost_resp"
@@ -1816,7 +1951,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1810,
+    "y": 1960,
     "wires": []
   },
   {
@@ -1827,7 +1962,7 @@
     "url": "/api/orgs/:id/entitlements",
     "method": "get",
     "x": 150,
-    "y": 1860,
+    "y": 2010,
     "wires": [
       [
         "entget_fn"
@@ -1848,7 +1983,7 @@
       }
     ],
     "x": 420,
-    "y": 1860,
+    "y": 2010,
     "wires": [
       [
         "entget_resp"
@@ -1861,7 +1996,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1860,
+    "y": 2010,
     "wires": []
   },
   {
@@ -1872,7 +2007,7 @@
     "url": "/api/orgs/:id/entitlements",
     "method": "put",
     "x": 150,
-    "y": 1910,
+    "y": 2060,
     "wires": [
       [
         "entput_fn"
@@ -1893,7 +2028,7 @@
       }
     ],
     "x": 420,
-    "y": 1910,
+    "y": 2060,
     "wires": [
       [
         "entput_resp"
@@ -1906,7 +2041,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1910,
+    "y": 2060,
     "wires": []
   },
   {
@@ -1917,7 +2052,7 @@
     "url": "/api/orgs/:orgId/departments",
     "method": "get",
     "x": 150,
-    "y": 1960,
+    "y": 2110,
     "wires": [
       [
         "deptget_fn"
@@ -1938,7 +2073,7 @@
       }
     ],
     "x": 420,
-    "y": 1960,
+    "y": 2110,
     "wires": [
       [
         "deptget_resp"
@@ -1951,7 +2086,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1960,
+    "y": 2110,
     "wires": []
   },
   {
@@ -1962,7 +2097,7 @@
     "url": "/api/orgs/:orgId/departments",
     "method": "post",
     "x": 150,
-    "y": 2010,
+    "y": 2160,
     "wires": [
       [
         "deptpost_fn"
@@ -1983,7 +2118,7 @@
       }
     ],
     "x": 420,
-    "y": 2010,
+    "y": 2160,
     "wires": [
       [
         "deptpost_resp"
@@ -1996,7 +2131,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2010,
+    "y": 2160,
     "wires": []
   },
   {
@@ -2007,7 +2142,7 @@
     "url": "/api/orgs/:orgId/users",
     "method": "get",
     "x": 150,
-    "y": 2060,
+    "y": 2210,
     "wires": [
       [
         "usrget_fn"
@@ -2028,7 +2163,7 @@
       }
     ],
     "x": 420,
-    "y": 2060,
+    "y": 2210,
     "wires": [
       [
         "usrget_resp"
@@ -2041,7 +2176,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2060,
+    "y": 2210,
     "wires": []
   },
   {
@@ -2052,7 +2187,7 @@
     "url": "/api/orgs/:orgId/users",
     "method": "post",
     "x": 150,
-    "y": 2110,
+    "y": 2260,
     "wires": [
       [
         "usrpost_fn"
@@ -2073,7 +2208,7 @@
       }
     ],
     "x": 420,
-    "y": 2110,
+    "y": 2260,
     "wires": [
       [
         "usrpost_resp"
@@ -2086,7 +2221,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2110,
+    "y": 2260,
     "wires": []
   },
   {
@@ -2097,7 +2232,7 @@
     "url": "/api/orgs/:id",
     "method": "delete",
     "x": 150,
-    "y": 2160,
+    "y": 2310,
     "wires": [
       [
         "orgsdel_fn"
@@ -2118,7 +2253,7 @@
       }
     ],
     "x": 420,
-    "y": 2160,
+    "y": 2310,
     "wires": [
       [
         "orgsdel_resp"
@@ -2131,7 +2266,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2160,
+    "y": 2310,
     "wires": []
   },
   {
@@ -2142,7 +2277,7 @@
     "url": "/api/departments/:id",
     "method": "delete",
     "x": 150,
-    "y": 2210,
+    "y": 2360,
     "wires": [
       [
         "deptdel_fn"
@@ -2163,7 +2298,7 @@
       }
     ],
     "x": 420,
-    "y": 2210,
+    "y": 2360,
     "wires": [
       [
         "deptdel_resp"
@@ -2176,7 +2311,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2210,
+    "y": 2360,
     "wires": []
   },
   {
@@ -2187,7 +2322,7 @@
     "url": "/api/users/:id",
     "method": "delete",
     "x": 150,
-    "y": 2260,
+    "y": 2410,
     "wires": [
       [
         "usrdel_fn"
@@ -2208,7 +2343,7 @@
       }
     ],
     "x": 420,
-    "y": 2260,
+    "y": 2410,
     "wires": [
       [
         "usrdel_resp"
@@ -2221,7 +2356,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2260,
+    "y": 2410,
     "wires": []
   },
   {
@@ -2232,7 +2367,7 @@
     "url": "/api/product-access",
     "method": "get",
     "x": 150,
-    "y": 2310,
+    "y": 2460,
     "wires": [
       [
         "paget_fn"
@@ -2253,7 +2388,7 @@
       }
     ],
     "x": 420,
-    "y": 2310,
+    "y": 2460,
     "wires": [
       [
         "paget_resp"
@@ -2266,7 +2401,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2310,
+    "y": 2460,
     "wires": []
   },
   {
@@ -2277,7 +2412,7 @@
     "url": "/api/product-access",
     "method": "put",
     "x": 150,
-    "y": 2360,
+    "y": 2510,
     "wires": [
       [
         "paput_fn"
@@ -2298,7 +2433,7 @@
       }
     ],
     "x": 420,
-    "y": 2360,
+    "y": 2510,
     "wires": [
       [
         "paput_resp"
@@ -2311,7 +2446,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2360,
+    "y": 2510,
     "wires": []
   },
   {
@@ -2322,7 +2457,7 @@
     "url": "/api/nodes",
     "method": "post",
     "x": 150,
-    "y": 2410,
+    "y": 2560,
     "wires": [
       [
         "nodeprov_fn"
@@ -2343,7 +2478,7 @@
       }
     ],
     "x": 420,
-    "y": 2410,
+    "y": 2560,
     "wires": [
       [
         "nodeprov_resp"
@@ -2356,7 +2491,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2410,
+    "y": 2560,
     "wires": []
   },
   {
@@ -2367,7 +2502,7 @@
     "url": "/api/nodes/:id/config",
     "method": "put",
     "x": 150,
-    "y": 2460,
+    "y": 2610,
     "wires": [
       [
         "cfgput_fn"
@@ -2388,7 +2523,7 @@
       }
     ],
     "x": 420,
-    "y": 2460,
+    "y": 2610,
     "wires": [
       [
         "cfgput_resp"
@@ -2404,7 +2539,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2460,
+    "y": 2610,
     "wires": []
   },
   {
@@ -2415,7 +2550,7 @@
     "url": "/api/nodes/:id/cmd",
     "method": "post",
     "x": 150,
-    "y": 2510,
+    "y": 2660,
     "wires": [
       [
         "cmdpost_fn"
@@ -2436,7 +2571,7 @@
       }
     ],
     "x": 420,
-    "y": 2510,
+    "y": 2660,
     "wires": [
       [
         "cmdpost_resp"
@@ -2452,7 +2587,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2510,
+    "y": 2660,
     "wires": []
   },
   {
@@ -2463,7 +2598,7 @@
     "url": "/api/nodes/:id/ota",
     "method": "post",
     "x": 150,
-    "y": 2560,
+    "y": 2710,
     "wires": [
       [
         "otapost_fn"
@@ -2484,7 +2619,7 @@
       }
     ],
     "x": 420,
-    "y": 2560,
+    "y": 2710,
     "wires": [
       [
         "otapost_resp"
@@ -2500,7 +2635,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2560,
+    "y": 2710,
     "wires": []
   },
   {
@@ -2511,7 +2646,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 2610,
+    "y": 2760,
     "wires": [
       [
         "cors_fn"
@@ -2527,7 +2662,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2610,
+    "y": 2760,
     "wires": [
       [
         "cors_resp"
@@ -2540,7 +2675,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2610,
+    "y": 2760,
     "wires": []
   },
   {
@@ -2551,7 +2686,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 2660,
+    "y": 2810,
     "wires": [
       [
         "readpost_fn"
@@ -2567,7 +2702,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2660,
+    "y": 2810,
     "wires": [
       [
         "ingest"
@@ -2580,7 +2715,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2660,
+    "y": 2810,
     "wires": []
   }
 ]

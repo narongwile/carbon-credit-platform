@@ -47,14 +47,15 @@ export const requireNode = (write = false) => async (req: Request, res: Response
   next()
 }
 
-// Acknowledge requires 'manage' on the domain of the event's node (own org).
-export const requireEventManage = async (req: Request, res: Response, next: NextFunction) => {
+// Event access: viewers with `view` may acknowledge (to set root cause); set
+// write=true to require `manage`. Always scoped to the event's node org + dept.
+export const requireEvent = (write = false) => async (req: Request, res: Response, next: NextFunction) => {
   if (!req.auth) return res.status(401).json({ error: 'authentication required' })
   if (req.auth.role === 'superadmin') return next()
   const node = await eventNode(req.params.id)
   if (!node) return res.status(404).json({ error: 'event not found' })
   const access = await effectiveAccess(req.auth.userId)
-  if (!access || !canSeeNode(access, node, true)) return res.status(403).json({ error: 'manage required to acknowledge' })
+  if (!access || !canSeeNode(access, node, write)) return res.status(403).json({ error: 'no access to this event' })
   next()
 }
 

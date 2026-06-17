@@ -73,6 +73,9 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST | `/api/reports/schedules` | scheduled reports (cron every 15 min → CSV email) |
 | DELETE | `/api/reports/schedules/:id` | remove a schedule |
 | POST | `/api/auth/login` | login → JWT `{ token, user }` (public) |
+| POST | `/api/events/:id/ack` | acknowledge + root cause (`eventProblemId`); needs **view** on the device's domain |
+| GET | `/api/event-problems?orgId=&departmentId=&domain=` | root-cause catalog (any authed user) |
+| POST/DELETE | `/api/event-problems[/:id]` | admin maintains the catalog |
 | GET/PUT | `/api/me/config` | per-user config (configProfile); identity via `x-user-id` header |
 | GET/POST | `/api/orgs` · DELETE `/api/orgs/:id` | **superadmin**: organizations (provision) |
 | GET/PUT | `/api/orgs/:id/entitlements` | superadmin: licensed platforms per org |
