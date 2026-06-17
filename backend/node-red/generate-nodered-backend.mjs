@@ -1,15 +1,14 @@
 #!/usr/bin/env node
 // ---------------------------------------------------------------------------
-// Auto-generate a NODE-RED-ONLY backend flow (no Express service).
-// It implements MQTT ingest + the alarm engine + MySQL persistence + REST API
-// + notifications + escalation entirely inside Node-RED.
+// Auto-generate a COMPLETE Node-RED-only backend flow (no Express service).
+// MQTT ingest + alarm engine + MySQL + full REST API + notifications +
+// escalation + CORS, all inside Node-RED.
 //
-// Requires (in your Node-RED):
+// Requires in Node-RED:
 //   • settings.js → functionExternalModules: true
-//   • the `mysql2` npm module available to function nodes (added via the
-//     function node "Setup → Modules", which this flow pre-declares)
-//   • env vars on the Node-RED process: DB_HOST/PORT/USER/PASSWORD/NAME,
-//     LINE_NOTIFY_TOKEN / TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID / GOOGLE_CHAT_WEBHOOK
+//   • mysql2 module (pre-declared on the init function node "libs")
+//   • env: DB_HOST/PORT/USER/PASSWORD/NAME, LINE_NOTIFY_TOKEN,
+//     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GOOGLE_CHAT_WEBHOOK
 //
 // Run:  node generate-nodered-backend.mjs   → flows.nodered-backend.json
 // ---------------------------------------------------------------------------
@@ -23,7 +22,10 @@ const MQTT_PORT = process.env.MQTT_PORT || '1883'
 const MQTT_TOPIC = process.env.MQTT_TOPIC || 'telemetry/#'
 const ESCALATE_MIN = process.env.ESCALATE_AFTER_MIN || '15'
 
-// --- shared engine + db helpers, installed into global context on deploy ----
+// CORS preamble injected into every REST handler
+const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
+
+// --- init: MySQL pool + alarm engine into global context --------------------
 const initFunc = `
 const mysql = global.get('mysql') || require('mysql2/promise');
 global.set('mysql', mysql);
@@ -37,7 +39,6 @@ if (!global.get('pool')) {
     namedPlaceholders: true, connectionLimit: 10, timezone: 'Z',
   }));
 }
-// Pure alarm engine (mirrors src/server/alarmEngine.ts) ----------------------
 function breaches(v,l,d){return d==='high'?v>=l:v<=l;}
 function cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}
 function evaluate(nodeId, rule, readings){
@@ -70,7 +71,7 @@ const taken = new Date(ts || Date.now());
   for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }
   const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);
   const [mm] = await pool.query('SELECT org_id, department_id FROM nodes WHERE id=?',[nodeId]);
-  if (!rr.length || !mm.length) { msg.payload={inserted:0}; node.send(msg); return; }
+  if (!rr.length || !mm.length) { msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null]); return; }
   const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;
   const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);
   const byTs=new Map();
@@ -79,12 +80,10 @@ const taken = new Date(ts || Date.now());
   const events = evaluate(nodeId, rule, readings);
   let inserted=0;
   for (const e of events){
-    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]);
-    if (ex.length) continue;
+    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;
     await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);
-    inserted++;
-    node.send([null, { payload: e }]); // 2nd output → notify
+    inserted++; node.send([null, { payload: e }]);
   }
   msg.payload = { inserted }; node.send([msg, null]);
 })().catch(err => { node.error(err.message, msg); });
@@ -92,15 +91,15 @@ return null;
 `
 
 const notifyFunc = `
-const e = msg.payload; const env2 = (k)=>env.get(k);
+const e = msg.payload;
 const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' @ '+e.time;
 (async () => {
   try {
-    const line = env2('LINE_NOTIFY_TOKEN');
+    const line = env.get('LINE_NOTIFY_TOKEN');
     if (line) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+line,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
-    const tg = env2('TELEGRAM_BOT_TOKEN'), chat = env2('TELEGRAM_CHAT_ID');
+    const tg = env.get('TELEGRAM_BOT_TOKEN'), chat = env.get('TELEGRAM_CHAT_ID');
     if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text})});
-    const gc = env2('GOOGLE_CHAT_WEBHOOK');
+    const gc = env.get('GOOGLE_CHAT_WEBHOOK');
     if (gc) await fetch(gc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});
   } catch(err){ node.error('notify: '+err.message); }
 })();
@@ -126,60 +125,97 @@ const pool = global.get('pool'); if(!pool) return null;
 return null;
 `
 
-// REST endpoint handlers ------------------------------------------------------
-const getRuleFunc = `const pool=global.get('pool'); const id=msg.req.params.id;
-(async()=>{const[r]=await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[id]); msg.statusCode=r.length?200:404; msg.payload=r.length?(typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json):{error:'no rule'}; node.send(msg);})(); return null;`
-const putRuleFunc = `const pool=global.get('pool'); const id=msg.req.params.id; const {orgId,rule,updatedBy}=msg.payload||{};
-(async()=>{await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); msg.payload={ok:true}; node.send(msg);})(); return null;`
-const getEventsFunc = `const pool=global.get('pool'); const id=msg.req.params.id;
-(async()=>{const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.payload=r; node.send(msg);})(); return null;`
-const ackFunc = `const pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};
-(async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.payload={ok:true}; node.send(msg);})(); return null;`
+// --- REST handlers (CORS prepended) -----------------------------------------
+const healthFunc = CORS + `const pool=global.get('pool');
+(async()=>{ let db=false; try{const c=await pool.getConnection(); await c.ping(); c.release(); db=true;}catch(e){} msg.headers=__CORS; msg.statusCode=200; msg.payload={ok:true,db,ts:Date.now()}; node.send(msg);})(); return null;`
+
+const getRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{const[r]=await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[id]); msg.headers=__CORS; msg.statusCode=r.length?200:404; msg.payload=r.length?(typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json):{error:'no rule'}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const putRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {orgId,rule,updatedBy}=msg.payload||{};
+if(!orgId||!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and rule required'};return msg;}
+(async()=>{await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const orgRuleFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId; const {rule,updatedBy}=msg.payload||{};
+if(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule.domain required'};return msg;}
+(async()=>{const[n]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=?',[orgId,rule.domain]);
+  for(const row of n){ await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),updated_by=VALUES(updated_by)',[row.id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); }
+  msg.headers=__CORS; msg.payload={ok:true,applied:n.length}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const getEventsFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const ackFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};
+(async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const readingsGetFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const since=Number((msg.req.query&&msg.req.query.sinceMin)||360);
+(async()=>{const[r]=await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL ? MINUTE) ORDER BY taken_at ASC',[id,since]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const docsGetFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const dept=(msg.req.query&&msg.req.query.departmentId)||'';
+(async()=>{const[r]=await pool.query('SELECT id,name,size,uploaded_by,created_at FROM documents WHERE node_id=? AND department_id=? ORDER BY created_at DESC',[id,dept]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const docsPostFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {departmentId,name,size,uploadedBy,dataBase64}=msg.payload||{};
+if(!departmentId||!name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'departmentId and name required'};return msg;}
+(async()=>{const docId='doc-'+Date.now(); await pool.query('INSERT INTO documents (id,node_id,department_id,name,size,uploaded_by,data) VALUES (?,?,?,?,?,?,?)',[docId,id,departmentId,name,size||null,uploadedBy||null,dataBase64?Buffer.from(dataBase64,'base64'):null]); msg.headers=__CORS; msg.payload={ok:true,id:docId}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const httpIngestFunc = `msg.payload={nodeId:msg.req.params.id,values:(msg.payload&&msg.payload.values)||{},ts:(msg.payload&&msg.payload.ts)};return msg;`
+const optionsFunc = CORS + `msg.headers=__CORS; msg.statusCode=204; msg.payload=''; return msg;`
 
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 const fn = (id, name, func, x, y, wires, outputs = 1, extra = {}) => ({ id, type: 'function', z: 'be', name, func, outputs, libs: [], x, y, wires, ...extra })
+let yREST = 360
+const endpoint = (idBase, method, url, handlerFunc) => {
+  const y = yREST; yREST += 50
+  return [
+    { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, handlerFunc, 420, y, [[`${idBase}_resp`]]),
+    { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
+  ]
+}
 
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
   { id: 'mqttbroker', type: 'mqtt-broker', name: 'broker', broker: MQTT_HOST, port: MQTT_PORT, clientid: 'nr-backend' },
 
-  // init (pool + engine)
+  // init
   { id: 'startup', type: 'inject', z: 'be', name: 'startup', props: [], once: true, onceDelay: '0.2', repeat: '', x: 130, y: 60, wires: [['init']] },
   fn('init', 'init pool + engine', initFunc, 340, 60, [[]], 1, { libs: LIBS }),
 
   // ingest pipeline
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
   fn('normalize', 'normalize', normalizeFunc, 330, 140, [['ingest']]),
-  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify']], 2),
+  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify']], 2, { libs: LIBS }),
   fn('notify', 'notify (LINE/Telegram/GChat)', notifyFunc, 820, 200, [[]]),
   { id: 'dbgIngest', type: 'debug', z: 'be', name: 'ingest', active: true, complete: 'payload', x: 830, y: 140, wires: [] },
 
   // escalation loop
   { id: 'esctick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 260, wires: [['escalate']] },
-  fn('escalate', 'escalation scan', escalationFunc, 350, 260, [['notify']]),
+  fn('escalate', 'escalation scan', escalationFunc, 350, 260, [['notify']], 1, { libs: LIBS }),
 
-  // REST API (http in/response)
-  { id: 'hGetRule', type: 'http in', z: 'be', name: '', url: '/api/nodes/:id/rule', method: 'get', x: 140, y: 360, wires: [['fGetRule']] },
-  fn('fGetRule', 'getRule', getRuleFunc, 360, 360, [['resp1']]),
-  { id: 'resp1', type: 'http response', z: 'be', x: 560, y: 360, wires: [] },
-
-  { id: 'hPutRule', type: 'http in', z: 'be', name: '', url: '/api/nodes/:id/rule', method: 'put', x: 140, y: 410, wires: [['fPutRule']] },
-  fn('fPutRule', 'putRule', putRuleFunc, 360, 410, [['resp2']]),
-  { id: 'resp2', type: 'http response', z: 'be', x: 560, y: 410, wires: [] },
-
-  { id: 'hEvents', type: 'http in', z: 'be', name: '', url: '/api/nodes/:id/events', method: 'get', x: 140, y: 460, wires: [['fEvents']] },
-  fn('fEvents', 'getEvents', getEventsFunc, 360, 460, [['resp3']]),
-  { id: 'resp3', type: 'http response', z: 'be', x: 560, y: 460, wires: [] },
-
-  { id: 'hAck', type: 'http in', z: 'be', name: '', url: '/api/events/:id/ack', method: 'post', x: 140, y: 510, wires: [['fAck']] },
-  fn('fAck', 'ackEvent', ackFunc, 360, 510, [['resp4']]),
-  { id: 'resp4', type: 'http response', z: 'be', x: 560, y: 510, wires: [] },
-
-  { id: 'hIngest', type: 'http in', z: 'be', name: '', url: '/api/nodes/:id/readings', method: 'post', x: 140, y: 560, wires: [['fHttpIngest']] },
-  fn('fHttpIngest', 'http→{nodeId,values}', `msg.payload={nodeId:msg.req.params.id,values:(msg.payload&&msg.payload.values)||{},ts:(msg.payload&&msg.payload.ts)};return msg;`, 360, 560, [['ingest']]),
+  // REST API (each endpoint = http in → fn → http response)
+  ...endpoint('health', 'get', '/api/health', healthFunc),
+  ...endpoint('getrule', 'get', '/api/nodes/:id/rule', getRuleFunc),
+  ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc),
+  ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc),
+  ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc),
+  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc),
+  ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc),
+  ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc),
+  ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc),
+  ...endpoint('cors', 'options', '/api/*', optionsFunc),
 ]
+
+// give every REST fn the mysql lib (handlers query the pool)
+for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs)/.test(n.id)) n.libs = LIBS
+
+// POST /readings ingest → reuse the engine ingest node
+const httpIngest = endpoint('readpost', 'post', '/api/nodes/:id/readings', httpIngestFunc)
+httpIngest[1].wires = [['ingest']]      // fn → ingest (engine), not a direct response
+httpIngest[1].name = 'POST /api/nodes/:id/readings'
+flow.push(httpIngest[0], httpIngest[1]) // (no response node; ingest replies via its own path)
 
 const out = join(dirname(fileURLToPath(import.meta.url)), 'flows.nodered-backend.json')
 writeFileSync(out, JSON.stringify(flow, null, 2) + '\n')
-console.log('Generated', out, '—', flow.length, 'nodes')
-console.log('Import in Node-RED (functionExternalModules: true; mysql2 available). REST on Node-RED httpNodeRoot.')
+const types = [...new Set(flow.map((n) => n.type))]
+console.log('Generated', out, '—', flow.length, 'nodes ·', types.join(', '))
+console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:orgId/rule · GET /nodes/:id/events · POST /events/:id/ack · GET|POST /nodes/:id/readings · GET|POST /nodes/:id/documents · OPTIONS /api/*')
