@@ -141,10 +141,28 @@ return null;
 `
 
 const normalizeFunc = `
-let nodeId, values, ts = Date.now();
-if (msg.payload && typeof msg.payload==='object' && msg.payload.nodeId){ nodeId=msg.payload.nodeId; values=msg.payload.values||{}; ts=msg.payload.ts||ts; }
-else { const p=(msg.topic||'').split('/'); nodeId=p[1]; values={[p[2]]:Number(msg.payload)}; }
+// Accepts three shapes and normalises to { nodeId, values, ts }:
+//  1) { nodeId, values:{...}, ts }                      (consolidated / internal bridge)
+//  2) { device_id, channel, value, ts }                 (ESP32 spec §6 per-channel envelope)
+//  3) topic telemetry/<nodeId>/<param> = <number>       (legacy flat)
+// Channel names from the ESP32 firmware are mapped to alarm-engine param keys.
+const MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',
+  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
+  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };
+let nodeId, raw = {}, ts = Date.now();
+const p = msg.payload;
+if (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }
+else if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }
+else if (p && typeof p==='object'){ return null; }   // status/heartbeat/diag → not a reading
+else { const t=(msg.topic||'').split('/'); nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }
 if(!nodeId) return null;
+// remap spec channel names → engine param keys (temp_c drives both directions)
+const values = {};
+for (const k of Object.keys(raw)) {
+  const v = raw[k];
+  if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; }
+  else values[MAP[k]||k] = v;
+}
 msg.payload = { nodeId, values, ts };
 return msg;
 `

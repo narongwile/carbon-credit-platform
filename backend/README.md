@@ -70,6 +70,14 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST/DELETE | `/api/bloodbox/beacons` | BLE beacon management (indoor anchors) |
 | GET/POST | `/api/bloodbox/boxes/:id/location` | current indoor location / move box |
 
+## Device firmware (ESP32-S3)
+The ESP32 firmware in [`firmware/esp32`](../firmware/esp32) publishes the spec
+per-channel telemetry envelope (`{device_id, channel, value, ...}`). The Node-RED
+`normalize` node accepts it directly, maps spec channel names → alarm-engine param
+keys (`oil_temp_c→oilTemp`, `dga_h2_ppm→hydrogen`, `temp_c→tempHigh+tempLow`, …),
+and feeds `ingest → evaluate`. Point the device at `telemetry/#` (set
+`OO_TOPIC_ROOT "telemetry"`); `device_id` must match a provisioned node id.
+
 ## Frontend wiring
 Set `NEXT_PUBLIC_API_URL` (e.g. `https://api.oneops.example`). The frontend
 `src/lib/api.ts` + `src/server/alarmStore.ts` sync rules/acks through this API and
