@@ -3,6 +3,7 @@ import { ingest } from './ingest.js'
 import {
   getRule, putRule, nodesByOrg, eventsByNode, ackEvent, recentReadings,
   fleetByOrg, latestReadings, mqttPrefix,
+  listSchedules, upsertSchedule, deleteSchedule,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
@@ -47,6 +48,20 @@ router.get('/fleet', async (req, res) => {
 
 router.get('/fleet/:id/latest', async (req, res) => {
   res.json(await latestReadings(req.params.id))
+})
+
+// ---- Scheduled reports -----------------------------------------------------
+router.get('/reports/schedules', async (req, res) => {
+  res.json(await listSchedules((req.query.orgId as string) || ''))
+})
+router.post('/reports/schedules', async (req, res) => {
+  const { orgId, name } = req.body ?? {}
+  if (!orgId || !name) return res.status(400).json({ error: 'orgId and name required' })
+  res.json({ ok: true, id: await upsertSchedule(req.body) })
+})
+router.delete('/reports/schedules/:id', async (req, res) => {
+  await deleteSchedule(req.params.id)
+  res.json({ ok: true })
 })
 
 // ---- Downlink (backend → device): config / cmd / ota -----------------------

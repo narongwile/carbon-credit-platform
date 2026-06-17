@@ -48,6 +48,12 @@ export const api = {
     req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/cmd`, { method: 'POST', body: JSON.stringify({ op, ...args }) }),
   sendOta: (nodeId: string, body: { to_version: string; artefact_uri: string; sha256?: string }) =>
     req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/ota`, { method: 'POST', body: JSON.stringify(body) }),
+
+  // Scheduled reports (cron-generated CSV emailed to recipients)
+  listSchedules: (orgId: string) => req<ReportSchedule[]>(`/api/reports/schedules?orgId=${encodeURIComponent(orgId)}`),
+  saveSchedule: (body: Partial<ReportSchedule> & { orgId: string; name: string }) =>
+    req<{ id: string }>(`/api/reports/schedules`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteSchedule: (id: string) => req(`/api/reports/schedules/${id}`, { method: 'DELETE' }),
 }
 
 export interface FleetNode {
@@ -56,9 +62,25 @@ export interface FleetNode {
   domain: 'transformer' | 'carbonNode' | 'bloodBox'
   site_id: string | null
   department_id: string | null
+  lat: number | null
+  lng: number | null
   online: 0 | 1 | null
   last_seen: string | null
   rssi: number | null
   fw: string | null
   alarm: 'WARNING' | 'CRITICAL' | null
+}
+
+export interface ReportSchedule {
+  id: string
+  org_id: string
+  name: string
+  scope: 'device' | 'department' | 'org'
+  scope_id: string | null
+  sequence: 'daily' | 'weekly' | 'monthly'
+  format: 'PDF' | 'XLSX' | 'CSV'
+  recipients: string | null
+  enabled: 0 | 1
+  last_run_at: string | null
+  next_run_at: string | null
 }

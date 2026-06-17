@@ -27,7 +27,7 @@ export async function nodesByOrg(orgId: string): Promise<{ id: string; domain: s
 // ---- Fleet (generic, all products) ----------------------------------------
 export async function fleetByOrg(orgId: string, domain?: string): Promise<RowDataPacket[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT n.id, n.name, n.domain, n.site_id, n.department_id,
+    `SELECT n.id, n.name, n.domain, n.site_id, n.department_id, n.lat, n.lng,
             p.online, p.last_seen, p.rssi, p.fw,
             (SELECT e.severity FROM alarm_events e
               WHERE e.node_id = n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL
@@ -126,6 +126,47 @@ export async function insertDeadLetter(source: string, error: string, payload: u
   await pool.query('INSERT INTO dead_letter (source, error, payload) VALUES (:s, :e, :p)', {
     s: source.slice(0, 120), e: error.slice(0, 500), p: payload == null ? null : JSON.stringify(payload),
   })
+}
+
+// ---- Report schedules ------------------------------------------------------
+export async function listSchedules(orgId: string): Promise<RowDataPacket[]> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM report_schedules WHERE org_id = :o ORDER BY name', { o: orgId })
+  return rows
+}
+export async function upsertSchedule(s: { id?: string; orgId: string; name: string; scope?: string; scopeId?: string; sequence?: string; format?: string; recipients?: string; enabled?: boolean }): Promise<string> {
+  const id = s.id || `rpt-${Date.now()}`
+  await pool.query(
+    `INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,recipients,enabled,next_run_at)
+       VALUES (:id,:o,:n,:sc,:si,:sq,:f,:r,:e,NOW(3))
+     ON DUPLICATE KEY UPDATE name=:n,scope=:sc,scope_id=:si,sequence=:sq,format=:f,recipients=:r,enabled=:e`,
+    { id, o: s.orgId, n: s.name, sc: s.scope ?? 'device', si: s.scopeId ?? null, sq: s.sequence ?? 'daily', f: s.format ?? 'CSV', r: s.recipients ?? null, e: s.enabled === false ? 0 : 1 },
+  )
+  return id
+}
+export async function deleteSchedule(id: string): Promise<void> {
+  await pool.query('DELETE FROM report_schedules WHERE id = :id', { id })
+}
+export async function dueSchedules(): Promise<RowDataPacket[]> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM report_schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at <= NOW(3))')
+  return rows
+}
+export async function nodeIdsForScope(orgId: string, scope: string, scopeId: string | null): Promise<string[]> {
+  if (scope === 'device' && scopeId) return [scopeId]
+  const sql = `SELECT id FROM nodes WHERE org_id = :o ${scope === 'department' && scopeId ? 'AND department_id = :d' : ''}`
+  const [rows] = await pool.query<RowDataPacket[]>(sql, { o: orgId, d: scopeId })
+  return rows.map((r) => r.id as string)
+}
+export async function summaryReadings(nodeIds: string[], days: number): Promise<RowDataPacket[]> {
+  if (!nodeIds.length) return []
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT node_id, param_key, COUNT(*) n, AVG(value) a, MIN(value) mn, MAX(value) mx FROM readings WHERE node_id IN (?) AND taken_at > (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key ORDER BY node_id, param_key',
+    [nodeIds, days],
+  )
+  return rows
+}
+export async function markScheduleRun(id: string, sequence: string): Promise<void> {
+  const iv = sequence === 'weekly' ? '7 DAY' : sequence === 'monthly' ? '1 MONTH' : '1 DAY'
+  await pool.query(`UPDATE report_schedules SET last_run_at=NOW(3), next_run_at=(NOW(3)+INTERVAL ${iv}) WHERE id=:id`, { id })
 }
 
 export async function rollupAndPurgeReadings(retentionDays: number): Promise<number> {

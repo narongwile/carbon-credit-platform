@@ -20,7 +20,7 @@ escalation loop: unacked CRITICAL > N min → re-dispatch (escalation)
 cp .env.example .env          # defaults already target the cluster MySQL/MQTT
 mysql < sql/schema.sql        # create core schema (+ device_presence)
 mysql < sql/bloodbox.sql      # BloodBOX domain tables (run after schema.sql)
-mysql < sql/seed-nodes.sql    # optional: demo fleet so /api/fleet has data
+mysql < sql/seed-nodes.sql    # optional: demo fleet (geo + mqtt_prefix) for /api/fleet & map
 npm install && npm run dev    # or: npm run build && npm start
 ```
 Docker: `docker build -t oneops-backend .`  ·  k8s: `kubectl apply -f k8s/backend.yaml`
@@ -69,6 +69,8 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | PUT  | `/api/nodes/:id/config` | **downlink**: publish retained `P/config` (empty body = sync saved rule) |
 | POST | `/api/nodes/:id/cmd` | downlink: publish `P/cmd/{op}` (reboot/calibrate/…) |
 | POST | `/api/nodes/:id/ota` | downlink: publish `P/ota/cmd` (signed artefact descriptor) |
+| GET/POST | `/api/reports/schedules` | scheduled reports (cron every 15 min → CSV email) |
+| DELETE | `/api/reports/schedules/:id` | remove a schedule |
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |
@@ -106,8 +108,21 @@ keys (`oil_temp_c→oilTemp`, `dga_h2_ppm→hydrogen`, `temp_c→tempHigh+tempLo
 and feeds `ingest → evaluate`. Point the device at `telemetry/#` (set
 `OO_TOPIC_ROOT "telemetry"`); `device_id` must match a provisioned node id.
 
+## Realtime WebSocket bridge
+The Node-RED flow taps `normalize` (telemetry) and `ingest` (alarm) into a
+`websocket out` on listener path **`/ws/telemetry`**. The frontend
+`useMqttTelemetry` hook connects to `NEXT_PUBLIC_WS_URL`
+(e.g. `wss://api.oneops.example/ws/telemetry`) and falls back to mock when
+unset — so live data is pushed (no polling), separate from the DB/engine path.
+
+## Scheduled reports
+`report_schedules` rows (managed via `/api/reports/schedules`) are run by a cron
+node every 15 min: it builds a CSV summary of the period's readings for the
+scope (device/department/org) and emails it to `recipients` via the same SMTP
+transport as notifications.
+
 ## Frontend wiring
-Set `NEXT_PUBLIC_API_URL` (e.g. `https://api.oneops.example`). The frontend
+Set `NEXT_PUBLIC_API_URL` (REST) and `NEXT_PUBLIC_WS_URL` (realtime). (e.g. `https://api.oneops.example`). The frontend
 `src/lib/api.ts` + `src/server/alarmStore.ts` sync rules/acks through this API and
 fall back to localStorage when it is unreachable (so the static build still works).
 

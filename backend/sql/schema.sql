@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   domain        ENUM('transformer','carbonNode','bloodBox') NOT NULL,
   name          VARCHAR(120) NOT NULL,
   mqtt_prefix   VARCHAR(255),   -- device topic prefix P (for downlink config/cmd/ota)
+  lat           DECIMAL(10,7),  -- geo for the live sensor map
+  lng           DECIMAL(10,7),
   INDEX (org_id), INDEX (department_id), INDEX (domain)
 );
 
@@ -91,6 +93,22 @@ CREATE TABLE IF NOT EXISTS device_logs (
   payload   TEXT,
   ts        DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
   INDEX (node_id, ts)
+);
+
+-- Scheduled reports (cron-generated CSV emailed to recipients)
+CREATE TABLE IF NOT EXISTS report_schedules (
+  id           VARCHAR(64) PRIMARY KEY,
+  org_id       VARCHAR(64) NOT NULL,
+  name         VARCHAR(160) NOT NULL,
+  scope        ENUM('device','department','org') NOT NULL DEFAULT 'device',
+  scope_id     VARCHAR(64),
+  sequence     ENUM('daily','weekly','monthly') NOT NULL DEFAULT 'daily',
+  format       ENUM('PDF','XLSX','CSV') NOT NULL DEFAULT 'CSV',
+  recipients   VARCHAR(500),          -- comma-separated emails
+  enabled      TINYINT(1) DEFAULT 1,
+  last_run_at  DATETIME(3) NULL,
+  next_run_at  DATETIME(3) NULL,
+  INDEX (org_id), INDEX (enabled, next_run_at)
 );
 
 -- Dead-letter — anything the global catch node (or Express error mw) couldn't process

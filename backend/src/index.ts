@@ -6,6 +6,7 @@ import { startMqtt } from './mqtt.js'
 import { startEscalation } from './escalation.js'
 import { startClearance } from './clearance.js'
 import { startRetention } from './retention.js'
+import { startReports } from './reports.js'
 import { insertDeadLetter } from './repo.js'
 import { ping } from './db.js'
 
@@ -30,6 +31,7 @@ async function main() {
   startEscalation()
   startClearance()
   startRetention()
+  startReports()
   app.listen(port, () => console.log(`[http] ONEOPS backend on :${port}`))
 }
 

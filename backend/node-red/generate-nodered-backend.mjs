@@ -383,7 +383,7 @@ if(!b.orgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId req
 // Powers the per-product overview / device-list screens from live DB instead of
 // mock data. Domain-agnostic: filter by ?domain= for one product line.
 const fleetListFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const domain=msg.req.query&&msg.req.query.domain;
-(async()=>{const sql="SELECT n.id,n.name,n.domain,n.site_id,n.department_id,p.online,p.last_seen,p.rssi,p.fw,"+
+(async()=>{const sql="SELECT n.id,n.name,n.domain,n.site_id,n.department_id,n.lat,n.lng,p.online,p.last_seen,p.rssi,p.fw,"+
   "(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm "+
   "FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?"+(domain?" AND n.domain=?":"")+" ORDER BY n.domain,n.id";
   const a=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
@@ -445,8 +445,69 @@ const downlinkEndpoint = (idBase, method, url, handlerFunc) => {
   ]
 }
 
+// --- WebSocket bridge: push live telemetry/alarm to the frontend -------------
+// Tapped off normalize (readings) + ingest (alarm). Emits the TelemetryData
+// shape the useMqttTelemetry hook expects; alarms carry type:'alarm'.
+const wsBroadcastFunc = `
+const p = msg.payload || {};
+let out;
+if (p.values) {
+  const v = p.values;
+  let temp = v.tempHigh; if (temp===undefined) temp = v.tempLow; if (temp===undefined) temp = v.oilTemp;
+  if (temp===undefined) { const n = Object.values(v).find(x => typeof x==='number'); temp = (n===undefined?null:n); }
+  out = { id: p.nodeId, mac: '', temperature: temp===null?null:Number(temp), doorOpen: (v.door||0)>0, values: v, timestamp: new Date(p.ts||Date.now()).toISOString() };
+} else if (p.severity) {
+  out = { type:'alarm', id: p.nodeId, paramKey: p.paramKey, severity: p.severity, value: p.value, timestamp: p.time || new Date().toISOString() };
+} else { return null; }
+msg.payload = out;
+return msg;
+`
+
+// --- Scheduled reports: cron → CSV summary → email (notify) ------------------
+const reportRunFunc = `
+const pool = global.get('pool'); if (!pool) return null;
+(async () => {
+  const [due] = await pool.query("SELECT * FROM report_schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=NOW(3))");
+  for (const s of due) {
+    let nodeIds = [];
+    if (s.scope==='device' && s.scope_id) nodeIds = [s.scope_id];
+    else { const args = (s.scope==='department' && s.scope_id) ? [s.org_id, s.scope_id] : [s.org_id];
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=?"+((s.scope==='department'&&s.scope_id)?" AND department_id=?":""), args); nodeIds = ns.map(n=>n.id); }
+    const days = s.sequence==='weekly'?7 : s.sequence==='monthly'?30 : 1;
+    let csv = 'node_id,param_key,n,avg,min,max\\n';
+    if (nodeIds.length) {
+      const [rows] = await pool.query("SELECT node_id,param_key,COUNT(*) n,AVG(value) a,MIN(value) mn,MAX(value) mx FROM readings WHERE node_id IN (?) AND taken_at>(NOW(3)-INTERVAL ? DAY) GROUP BY node_id,param_key ORDER BY node_id,param_key", [nodeIds, days]);
+      for (const r of rows) csv += r.node_id+','+r.param_key+','+r.n+','+Number(r.a).toFixed(2)+','+Number(r.mn).toFixed(2)+','+Number(r.mx).toFixed(2)+'\\n';
+    }
+    const to = (s.recipients||'').trim();
+    if (to && env.get('SMTP_HOST')) {
+      let tx = global.get('mailer');
+      if (!tx) { tx = nodemailer.createTransport({ host: env.get('SMTP_HOST'), port: Number(env.get('SMTP_PORT')||587), auth: env.get('SMTP_USER')?{user:env.get('SMTP_USER'),pass:env.get('SMTP_PASS')}:undefined }); global.set('mailer', tx); }
+      await tx.sendMail({ from: env.get('MAIL_FROM')||'alerts@oneops.local', to, subject: 'ONEOPS Report: '+s.name, text: 'Automated '+s.sequence+' '+s.scope+' report.', attachments: [{ filename: String(s.name).replace(/\\s+/g,'_')+'.csv', content: csv }] });
+    } else { node.warn('report '+s.name+': email skipped (no SMTP/recipients), '+nodeIds.length+' nodes'); }
+    const iv = s.sequence==='weekly'?'7 DAY' : s.sequence==='monthly'?'1 MONTH' : '1 DAY';
+    await pool.query("UPDATE report_schedules SET last_run_at=NOW(3), next_run_at=(NOW(3)+INTERVAL "+iv+") WHERE id=?", [s.id]);
+  }
+})().catch(e => node.error('report-run: ' + e.message));
+return null;
+`
+
+const rptListFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||'';
+(async()=>{const[r]=await pool.query("SELECT * FROM report_schedules WHERE org_id=? ORDER BY name",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const rptPostFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.orgId||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and name required'};return msg;}
+(async()=>{const id=b.id||'rpt-'+Date.now();
+  await pool.query("INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,recipients,enabled,next_run_at) VALUES (?,?,?,?,?,?,?,?,?,NOW(3)) ON DUPLICATE KEY UPDATE name=VALUES(name),scope=VALUES(scope),scope_id=VALUES(scope_id),sequence=VALUES(sequence),format=VALUES(format),recipients=VALUES(recipients),enabled=VALUES(enabled)",
+    [id,b.orgId,b.name,b.scope||'device',b.scopeId||null,b.sequence||'daily',b.format||'CSV',b.recipients||null,b.enabled===false?0:1]);
+  msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+
+const rptDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query("DELETE FROM report_schedules WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
+  { id: 'wslistener', type: 'websocket-listener', path: '/ws/telemetry', wholemsg: 'false' },
   { id: 'mqttbroker', type: 'mqtt-broker', name: 'broker', broker: MQTT_HOST, port: MQTT_PORT, clientid: 'nr-backend' },
 
   // init
@@ -457,9 +518,12 @@ const flow = [
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
   // downlink publisher: topic/qos/retain taken from each msg (config/cmd/ota)
   { id: 'mqttout', type: 'mqtt out', z: 'be', name: 'downlink', topic: '', qos: '', retain: '', broker: 'mqttbroker', x: 980, y: 470, wires: [] },
-  fn('normalize', 'normalize (readings | presence | logs)', normalizeFunc, 330, 140, [['ingest'], ['presence'], ['devlog']], 3),
-  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], [], ['mqttout']], 4, { libs: LIBS }),
+  fn('normalize', 'normalize (readings | presence | logs)', normalizeFunc, 330, 140, [['ingest', 'wsbroadcast'], ['presence'], ['devlog']], 3),
+  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify', 'wsbroadcast'], [], ['mqttout']], 4, { libs: LIBS }),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
+  // WebSocket bridge → frontend useMqttTelemetry (NEXT_PUBLIC_WS_URL)
+  fn('wsbroadcast', 'ws broadcast', wsBroadcastFunc, 820, 280, [['wsout']], 1),
+  { id: 'wsout', type: 'websocket out', z: 'be', name: 'telemetry ws', server: 'wslistener', client: '', x: 1030, y: 280, wires: [] },
   { id: 'dbgIngest', type: 'debug', z: 'be', name: 'ingest', active: true, complete: 'payload', x: 830, y: 140, wires: [] },
 
   // presence: heartbeat/status → device_presence (last_seen, online)
@@ -474,6 +538,10 @@ const flow = [
   // retention: hourly rollup + purge of raw readings
   { id: 'rettick', type: 'inject', z: 'be', name: 'hourly', props: [], repeat: '3600', x: 130, y: 600, wires: [['retention']] },
   fn('retention', 'readings retention', retentionFunc, 350, 600, [[]], 1, { libs: LIBS }),
+
+  // scheduled reports: cron → CSV → email
+  { id: 'rpttick', type: 'inject', z: 'be', name: 'every 15m', props: [], repeat: '900', x: 130, y: 660, wires: [['reportrun']] },
+  fn('reportrun', 'report scheduler', reportRunFunc, 350, 660, [[]], 1, { libs: NOTIFY_LIBS }),
 
   // escalation loop
   { id: 'esctick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 260, wires: [['escalate']] },
@@ -515,6 +583,11 @@ const flow = [
   ...endpoint('fleetlatest', 'get', '/api/fleet/:id/latest', fleetLatestFunc),
   ...endpoint('fleetlist', 'get', '/api/fleet', fleetListFunc),
 
+  // Scheduled-report CRUD (cron runs them; the scheduler lives in this flow)
+  ...endpoint('rptlist', 'get', '/api/reports/schedules', rptListFunc),
+  ...endpoint('rptpost', 'post', '/api/reports/schedules', rptPostFunc),
+  ...endpoint('rptdel', 'delete', '/api/reports/schedules/:id', rptDelFunc),
+
   // Downlink (backend → device): config (retained) / cmd / ota
   ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc),
   ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc),
@@ -524,7 +597,7 @@ const flow = [
 ]
 
 // give every REST fn the mysql lib (handlers query the pool)
-for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb|fleet)/.test(n.id)) n.libs = LIBS
+for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb|fleet|rpt)/.test(n.id)) n.libs = LIBS
 
 // POST /readings ingest → reuse the engine ingest node, then reply via its
 // own http response node. ingest re-emits the original msg (req/res preserved
@@ -535,7 +608,7 @@ httpIngest[1].name = 'POST /api/nodes/:id/readings'
 flow.push(...httpIngest)                 // keep the http response node (readpost_resp)
 // ingest output 3 → readings http response (only fired for HTTP-origin msgs)
 const ingestNode = flow.find((n) => n.id === 'ingest')
-ingestNode.wires = [['dbgIngest'], ['notify'], ['readpost_resp'], ['mqttout']]
+ingestNode.wires = [['dbgIngest'], ['notify', 'wsbroadcast'], ['readpost_resp'], ['mqttout']]
 
 const out = join(dirname(fileURLToPath(import.meta.url)), 'flows.nodered-backend.json')
 writeFileSync(out, JSON.stringify(flow, null, 2) + '\n')
@@ -545,3 +618,5 @@ console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:org
 console.log('BloodBOX: GET /bloodbox/transits · GET /bloodbox/transits/:id · GET|POST /bloodbox/transits/:id/journey · POST /bloodbox/transits/:id/temp (→engine bridge) · GET /bloodbox/floors · GET|POST|DELETE /bloodbox/beacons · GET|POST /bloodbox/boxes/:id/location')
 console.log('Fleet (all products): GET /fleet?orgId=&domain= · GET /fleet/:id/latest')
 console.log('Downlink (→device): PUT /nodes/:id/config (retained) · POST /nodes/:id/cmd · POST /nodes/:id/ota')
+console.log('Reports: GET|POST /reports/schedules · DELETE /reports/schedules/:id (cron 15m → CSV email)')
+console.log('Realtime: WebSocket bridge on listener path /ws/telemetry (tap normalize + ingest)')
