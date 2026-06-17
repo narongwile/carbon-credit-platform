@@ -115,6 +115,12 @@ export async function clearEvent(id: string): Promise<void> {
   await pool.query('UPDATE alarm_events SET cleared_at = NOW(3) WHERE id = :id', { id })
 }
 
+// ---- Downlink --------------------------------------------------------------
+export async function mqttPrefix(nodeId: string): Promise<string | null> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT mqtt_prefix FROM nodes WHERE id = :id', { id: nodeId })
+  return rows.length ? ((rows[0].mqtt_prefix as string) ?? null) : null
+}
+
 export async function markEscalated(ids: string[]): Promise<void> {
   if (!ids.length) return
   await pool.query('UPDATE alarm_events SET escalated = 1 WHERE id IN (?)', [ids])

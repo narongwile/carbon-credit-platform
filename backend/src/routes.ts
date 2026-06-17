@@ -2,10 +2,11 @@ import { Router } from 'express'
 import { ingest } from './ingest.js'
 import {
   getRule, putRule, nodesByOrg, eventsByNode, ackEvent, recentReadings,
-  fleetByOrg, latestReadings,
+  fleetByOrg, latestReadings, mqttPrefix,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
+import { publishDownlink } from './mqtt.js'
 
 export const router = Router()
 
@@ -46,6 +47,33 @@ router.get('/fleet', async (req, res) => {
 
 router.get('/fleet/:id/latest', async (req, res) => {
   res.json(await latestReadings(req.params.id))
+})
+
+// ---- Downlink (backend → device): config / cmd / ota -----------------------
+router.put('/nodes/:id/config', async (req, res) => {
+  const prefix = await mqttPrefix(req.params.id)
+  if (!prefix) return res.status(404).json({ error: 'node/mqtt_prefix not found' })
+  let payload = req.body
+  if (!payload || !Object.keys(payload).length) payload = (await getRule(req.params.id)) ?? {}
+  const topic = `${prefix}/config`
+  res.json({ ok: publishDownlink(topic, payload, { qos: 1, retain: true }), topic })
+})
+
+router.post('/nodes/:id/cmd', async (req, res) => {
+  const prefix = await mqttPrefix(req.params.id)
+  if (!prefix) return res.status(404).json({ error: 'node/mqtt_prefix not found' })
+  const op = (req.body?.op as string) || 'reboot'
+  const topic = `${prefix}/cmd/${op}`
+  res.json({ ok: publishDownlink(topic, req.body ?? {}, { qos: 1 }), topic })
+})
+
+router.post('/nodes/:id/ota', async (req, res) => {
+  const { to_version, artefact_uri } = req.body ?? {}
+  if (!to_version || !artefact_uri) return res.status(400).json({ error: 'to_version and artefact_uri required' })
+  const prefix = await mqttPrefix(req.params.id)
+  if (!prefix) return res.status(404).json({ error: 'node/mqtt_prefix not found' })
+  const topic = `${prefix}/ota/cmd`
+  res.json({ ok: publishDownlink(topic, req.body, { qos: 1 }), topic })
 })
 
 // ---- Events ----------------------------------------------------------------

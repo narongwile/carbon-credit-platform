@@ -66,6 +66,19 @@
     ]
   },
   {
+    "id": "mqttout",
+    "type": "mqtt out",
+    "z": "be",
+    "name": "downlink",
+    "topic": "",
+    "qos": "",
+    "retain": "",
+    "broker": "mqttbroker",
+    "x": 980,
+    "y": 470,
+    "wires": []
+  },
+  {
     "id": "normalize",
     "type": "function",
     "z": "be",
@@ -1267,6 +1280,150 @@
     "wires": []
   },
   {
+    "id": "cfgput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/config",
+    "method": "put",
+    "x": 150,
+    "y": 1460,
+    "wires": [
+      [
+        "cfgput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "cfgput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/nodes/:id/config",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  let payload=body; if(!body||!Object.keys(body).length){const[rr]=await pool.query(\"SELECT rule_json FROM alarm_rules WHERE node_id=?\",[id]); payload=rr.length?(typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json):{};}\n  const topic=n[0].mqtt_prefix+'/config'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload,qos:1,retain:true}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1460,
+    "wires": [
+      [
+        "cfgput_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "cfgput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1460,
+    "wires": []
+  },
+  {
+    "id": "cmdpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/cmd",
+    "method": "post",
+    "x": 150,
+    "y": 1510,
+    "wires": [
+      [
+        "cmdpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "cmdpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/cmd",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{}; const op=body.op||'reboot';\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  const topic=n[0].mqtt_prefix+'/cmd/'+op; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1510,
+    "wires": [
+      [
+        "cmdpost_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "cmdpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1510,
+    "wires": []
+  },
+  {
+    "id": "otapost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/ota",
+    "method": "post",
+    "x": 150,
+    "y": 1560,
+    "wires": [
+      [
+        "otapost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otapost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/ota",
+    "func": "const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};\nif(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'to_version and artefact_uri required'};node.send([msg,null]);return null;}\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1560,
+    "wires": [
+      [
+        "otapost_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "otapost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1560,
+    "wires": []
+  },
+  {
     "id": "cors_in",
     "type": "http in",
     "z": "be",
@@ -1274,7 +1431,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 1460,
+    "y": 1610,
     "wires": [
       [
         "cors_fn"
@@ -1290,7 +1447,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 1460,
+    "y": 1610,
     "wires": [
       [
         "cors_resp"
@@ -1303,7 +1460,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1460,
+    "y": 1610,
     "wires": []
   },
   {
@@ -1314,7 +1471,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 1510,
+    "y": 1660,
     "wires": [
       [
         "readpost_fn"
@@ -1330,7 +1487,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 1510,
+    "y": 1660,
     "wires": [
       [
         "ingest"
@@ -1343,7 +1500,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1510,
+    "y": 1660,
     "wires": []
   }
 ]

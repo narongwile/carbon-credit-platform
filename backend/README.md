@@ -66,6 +66,9 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST | `/api/nodes/:id/documents` | department-scoped documents |
 | GET  | `/api/fleet?orgId=&domain=` | **fleet list (all products)** — nodes + presence + open-alarm severity (powers transformer & refrigeration overviews) |
 | GET  | `/api/fleet/:id/latest` | latest reading per channel for one node |
+| PUT  | `/api/nodes/:id/config` | **downlink**: publish retained `P/config` (empty body = sync saved rule) |
+| POST | `/api/nodes/:id/cmd` | downlink: publish `P/cmd/{op}` (reboot/calibrate/…) |
+| POST | `/api/nodes/:id/ota` | downlink: publish `P/ota/cmd` (signed artefact descriptor) |
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |

@@ -39,6 +39,15 @@ export const api = {
     req<FleetNode[]>(`/api/fleet?orgId=${encodeURIComponent(orgId)}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`),
   latest: (nodeId: string) =>
     req<{ nodeId: string; values: Record<string, number>; lastReadingAt: string | null }>(`/api/fleet/${nodeId}/latest`),
+
+  // Downlink (backend → device). config publishes retained; body empty = sync
+  // the saved alarm rule down to the device.
+  pushConfig: (nodeId: string, body?: Record<string, unknown>) =>
+    req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/config`, { method: 'PUT', body: JSON.stringify(body ?? {}) }),
+  sendCmd: (nodeId: string, op: string, args?: Record<string, unknown>) =>
+    req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/cmd`, { method: 'POST', body: JSON.stringify({ op, ...args }) }),
+  sendOta: (nodeId: string, body: { to_version: string; artefact_uri: string; sha256?: string }) =>
+    req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/ota`, { method: 'POST', body: JSON.stringify(body) }),
 }
 
 export interface FleetNode {

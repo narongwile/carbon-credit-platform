@@ -342,6 +342,25 @@ const fleetLatestFunc = CORS + `const pool=global.get('pool'); const id=msg.req.
   const out={}; let last=null; for(const row of r){ out[row.param_key]=Number(row.value); if(!last||row.taken_at>last) last=row.taken_at; }
   msg.headers=__CORS; msg.payload={nodeId:id, values:out, lastReadingAt:last}; node.send(msg);})()` + bbErr
 
+// --- Downlink (backend → device): config / cmd / ota --------------------------
+// out1 → http response, out2 → mqtt out (published to the device's mqtt_prefix).
+const cfgPutFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};
+(async()=>{const[n]=await pool.query("SELECT mqtt_prefix FROM nodes WHERE id=?",[id]);
+  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}
+  let payload=body; if(!body||!Object.keys(body).length){const[rr]=await pool.query("SELECT rule_json FROM alarm_rules WHERE node_id=?",[id]); payload=rr.length?(typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json):{};}
+  const topic=n[0].mqtt_prefix+'/config'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload,qos:1,retain:true}]);})()` + bbErr
+
+const cmdPostFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{}; const op=body.op||'reboot';
+(async()=>{const[n]=await pool.query("SELECT mqtt_prefix FROM nodes WHERE id=?",[id]);
+  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}
+  const topic=n[0].mqtt_prefix+'/cmd/'+op; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})()` + bbErr
+
+const otaPostFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};
+if(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'to_version and artefact_uri required'};node.send([msg,null]);return null;}
+(async()=>{const[n]=await pool.query("SELECT mqtt_prefix FROM nodes WHERE id=?",[id]);
+  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}
+  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})()` + bbErr
+
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 // notify node also needs nodemailer (SMTP email), like the Express service
 const NOTIFY_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'nodemailer', module: 'nodemailer' }]
@@ -365,6 +384,15 @@ const bridgeEndpoint = (idBase, method, url, handlerFunc) => {
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
+// Like endpoint() but out2 → `mqttout` — backend→device downlink (config/cmd/ota).
+const downlinkEndpoint = (idBase, method, url, handlerFunc) => {
+  const y = yREST; yREST += 50
+  return [
+    { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, handlerFunc, 420, y, [[`${idBase}_resp`], ['mqttout']], 2, { libs: LIBS }),
+    { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
+  ]
+}
 
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
@@ -376,6 +404,8 @@ const flow = [
 
   // ingest pipeline
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
+  // downlink publisher: topic/qos/retain taken from each msg (config/cmd/ota)
+  { id: 'mqttout', type: 'mqtt out', z: 'be', name: 'downlink', topic: '', qos: '', retain: '', broker: 'mqttbroker', x: 980, y: 470, wires: [] },
   fn('normalize', 'normalize (readings | presence)', normalizeFunc, 330, 140, [['ingest'], ['presence']], 2),
   fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], []], 3, { libs: LIBS }),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
@@ -424,6 +454,11 @@ const flow = [
   ...endpoint('fleetlatest', 'get', '/api/fleet/:id/latest', fleetLatestFunc),
   ...endpoint('fleetlist', 'get', '/api/fleet', fleetListFunc),
 
+  // Downlink (backend → device): config (retained) / cmd / ota
+  ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc),
+  ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc),
+  ...downlinkEndpoint('otapost', 'post', '/api/nodes/:id/ota', otaPostFunc),
+
   ...endpoint('cors', 'options', '/api/*', optionsFunc),
 ]
 
@@ -448,3 +483,4 @@ console.log('Generated', out, '—', flow.length, 'nodes ·', types.join(', '))
 console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:orgId/rule · GET /nodes/:id/events · POST /events/:id/ack · GET|POST /nodes/:id/readings · GET|POST /nodes/:id/documents · OPTIONS /api/*')
 console.log('BloodBOX: GET /bloodbox/transits · GET /bloodbox/transits/:id · GET|POST /bloodbox/transits/:id/journey · POST /bloodbox/transits/:id/temp (→engine bridge) · GET /bloodbox/floors · GET|POST|DELETE /bloodbox/beacons · GET|POST /bloodbox/boxes/:id/location')
 console.log('Fleet (all products): GET /fleet?orgId=&domain= · GET /fleet/:id/latest')
+console.log('Downlink (→device): PUT /nodes/:id/config (retained) · POST /nodes/:id/cmd · POST /nodes/:id/ota')
