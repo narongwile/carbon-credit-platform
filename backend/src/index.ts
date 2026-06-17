@@ -8,11 +8,13 @@ import { startClearance } from './clearance.js'
 import { startRetention } from './retention.js'
 import { startReports } from './reports.js'
 import { insertDeadLetter } from './repo.js'
+import { authMiddleware } from './auth.js'
 import { ping } from './db.js'
 
 const app = express()
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }))
 app.use(express.json({ limit: '15mb' })) // large limit for document upload
+app.use(authMiddleware)                   // attach JWT claims (guards enforce)
 app.use('/api', router)
 
 // Global error handler → dead-letter (robustness; mirrors the Node-RED catch node)

@@ -126,8 +126,9 @@ CREATE TABLE IF NOT EXISTS users (
   name          VARCHAR(120),
   role          VARCHAR(32),
   department_id VARCHAR(64),
+  password_hash VARCHAR(120),
   created_at    DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
-  INDEX (org_id)
+  INDEX (org_id), UNIQUE KEY uq_email (email)
 );
 
 CREATE TABLE IF NOT EXISTS user_prefs (

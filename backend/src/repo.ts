@@ -187,6 +187,10 @@ export async function getUser(userId: string): Promise<RowDataPacket | null> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, department_id FROM users WHERE id = :id', { id: userId })
   return rows.length ? rows[0] : null
 }
+export async function userByEmail(email: string): Promise<RowDataPacket | null> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, password_hash FROM users WHERE email = :e', { e: email })
+  return rows.length ? rows[0] : null
+}
 export async function getPrefs(userId: string): Promise<Record<string, unknown>> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT prefs FROM user_prefs WHERE user_id = :id', { id: userId })
   if (!rows.length) return {}

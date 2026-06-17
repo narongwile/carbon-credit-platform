@@ -12,15 +12,31 @@ import {
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
 import { publishDownlink } from './mqtt.js'
+import { userByEmail } from './repo.js'
+import { signToken, checkPassword, requireAuth, requireRole, orgScope } from './auth.js'
 
 export const router = Router()
 
-// ---- BloodBOX domain (transits, journey, floors, beacons, locations) -------
-router.use('/bloodbox', bloodboxRouter)
-
+// ---- Public: health + login ------------------------------------------------
 router.get('/health', async (_req, res) => {
   res.json({ ok: true, db: await ping(), ts: Date.now() })
 })
+
+router.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body ?? {}
+  const u = email ? await userByEmail(email) : null
+  if (!u || !u.password_hash || !(await checkPassword(password || '', u.password_hash as string))) {
+    return res.status(401).json({ error: 'invalid credentials' })
+  }
+  const claims = { userId: u.id as string, orgId: (u.org_id as string) || '', role: (u.role as string) || 'viewer' }
+  res.json({ token: signToken(claims), user: { id: claims.userId, orgId: claims.orgId, role: claims.role, name: u.name, email: u.email } })
+})
+
+// Everything below requires a valid token.
+router.use(requireAuth)
+
+// ---- BloodBOX domain (transits, journey, floors, beacons, locations) -------
+router.use('/bloodbox', bloodboxRouter)
 
 // ---- Alarm rules -----------------------------------------------------------
 router.get('/nodes/:id/rule', async (req, res) => {
@@ -54,34 +70,36 @@ router.get('/fleet/:id/latest', async (req, res) => {
   res.json(await latestReadings(req.params.id))
 })
 
-// ---- Tenancy / provisioning (superadmin + admin; not yet authz-enforced) ---
+// ---- Tenancy / provisioning ------------------------------------------------
+// superadmin: orgs + entitlements + node provisioning. admin (own org): depts,
+// users, product-access. requireRole() with no args = superadmin-only.
 router.get('/orgs', async (_req, res) => res.json(await listOrgs()))
-router.post('/orgs', async (req, res) => {
+router.post('/orgs', requireRole(), async (req, res) => {
   if (!req.body?.name) return res.status(400).json({ error: 'name required' })
   res.json({ ok: true, id: await upsertOrg(req.body) })
 })
-router.delete('/orgs/:id', async (req, res) => { await deleteOrg(req.params.id); res.json({ ok: true }) })
-router.get('/orgs/:id/entitlements', async (req, res) => res.json(await getEntitlements(req.params.id)))
-router.put('/orgs/:id/entitlements', async (req, res) => { await setEntitlements(req.params.id, req.body?.platforms ?? []); res.json({ ok: true }) })
-router.get('/orgs/:orgId/departments', async (req, res) => res.json(await listDepartments(req.params.orgId)))
-router.post('/orgs/:orgId/departments', async (req, res) => {
+router.delete('/orgs/:id', requireRole(), async (req, res) => { await deleteOrg(req.params.id); res.json({ ok: true }) })
+router.get('/orgs/:id/entitlements', orgScope('id'), async (req, res) => res.json(await getEntitlements(req.params.id)))
+router.put('/orgs/:id/entitlements', requireRole(), async (req, res) => { await setEntitlements(req.params.id, req.body?.platforms ?? []); res.json({ ok: true }) })
+router.get('/orgs/:orgId/departments', orgScope('orgId'), async (req, res) => res.json(await listDepartments(req.params.orgId)))
+router.post('/orgs/:orgId/departments', requireRole('admin'), orgScope('orgId'), async (req, res) => {
   if (!req.body?.name) return res.status(400).json({ error: 'name required' })
   res.json({ ok: true, id: await upsertDepartment(req.params.orgId, req.body) })
 })
-router.delete('/departments/:id', async (req, res) => { await deleteDepartment(req.params.id); res.json({ ok: true }) })
-router.get('/orgs/:orgId/users', async (req, res) => res.json(await listUsers(req.params.orgId)))
-router.post('/orgs/:orgId/users', async (req, res) => {
+router.delete('/departments/:id', requireRole('admin'), async (req, res) => { await deleteDepartment(req.params.id); res.json({ ok: true }) })
+router.get('/orgs/:orgId/users', orgScope('orgId'), async (req, res) => res.json(await listUsers(req.params.orgId)))
+router.post('/orgs/:orgId/users', requireRole('admin'), orgScope('orgId'), async (req, res) => {
   if (!req.body?.name) return res.status(400).json({ error: 'name required' })
   res.json({ ok: true, id: await upsertUser(req.params.orgId, req.body) })
 })
-router.delete('/users/:id', async (req, res) => { await deleteUser(req.params.id); res.json({ ok: true }) })
+router.delete('/users/:id', requireRole('admin'), async (req, res) => { await deleteUser(req.params.id); res.json({ ok: true }) })
 router.get('/product-access', async (req, res) => res.json(await getProductAccess((req.query.scope as string) || 'department', (req.query.scopeId as string) || '')))
-router.put('/product-access', async (req, res) => {
+router.put('/product-access', requireRole('admin'), async (req, res) => {
   const { scope, scopeId, domain } = req.body ?? {}
   if (!scope || !scopeId || !domain) return res.status(400).json({ error: 'scope, scopeId, domain required' })
   await putProductAccess(req.body); res.json({ ok: true })
 })
-router.post('/nodes', async (req, res) => {
+router.post('/nodes', requireRole(), async (req, res) => {
   const { id, orgId, domain, name } = req.body ?? {}
   if (!id || !orgId || !domain || !name) return res.status(400).json({ error: 'id, orgId, domain, name required' })
   await provisionNode(req.body); res.json({ ok: true, id })

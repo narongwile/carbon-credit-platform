@@ -9,11 +9,23 @@ import type { NodeAlarmRule } from '@/server/alarmEngine'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || ''
 export const apiEnabled = !!BASE
+const TOKEN_KEY = 'oneops_token'
+
+// JWT is kept in localStorage and attached as Bearer on every call.
+export function setToken(token: string | null) {
+  if (typeof window === 'undefined') return
+  if (token) localStorage.setItem(TOKEN_KEY, token)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+export function getToken(): string | null {
+  return typeof window === 'undefined' ? null : localStorage.getItem(TOKEN_KEY)
+}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   if (!BASE) return null
   try {
-    const r = await fetch(`${BASE}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers as Record<string, string>) } })
+    const tok = getToken()
+    const r = await fetch(`${BASE}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(tok ? { authorization: `Bearer ${tok}` } : {}), ...(init?.headers as Record<string, string>) } })
     if (!r.ok) return null
     return (await r.json()) as T
   } catch {
@@ -21,7 +33,17 @@ async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
+export interface AuthUser { id: string; orgId: string; role: string; name?: string; email?: string }
+
 export const api = {
+  // Auth — stores the JWT on success so subsequent calls are authenticated.
+  login: async (email: string, password: string): Promise<{ token: string; user: AuthUser } | null> => {
+    const r = await req<{ token: string; user: AuthUser }>(`/api/auth/login`, { method: 'POST', body: JSON.stringify({ email, password }) })
+    if (r?.token) setToken(r.token)
+    return r
+  },
+  logout: () => setToken(null),
+
   getRule: (nodeId: string) => req<NodeAlarmRule>(`/api/nodes/${nodeId}/rule`),
   putRule: (nodeId: string, body: { orgId: string; rule: NodeAlarmRule; updatedBy?: string }) =>
     req(`/api/nodes/${nodeId}/rule`, { method: 'PUT', body: JSON.stringify(body) }),

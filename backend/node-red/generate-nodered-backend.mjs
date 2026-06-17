@@ -27,7 +27,17 @@ const MQTT_TOPIC = process.env.MQTT_TOPIC || 'telemetry/#'
 const ESCALATE_MIN = process.env.ESCALATE_AFTER_MIN || '15'
 
 // CORS preamble injected into every REST handler
-const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
+const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
+
+// Guard preamble injected into protected handlers (policy: auth|admin|super).
+// Verifies the Bearer JWT via the global guard (set in init) and enforces role +
+// org-scope; on failure it responds and short-circuits the handler.
+const GUARD = (policy) => !policy || policy === 'public' ? '' : `
+const __g=global.get('guard');
+const __ar=__g?__g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','${policy}',msg.req):{ok:false,code:503,error:'auth not ready'};
+if(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}
+msg.auth=__ar.auth;
+`
 
 // --- init: MySQL pool + alarm engine into global context --------------------
 const initFunc = `
@@ -62,8 +72,30 @@ function evaluate(nodeId, rule, readings){
 }
 function mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}
 global.set('evaluate', evaluate);
-node.warn('ONEOPS Node-RED backend: pool + engine ready');
+// 'jwt' is injected (functionExternalModules). Auth guard for protected handlers.
+global.set('guard', function(authHeader, policy, req){
+  if(policy==='public') return {ok:true,auth:null};
+  try{
+    const tok=(authHeader||'').replace(/^Bearer /,'');
+    if(!tok) return {ok:false,code:401,error:'authentication required'};
+    const claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me');
+    if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};
+    if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};
+    const oid = req.params && req.params.orgId;
+    if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};
+    return {ok:true, auth:claims};
+  }catch(e){ return {ok:false,code:401,error:'invalid token'}; }
+});
+node.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');
 `
+
+// Login: verify bcrypt password → issue JWT (userId/orgId/role).
+const loginFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+(async()=>{const[u]=await pool.query("SELECT id,org_id,role,name,email,password_hash FROM users WHERE email=?",[b.email||'']);
+  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'invalid credentials'};node.send(msg);return;}
+  const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};
+  const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
+  msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const ingestFunc = `
 const __H = { 'Access-Control-Allow-Origin': '*' };
@@ -415,32 +447,36 @@ if(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;m
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 // notify node also needs nodemailer (SMTP email), like the Express service
 const NOTIFY_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'nodemailer', module: 'nodemailer' }]
+// init defines the auth guard closure (needs jwt); login verifies bcrypt + signs jwt
+const INIT_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'jwt', module: 'jsonwebtoken' }]
+const LOGIN_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'jwt', module: 'jsonwebtoken' }, { var: 'bcrypt', module: 'bcryptjs' }]
 const fn = (id, name, func, x, y, wires, outputs = 1, extra = {}) => ({ id, type: 'function', z: 'be', name, func, outputs, libs: [], x, y, wires, ...extra })
 let yREST = 360
-const endpoint = (idBase, method, url, handlerFunc) => {
+// policy ∈ public|auth|admin|super (default auth). GUARD is prepended to the handler.
+const endpoint = (idBase, method, url, handlerFunc, policy = 'auth') => {
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, handlerFunc, 420, y, [[`${idBase}_resp`]]),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD(policy) + handlerFunc, 420, y, [[`${idBase}_resp`]]),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
 // Like endpoint() but the handler has a 2nd output wired to the engine `ingest`
 // node — used by the BloodBOX transit-temperature bridge (excursion alerts).
-const bridgeEndpoint = (idBase, method, url, handlerFunc) => {
+const bridgeEndpoint = (idBase, method, url, handlerFunc, policy = 'auth') => {
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, handlerFunc, 420, y, [[`${idBase}_resp`], ['ingest']], 2, { libs: LIBS }),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD(policy) + handlerFunc, 420, y, [[`${idBase}_resp`], ['ingest']], 2, { libs: LIBS }),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
 // Like endpoint() but out2 → `mqttout` — backend→device downlink (config/cmd/ota).
-const downlinkEndpoint = (idBase, method, url, handlerFunc) => {
+const downlinkEndpoint = (idBase, method, url, handlerFunc, policy = 'auth') => {
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, handlerFunc, 420, y, [[`${idBase}_resp`], ['mqttout']], 2, { libs: LIBS }),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD(policy) + handlerFunc, 420, y, [[`${idBase}_resp`], ['mqttout']], 2, { libs: LIBS }),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
@@ -560,7 +596,7 @@ const flow = [
 
   // init
   { id: 'startup', type: 'inject', z: 'be', name: 'startup', props: [], once: true, onceDelay: '0.2', repeat: '', x: 130, y: 60, wires: [['init']] },
-  fn('init', 'init pool + engine', initFunc, 340, 60, [[]], 1, { libs: LIBS }),
+  fn('init', 'init pool + engine + guard', initFunc, 340, 60, [[]], 1, { libs: INIT_LIBS }),
 
   // ingest pipeline
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
@@ -604,12 +640,13 @@ const flow = [
   fn('clearsweep', 'auto-clear sweep', clearSweepFunc, 350, 400, [['mqttout']], 1, { libs: LIBS }),
 
   // REST API (each endpoint = http in → fn → http response)
-  ...endpoint('health', 'get', '/api/health', healthFunc),
+  ...endpoint('health', 'get', '/api/health', healthFunc, 'public'),
+  ...endpoint('login', 'post', '/api/auth/login', loginFunc, 'public'),
   ...endpoint('getrule', 'get', '/api/nodes/:id/rule', getRuleFunc),
-  ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc),
-  ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc),
+  ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc, 'admin'),
+  ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),
   ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc),
-  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc),
+  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc, 'admin'),
   ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc),
   ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc),
   ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc),
@@ -633,8 +670,8 @@ const flow = [
 
   // Scheduled-report CRUD (cron runs them; the scheduler lives in this flow)
   ...endpoint('rptlist', 'get', '/api/reports/schedules', rptListFunc),
-  ...endpoint('rptpost', 'post', '/api/reports/schedules', rptPostFunc),
-  ...endpoint('rptdel', 'delete', '/api/reports/schedules/:id', rptDelFunc),
+  ...endpoint('rptpost', 'post', '/api/reports/schedules', rptPostFunc, 'admin'),
+  ...endpoint('rptdel', 'delete', '/api/reports/schedules/:id', rptDelFunc, 'admin'),
 
   // Per-user config (configProfile)
   ...endpoint('meget', 'get', '/api/me/config', meGetFunc),
@@ -642,36 +679,38 @@ const flow = [
 
   // Tenancy / provisioning (superadmin + admin; not yet authz-enforced)
   ...endpoint('orgsget', 'get', '/api/orgs', orgsListFunc),
-  ...endpoint('orgspost', 'post', '/api/orgs', orgsPostFunc),
+  ...endpoint('orgspost', 'post', '/api/orgs', orgsPostFunc, 'super'),
   ...endpoint('entget', 'get', '/api/orgs/:id/entitlements', entGetFunc),
-  ...endpoint('entput', 'put', '/api/orgs/:id/entitlements', entPutFunc),
+  ...endpoint('entput', 'put', '/api/orgs/:id/entitlements', entPutFunc, 'super'),
   ...endpoint('deptget', 'get', '/api/orgs/:orgId/departments', deptListFunc),
-  ...endpoint('deptpost', 'post', '/api/orgs/:orgId/departments', deptPostFunc),
+  ...endpoint('deptpost', 'post', '/api/orgs/:orgId/departments', deptPostFunc, 'admin'),
   ...endpoint('usrget', 'get', '/api/orgs/:orgId/users', usrListFunc),
-  ...endpoint('usrpost', 'post', '/api/orgs/:orgId/users', usrPostFunc),
-  ...endpoint('orgsdel', 'delete', '/api/orgs/:id', orgsDelFunc),
-  ...endpoint('deptdel', 'delete', '/api/departments/:id', deptDelFunc),
-  ...endpoint('usrdel', 'delete', '/api/users/:id', usrDelFunc),
+  ...endpoint('usrpost', 'post', '/api/orgs/:orgId/users', usrPostFunc, 'admin'),
+  ...endpoint('orgsdel', 'delete', '/api/orgs/:id', orgsDelFunc, 'super'),
+  ...endpoint('deptdel', 'delete', '/api/departments/:id', deptDelFunc, 'admin'),
+  ...endpoint('usrdel', 'delete', '/api/users/:id', usrDelFunc, 'admin'),
   ...endpoint('paget', 'get', '/api/product-access', paGetFunc),
-  ...endpoint('paput', 'put', '/api/product-access', paPutFunc),
-  ...endpoint('nodeprov', 'post', '/api/nodes', nodeProvFunc),
+  ...endpoint('paput', 'put', '/api/product-access', paPutFunc, 'admin'),
+  ...endpoint('nodeprov', 'post', '/api/nodes', nodeProvFunc, 'super'),
 
   // Downlink (backend → device): config (retained) / cmd / ota
-  ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc),
-  ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc),
-  ...downlinkEndpoint('otapost', 'post', '/api/nodes/:id/ota', otaPostFunc),
+  ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc, 'admin'),
+  ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc, 'admin'),
+  ...downlinkEndpoint('otapost', 'post', '/api/nodes/:id/ota', otaPostFunc, 'admin'),
 
-  ...endpoint('cors', 'options', '/api/*', optionsFunc),
+  ...endpoint('cors', 'options', '/api/*', optionsFunc, 'public'),
 ]
 
 // give every REST fn the mysql lib (handlers query the pool)
 // Any handler that queries the pool gets the mysql lib (skip ones with libs set).
 for (const n of flow) if (n.type === 'function' && /pool\.query|global\.get\('pool'\)/.test(n.func) && !(n.libs && n.libs.length)) n.libs = LIBS
+// login also needs jwt + bcrypt (the guard closure's jwt lives in the init node)
+const loginFn = flow.find((n) => n.id === 'login_fn'); if (loginFn) loginFn.libs = LOGIN_LIBS
 
 // POST /readings ingest → reuse the engine ingest node, then reply via its
 // own http response node. ingest re-emits the original msg (req/res preserved
 // for HTTP-originated requests) on output 1, so we wire that to readpost_resp.
-const httpIngest = endpoint('readpost', 'post', '/api/nodes/:id/readings', httpIngestFunc)
+const httpIngest = endpoint('readpost', 'post', '/api/nodes/:id/readings', httpIngestFunc, 'public')
 httpIngest[1].wires = [['ingest']]      // fn → ingest (engine)
 httpIngest[1].name = 'POST /api/nodes/:id/readings'
 flow.push(...httpIngest)                 // keep the http response node (readpost_resp)

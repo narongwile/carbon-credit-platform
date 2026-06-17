@@ -72,6 +72,7 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | POST | `/api/nodes/:id/ota` | downlink: publish `P/ota/cmd` (signed artefact descriptor) |
 | GET/POST | `/api/reports/schedules` | scheduled reports (cron every 15 min → CSV email) |
 | DELETE | `/api/reports/schedules/:id` | remove a schedule |
+| POST | `/api/auth/login` | login → JWT `{ token, user }` (public) |
 | GET/PUT | `/api/me/config` | per-user config (configProfile); identity via `x-user-id` header |
 | GET/POST | `/api/orgs` · DELETE `/api/orgs/:id` | **superadmin**: organizations (provision) |
 | GET/PUT | `/api/orgs/:id/entitlements` | superadmin: licensed platforms per org |
@@ -80,9 +81,21 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/PUT | `/api/product-access` | admin: department/user → domain → none/view/manage |
 | POST | `/api/nodes` | superadmin: provision/modify a node (mqtt_prefix, geo) |
 
-> ⚠️ Provisioning/admin endpoints are **not yet authz-enforced** — anyone reachable
-> can call them. The role + org-scope guard lands with the JWT auth work
-> (`x-user-id`/token). Do not expose this build publicly without that layer.
+## Auth & RBAC (self-issued JWT)
+`POST /api/auth/login` `{email,password}` → `{ token, user }`. The token (claims
+`userId/orgId/role`, signed with `JWT_SECRET`) is sent as `Authorization: Bearer`.
+Every endpoint except `/health`, `/auth/login`, the device readings ingest and
+CORS preflight requires a valid token; a per-endpoint **guard** enforces:
+- **superadmin-only**: create/delete orgs, set entitlements, provision nodes.
+- **admin (+ own-org scope)**: departments, users, product-access, alarm rules,
+  config/cmd/ota downlink, report schedules. Non-superadmins are pinned to their
+  `orgId` (the `:orgId` route param must match the token), so an admin cannot
+  read or modify another tenant.
+- **authenticated (any role)**: reads (fleet/events/readings), me/config, bloodbox.
+
+Demo logins (after `seed-tenancy.sql`, password `demo1234`): `super@oneops.demo`
+(superadmin), `admin@kmutt.demo` (admin org-1), `viewer@kmutt.demo` (viewer).
+Set a strong `JWT_SECRET` in production.
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |

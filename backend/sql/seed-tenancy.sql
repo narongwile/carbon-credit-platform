@@ -19,11 +19,12 @@ INSERT IGNORE INTO departments (id, org_id, name) VALUES
   ('dept-2a','org-2','Plant Ops'),
   ('dept-3a','org-3','Facilities');
 
-INSERT IGNORE INTO users (id, org_id, email, name, role, department_id) VALUES
-  ('u-admin1','org-1','admin@kmutt.demo','Org-1 Admin','admin','dept-1a'),
-  ('u-view1','org-1','viewer@kmutt.demo','Org-1 Viewer','viewer','dept-1a'),
-  ('u-admin2','org-2','admin@alpha.demo','Org-2 Admin','admin','dept-2a'),
-  ('u-super','','super@oneops.demo','Super Admin','superadmin',NULL);
+-- password_hash = bcrypt('demo1234') for all demo users
+INSERT IGNORE INTO users (id, org_id, email, name, role, department_id, password_hash) VALUES
+  ('u-admin1','org-1','admin@kmutt.demo','Org-1 Admin','admin','dept-1a','$2b$10$16mJwlPN1GG1HmaNyAQWK.1/G0OchMcBAScVdU.VWhLiSabfL34aS'),
+  ('u-view1','org-1','viewer@kmutt.demo','Org-1 Viewer','viewer','dept-1a','$2b$10$16mJwlPN1GG1HmaNyAQWK.1/G0OchMcBAScVdU.VWhLiSabfL34aS'),
+  ('u-admin2','org-2','admin@alpha.demo','Org-2 Admin','admin','dept-2a','$2b$10$16mJwlPN1GG1HmaNyAQWK.1/G0OchMcBAScVdU.VWhLiSabfL34aS'),
+  ('u-super','','super@oneops.demo','Super Admin','superadmin',NULL,'$2b$10$16mJwlPN1GG1HmaNyAQWK.1/G0OchMcBAScVdU.VWhLiSabfL34aS');
 
 -- Department product access (admin grant): dept → domain → level
 INSERT IGNORE INTO product_access (scope, scope_id, domain, level) VALUES
