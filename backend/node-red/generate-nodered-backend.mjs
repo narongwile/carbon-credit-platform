@@ -6,9 +6,13 @@
 //
 // Requires in Node-RED:
 //   • settings.js → functionExternalModules: true
-//   • mysql2 module (pre-declared on the init function node "libs")
-//   • env: DB_HOST/PORT/USER/PASSWORD/NAME, LINE_NOTIFY_TOKEN,
-//     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, GOOGLE_CHAT_WEBHOOK
+//   • mysql2 + nodemailer modules (pre-declared on the function node "libs")
+//   • env: DB_HOST/PORT/USER/PASSWORD/NAME; notification: SMTP_HOST/PORT/USER/
+//     PASS/MAIL_FROM, LINE_NOTIFY_TOKEN, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
+//     GOOGLE_CHAT_WEBHOOK
+// Notifications route per-tenant via the notification_channels table (org +
+// department + min_severity), matching the Express service; env vars act as a
+// single-destination fallback when no DB channels are configured.
 //
 // Run:  node generate-nodered-backend.mjs   → flows.nodered-backend.json
 // ---------------------------------------------------------------------------
@@ -27,8 +31,7 @@ const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Al
 
 // --- init: MySQL pool + alarm engine into global context --------------------
 const initFunc = `
-const mysql = global.get('mysql') || require('mysql2/promise');
-global.set('mysql', mysql);
+// 'mysql' is injected by functionExternalModules (declared in this node's libs).
 if (!global.get('pool')) {
   global.set('pool', mysql.createPool({
     host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',
@@ -85,7 +88,7 @@ const taken = new Date(ts || Date.now());
     const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;
     await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);
-    inserted++; node.send([null, { payload: e }, null]);
+    inserted++; node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null]);
   }
   msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null]);
 })().catch(err => { node.error(err.message, msg); });
@@ -93,16 +96,45 @@ return null;
 `
 
 const notifyFunc = `
+const pool = global.get('pool');
 const e = msg.payload;
-const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' @ '+e.time;
+if (!e) return null;
+const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' — '+(e.kind||'')+' @ '+e.time;
+const subject = 'ONEOPS '+e.severity+': '+e.paramLabel;
 (async () => {
   try {
-    const line = env.get('LINE_NOTIFY_TOKEN');
-    if (line) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+line,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
-    const tg = env.get('TELEGRAM_BOT_TOKEN'), chat = env.get('TELEGRAM_CHAT_ID');
-    if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text})});
-    const gc = env.get('GOOGLE_CHAT_WEBHOOK');
-    if (gc) await fetch(gc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});
+    // Per-tenant channels (org + dept) from DB — same routing as the Express service.
+    let channels = [];
+    if (pool && e.orgId) {
+      const [rows] = await pool.query("SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)", [e.orgId, e.departmentId || null]);
+      channels = rows;
+    }
+    // Fallback: env-based single destination when no DB channels are configured.
+    if (!channels.length) {
+      if (env.get('LINE_NOTIFY_TOKEN')) channels.push({ channel:'line', target:'' });
+      if (env.get('TELEGRAM_BOT_TOKEN')) channels.push({ channel:'telegram', target:'' });
+      if (env.get('GOOGLE_CHAT_WEBHOOK')) channels.push({ channel:'googlechat', target:'' });
+    }
+    for (const c of channels) {
+      if (c.min_severity === 'CRITICAL' && e.severity !== 'CRITICAL') continue;   // severity filter
+      try {
+        if (c.channel === 'email') {
+          if (!env.get('SMTP_HOST') || !c.target) { node.warn('notify:email skipped — SMTP_HOST/target missing'); continue; }
+          let tx = global.get('mailer');
+          if (!tx) { tx = nodemailer.createTransport({ host: env.get('SMTP_HOST'), port: Number(env.get('SMTP_PORT')||587), auth: env.get('SMTP_USER') ? { user: env.get('SMTP_USER'), pass: env.get('SMTP_PASS') } : undefined }); global.set('mailer', tx); }
+          await tx.sendMail({ from: env.get('MAIL_FROM')||'alerts@oneops.local', to: c.target, subject, text });
+        } else if (c.channel === 'line') {
+          const t = c.target || env.get('LINE_NOTIFY_TOKEN');
+          if (t) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
+        } else if (c.channel === 'telegram') {
+          const tg = env.get('TELEGRAM_BOT_TOKEN'); const chat = c.target || env.get('TELEGRAM_CHAT_ID');
+          if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text})});
+        } else if (c.channel === 'googlechat') {
+          const url = c.target || env.get('GOOGLE_CHAT_WEBHOOK');
+          if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});
+        }
+      } catch(err){ node.error('notify:'+c.channel+' '+err.message); }
+    }
   } catch(err){ node.error('notify: '+err.message); }
 })();
 return null;
@@ -121,7 +153,7 @@ const escalationFunc = `
 const pool = global.get('pool'); if(!pool) return null;
 (async()=>{
   const [rows]=await pool.query("SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND escalated=0 AND raised_at<(NOW(3)-INTERVAL ${ESCALATE_MIN} MINUTE)");
-  for(const r of rows){ node.send({ payload: { nodeId:r.node_id, paramLabel:'ESCALATION · '+r.param_label, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }
+  for(const r of rows){ node.send({ payload: { nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'ESCALATION · '+r.param_label, kind:r.kind, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }
   if(rows.length){ await pool.query('UPDATE alarm_events SET escalated=1 WHERE id IN (?)',[rows.map(r=>r.id)]); }
 })().catch(e=>node.error(e.message));
 return null;
@@ -220,6 +252,8 @@ if(!b.orgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId req
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
+// notify node also needs nodemailer (SMTP email), like the Express service
+const NOTIFY_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'nodemailer', module: 'nodemailer' }]
 const fn = (id, name, func, x, y, wires, outputs = 1, extra = {}) => ({ id, type: 'function', z: 'be', name, func, outputs, libs: [], x, y, wires, ...extra })
 let yREST = 360
 const endpoint = (idBase, method, url, handlerFunc) => {
@@ -253,7 +287,7 @@ const flow = [
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
   fn('normalize', 'normalize', normalizeFunc, 330, 140, [['ingest']]),
   fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], []], 3, { libs: LIBS }),
-  fn('notify', 'notify (LINE/Telegram/GChat)', notifyFunc, 820, 200, [[]]),
+  fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
   { id: 'dbgIngest', type: 'debug', z: 'be', name: 'ingest', active: true, complete: 'payload', x: 830, y: 140, wires: [] },
 
   // escalation loop

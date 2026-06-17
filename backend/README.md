@@ -44,10 +44,14 @@ This flow serves the full REST surface — including the BloodBOX endpoints
 (`/api/bloodbox/transits`, `/journey`, `/floors`, `/beacons`, `/boxes/:id/location`) —
 so it is feature-equivalent to the Express service. Run `sql/bloodbox.sql` first.
 Requires in Node-RED: `functionExternalModules: true` in settings.js and the
-`mysql2` module (pre-declared on the init function node), plus the same `DB_*`
-and channel env vars on the Node-RED process. Trade-off: faster to run, but the
-alarm engine lives as JS inside a function node (loses the TypeScript types /
-unit tests / sharing with the frontend that the Express service keeps).
+`mysql2` + `nodemailer` modules (pre-declared on the relevant function nodes),
+plus the same `DB_*`, `SMTP_*` and channel env vars on the Node-RED process.
+Notifications route **per-tenant** through the `notification_channels` table
+(org + department + `min_severity` filter) and support **Email/LINE/Telegram/
+Google Chat** — full parity with the Express service; the env tokens act as a
+single-destination fallback when no DB channels exist. Trade-off: faster to run,
+but the alarm engine lives as JS inside a function node (loses the TypeScript
+types / unit tests / sharing with the frontend that the Express service keeps).
 
 ## REST API
 | Method | Path | Purpose |
