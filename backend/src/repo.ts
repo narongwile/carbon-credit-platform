@@ -216,6 +216,15 @@ export async function effectiveAccess(userId: string): Promise<Access | null> {
   return { userId, orgId: (u.org_id as string) || '', role, departmentId, levels }
 }
 
+// The node behind an alarm event (for ack authorization).
+export async function eventNode(eventId: string): Promise<{ org_id: string; domain: string; department_id: string | null } | null> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT n.org_id, n.domain, n.department_id FROM alarm_events e JOIN nodes n ON n.id = e.node_id WHERE e.id = :id',
+    { id: eventId },
+  )
+  return rows.length ? (rows[0] as { org_id: string; domain: string; department_id: string | null }) : null
+}
+
 // Can this access see/operate a node? (org → domain access → department → manage)
 export function canSeeNode(a: Access, node: { org_id: string; domain: string; department_id: string | null }, write = false): boolean {
   if (a.role === 'superadmin') return true

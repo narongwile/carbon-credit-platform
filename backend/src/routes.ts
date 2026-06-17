@@ -13,7 +13,7 @@ import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
 import { publishDownlink } from './mqtt.js'
 import { userByEmail } from './repo.js'
-import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode } from './auth.js'
+import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode, requireEventManage } from './auth.js'
 import { effectiveAccess, canSeeNode } from './repo.js'
 
 export const router = Router()
@@ -169,7 +169,7 @@ router.get('/nodes/:id/events', requireNode(), async (req, res) => {
   res.json(await eventsByNode(req.params.id, Number(req.query.limit || 50)))
 })
 
-router.post('/events/:id/ack', requireRole('admin'), async (req, res) => {
+router.post('/events/:id/ack', requireEventManage, async (req, res) => {
   const { by, eventProblemId } = req.body
   await ackEvent(req.params.id, by || 'user', eventProblemId)
   res.json({ ok: true })

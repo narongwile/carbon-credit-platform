@@ -101,17 +101,19 @@ global.set('guard', async function(authHeader, policy, req){
   if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};
   const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);
   if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};
-  if((policy==='node'||policy==='node:manage') && claims.role!=='superadmin'){
+  if((policy==='node'||policy==='node:manage'||policy==='event:manage') && claims.role!=='superadmin'){
     const pool=global.get('pool');
-    const [nm]=await pool.query("SELECT org_id,domain,department_id FROM nodes WHERE id=?",[req.params.id]);
-    if(!nm.length) return {ok:false,code:404,error:'node not found'};
-    const node=nm[0];
+    let nm;
+    if(policy==='event:manage') nm=(await pool.query("SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?",[req.params.id]))[0];
+    else nm=(await pool.query("SELECT org_id,domain,department_id FROM nodes WHERE id=?",[req.params.id]))[0];
+    if(!nm.length) return {ok:false,code:404,error:'not found'};
+    const node=nm[0]; const needManage = policy!=='node';
     if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};
     if(claims.role!=='admin'){
       const acc=await global.get('accessFor')(claims.userId);
       const lvl=acc.levels[node.domain]||'none';
       if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};
-      if(policy==='node:manage' && lvl!=='manage') return {ok:false,code:403,error:'manage required'};
+      if(needManage && lvl!=='manage') return {ok:false,code:403,error:'manage required'};
       if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};
     }
   }
@@ -682,7 +684,7 @@ const flow = [
   ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc, 'node:manage'),
   ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),
   ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc, 'node'),
-  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc, 'admin'),
+  ...endpoint('ack', 'post', '/api/events/:id/ack', ackFunc, 'event:manage'),
   ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc, 'node'),
   ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc, 'node'),
   ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc, 'node:manage'),

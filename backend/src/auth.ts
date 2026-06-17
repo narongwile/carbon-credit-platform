@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import type { Request, Response, NextFunction } from 'express'
-import { nodeMeta, effectiveAccess, canSeeNode } from './repo.js'
+import { nodeMeta, effectiveAccess, canSeeNode, eventNode } from './repo.js'
 
 const SECRET = process.env.JWT_SECRET || 'dev-secret-change-me'
 const TTL = process.env.JWT_TTL || '12h'
@@ -44,6 +44,17 @@ export const requireNode = (write = false) => async (req: Request, res: Response
   if (!node) return res.status(404).json({ error: 'node not found' })
   const access = await effectiveAccess(req.auth.userId)
   if (!access || !canSeeNode(access, node, write)) return res.status(403).json({ error: 'no access to this device' })
+  next()
+}
+
+// Acknowledge requires 'manage' on the domain of the event's node (own org).
+export const requireEventManage = async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.auth) return res.status(401).json({ error: 'authentication required' })
+  if (req.auth.role === 'superadmin') return next()
+  const node = await eventNode(req.params.id)
+  if (!node) return res.status(404).json({ error: 'event not found' })
+  const access = await effectiveAccess(req.auth.userId)
+  if (!access || !canSeeNode(access, node, true)) return res.status(403).json({ error: 'manage required to acknowledge' })
   next()
 }
 
