@@ -161,6 +161,45 @@ if(!departmentId||!name){msg.headers=__CORS;msg.statusCode=400;msg.payload={erro
 const httpIngestFunc = `msg.payload={nodeId:msg.req.params.id,values:(msg.payload&&msg.payload.values)||{},ts:(msg.payload&&msg.payload.ts)};return msg;`
 const optionsFunc = CORS + `msg.headers=__CORS; msg.statusCode=204; msg.payload=''; return msg;`
 
+// --- BloodBOX domain handlers (ERD #4) --------------------------------------
+const bbErr = `.catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const bbTransitsFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||'';
+(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_transits WHERE org_id=? ORDER BY current_eta_min ASC',[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const bbTransitFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_transits WHERE id=?',[id]); msg.headers=__CORS; msg.statusCode=r.length?200:404; msg.payload=r.length?r[0]:{error:'not found'}; node.send(msg);})()` + bbErr
+
+const bbJourneyGetFunc = CORS + `const pool=global.get('pool'); const tid=msg.req.params.id;
+(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_journey_events WHERE transit_id=? ORDER BY ts ASC',[tid]); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const bbJourneyPostFunc = CORS + `const pool=global.get('pool'); const tid=msg.req.params.id; const b=msg.payload||{};
+if(!b.eventType||!b.signal){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'eventType and signal required'};return msg;}
+(async()=>{const id='je-'+Date.now(); await pool.query('INSERT INTO blood_box_journey_events (id,transit_id,floor_id,event_type,label,signal,lat,lng,pos_x_m,pos_y_m,temp_c,battery_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',[id,tid,b.floorId||null,b.eventType,b.label||null,b.signal,b.lat||null,b.lng||null,b.posX||null,b.posY||null,b.tempC||null,b.batteryPct||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+
+const bbFloorsFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||'';
+(async()=>{const[r]=await pool.query('SELECT * FROM building_floors WHERE org_id=? ORDER BY floor_number DESC',[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const bbBeaconsGetFunc = CORS + `const pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const floorId=msg.req.query&&msg.req.query.floorId;
+(async()=>{const sql='SELECT * FROM ble_beacons WHERE org_id=?'+(floorId?' AND floor_id=?':'')+' ORDER BY id'; const a=floorId?[orgId,floorId]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const bbBeaconsPostFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.orgId||!b.floorId||!b.uuid){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId, floorId and uuid required'};return msg;}
+(async()=>{const id=b.id||'bcn-'+Date.now(); await pool.query('INSERT INTO ble_beacons (id,org_id,floor_id,uuid,major,minor,pos_x_m,pos_y_m,tx_power_dbm,battery_pct,status) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE floor_id=VALUES(floor_id),pos_x_m=VALUES(pos_x_m),pos_y_m=VALUES(pos_y_m),tx_power_dbm=VALUES(tx_power_dbm),battery_pct=VALUES(battery_pct),status=VALUES(status)',[id,b.orgId,b.floorId,b.uuid,b.major||null,b.minor||null,b.posX||null,b.posY||null,b.txPower||null,b.battery||null,b.status||'active']); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+
+const bbBeaconDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query('DELETE FROM ble_beacons WHERE id=?',[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
+const bbLocGetFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_locations WHERE box_id=? AND is_current=1 ORDER BY moved_at DESC LIMIT 1',[id]); msg.headers=__CORS; msg.payload=r.length?r[0]:null; node.send(msg);})()` + bbErr
+
+const bbLocPostFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};
+if(!b.orgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId required'};return msg;}
+(async()=>{await pool.query('UPDATE blood_box_locations SET is_current=0 WHERE box_id=? AND is_current=1',[id]);
+  await pool.query('INSERT INTO blood_box_locations (org_id,box_id,floor_id,pos_x_m,pos_y_m,room_label,moved_by) VALUES (?,?,?,?,?,?,?)',[b.orgId,id,b.floorId||null,b.posX||null,b.posY||null,b.roomLabel||null,b.movedBy||null]);
+  await pool.query('UPDATE blood_boxes SET floor_id=?,pos_x_m=?,pos_y_m=? WHERE id=?',[b.floorId||null,b.posX||null,b.posY||null,id]);
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 const fn = (id, name, func, x, y, wires, outputs = 1, extra = {}) => ({ id, type: 'function', z: 'be', name, func, outputs, libs: [], x, y, wires, ...extra })
 let yREST = 360
@@ -202,11 +241,24 @@ const flow = [
   ...endpoint('readget', 'get', '/api/nodes/:id/readings', readingsGetFunc),
   ...endpoint('docsget', 'get', '/api/nodes/:id/documents', docsGetFunc),
   ...endpoint('docspost', 'post', '/api/nodes/:id/documents', docsPostFunc),
+
+  // BloodBOX domain (ERD #4): transits, journey, floors, beacons, locations
+  ...endpoint('bbjourneyget', 'get', '/api/bloodbox/transits/:id/journey', bbJourneyGetFunc),
+  ...endpoint('bbjourneypost', 'post', '/api/bloodbox/transits/:id/journey', bbJourneyPostFunc),
+  ...endpoint('bbtransit', 'get', '/api/bloodbox/transits/:id', bbTransitFunc),
+  ...endpoint('bbtransits', 'get', '/api/bloodbox/transits', bbTransitsFunc),
+  ...endpoint('bbfloors', 'get', '/api/bloodbox/floors', bbFloorsFunc),
+  ...endpoint('bbbeacondel', 'delete', '/api/bloodbox/beacons/:id', bbBeaconDelFunc),
+  ...endpoint('bbbeaconsget', 'get', '/api/bloodbox/beacons', bbBeaconsGetFunc),
+  ...endpoint('bbbeaconspost', 'post', '/api/bloodbox/beacons', bbBeaconsPostFunc),
+  ...endpoint('bblocget', 'get', '/api/bloodbox/boxes/:id/location', bbLocGetFunc),
+  ...endpoint('bblocpost', 'post', '/api/bloodbox/boxes/:id/location', bbLocPostFunc),
+
   ...endpoint('cors', 'options', '/api/*', optionsFunc),
 ]
 
 // give every REST fn the mysql lib (handlers query the pool)
-for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs)/.test(n.id)) n.libs = LIBS
+for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb)/.test(n.id)) n.libs = LIBS
 
 // POST /readings ingest → reuse the engine ingest node
 const httpIngest = endpoint('readpost', 'post', '/api/nodes/:id/readings', httpIngestFunc)
@@ -219,3 +271,4 @@ writeFileSync(out, JSON.stringify(flow, null, 2) + '\n')
 const types = [...new Set(flow.map((n) => n.type))]
 console.log('Generated', out, '—', flow.length, 'nodes ·', types.join(', '))
 console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:orgId/rule · GET /nodes/:id/events · POST /events/:id/ack · GET|POST /nodes/:id/readings · GET|POST /nodes/:id/documents · OPTIONS /api/*')
+console.log('BloodBOX: GET /bloodbox/transits · GET /bloodbox/transits/:id · GET|POST /bloodbox/transits/:id/journey · GET /bloodbox/floors · GET|POST|DELETE /bloodbox/beacons · GET|POST /bloodbox/boxes/:id/location')
