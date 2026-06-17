@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
 import { getGeoNodes } from '@/lib/geoNodes'
 import { getHostsByOrg } from '@/lib/fleetData'
+import { useFleetLive, statusFromLive } from '@/lib/useFleetLive'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
 import Link from 'next/link'
 import clsx from 'clsx'
@@ -118,14 +119,15 @@ function hostMetric(h: SensorHost): string {
   if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} cr`
   return `set ${h.setLowC}–${h.setHighC}°C`
 }
-function HostCard({ host, href }: { host: SensorHost; href: string }) {
+function HostCard({ host, href, liveStatus }: { host: SensorHost; href: string; liveStatus?: string }) {
   const meta = DOMAIN_META[host.domain]
+  const status = liveStatus ?? host.status
   return (
     <Link href={href}>
       <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
         <div className="flex items-start justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: statusColorH(host.status), boxShadow: `0 0 6px ${statusColorH(host.status)}` }} />
+            <span className="w-2.5 h-2.5 rounded-full" style={{ background: statusColorH(status), boxShadow: `0 0 6px ${statusColorH(status)}` }} />
             <div className="text-sm font-bold text-white">{host.name}</div>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span>
@@ -145,10 +147,17 @@ function OverviewTab() {
   const hosts = getHostsByOrg(orgId)
   const alarms = getAlarmsByOrg(orgId)
 
+  // Live overlay from MySQL (via /api/fleet); falls back to mock when API is off.
+  const live = useFleetLive(orgId)
+  const eff = (h: SensorHost): string => {
+    const l = live.byId.get(h.id)
+    return l ? statusFromLive(l) : h.status
+  }
+
   const byDomain = (d: SensorDomain) => hosts.filter((h) => h.domain === d)
-  const normal = hosts.filter((h) => h.status === 'NORMAL').length
-  const warning = hosts.filter((h) => h.status === 'WARNING').length
-  const critical = hosts.filter((h) => h.status === 'CRITICAL' || h.status === 'OFFLINE').length
+  const normal = hosts.filter((h) => eff(h) === 'NORMAL').length
+  const warning = hosts.filter((h) => eff(h) === 'WARNING').length
+  const critical = hosts.filter((h) => eff(h) === 'CRITICAL' || eff(h) === 'OFFLINE').length
   const unacked = alarms.filter((a) => !a.acknowledged).length
   const totalSensors = hosts.reduce((a, h) => a + h.sensorCount, 0)
 
@@ -192,7 +201,7 @@ function OverviewTab() {
             <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} href={d === 'transformer' ? `/admin/transformers/${h.id}` : `/admin/nodes/${h.id}`} />
+                <HostCard key={h.id} host={h} liveStatus={live.byId.get(h.id) ? eff(h) : undefined} href={d === 'transformer' ? `/admin/transformers/${h.id}` : `/admin/nodes/${h.id}`} />
               ))}
             </div>
           </div>
