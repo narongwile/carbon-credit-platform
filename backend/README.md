@@ -32,6 +32,18 @@ Then in Node-RED: **Menu → Import → select `node-red/flows.json` → Deploy*
 `telemetry/#` → normalize → `POST /api/nodes/:id/readings`, plus a debug node, an
 error catch, and a manual "Simulate reading" inject for testing without a broker.
 
+### Option B — Node-RED as the WHOLE backend (no Express service)
+If you prefer one tool, generate an all-in-one Node-RED backend (MQTT + alarm
+engine + MySQL + REST API + notifications + escalation, all inside Node-RED):
+```bash
+npm run flows:backend     # → node-red/flows.nodered-backend.json
+```
+Requires in Node-RED: `functionExternalModules: true` in settings.js and the
+`mysql2` module (pre-declared on the init function node), plus the same `DB_*`
+and channel env vars on the Node-RED process. Trade-off: faster to run, but the
+alarm engine lives as JS inside a function node (loses the TypeScript types /
+unit tests / sharing with the frontend that the Express service keeps).
+
 ## REST API
 | Method | Path | Purpose |
 |---|---|---|
