@@ -27,7 +27,7 @@ const MQTT_TOPIC = process.env.MQTT_TOPIC || 'telemetry/#'
 const ESCALATE_MIN = process.env.ESCALATE_AFTER_MIN || '15'
 
 // CORS preamble injected into every REST handler
-const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
+const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
 
 // --- init: MySQL pool + alarm engine into global context --------------------
 const initFunc = `
@@ -505,6 +505,18 @@ if(!b.orgId||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'
 const rptDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
 (async()=>{await pool.query("DELETE FROM report_schedules WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
+// --- Per-user config (configProfile). Identity = x-user-id header (pre-auth) --
+const meGetFunc = CORS + `const pool=global.get('pool'); const uid=(msg.req.headers&&msg.req.headers['x-user-id'])||'';
+if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'x-user-id header required'};return msg;}
+(async()=>{const[u]=await pool.query("SELECT id,org_id,email,name,role,department_id FROM users WHERE id=?",[uid]);
+  const[pr]=await pool.query("SELECT prefs FROM user_prefs WHERE user_id=?",[uid]);
+  const prefs = pr.length ? (typeof pr[0].prefs==='string'?JSON.parse(pr[0].prefs||'{}'):pr[0].prefs) : {};
+  msg.headers=__CORS; msg.payload={ user: u.length?u[0]:{id:uid}, prefs }; node.send(msg);})()` + bbErr
+
+const mePutFunc = CORS + `const pool=global.get('pool'); const uid=(msg.req.headers&&msg.req.headers['x-user-id'])||''; const prefs=msg.payload&&msg.payload.prefs!==undefined?msg.payload.prefs:msg.payload;
+if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'x-user-id header required'};return msg;}
+(async()=>{await pool.query("INSERT INTO user_prefs (user_id,prefs) VALUES (?,?) ON DUPLICATE KEY UPDATE prefs=VALUES(prefs)",[uid,JSON.stringify(prefs||{})]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
   { id: 'wslistener', type: 'websocket-listener', path: '/ws/telemetry', wholemsg: 'false' },
@@ -588,6 +600,10 @@ const flow = [
   ...endpoint('rptpost', 'post', '/api/reports/schedules', rptPostFunc),
   ...endpoint('rptdel', 'delete', '/api/reports/schedules/:id', rptDelFunc),
 
+  // Per-user config (configProfile)
+  ...endpoint('meget', 'get', '/api/me/config', meGetFunc),
+  ...endpoint('meput', 'put', '/api/me/config', mePutFunc),
+
   // Downlink (backend → device): config (retained) / cmd / ota
   ...downlinkEndpoint('cfgput', 'put', '/api/nodes/:id/config', cfgPutFunc),
   ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc),
@@ -597,7 +613,7 @@ const flow = [
 ]
 
 // give every REST fn the mysql lib (handlers query the pool)
-for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb|fleet|rpt)/.test(n.id)) n.libs = LIBS
+for (const n of flow) if (n.type === 'function' && /^(health|getrule|putrule|orgrule|events|ack|readget|docs|bb|fleet|rpt|me)/.test(n.id)) n.libs = LIBS
 
 // POST /readings ingest → reuse the engine ingest node, then reply via its
 // own http response node. ingest re-emits the original msg (req/res preserved

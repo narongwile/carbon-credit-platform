@@ -84,6 +84,25 @@ CREATE TABLE IF NOT EXISTS notification_channels (
   INDEX (org_id)
 );
 
+-- Users + per-user preferences (configProfile). Identity is the x-user-id
+-- header for now (pre-auth); swap for JWT subject when auth lands.
+CREATE TABLE IF NOT EXISTS users (
+  id            VARCHAR(64) PRIMARY KEY,
+  org_id        VARCHAR(64) NOT NULL,
+  email         VARCHAR(160),
+  name          VARCHAR(120),
+  role          VARCHAR(32),
+  department_id VARCHAR(64),
+  created_at    DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  INDEX (org_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_prefs (
+  user_id    VARCHAR(64) PRIMARY KEY,
+  prefs      TEXT,
+  updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+);
+
 -- Device logs (P/diag/log + P/ota/progress)
 CREATE TABLE IF NOT EXISTS device_logs (
   id        BIGINT AUTO_INCREMENT PRIMARY KEY,

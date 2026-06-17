@@ -128,6 +128,21 @@ export async function insertDeadLetter(source: string, error: string, payload: u
   })
 }
 
+// ---- Users + per-user config (configProfile) -------------------------------
+export async function getUser(userId: string): Promise<RowDataPacket | null> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, department_id FROM users WHERE id = :id', { id: userId })
+  return rows.length ? rows[0] : null
+}
+export async function getPrefs(userId: string): Promise<Record<string, unknown>> {
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT prefs FROM user_prefs WHERE user_id = :id', { id: userId })
+  if (!rows.length) return {}
+  const raw = rows[0].prefs
+  return typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw as Record<string, unknown>)
+}
+export async function putPrefs(userId: string, prefs: unknown): Promise<void> {
+  await pool.query('INSERT INTO user_prefs (user_id, prefs) VALUES (:id, :p) ON DUPLICATE KEY UPDATE prefs = :p', { id: userId, p: JSON.stringify(prefs ?? {}) })
+}
+
 // ---- Report schedules ------------------------------------------------------
 export async function listSchedules(orgId: string): Promise<RowDataPacket[]> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM report_schedules WHERE org_id = :o ORDER BY name', { o: orgId })

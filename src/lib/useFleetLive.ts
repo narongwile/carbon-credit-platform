@@ -6,6 +6,8 @@
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react'
 import { api, apiEnabled, type FleetNode } from './api'
+import { DOMAIN_META } from '@/types/fleet'
+import type { GeoNode } from './geoNodes'
 
 export type EffectiveStatus = 'NORMAL' | 'WARNING' | 'CRITICAL' | 'OFFLINE'
 
@@ -32,4 +34,29 @@ export function useFleetLive(orgId: string, domain?: string) {
   }, [orgId, domain])
 
   return { byId, enabled: apiEnabled, loaded }
+}
+
+const geoHealth = (n: FleetNode) => {
+  const s = statusFromLive(n)
+  return s === 'CRITICAL' ? 'critical' : s === 'WARNING' || s === 'OFFLINE' ? 'warning' : 'healthy'
+}
+
+// Live GeoNode[] for the sensor map from /api/fleet (uses node lat/lng). Returns
+// null when the API is off or no node has coordinates → caller falls back to mock.
+export function useLiveGeoNodes(orgId: string): GeoNode[] | null {
+  const { byId, loaded } = useFleetLive(orgId)
+  if (!loaded || byId.size === 0) return null
+  const geo: GeoNode[] = []
+  for (const n of Array.from(byId.values())) {
+    if (n.lat == null || n.lng == null) continue
+    const meta = DOMAIN_META[n.domain]
+    geo.push({
+      id: n.id, orgId, name: n.name, domain: n.domain,
+      platform: meta.platform, accent: meta.accent, health: geoHealth(n),
+      lat: Number(n.lat), lng: Number(n.lng),
+      metricLabel: 'Status', metricValue: n.alarm ?? (n.online === 0 ? 'Offline' : 'Online'),
+      updated: n.last_seen ?? '—',
+    })
+  }
+  return geo.length ? geo : null
 }

@@ -71,6 +71,7 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | POST | `/api/nodes/:id/ota` | downlink: publish `P/ota/cmd` (signed artefact descriptor) |
 | GET/POST | `/api/reports/schedules` | scheduled reports (cron every 15 min → CSV email) |
 | DELETE | `/api/reports/schedules/:id` | remove a schedule |
+| GET/PUT | `/api/me/config` | per-user config (configProfile); identity via `x-user-id` header |
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |

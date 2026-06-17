@@ -4,6 +4,7 @@ import {
   getRule, putRule, nodesByOrg, eventsByNode, ackEvent, recentReadings,
   fleetByOrg, latestReadings, mqttPrefix,
   listSchedules, upsertSchedule, deleteSchedule,
+  getUser, getPrefs, putPrefs,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
@@ -48,6 +49,19 @@ router.get('/fleet', async (req, res) => {
 
 router.get('/fleet/:id/latest', async (req, res) => {
   res.json(await latestReadings(req.params.id))
+})
+
+// ---- Per-user config (configProfile); identity = x-user-id header ----------
+router.get('/me/config', async (req, res) => {
+  const uid = req.header('x-user-id')
+  if (!uid) return res.status(401).json({ error: 'x-user-id header required' })
+  res.json({ user: (await getUser(uid)) ?? { id: uid }, prefs: await getPrefs(uid) })
+})
+router.put('/me/config', async (req, res) => {
+  const uid = req.header('x-user-id')
+  if (!uid) return res.status(401).json({ error: 'x-user-id header required' })
+  await putPrefs(uid, req.body?.prefs ?? req.body)
+  res.json({ ok: true })
 })
 
 // ---- Scheduled reports -----------------------------------------------------

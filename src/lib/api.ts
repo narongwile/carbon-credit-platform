@@ -13,7 +13,7 @@ export const apiEnabled = !!BASE
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   if (!BASE) return null
   try {
-    const r = await fetch(`${BASE}${path}`, { headers: { 'content-type': 'application/json' }, ...init })
+    const r = await fetch(`${BASE}${path}`, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers as Record<string, string>) } })
     if (!r.ok) return null
     return (await r.json()) as T
   } catch {
@@ -54,6 +54,12 @@ export const api = {
   saveSchedule: (body: Partial<ReportSchedule> & { orgId: string; name: string }) =>
     req<{ id: string }>(`/api/reports/schedules`, { method: 'POST', body: JSON.stringify(body) }),
   deleteSchedule: (id: string) => req(`/api/reports/schedules/${id}`, { method: 'DELETE' }),
+
+  // Per-user config (configProfile); identity passed as the x-user-id header.
+  getMyConfig: (userId: string) =>
+    req<{ user: Record<string, unknown>; prefs: Record<string, unknown> }>(`/api/me/config`, { headers: { 'x-user-id': userId } }),
+  putMyConfig: (userId: string, prefs: Record<string, unknown>) =>
+    req<{ ok: boolean }>(`/api/me/config`, { method: 'PUT', headers: { 'x-user-id': userId }, body: JSON.stringify({ prefs }) }),
 }
 
 export interface FleetNode {

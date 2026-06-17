@@ -4,6 +4,7 @@ import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { getGeoNodes } from '@/lib/geoNodes'
+import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
 import { useAppStore } from '@/lib/store'
 import { viewerDomains } from '@/lib/viewer'
@@ -19,7 +20,7 @@ const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { 
 export default function CustomerMapPage() {
   const { viewerUserId } = useAppStore()
   const allowed = viewerDomains(viewerUserId)
-  const nodes = getGeoNodes('org-1').filter((n) => allowed.includes(n.domain))
+  const nodes = (useLiveGeoNodes('org-1') ?? getGeoNodes('org-1')).filter((n) => allowed.includes(n.domain))
   const devices = managedDevicesFromFleet('org-1').filter((d) => !d.domain || allowed.includes(d.domain))
   const [tab, setTab] = useState<'map' | 'layout'>('map')
 
