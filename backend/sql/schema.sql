@@ -79,3 +79,14 @@ CREATE TABLE IF NOT EXISTS notification_channels (
   enabled     TINYINT(1) DEFAULT 1,
   INDEX (org_id)
 );
+
+-- Device presence / liveness (driven by ESP32 heartbeat + status birth/will)
+CREATE TABLE IF NOT EXISTS device_presence (
+  node_id     VARCHAR(64) PRIMARY KEY,
+  online      TINYINT(1) DEFAULT 1,
+  last_seen   DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3),
+  rssi        SMALLINT,
+  batt        TINYINT,
+  fw          VARCHAR(32),
+  INDEX (online, last_seen)
+);

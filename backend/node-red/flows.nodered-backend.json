@@ -69,15 +69,18 @@
     "id": "normalize",
     "type": "function",
     "z": "be",
-    "name": "normalize",
-    "func": "\n// Accepts three shapes and normalises to { nodeId, values, ts }:\n//  1) { nodeId, values:{...}, ts }                      (consolidated / internal bridge)\n//  2) { device_id, channel, value, ts }                 (ESP32 spec §6 per-channel envelope)\n//  3) topic telemetry/<nodeId>/<param> = <number>       (legacy flat)\n// Channel names from the ESP32 firmware are mapped to alarm-engine param keys.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nlet nodeId, raw = {}, ts = Date.now();\nconst p = msg.payload;\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }\nelse if (p && typeof p==='object'){ return null; }   // status/heartbeat/diag → not a reading\nelse { const t=(msg.topic||'').split('/'); nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\n// remap spec channel names → engine param keys (temp_c drives both directions)\nconst values = {};\nfor (const k of Object.keys(raw)) {\n  const v = raw[k];\n  if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; }\n  else values[MAP[k]||k] = v;\n}\nmsg.payload = { nodeId, values, ts };\nreturn msg;\n",
-    "outputs": 1,
+    "name": "normalize (readings | presence)",
+    "func": "\n// Output 1 = readings (→ ingest); Output 2 = presence (→ device_presence).\n// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |\n//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nconst p = msg.payload;\n// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload\nif (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {\n  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {\n    const id = p.device_id || (msg.topic||'').split('/').slice(-2,-1)[0];\n    if (!id) return null;\n    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online\n    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }];\n  }\n  return null;   // diag / ota-progress → not ingested\n}\n// --- readings\nlet nodeId, raw = {}, ts = Date.now();\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }\nelse if (p && typeof p==='object'){ return null; }\nelse { const t=(msg.topic||'').split('/'); nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\nconst values = {};\nfor (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }\nreturn [{ payload: { nodeId, values, ts } }, null];\n",
+    "outputs": 2,
     "libs": [],
     "x": 330,
     "y": 140,
     "wires": [
       [
         "ingest"
+      ],
+      [
+        "presence"
       ]
     ]
   },
@@ -143,6 +146,25 @@
     "wires": []
   },
   {
+    "id": "presence",
+    "type": "function",
+    "z": "be",
+    "name": "presence upsert",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?,?,NOW(3),?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw)\",\n    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null]);\n})().catch(err => node.error('presence: ' + err.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 560,
+    "y": 80,
+    "wires": [
+      []
+    ]
+  },
+  {
     "id": "esctick",
     "type": "inject",
     "z": "be",
@@ -172,6 +194,42 @@
     ],
     "x": 350,
     "y": 260,
+    "wires": [
+      [
+        "notify"
+      ]
+    ]
+  },
+  {
+    "id": "offtick",
+    "type": "inject",
+    "z": "be",
+    "name": "every 60s",
+    "props": [],
+    "repeat": "60",
+    "x": 130,
+    "y": 330,
+    "wires": [
+      [
+        "offlinesweep"
+      ]
+    ]
+  },
+  {
+    "id": "offlinesweep",
+    "type": "function",
+    "z": "be",
+    "name": "offline sweep",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst AFTER = Number(env.get('OFFLINE_AFTER_S') || 90);\n(async () => {\n  const [rows] = await pool.query(\n    \"SELECT p.node_id, n.org_id, n.department_id FROM device_presence p JOIN nodes n ON n.id = p.node_id WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)\",\n    [AFTER]);\n  for (const r of rows) {\n    await pool.query(\"UPDATE device_presence SET online = 0 WHERE node_id = ?\", [r.node_id]);\n    const id = 'ev-offline-' + r.node_id + '-' + Date.now();\n    await pool.query(\"INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))\",\n      [id, r.node_id, r.org_id, r.department_id, 'online', 'Device Offline', 'CRITICAL', 'offline', 0, 0, '']);\n    node.send({ payload: { id, nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'Device Offline', kind:'offline', value:0, unit:'', threshold:0, severity:'CRITICAL', time:new Date().toISOString() } });\n  }\n})().catch(e => node.error('offline-sweep: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 330,
     "wires": [
       [
         "notify"

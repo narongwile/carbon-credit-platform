@@ -70,6 +70,15 @@ types / unit tests / sharing with the frontend that the Express service keeps).
 | GET/POST/DELETE | `/api/bloodbox/beacons` | BLE beacon management (indoor anchors) |
 | GET/POST | `/api/bloodbox/boxes/:id/location` | current indoor location / move box |
 
+## Presence / offline detection
+The ESP32 `P/status` (birth/will) and `P/heartbeat` messages are routed by the
+Node-RED `normalize` node to a **presence** handler that upserts `device_presence`
+(`online`, `last_seen`, `rssi`, `batt`, `fw`). A 60 s **offline sweep** marks any
+device unseen for more than `OFFLINE_AFTER_S` (default 90 s) offline, raises a
+CRITICAL `offline` event, and dispatches it through the same per-tenant notify
+path as any alarm. (Presence handling lives in the Node-RED backend flow; the
+Express service ingests readings — add the same sweep there if you run Express.)
+
 ## Device firmware (ESP32-S3)
 The ESP32 firmware in [`firmware/esp32`](../firmware/esp32) publishes the spec
 per-channel telemetry envelope (`{device_id, channel, value, ...}`). The Node-RED

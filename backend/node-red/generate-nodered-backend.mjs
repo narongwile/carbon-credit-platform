@@ -141,30 +141,64 @@ return null;
 `
 
 const normalizeFunc = `
-// Accepts three shapes and normalises to { nodeId, values, ts }:
-//  1) { nodeId, values:{...}, ts }                      (consolidated / internal bridge)
-//  2) { device_id, channel, value, ts }                 (ESP32 spec §6 per-channel envelope)
-//  3) topic telemetry/<nodeId>/<param> = <number>       (legacy flat)
-// Channel names from the ESP32 firmware are mapped to alarm-engine param keys.
+// Output 1 = readings (→ ingest); Output 2 = presence (→ device_presence).
+// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |
+//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.
 const MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',
   moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
   rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };
-let nodeId, raw = {}, ts = Date.now();
 const p = msg.payload;
+// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload
+if (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {
+  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {
+    const id = p.device_id || (msg.topic||'').split('/').slice(-2,-1)[0];
+    if (!id) return null;
+    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online
+    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }];
+  }
+  return null;   // diag / ota-progress → not ingested
+}
+// --- readings
+let nodeId, raw = {}, ts = Date.now();
 if (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }
 else if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }
-else if (p && typeof p==='object'){ return null; }   // status/heartbeat/diag → not a reading
+else if (p && typeof p==='object'){ return null; }
 else { const t=(msg.topic||'').split('/'); nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }
 if(!nodeId) return null;
-// remap spec channel names → engine param keys (temp_c drives both directions)
 const values = {};
-for (const k of Object.keys(raw)) {
-  const v = raw[k];
-  if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; }
-  else values[MAP[k]||k] = v;
-}
-msg.payload = { nodeId, values, ts };
-return msg;
+for (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }
+return [{ payload: { nodeId, values, ts } }, null];
+`
+
+// Presence upsert: heartbeat/status keep device_presence fresh (last_seen, online).
+const presenceFunc = `
+const pool = global.get('pool'); const e = msg.payload;
+if (!pool || !e || !e.nodeId) return null;
+(async () => {
+  await pool.query("INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?,?,NOW(3),?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw)",
+    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null]);
+})().catch(err => node.error('presence: ' + err.message));
+return null;
+`
+
+// Offline detection: any device online but unseen > OFFLINE_AFTER_S ⇒ mark offline,
+// raise a CRITICAL offline event, and route to notify (per-tenant, like any alarm).
+const offlineSweepFunc = `
+const pool = global.get('pool'); if (!pool) return null;
+const AFTER = Number(env.get('OFFLINE_AFTER_S') || 90);
+(async () => {
+  const [rows] = await pool.query(
+    "SELECT p.node_id, n.org_id, n.department_id FROM device_presence p JOIN nodes n ON n.id = p.node_id WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)",
+    [AFTER]);
+  for (const r of rows) {
+    await pool.query("UPDATE device_presence SET online = 0 WHERE node_id = ?", [r.node_id]);
+    const id = 'ev-offline-' + r.node_id + '-' + Date.now();
+    await pool.query("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
+      [id, r.node_id, r.org_id, r.department_id, 'online', 'Device Offline', 'CRITICAL', 'offline', 0, 0, '']);
+    node.send({ payload: { id, nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'Device Offline', kind:'offline', value:0, unit:'', threshold:0, severity:'CRITICAL', time:new Date().toISOString() } });
+  }
+})().catch(e => node.error('offline-sweep: ' + e.message));
+return null;
 `
 
 const escalationFunc = `
@@ -303,14 +337,21 @@ const flow = [
 
   // ingest pipeline
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
-  fn('normalize', 'normalize', normalizeFunc, 330, 140, [['ingest']]),
+  fn('normalize', 'normalize (readings | presence)', normalizeFunc, 330, 140, [['ingest'], ['presence']], 2),
   fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify'], []], 3, { libs: LIBS }),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
   { id: 'dbgIngest', type: 'debug', z: 'be', name: 'ingest', active: true, complete: 'payload', x: 830, y: 140, wires: [] },
 
+  // presence: heartbeat/status → device_presence (last_seen, online)
+  fn('presence', 'presence upsert', presenceFunc, 560, 80, [[]], 1, { libs: LIBS }),
+
   // escalation loop
   { id: 'esctick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 260, wires: [['escalate']] },
   fn('escalate', 'escalation scan', escalationFunc, 350, 260, [['notify']], 1, { libs: LIBS }),
+
+  // offline detection: unseen device > OFFLINE_AFTER_S → CRITICAL offline + notify
+  { id: 'offtick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 330, wires: [['offlinesweep']] },
+  fn('offlinesweep', 'offline sweep', offlineSweepFunc, 350, 330, [['notify']], 1, { libs: LIBS }),
 
   // REST API (each endpoint = http in → fn → http response)
   ...endpoint('health', 'get', '/api/health', healthFunc),
