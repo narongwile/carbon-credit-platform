@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
@@ -13,6 +13,7 @@ import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
 import { useAlarmDB } from '@/server/alarmStore'
+import { api, apiEnabled } from '@/lib/api'
 import { defaultNodeRule } from '@/lib/alarmParams'
 import {
   ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users, Bell,
@@ -45,7 +46,20 @@ export default function DeviceDetailClient() {
   const canAccess = !domain || viewerCanAccess(viewerUserId, domain)
   const canManage = !domain || viewerCanManage(viewerUserId, domain)
   const deptEvents = viewerEventProblems(viewerUserId)
-  const evProblems = deptEvents.length ? deptEvents : eventProblems
+  // Root-cause catalog: live from the backend (admin-managed) when configured,
+  // else the viewer's department mock list.
+  const { selectedOrgId } = useAppStore()
+  const [liveProblems, setLiveProblems] = useState<{ id: string; label: string }[] | null>(null)
+  useEffect(() => {
+    if (!apiEnabled) return
+    const dept = viewerDepartments(viewerUserId)[0]?.id
+    let cancelled = false
+    api.eventProblems(selectedOrgId, dept, domain).then((rows) => {
+      if (!cancelled && rows) setLiveProblems(rows.map((r) => ({ id: r.id, label: r.label })))
+    })
+    return () => { cancelled = true }
+  }, [selectedOrgId, viewerUserId, domain])
+  const evProblems = liveProblems ?? (deptEvents.length ? deptEvents : eventProblems)
 
   // viewer identity + department(s) for document scoping & email export
   const me = getViewerUser(viewerUserId)
