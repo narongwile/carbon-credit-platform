@@ -1,10 +1,12 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { hosts, sites } from '@/lib/fleetData'
 import { organizations } from '@/lib/mockData'
 import { useAppStore } from '@/lib/store'
+import { api, apiEnabled } from '@/lib/api'
+import { statusFromLive } from '@/lib/useFleetLive'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { Activity, Search, Zap, Thermometer, Droplet, ExternalLink } from 'lucide-react'
 import clsx from 'clsx'
@@ -36,13 +38,28 @@ export default function SuperAdminMonitoringPage() {
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
 
+  // Live cross-tenant status overlay (superadmin sees every org's fleet).
+  const [live, setLive] = useState<Map<string, string>>(new Map())
+  useEffect(() => {
+    if (!apiEnabled) return
+    let cancelled = false
+    Promise.all(organizations.map((o) => api.fleet(o.id))).then((results) => {
+      if (cancelled) return
+      const m = new Map<string, string>()
+      results.forEach((rows) => (rows || []).forEach((n) => m.set(n.id, statusFromLive(n))))
+      setLive(m)
+    })
+    return () => { cancelled = true }
+  }, [])
+  const eff = (h: SensorHost) => live.get(h.id) ?? h.status
+
   const filtered = useMemo(() => hosts.filter((h) => {
     if (org !== 'all' && h.orgId !== org) return false
     if (domain !== 'all' && h.domain !== domain) return false
-    if (status !== 'all' && h.status !== status) return false
+    if (status !== 'all' && eff(h) !== status) return false
     if (search && !`${h.name} ${siteName(h.siteId)}`.toLowerCase().includes(search.toLowerCase())) return false
     return true
-  }), [org, domain, status, search])
+  }), [org, domain, status, search, live])
 
   const openMonitor = (h: SensorHost) => { setSelectedOrgId(h.orgId); router.push(monitorRoute(h)) }
 
@@ -61,7 +78,7 @@ export default function SuperAdminMonitoringPage() {
           { label: 'Sensor Hosts', value: filtered.length, color: '#6366f1' },
           { label: 'Total Sensors', value: totalSensors, color: '#06b6d4' },
           { label: 'Organizations', value: org === 'all' ? organizations.length : 1, color: '#a78bfa' },
-          { label: 'Critical', value: filtered.filter((h) => h.status === 'CRITICAL').length, color: '#ef4444' },
+          { label: 'Critical', value: filtered.filter((h) => eff(h) === 'CRITICAL').length, color: '#ef4444' },
         ].map((s) => (
           <div key={s.label} className="rounded-xl p-4" style={surface}>
             <div className="text-xs text-slate-500 mb-1">{s.label}</div>
@@ -120,7 +137,7 @@ export default function SuperAdminMonitoringPage() {
                   <td className="py-3 px-4 text-slate-400">{orgName(h.orgId)}</td>
                   <td className="py-3 px-4 text-slate-400">{siteName(h.siteId)}</td>
                   <td className="py-3 px-4"><span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span></td>
-                  <td className="py-3 px-4"><span className="flex items-center gap-1.5 text-xs"><span className="w-2 h-2 rounded-full" style={{ background: statusColor(h.status) }} /><span style={{ color: statusColor(h.status) }}>{h.status}</span></span></td>
+                  <td className="py-3 px-4"><span className="flex items-center gap-1.5 text-xs"><span className="w-2 h-2 rounded-full" style={{ background: statusColor(eff(h)) }} /><span style={{ color: statusColor(eff(h)) }}>{eff(h)}</span></span></td>
                   <td className="py-3 px-4 text-xs text-slate-400">{metric(h)}</td>
                   <td className="py-3 px-4 text-right">
                     <button onClick={() => openMonitor(h)} className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300">
