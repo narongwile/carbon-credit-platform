@@ -1,7 +1,8 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '@/lib/store'
+import { api, apiEnabled } from '@/lib/api'
 import {
   departments as seedDepartments,
   managedUsers as seedUsers,
@@ -53,23 +54,45 @@ export default function UserManagementPage() {
 
   const deptName = (id: string) => departments.find((d) => d.id === id)?.name ?? '—'
 
+  // Live load from the backend (departments + users) when an API is configured.
+  useEffect(() => {
+    if (!apiEnabled) return
+    let cancelled = false
+    api.departments(orgId).then((rows) => {
+      if (cancelled || !rows) return
+      setDepartments((rows as Array<{ id: string; name: string }>).map((r) => ({ id: r.id, orgId, name: r.name, themeIds: ['th-overview'] })))
+    })
+    api.users(orgId).then((rows) => {
+      if (cancelled || !rows) return
+      setUsers((rows as Array<{ id: string; name: string; email?: string; role?: string; department_id?: string }>).map((r) => ({
+        id: r.id, orgId, name: r.name, username: r.email || r.id, email: r.email || '',
+        role: (r.role === 'admin' ? 'admin' : 'viewer'), departmentIds: r.department_id ? [r.department_id] : [], status: 'active',
+      })))
+    })
+    return () => { cancelled = true }
+  }, [orgId])
+
   // ----- Departments -----
   const [newDept, setNewDept] = useState('')
   const [editingDeptId, setEditingDeptId] = useState<string | null>(null)
   const [editingDeptName, setEditingDeptName] = useState('')
   const addDept = () => {
     if (!newDept.trim()) return
-    setDepartments((d) => [...d, { id: `dept-${Date.now()}`, orgId, name: newDept.trim(), themeIds: ['th-overview'] }])
+    const id = `dept-${Date.now()}`, name = newDept.trim()
+    setDepartments((d) => [...d, { id, orgId, name, themeIds: ['th-overview'] }])
     setNewDept('')
+    if (apiEnabled) api.saveDepartment(orgId, { id, name })
   }
   const renameDept = (id: string, name: string) => {
     if (!name.trim()) return
     setDepartments((d) => d.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)))
     setEditingDeptId(null); setEditingDeptName('')
+    if (apiEnabled) api.saveDepartment(orgId, { id, name: name.trim() })
   }
   const removeDept = (id: string) => {
     setDepartments((d) => d.filter((x) => x.id !== id))
     setUsers((u) => u.map((x) => ({ ...x, departmentIds: x.departmentIds.filter((dd) => dd !== id) })))
+    if (apiEnabled) api.deleteDepartment(id)
   }
 
   // ----- Users -----
@@ -78,8 +101,9 @@ export default function UserManagementPage() {
 
   const upsertUser = (u: ManagedUser) => {
     setUsers((prev) => (prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]))
+    if (apiEnabled) api.saveUser(orgId, { id: u.id, email: u.email, name: u.name, role: u.role, departmentId: u.departmentIds[0] })
   }
-  const removeUser = (id: string) => setUsers((u) => u.filter((x) => x.id !== id))
+  const removeUser = (id: string) => { setUsers((u) => u.filter((x) => x.id !== id)); if (apiEnabled) api.deleteUser(id) }
 
   return (
     <div className="p-6 space-y-5">
@@ -250,7 +274,7 @@ export default function UserManagementPage() {
 
       {/* EVENT CATALOG */}
       {tab === 'events' && (
-        <EventCatalog departments={departments} />
+        <EventCatalog orgId={orgId} departments={departments} />
       )}
 
       {(editingUser || showNewUser) && (
@@ -524,7 +548,7 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
 // ---- Per-department Event Catalog (CRUD) -----------------------------------
 // Admin manages each department's own eventProblem list — the catalog that
 // populates the viewer's detailed-monitoring event dropdown.
-function EventCatalog({ departments }: { departments: Department[] }) {
+function EventCatalog({ orgId, departments }: { orgId: string; departments: Department[] }) {
   const [selectedDept, setSelectedDept] = useState(departments[0]?.id ?? '')
   const [catalog, setCatalog] = useState<Record<string, EventProblem[]>>(
     () => Object.fromEntries(departments.map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
@@ -533,19 +557,34 @@ function EventCatalog({ departments }: { departments: Department[] }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingLabel, setEditingLabel] = useState('')
 
+  // Live catalog for the selected department (admin-managed root causes).
+  useEffect(() => {
+    if (!apiEnabled || !selectedDept) return
+    let cancelled = false
+    api.eventProblems(orgId, selectedDept).then((rows) => {
+      if (cancelled || !rows) return
+      setCatalog((c) => ({ ...c, [selectedDept]: rows.map((r) => ({ id: r.id, label: r.label, departmentId: selectedDept })) }))
+    })
+    return () => { cancelled = true }
+  }, [orgId, selectedDept])
+
   const list = catalog[selectedDept] ?? []
   const update = (next: EventProblem[]) => setCatalog((c) => ({ ...c, [selectedDept]: next }))
 
   const add = () => {
     if (!draft.trim()) return
-    update([...list, { id: `ev-${selectedDept}-${Date.now()}`, label: draft.trim(), departmentId: selectedDept }])
+    const id = `ev-${selectedDept}-${Date.now()}`, label = draft.trim()
+    update([...list, { id, label, departmentId: selectedDept }])
     setDraft(''); toast.success('Event added')
+    if (apiEnabled) api.saveEventProblem({ id, orgId, departmentId: selectedDept, label })
   }
-  const remove = (id: string) => { update(list.filter((e) => e.id !== id)); toast.success('Event removed') }
+  const remove = (id: string) => { update(list.filter((e) => e.id !== id)); toast.success('Event removed'); if (apiEnabled) api.deleteEventProblem(id) }
   const startEdit = (e: EventProblem) => { setEditingId(e.id); setEditingLabel(e.label) }
   const saveEdit = () => {
     if (!editingLabel.trim()) return
-    update(list.map((e) => (e.id === editingId ? { ...e, label: editingLabel.trim() } : e)))
+    const label = editingLabel.trim()
+    update(list.map((e) => (e.id === editingId ? { ...e, label } : e)))
+    if (apiEnabled && editingId) api.saveEventProblem({ id: editingId, orgId, departmentId: selectedDept, label })
     setEditingId(null); setEditingLabel(''); toast.success('Event updated')
   }
 
