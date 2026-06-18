@@ -105,7 +105,20 @@ CORS preflight requires a valid token; a per-endpoint **guard** enforces:
 
 Demo logins (after `seed-tenancy.sql`, password `demo1234`): `super@oneops.demo`
 (superadmin), `admin@kmutt.demo` (admin org-1), `viewer@kmutt.demo` (viewer).
-Set a strong `JWT_SECRET` in production.
+
+## Production hardening checklist
+- **`NODE_ENV=production`** — makes the backend refuse to start on the dev
+  `JWT_SECRET` and warn on a wildcard CORS origin.
+- **`JWT_SECRET`** — strong random value (rotate periodically); **`JWT_TTL`** sized
+  to your session policy.
+- **`CORS_ORIGIN`** — set to the exact frontend origin (Express + Node-RED both
+  honour it); never `*` in production. Serve both over **HTTPS/WSS**.
+- **Login throttle** — `LOGIN_MAX_ATTEMPTS` / `LOGIN_WINDOW_MIN` return `429`
+  after too many failed logins per IP (front it with a real WAF/ingress limiter
+  for multi-replica deployments).
+- Baseline security headers (`X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`) are set; `x-powered-by` is disabled.
+- Change the demo passwords / remove demo users before go-live.
 | GET  | `/api/bloodbox/transits?orgId=` | BloodBOX cold-chain transits |
 | POST | `/api/bloodbox/transits/:id/temp` | **report transit temp → bridged into the alarm engine** (excursion alerts in transit) |
 | GET/POST | `/api/bloodbox/transits/:id/journey` | indoor journey events (scan log; a scan carrying `tempC` is bridged into the engine too) |

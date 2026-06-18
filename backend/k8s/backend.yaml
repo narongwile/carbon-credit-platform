@@ -12,12 +12,26 @@ stringData:
   DB_NAME: iothub
   MQTT_URL: mqtt://mqtt.data.svc.cluster.local:1883
   ESCALATE_AFTER_MIN: "15"
+  CLEAR_AFTER_MIN: "5"
+  OFFLINE_AFTER_S: "90"
+  READINGS_RETENTION_DAYS: "30"
+  # ── Production hardening ──────────────────────────────────────────────
+  NODE_ENV: production
+  JWT_SECRET: CHANGE-ME-strong-random-secret   # required in production
+  JWT_TTL: 12h
+  LOGIN_MAX_ATTEMPTS: "10"
+  LOGIN_WINDOW_MIN: "15"
+  CORS_ORIGIN: https://oneops.example          # set to your frontend origin
+  MAIL_FROM: alerts@oneops.local
   # fill to enable real delivery
   LINE_NOTIFY_TOKEN: ""
   TELEGRAM_BOT_TOKEN: ""
   TELEGRAM_CHAT_ID: ""
   GOOGLE_CHAT_WEBHOOK: ""
   SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_USER: ""
+  SMTP_PASS: ""
 ---
 apiVersion: apps/v1
 kind: Deployment

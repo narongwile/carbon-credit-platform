@@ -11,8 +11,21 @@ import { insertDeadLetter } from './repo.js'
 import { authMiddleware } from './auth.js'
 import { ping } from './db.js'
 
+const CORS_ORIGIN = process.env.CORS_ORIGIN || '*'
+if (process.env.NODE_ENV === 'production' && CORS_ORIGIN === '*') {
+  console.warn('[security] CORS_ORIGIN is "*" in production — set it to your frontend origin')
+}
+
 const app = express()
-app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }))
+app.disable('x-powered-by')
+// Baseline security headers (no extra deps).
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  next()
+})
+app.use(cors({ origin: CORS_ORIGIN }))
 app.use(express.json({ limit: '15mb' })) // large limit for document upload
 app.use(authMiddleware)                   // attach JWT claims (guards enforce)
 app.use('/api', router)

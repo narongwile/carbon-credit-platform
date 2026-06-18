@@ -14,7 +14,7 @@ import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
 import { publishDownlink } from './mqtt.js'
 import { userByEmail } from './repo.js'
-import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode, requireEvent } from './auth.js'
+import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode, requireEvent, loginRateLimit, noteLoginFailure, noteLoginSuccess } from './auth.js'
 import { effectiveAccess, canSeeNode } from './repo.js'
 
 export const router = Router()
@@ -24,12 +24,14 @@ router.get('/health', async (_req, res) => {
   res.json({ ok: true, db: await ping(), ts: Date.now() })
 })
 
-router.post('/auth/login', async (req, res) => {
+router.post('/auth/login', loginRateLimit, async (req, res) => {
   const { email, password } = req.body ?? {}
   const u = email ? await userByEmail(email) : null
   if (!u || !u.password_hash || !(await checkPassword(password || '', u.password_hash as string))) {
+    noteLoginFailure(req)
     return res.status(401).json({ error: 'invalid credentials' })
   }
+  noteLoginSuccess(req)
   const claims = { userId: u.id as string, orgId: (u.org_id as string) || '', role: (u.role as string) || 'viewer' }
   res.json({ token: signToken(claims), user: { id: claims.userId, orgId: claims.orgId, role: claims.role, name: u.name, email: u.email } })
 })

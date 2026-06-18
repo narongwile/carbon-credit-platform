@@ -6,6 +6,32 @@ import { nodeMeta, effectiveAccess, canSeeNode, eventNode } from './repo.js'
 const SECRET = process.env.JWT_SECRET || 'dev-secret-change-me'
 const TTL = process.env.JWT_TTL || '12h'
 
+// Fail fast: never run production on the dev signing secret.
+if (process.env.NODE_ENV === 'production' && SECRET === 'dev-secret-change-me') {
+  throw new Error('[auth] JWT_SECRET must be set to a strong value in production')
+}
+
+// In-memory login throttle (per client IP): too many FAILED attempts → 429.
+const loginAttempts = new Map<string, { n: number; resetAt: number }>()
+const clientIp = (req: Request) => ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()) || req.ip || 'unknown'
+export function loginRateLimit(req: Request, res: Response, next: NextFunction) {
+  const max = Number(process.env.LOGIN_MAX_ATTEMPTS || 10)
+  const windowMs = Number(process.env.LOGIN_WINDOW_MIN || 15) * 60_000
+  const key = clientIp(req)
+  const rec = loginAttempts.get(key)
+  if (rec && Date.now() < rec.resetAt && rec.n >= max) {
+    return res.status(429).json({ error: 'too many login attempts — try again later' })
+  }
+  next()
+}
+export function noteLoginFailure(req: Request) {
+  const windowMs = Number(process.env.LOGIN_WINDOW_MIN || 15) * 60_000
+  const key = clientIp(req); const now = Date.now(); const rec = loginAttempts.get(key)
+  if (!rec || now > rec.resetAt) loginAttempts.set(key, { n: 1, resetAt: now + windowMs })
+  else rec.n++
+}
+export const noteLoginSuccess = (req: Request) => loginAttempts.delete(clientIp(req))
+
 export interface Claims { userId: string; orgId: string; role: string }
 
 export const signToken = (c: Claims) => jwt.sign(c, SECRET, { expiresIn: TTL } as jwt.SignOptions)

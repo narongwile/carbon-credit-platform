@@ -27,7 +27,7 @@ const MQTT_TOPIC = process.env.MQTT_TOPIC || 'telemetry/#'
 const ESCALATE_MIN = process.env.ESCALATE_AFTER_MIN || '15'
 
 // CORS preamble injected into every REST handler
-const CORS = `const __CORS={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS'};\n`
+const CORS = `const __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\n`
 
 // Guard wrapper injected into protected handlers (policy: auth|admin|super|org|
 // node|node:manage). The async guard (init) verifies the Bearer JWT and enforces
@@ -37,7 +37,7 @@ const GUARD_OPEN = (policy) => !policy || policy === 'public' ? '' : `
 return (async()=>{
 const __g=global.get('guard');
 const __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','${policy}',msg.req):{ok:false,code:503,error:'auth not ready'};
-if(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}
+if(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}
 msg.auth=__ar.auth;
 `
 const GUARD_CLOSE = (policy) => !policy || policy === 'public' ? '' : `
@@ -124,8 +124,12 @@ node.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');
 
 // Login: verify bcrypt password → issue JWT (userId/orgId/role).
 const loginFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+const ip=((msg.req.headers['x-forwarded-for']||'').split(',')[0].trim())||(msg.req.ip)||'unknown';
+const rl=global.get('loginRL')||{}; const max=Number(env.get('LOGIN_MAX_ATTEMPTS')||10); const win=Number(env.get('LOGIN_WINDOW_MIN')||15)*60000; const now=Date.now(); const rec=rl[ip];
+if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;msg.payload={error:'too many login attempts — try again later'};return msg;}
 (async()=>{const[u]=await pool.query("SELECT id,org_id,role,name,email,password_hash FROM users WHERE email=?",[b.email||'']);
-  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'invalid credentials'};node.send(msg);return;}
+  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){rl[ip]=(!rec||now>rec.resetAt)?{n:1,resetAt:now+win}:{n:rec.n+1,resetAt:rec.resetAt}; global.set('loginRL',rl); msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'invalid credentials'};node.send(msg);return;}
+  delete rl[ip]; global.set('loginRL',rl);
   const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};
   const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
   msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
