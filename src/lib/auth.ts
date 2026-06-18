@@ -1,4 +1,7 @@
 import type { User } from '@/types'
+import { api, apiEnabled, setToken } from './api'
+
+export const authApiEnabled = apiEnabled
 
 const USERS: User[] = [
   { id: 'u1', username: 'superadmin', role: 'superadmin', name: 'System Administrator', email: 'superadmin@eternity.io' },
@@ -17,6 +20,16 @@ export function login(username: string, password: string): User | null {
   if (!user) return null
   if (PASSWORDS[username] !== password) return null
   return user
+}
+
+// Real login via the backend (JWT). The username field carries the email.
+// Maps the backend role ('viewer') to the app role ('customer').
+export async function loginRemote(email: string, password: string): Promise<User | null> {
+  const r = await api.login(email, password)
+  if (!r?.user) return null
+  const u = r.user
+  const role = (u.role === 'viewer' ? 'customer' : u.role) as User['role']
+  return { id: u.id, username: u.email || u.id, role, orgId: u.orgId || undefined, name: u.name || u.email || u.id, email: u.email || '' }
 }
 
 export function saveSession(user: User): void {
@@ -40,6 +53,7 @@ export function clearSession(): void {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('eternity_user')
   }
+  setToken(null) // drop the JWT too
 }
 
 export function getDashboardRoute(user: User): string {

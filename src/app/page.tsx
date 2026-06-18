@@ -2,32 +2,25 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { login, saveSession, getDashboardRoute } from '@/lib/auth'
+import { login, loginRemote, saveSession, getDashboardRoute, authApiEnabled } from '@/lib/auth'
+import { useAppStore } from '@/lib/store'
 import { Boxes, Eye, EyeOff, Shield, Users, User } from 'lucide-react'
 import clsx from 'clsx'
 
 type RoleTab = 'superadmin' | 'admin' | 'customer'
 
-const ROLE_TABS: { id: RoleTab; label: string; icon: React.ReactNode; hint: { user: string; pass: string } }[] = [
-  {
-    id: 'superadmin',
-    label: 'Super Admin',
-    icon: <Shield size={14} />,
-    hint: { user: 'superadmin', pass: 'admin123' },
-  },
-  {
-    id: 'admin',
-    label: 'Admin',
-    icon: <Users size={14} />,
-    hint: { user: 'admin', pass: 'admin123' },
-  },
-  {
-    id: 'customer',
-    label: 'Customer',
-    icon: <User size={14} />,
-    hint: { user: 'customer', pass: 'customer123' },
-  },
-]
+// Demo creds: backend (email + JWT) when an API is configured, else mock usernames.
+const ROLE_TABS: { id: RoleTab; label: string; icon: React.ReactNode; hint: { user: string; pass: string } }[] = authApiEnabled
+  ? [
+      { id: 'superadmin', label: 'Super Admin', icon: <Shield size={14} />, hint: { user: 'super@oneops.demo', pass: 'demo1234' } },
+      { id: 'admin', label: 'Admin', icon: <Users size={14} />, hint: { user: 'admin@kmutt.demo', pass: 'demo1234' } },
+      { id: 'customer', label: 'Customer', icon: <User size={14} />, hint: { user: 'viewer@kmutt.demo', pass: 'demo1234' } },
+    ]
+  : [
+      { id: 'superadmin', label: 'Super Admin', icon: <Shield size={14} />, hint: { user: 'superadmin', pass: 'admin123' } },
+      { id: 'admin', label: 'Admin', icon: <Users size={14} />, hint: { user: 'admin', pass: 'admin123' } },
+      { id: 'customer', label: 'Customer', icon: <User size={14} />, hint: { user: 'customer', pass: 'customer123' } },
+    ]
 
 export default function LoginPage() {
   const router = useRouter()
@@ -45,14 +38,17 @@ export default function LoginPage() {
       return
     }
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 600))
-    const user = login(username, password)
+    // Real backend (JWT) when configured; the username field carries the email.
+    const user = authApiEnabled ? await loginRemote(username, password) : (await new Promise((r) => setTimeout(r, 600)), login(username, password))
     if (!user) {
-      setError('Invalid credentials. Check the hints below.')
+      setError(authApiEnabled ? 'Invalid credentials.' : 'Invalid credentials. Check the hints below.')
       setLoading(false)
       return
     }
     saveSession(user)
+    // Sync the active org + user so the app shows this tenant's data.
+    if (user.orgId) useAppStore.getState().setSelectedOrgId(user.orgId)
+    useAppStore.getState().setViewerUserId(user.id)
     router.push(getDashboardRoute(user))
   }
 
