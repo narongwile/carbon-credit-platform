@@ -46,3 +46,23 @@ INSERT IGNORE INTO event_problems (id, org_id, department_id, domain, label) VAL
   ('ep-3','org-1','dept-1a','transformer','Oil degradation / low level'),
   ('ep-4','org-1','dept-1a','transformer','Sensor fault (false reading)'),
   ('ep-5','org-1','dept-1a','transformer','Ambient heat / ventilation');
+
+-- Refrigeration (carbonNode) root causes — org-1 dept-1a, org-3 dept-3a
+INSERT IGNORE INTO event_problems (id, org_id, department_id, domain, label) VALUES
+  ('ep-c1','org-1','dept-1a','carbonNode','Door left open'),
+  ('ep-c2','org-1','dept-1a','carbonNode','Compressor failure'),
+  ('ep-c3','org-1','dept-1a','carbonNode','Power outage'),
+  ('ep-c4','org-1','dept-1a','carbonNode','Defrost cycle / icing'),
+  ('ep-c5','org-1','dept-1a','carbonNode','Sensor fault (false reading)'),
+  ('ep-c6','org-3','dept-3a','carbonNode','Door left open'),
+  ('ep-c7','org-3','dept-3a','carbonNode','Compressor failure');
+
+-- BloodBOX root causes — org-2 dept-2a, org-3 dept-3a
+INSERT IGNORE INTO event_problems (id, org_id, department_id, domain, label) VALUES
+  ('ep-b1','org-2','dept-2a','bloodBox','Cold-chain breach in transit'),
+  ('ep-b2','org-2','dept-2a','bloodBox','Lid left open'),
+  ('ep-b3','org-2','dept-2a','bloodBox','Coolant / ice pack exhausted'),
+  ('ep-b4','org-2','dept-2a','bloodBox','Battery depleted'),
+  ('ep-b5','org-2','dept-2a','bloodBox','Impact / shock during transport'),
+  ('ep-b6','org-3','dept-3a','bloodBox','Cold-chain breach in transit'),
+  ('ep-b7','org-3','dept-3a','bloodBox','Lid left open');
