@@ -32,7 +32,7 @@ on overflow, alarms are never dropped).
 | §2 | **mutual TLS** (X.509 client cert/key from NVS) | ✅ (certs provisioned) |
 | §5 | retained Will + birth on `P/status` | ✅ |
 | §3 | `P/heartbeat` every 30 s (rssi, batt, uptime, fw, heap, time_src, transport) | ✅ |
-| §6 | per-channel envelope on `P/sensors/{sid}/raw` (or Node-RED consolidated) | ✅ |
+| §6 | per-channel envelope on `P/sensors/{sid}/raw` + **real bus reads** (`quality`) | ✅ |
 | §7 | downlink `P/config` (sample rate, cfg_v) / `P/cmd/+` (reboot) / `P/ota/cmd` | ✅ |
 | §8/§9 | edge-alarm fast-path (per-product thresholds → `P/alarm/{sid}` hint) | ✅ |
 | §10.1 | external **DS3231 RTC** + NTP, `time_src`, RTC discipline | ✅ |
@@ -43,6 +43,24 @@ on overflow, alarms are never dropped).
 | §20 | frozen 16 MB A/B **partition table** (`partitions.csv`) | ✅ |
 | §24 | **A/B HTTPS OTA** + rollback + version gate + download retries | ✅ |
 | §25 | config versioning (`cfg_v`) + persisted sample rate | ✅ (partial) |
+
+## Sensor drivers (demo — real buses, per the schematic)
+`drivers.cpp` reads each channel from the actual bus on the board (pins in
+`board_pins.h`, mapped from the CAN/485 + MCU schematic sheets). A failed read
+(sensor absent / NACK / CRC / timeout) is tagged `quality="error"`, or — with
+`OO_SIM_FALLBACK=1` — substituted by a simulated value tagged `quality="sim"`,
+so the demo runs on a bare board. Set `OO_USE_REAL_SENSORS=0` for pure simulation.
+
+| Product | Channel → bus (driver) |
+| --- | --- |
+| **eternity** | `oil_temp_c`,`ambient_temp_c`,`dga_h2_ppm`,`moisture_ppm`,`oil_level_pct` → **RS-485 Modbus-RTU** (MAX3485, DE=GPIO10, UART0 43/44); `load_pct` → **ADC** (CT) |
+| **carbonbox** | `temp_c` → **I²C SHT3x** (0x44); `door_state` → **digital input** (debounced) |
+| **bloodbox** | `temp_c`/`rh_pct` → **I²C SHT3x**; `baro_alt_m` → **I²C BMP280** (0x76, Bosch compensation); `impact_g` → **I²C ADXL345** (0x53, \|a\|−1g); `batt_pct` → **ADC** (divider) |
+
+Bus pins read from the schematic — **[HIGH]** confidence: CAN GPIO14/13, RS-485
+GPIO43/44 + DE GPIO10, LEDs GPIO47/48, UART1 (4G/LoRa) GPIO17/18, SD GPIO45.
+**[VERIFY]** (not fully legible — confirm before trusting reads): I²C SDA/SCL,
+CT/battery ADC pins, door DI, DO1/DO2 (`board_pins.h`).
 
 ## Validation status (honest)
 - **Not compiled here** — needs `pio run` on a real toolchain. Two third-party
@@ -56,19 +74,23 @@ on overflow, alarms are never dropped).
 - **4G/LoRa transport + §21 hysteresis** — Wi-Fi is implemented; `ooTransport()`
   is the integration hook. The cellular/LoRa radio drivers are out of scope for
   this carrier build (the spec §18/§21 defines the contract).
-- **Sensor drivers** — `ooSimRead()` is a simulator; replace per-channel with the
-  real I²C/ADC/RS-485 driver reads. GPIO/I²C pins in `config.h` are placeholders —
-  set them from the schematic.
+- **Sensor drivers** — now real (Modbus/I²C/ADC/DI) with sim fallback, but the
+  I²C device part numbers (SHT3x/BMP280/ADXL345) and the **[VERIFY]** pins in
+  `board_pins.h` are assumptions — confirm against the populated BOM/schematic.
+  The Modbus register map (`reg/10`) is a demo convention; match it to the real
+  transformer sensor's map.
 
 ## Files
 | File | Role |
 |---|---|
 | `platformio.ini` | N16R8 board (16 MB + OPI PSRAM), `partitions.csv`, deps |
 | `partitions.csv` | frozen A/B layout (spec §20) |
-| `src/config.h` | dev defaults / pins / cadence / toggles |
+| `src/config.h` | dev defaults / cadence / toggles (includes `board_pins.h`) |
+| `src/board_pins.h` | GPIO / bus map read from the schematic |
 | `src/identity.{h,cpp}` | NVS identity + mTLS certs (provisioning, §2/§13) |
 | `src/timekeeping.{h,cpp}` | NTP + DS3231 RTC + `time_src` (§10.1) |
-| `src/product_profile.{h,cpp}` | channel sets + thresholds + severity eval (§6/§8) |
+| `src/product_profile.{h,cpp}` | channel sets + thresholds + bus routing + severity (§6/§8) |
+| `src/drivers.{h,cpp}` | real sensor reads: Modbus / I²C / ADC / DI + `quality` (§6/§16) |
 | `src/oneops.{h,cpp}` | egress queue + shared contracts (§14) |
 | `src/net_mqtt.{h,cpp}` | Wi-Fi + MQTT QoS1/LWT/mTLS + downlink (§1/§5/§7/§15) |
 | `src/ota.{h,cpp}` | A/B HTTPS OTA + rollback (§24) |

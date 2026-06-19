@@ -1,27 +1,33 @@
 #include "product_profile.h"
 #include <string.h>
 
-// Channel sets + thresholds per spec §6/§8. Sim ranges span the warn/crit bands
-// so the alarm engine actually trips during a dev run.
-//                sid   channel          unit    event  invert  warn   crit   simMin simMax
+// Channel sets + thresholds per spec §6/§8, each routed to its real bus/driver
+// (board_pins.h + drivers.cpp). Sim ranges span the warn/crit bands so the
+// alarm engine still trips when running on the simulator fallback.
+//
+// eternity: a Modbus-RTU transformer sensor over RS-485 (oil/DGA/moisture/level)
+//           + a current transformer on ADC (load).
+//        sid   channel          unit  event invert warn crit simMin simMax  bus          arg
 static const OoChannel ETERNITY[] = {
-  {"t1", "oil_temp_c",     "C",   false, false, 80,   95,   55,  98},
-  {"t2", "ambient_temp_c", "C",   false, false, 40,   50,   25,  45},
-  {"g1", "dga_h2_ppm",     "ppm", false, false, 150,  300,  80,  320},
-  {"m1", "moisture_ppm",   "ppm", false, false, 25,   35,   10,  38},
-  {"l1", "oil_level_pct",  "%",   false, true,  70,   60,   58,  95},   // inverted
-  {"p1", "load_pct",       "%",   false, false, 80,   95,   40,  99},
+  {"t1","oil_temp_c",    "C",  false,false, 80, 95, 55, 98, BUS_MODBUS,  0},
+  {"t2","ambient_temp_c","C",  false,false, 40, 50, 25, 45, BUS_MODBUS,  1},
+  {"g1","dga_h2_ppm",    "ppm",false,false,150,300, 80,320, BUS_MODBUS,  2},
+  {"m1","moisture_ppm",  "ppm",false,false, 25, 35, 10, 38, BUS_MODBUS,  3},
+  {"l1","oil_level_pct", "%",  false,true,  70, 60, 58, 95, BUS_MODBUS,  4},   // inverted
+  {"p1","load_pct",      "%",  false,false, 80, 95, 40, 99, BUS_ADC, OO_PIN_CT_ADC},
 };
+// carbonbox: I2C temperature + a door switch on a digital input.
 static const OoChannel CARBONBOX[] = {
-  {"t1", "temp_c",     "C",     false, false, 6, 8, 2, 9},
-  {"d1", "door_state", "event", true,  false, 0, 1, 0, 1},
+  {"t1","temp_c",    "C",    false,false, 6, 8, 2, 9, BUS_I2C_TEMP, 0},
+  {"d1","door_state","event",true, false, 0, 1, 0, 1, BUS_DI, OO_PIN_DOOR_DI},
 };
+// bloodbox: SHT3x temp+rh, BMP280 altitude, ADXL345 impact, battery on ADC.
 static const OoChannel BLOODBOX[] = {
-  {"t1", "temp_c",     "C",     false, false, 6,  7,   2,  8},
-  {"h1", "rh_pct",     "%",     false, false, 80, 90,  40, 85},
-  {"b1", "batt_pct",   "%",     false, true,  40, 20,  18, 100},  // inverted (low bad)
-  {"a1", "impact_g",   "g",     true,  false, 3,  3,   0,  6},    // event > 3 g
-  {"f1", "baro_alt_m", "m",     false, false, 0,  0,   0,  20},   // info only
+  {"t1","temp_c",    "C", false,false, 6,  7,  2,  8, BUS_I2C_TEMP,    0},
+  {"h1","rh_pct",    "%", false,false, 80, 90, 40, 85, BUS_I2C_RH,      0},
+  {"b1","batt_pct",  "%", false,true,  40, 20, 18,100, BUS_ADC_BATT, OO_PIN_BATT_ADC},
+  {"a1","impact_g",  "g", false,false, 2.5f,3,  0,  6, BUS_I2C_IMPACT,  0},   // magnitude + threshold
+  {"f1","baro_alt_m","m", false,false, 0,  0,  0, 20, BUS_I2C_BARO_ALT,0},
 };
 
 static const OoProfile PROFILES[] = {
@@ -37,11 +43,7 @@ const OoProfile& ooGetProfile(const char* product) {
 }
 
 float ooSimRead(const OoChannel& ch) {
-  if (ch.isEvent) {
-    if (strcmp(ch.unit, "g") == 0)                       // impact: occasional real g
-      return (random(0, 100) < 4) ? (ch.crit + 1.0f) : (float)random(0, 200) / 100.0f;
-    return (random(0, 100) < 5) ? 1.0f : 0.0f;           // door etc.: ~5% events
-  }
+  if (ch.isEvent) return (random(0, 100) < 5) ? 1.0f : 0.0f;   // door etc.: ~5% events
   float span = ch.simMax - ch.simMin;
   return ch.simMin + (random(0, 1001) / 1000.0f) * span;
 }

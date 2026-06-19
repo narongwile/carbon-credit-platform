@@ -16,6 +16,7 @@
 #include "identity.h"
 #include "timekeeping.h"
 #include "product_profile.h"
+#include "drivers.h"
 #include "net_mqtt.h"
 #include "ota.h"
 
@@ -27,22 +28,27 @@ enum { HB_SENSOR = 0, HB_MQTT = 1, HB_COUNT };
 static volatile uint32_t gHb[HB_COUNT] = {0};
 
 // ---- telemetry builders ----------------------------------------------------
-static void enqueueReading(const OoChannel& ch, float v) {
+// Returns the read value (NaN-safe) so the caller can run the edge alarm.
+static float enqueueReading(const OoChannel& ch, const OoReading& r) {
   JsonDocument d;
   d["ts"] = ooEpochMs(); d["device_id"] = ooId().device; d["product"] = ooId().product;
-  d["sid"] = ch.sid; d["channel"] = ch.channel;
-  d["value"] = v; d["unit"] = ch.unit; d["quality"] = "good";
+  d["sid"] = ch.sid; d["channel"] = ch.channel; d["unit"] = ch.unit;
+  if (isnan(r.value)) d["value"] = nullptr; else d["value"] = r.value;
+  d["quality"] = r.quality;                                        // good | sim | error (§16)
   char buf[256]; size_t n = serializeJson(d, buf);
   char suffix[64]; snprintf(suffix, sizeof(suffix), "sensors/%s/raw", ch.sid);
-  ooEnqueue(suffix, buf, n, /*qos*/1, false, /*prio*/0);          // spec §6
+  ooEnqueue(suffix, buf, n, /*qos*/1, false, /*prio*/0);           // spec §6
+  return r.value;
 }
 
 static void enqueueConsolidated() {
   JsonDocument d;
   d["nodeId"] = ooId().device; d["ts"] = ooEpochMs();
   JsonObject vals = d["values"].to<JsonObject>();
-  for (size_t i = 0; i < profile->count; i++)
-    vals[profile->channels[i].channel] = ooSimRead(profile->channels[i]);
+  for (size_t i = 0; i < profile->count; i++) {
+    OoReading r = ooReadChannel(profile->channels[i]);
+    if (!isnan(r.value)) vals[profile->channels[i].channel] = r.value;
+  }
   char buf[480]; size_t n = serializeJson(d, buf);
   char t[64];
   snprintf(t, sizeof(t), "%s/%s", strlen(OO_TOPIC_ROOT) ? OO_TOPIC_ROOT : "telemetry", ooId().device.c_str());
@@ -80,8 +86,9 @@ static void sensorTask(void*) {
       enqueueConsolidated();
 #else
       for (size_t i = 0; i < profile->count; i++) {
-        float v = ooSimRead(profile->channels[i]);
-        enqueueReading(profile->channels[i], v);
+        OoReading r = ooReadChannel(profile->channels[i]);          // real bus read (§6)
+        float v = enqueueReading(profile->channels[i], r);
+        if (isnan(v)) continue;                                     // sensor fault -> no alarm
         OoSeverity sev = ooEvalSeverity(profile->channels[i], v);
         if (sev >= OO_WARNING) enqueueEdgeAlarm(profile->channels[i], v, sev);  // §8/§9
       }
@@ -140,6 +147,7 @@ void setup() {
   ooTimeInit();                                     // NTP + DS3231 + time_src (§10.1)
 
   profile = &ooGetProfile(ooId().product.c_str());
+  ooDriversInit();                                  // real sensor buses (drivers.cpp)
   Serial.printf("\n[boot] %s fw %s product=%s channels=%u provisioned=%d rtc=%d\n",
                 ooId().device.c_str(), ooId().fw.c_str(), ooId().product.c_str(),
                 (unsigned)profile->count, ooId().provisioned, ooRtcPresent());

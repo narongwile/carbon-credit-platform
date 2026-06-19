@@ -8,6 +8,7 @@
 //  identity.cpp prefers the NVS values and falls back to the macros below so a
 //  freshly-flashed unit still boots on the bench.
 // ===========================================================================
+#include "board_pins.h"               // GPIO / bus map from the schematic
 
 // ---- Firmware version (also injected via -DOO_FW_VERSION in platformio.ini)
 #ifndef OO_FW_VERSION
@@ -39,17 +40,19 @@
 #define OO_HEARTBEAT_MS  30000        // spec §3: liveness every 30 s
 #define OO_SAMPLE_MS     1500         // spec §3: per-sensor reading every 1.5 s (0 = use profile)
 
-// ---- External RTC (DS3231 on I2C) — audit-grade offline time (spec §10.1) ---
+// ---- Time (DS3231 RTC pins/addr live in board_pins.h) — spec §10.1 ---------
 #define OO_RTC_ENABLE    1
-#define OO_I2C_SDA       8            // set to the schematic's SDA net
-#define OO_I2C_SCL       9            // set to the schematic's SCL net
-#define OO_DS3231_ADDR   0x68
 #define OO_NTP_SERVER1   "pool.ntp.org"
 #define OO_NTP_SERVER2   "time.nist.gov"
 
-// ---- Status LEDs (spec §10/§16 — error blink codes) ------------------------
-#define OO_LED_GREEN     47
-#define OO_LED_RED       48
+// ---- Sensor drivers --------------------------------------------------------
+// 1 -> read the real buses (RS-485 Modbus / I2C / ADC / DI) per product.
+// 0 -> pure simulation (no hardware).
+#define OO_USE_REAL_SENSORS 1
+// If a real read fails (sensor absent / NACK / CRC), fall back to a simulated
+// value so the demo keeps running on a bare board. The reading is then tagged
+// quality="sim" (vs "good" for a real read, "error" if no fallback) — spec §16.
+#define OO_SIM_FALLBACK     1
 
 // ---- Telemetry shape -------------------------------------------------------
 // 1 -> one consolidated {nodeId,values,ts} per cycle (Node-RED compat).
