@@ -36,6 +36,15 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      initContainers:
+        - name: fix-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          securityContext:
+            runAsUser: 0 # ใช้ root เพื่อปลดล็อกสิทธิ์
+          volumeMounts:
+            - name: node-red-data
+              mountPath: /data
       containers:
         - name: node-red
           image: nodered/node-red:latest
@@ -48,11 +57,11 @@ spec:
               value: Asia/Bangkok
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: "1"
+              memory: 1Gi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: "2"
+              memory: 3Gi
           readinessProbe:
             tcpSocket:
               port: http
