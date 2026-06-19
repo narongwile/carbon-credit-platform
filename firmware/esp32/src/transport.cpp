@@ -42,5 +42,5 @@ OoTr ooTransportSelect(uint64_t now) {
 }
 
 const char* ooTransportName(OoTr t) {
-  switch (t) { case TR_WIFI: return "wifi"; case TR_CELL: return "lte"; case TR_LORA: return "lora"; default: return "none"; }
+  switch (t) { case TR_WIFI: return "wifi"; case TR_CELL: return "4g"; case TR_LORA: return "lora"; default: return "none"; }
 }
