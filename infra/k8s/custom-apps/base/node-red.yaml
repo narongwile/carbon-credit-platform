@@ -102,7 +102,7 @@ spec:
             - name: NPM_CONFIG_CACHE
               value: "/data/.npm"
             - name: NODE_RED_ENABLE_PROJECTS
-              value: "false"
+              value: "true"
           resources:
             requests:
               cpu: "1"
