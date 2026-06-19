@@ -10,6 +10,7 @@ import { startReports } from './reports.js'
 import { insertDeadLetter } from './repo.js'
 import { authMiddleware } from './auth.js'
 import { ping } from './db.js'
+import { runMigrations } from './migrate.js'
 
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*'
 if (process.env.NODE_ENV === 'production' && CORS_ORIGIN === '*') {
@@ -40,6 +41,9 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 const port = Number(process.env.PORT || 4000)
 
 async function main() {
+  // Auto-migrate: bootstrap schema + apply pending migrations (idempotent)
+  await runMigrations()
+
   const dbOk = await ping()
   console.log(`[db] ${dbOk ? 'connected' : 'NOT reachable — check DB_* env'}`)
   startMqtt()
