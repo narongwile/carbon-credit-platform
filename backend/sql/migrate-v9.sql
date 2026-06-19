@@ -89,5 +89,5 @@ CREATE TABLE IF NOT EXISTS blood_box_transit_telemetry (
 
 -- 7. Alarm debounce config (per-product door/event debounce settings)
 -- ใช้ทั้ง edge (firmware) และ cloud (Node-RED ingest)
-ALTER TABLE alarm_rules ADD COLUMN IF NOT EXISTS debounce_json JSON;
+ALTER TABLE alarm_rules ADD COLUMN debounce_json JSON;
 -- debounce_json example: {"door_state": {"min_duration_s": 30, "cooldown_s": 300}}
