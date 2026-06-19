@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
+import { api } from '@/lib/api'
 import { getDepartmentsByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
 import type { ReportSchedule, ReportSequence } from '@/types/org'
@@ -90,14 +91,33 @@ export default function ReportsPage() {
   const [draft, setDraft] = useState<{ name: string; scope: 'device' | 'department'; scopeId: string; sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV' }>({
     name: '', scope: 'department', scopeId: departments[0]?.id ?? '', sequence: 'daily', format: 'PDF',
   })
+
+  // Load schedules from the backend when reachable (else keep the seed mock).
+  useEffect(() => {
+    let cancelled = false
+    api.listSchedules(orgId).then((rows) => {
+      if (cancelled || !rows) return
+      setSchedules(rows.map((r) => ({ id: r.id, name: r.name, scope: (r.scope === 'org' ? 'department' : r.scope) as 'device' | 'department', scopeId: r.scope_id ?? '', sequence: r.sequence as ReportSequence, format: r.format, enabled: !!r.enabled })))
+    })
+    return () => { cancelled = true }
+  }, [orgId])
+
   const scopeOptions = draft.scope === 'department' ? departments.map((d) => ({ id: d.id, name: d.name })) : devices.map((d) => ({ id: d.id, name: d.name }))
   const addSchedule = () => {
     if (!draft.name.trim()) return
-    setSchedules((s) => [...s, { id: `rs-${Date.now()}`, ...draft, scopeId: draft.scopeId || scopeOptions[0]?.id || '', enabled: true }])
+    const id = `rs-${Date.now()}`
+    const scopeId = draft.scopeId || scopeOptions[0]?.id || ''
+    setSchedules((s) => [...s, { id, ...draft, scopeId, enabled: true }])
     setDraft((d) => ({ ...d, name: '' }))
+    api.saveSchedule({ id, orgId, name: draft.name, scope: draft.scope, scope_id: scopeId, sequence: draft.sequence, format: draft.format, enabled: 1 })
   }
-  const toggleSchedule = (id: string) => setSchedules((s) => s.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
-  const removeSchedule = (id: string) => setSchedules((s) => s.filter((x) => x.id !== id))
+  const toggleSchedule = (id: string) => setSchedules((s) => s.map((x) => {
+    if (x.id !== id) return x
+    const enabled = !x.enabled
+    api.saveSchedule({ id, orgId, name: x.name, scope: x.scope, scope_id: x.scopeId, sequence: x.sequence, format: x.format, enabled: enabled ? 1 : 0 })
+    return { ...x, enabled }
+  }))
+  const removeSchedule = (id: string) => { setSchedules((s) => s.filter((x) => x.id !== id)); api.deleteSchedule(id) }
   const scopeName = (s: ReportSchedule) => (s.scope === 'department' ? departments.find((d) => d.id === s.scopeId)?.name : devices.find((d) => d.id === s.scopeId)?.name) ?? s.scopeId
 
   return (

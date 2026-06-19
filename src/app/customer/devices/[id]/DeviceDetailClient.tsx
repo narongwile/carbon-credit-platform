@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
@@ -10,6 +10,11 @@ import { viewerEventProblems, viewerCanManage, viewerCanAccess, viewerDepartment
 import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
+import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
+import { useAlarmDB } from '@/server/alarmStore'
+import { api, apiEnabled } from '@/lib/api'
+import { defaultNodeRule } from '@/lib/alarmParams'
 import {
   ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users, Bell,
   ToggleLeft, ToggleRight, Wifi, WifiOff, Save, Check, LayoutGrid, Sparkles, Lock, Eye,
@@ -41,7 +46,20 @@ export default function DeviceDetailClient() {
   const canAccess = !domain || viewerCanAccess(viewerUserId, domain)
   const canManage = !domain || viewerCanManage(viewerUserId, domain)
   const deptEvents = viewerEventProblems(viewerUserId)
-  const evProblems = deptEvents.length ? deptEvents : eventProblems
+  // Root-cause catalog: live from the backend (admin-managed) when configured,
+  // else the viewer's department mock list.
+  const { selectedOrgId } = useAppStore()
+  const [liveProblems, setLiveProblems] = useState<{ id: string; label: string }[] | null>(null)
+  useEffect(() => {
+    if (!apiEnabled) return
+    const dept = viewerDepartments(viewerUserId)[0]?.id
+    let cancelled = false
+    api.eventProblems(selectedOrgId, dept, domain).then((rows) => {
+      if (!cancelled && rows) setLiveProblems(rows.map((r) => ({ id: r.id, label: r.label })))
+    })
+    return () => { cancelled = true }
+  }, [selectedOrgId, viewerUserId, domain])
+  const evProblems = liveProblems ?? (deptEvents.length ? deptEvents : eventProblems)
 
   // viewer identity + department(s) for document scoping & email export
   const me = getViewerUser(viewerUserId)
@@ -117,15 +135,35 @@ export default function DeviceDetailClient() {
     setExported('email'); toast.success(`Node detail (${range.start}→${range.end}) sent to ${email}`)
   }
 
-  // Event log rows (over/under threshold) with per-row event + acknowledge state
-  const logRows = useMemo(
-    () => history.filter((h) => h.value > limits.high || h.value < limits.low).slice(0, 8),
-    [history, limits],
-  )
-  const [logState, setLogState] = useState<Record<number, { eventId: string; acked: boolean }>>({})
-  const rowEvent = (i: number) => logState[i]?.eventId ?? evProblems[0]?.id ?? ''
-  const setRowEvent = (i: number, eventId: string) => setLogState((s) => ({ ...s, [i]: { eventId, acked: s[i]?.acked ?? false } }))
-  const ackRow = (i: number) => setLogState((s) => ({ ...s, [i]: { eventId: rowEvent(i), acked: true } }))
+  // --- Alarm engine: real events from the saved rule (config drives the log) ---
+  const dbRules = useAlarmDB((s) => s.rules)
+  const dbAcks = useAlarmDB((s) => s.acks)
+  const hasHydrated = useAlarmDB((s) => s.hasHydrated)
+  const ackEvent = useAlarmDB((s) => s.ackEvent)
+  const rule = useMemo(() => {
+    if (!domain) return null
+    return (hasHydrated && dbRules[id]) ? dbRules[id] : defaultNodeRule(domain)
+  }, [domain, id, hasHydrated, dbRules])
+
+  // Synthesize a multi-parameter telemetry series around each rule threshold so
+  // the engine produces a realistic event mix that RESPONDS to threshold edits.
+  const events: AlarmEvent[] = useMemo(() => {
+    if (!rule) return []
+    const readings = history.map((h, i) => {
+      const values: Record<string, number> = {}
+      rule.params.forEach((p, pi) => {
+        const span = Math.max(2, Math.abs(p.critical - p.warn))
+        const wave = Math.sin((i + pi * 4) * 0.45) * span * 0.95
+        const noise = (((i * 7 + pi * 13) % 5) - 2) * span * 0.06
+        values[p.key] = +(p.direction === 'high' ? p.warn - span * 0.25 + wave + noise : p.warn + span * 0.25 - wave - noise).toFixed(2)
+      })
+      return { time: h.time, ts: Date.now() - (history.length - i) * 15 * 60000, values }
+    })
+    return evaluate(id, rule, readings).slice(0, 12)
+  }, [rule, history, id])
+
+  // per-event classification (department event-problem)
+  const [evClass, setEvClass] = useState<Record<string, string>>({})
 
   const toggleChannel = (cid: string) => setChannels((c) => c.map((x) => (x.id === cid ? { ...x, enabled: !x.enabled } : x)))
   const saveSetting = async () => { await new Promise((r) => setTimeout(r, 300)); setSavedSetting(true); setTimeout(() => setSavedSetting(false), 2000) }
@@ -181,44 +219,45 @@ export default function DeviceDetailClient() {
         <div className="rounded-xl p-5 lg:col-span-2" style={surface}>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-white">Event Log</h3>
-            <span className="text-[11px] text-slate-500">Classify from your department&apos;s catalog ({evProblems.length} types)</span>
+            <span className="text-[11px] text-slate-500">Generated by the alarm engine from your saved rules · classify ({evProblems.length})</span>
           </div>
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
             <table className="w-full text-sm">
               <thead>
                 <tr style={{ background: '#0a0e1a' }}>
-                  {['Time', 'Reading', 'Event (department)', 'Status', ''].map((h) => (
+                  {['Time', 'Parameter', 'Value', 'Severity', 'Event (department)', 'Status', ''].map((h) => (
                     <th key={h} className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {logRows.length ? logRows.map((h, i) => {
-                  const st = logState[i]
+                {events.length ? events.map((ev) => {
+                  const acked = !!dbAcks[ev.id]
+                  const sc = ev.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24'
                   return (
-                    <tr key={i} style={{ borderTop: '1px solid #1e2433' }}>
-                      <td className="py-2.5 px-3 text-slate-400 text-xs">{h.time}</td>
-                      <td className="py-2.5 px-3"><span className={h.value > limits.high ? 'text-red-400' : 'text-blue-400'}>{h.value}</span></td>
+                    <tr key={ev.id} style={{ borderTop: '1px solid #1e2433' }}>
+                      <td className="py-2.5 px-3 text-slate-400 text-xs">{ev.time}</td>
+                      <td className="py-2.5 px-3 text-slate-300 text-xs">{ev.paramLabel}{ev.kind === 'rate' && <span className="text-indigo-400"> · rate</span>}</td>
+                      <td className="py-2.5 px-3"><span style={{ color: sc }}>{ev.value} {ev.unit}</span><span className="text-slate-600 text-[10px]"> /{ev.threshold}</span></td>
+                      <td className="py-2.5 px-3"><span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: sc, background: `${sc}1f` }}>{ev.severity}</span></td>
                       <td className="py-2.5 px-3">
-                        <select value={rowEvent(i)} onChange={(e) => setRowEvent(i, e.target.value)} disabled={st?.acked}
+                        <select value={evClass[ev.id] ?? evProblems[0]?.id ?? ''} onChange={(e) => setEvClass((s) => ({ ...s, [ev.id]: e.target.value }))} disabled={acked}
                           className="rounded-md px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60" style={inset}>
-                          {evProblems.map((ev) => <option key={ev.id} value={ev.id}>{ev.label}</option>)}
+                          {evProblems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                         </select>
                       </td>
                       <td className="py-2.5 px-3">
-                        {st?.acked
-                          ? <span className="flex items-center gap-1 text-[11px] text-green-400"><Check size={12} /> Acknowledged</span>
-                          : <span className="text-[11px] text-amber-400">Open</span>}
+                        {acked ? <span className="flex items-center gap-1 text-[11px] text-green-400"><Check size={12} /> {dbAcks[ev.id].by}</span> : <span className="text-[11px] text-amber-400">Open</span>}
                       </td>
                       <td className="py-2.5 px-3 text-right">
-                        {st?.acked ? <span className="text-[11px] text-slate-600">—</span>
+                        {acked ? <span className="text-[11px] text-slate-600">—</span>
                           : canManage
-                            ? <button onClick={() => ackRow(i)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>
+                            ? <button onClick={() => ackEvent(ev.id, me?.name ?? 'viewer')} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>
                             : <span className="text-[11px] text-slate-600 flex items-center gap-1 justify-end"><Eye size={11} /> view-only</span>}
                       </td>
                     </tr>
                   )
-                }) : <tr><td colSpan={5} className="py-6 text-center text-slate-600 text-xs">No threshold events in range.</td></tr>}
+                }) : <tr><td colSpan={7} className="py-6 text-center text-slate-600 text-xs">No events — readings are within all alarm rules.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -277,16 +316,7 @@ export default function DeviceDetailClient() {
             <h3 className="text-sm font-semibold text-white">My Alert Settings</h3>
             <span className="text-[10px] text-slate-500 flex items-center gap-1"><Bell size={11} /> personal — alerts only you · {email}</span>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[10px] text-blue-400 mb-1 uppercase tracking-wider">Lower limit</label>
-              <input type="number" value={limits.low} onChange={(e) => setLimits((l) => ({ ...l, low: +e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-            </div>
-            <div>
-              <label className="block text-[10px] text-red-400 mb-1 uppercase tracking-wider">Upper limit</label>
-              <input type="number" value={limits.high} onChange={(e) => setLimits((l) => ({ ...l, high: +e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-            </div>
-          </div>
+          <AlarmParamConfig domain={device.domain} nodeId={id} orgId={device.orgId} />
           <div className="space-y-1.5">
             {channels.map((ch) => (
               <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>

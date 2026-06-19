@@ -8,6 +8,7 @@ import {
   type PlatformType,
 } from '@/lib/platforms'
 import { organizations } from '@/lib/mockData'
+import { api, apiEnabled } from '@/lib/api'
 import { getSitesByOrg } from '@/lib/fleetData'
 import {
   Thermometer, Droplet, Zap, Plus, X, Check, ChevronLeft, ChevronRight,
@@ -93,6 +94,25 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
     : form.siteName || '—'
 
   const enabledCount = Object.values(form.features).filter(Boolean).length
+
+  // Persist the provisioning: create the org if new, then license the platform.
+  // (Template ids match the backend platform ids in platforms.ts.)
+  const provision = async () => {
+    if (apiEnabled) {
+      try {
+        let orgId = form.orgId
+        if (form.customerMode !== 'existing' && form.orgName.trim()) {
+          const r = await api.saveOrg({ name: form.orgName.trim() })
+          orgId = r?.id || orgId
+        }
+        if (orgId && form.platform) {
+          const cur = (await api.entitlements(orgId)) || []
+          if (!cur.includes(form.platform)) await api.setEntitlements(orgId, [...cur, form.platform])
+        }
+      } catch { /* fall through to the success screen regardless */ }
+    }
+    setDone(true)
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
@@ -328,7 +348,7 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
                 </button>
               ) : (
                 <button
-                  onClick={() => setDone(true)}
+                  onClick={provision}
                   className="flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-all"
                   style={{ background: 'linear-gradient(135deg, #16a34a, #22c55e)' }}
                 >

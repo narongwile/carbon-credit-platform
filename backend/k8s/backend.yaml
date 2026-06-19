@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oneops-backend-secrets
+  namespace: data
+type: Opaque
+stringData:
+  DB_HOST: mysql.data.svc.cluster.local
+  DB_PORT: "3306"
+  DB_USER: admin
+  DB_PASSWORD: iothub.2026
+  DB_NAME: iothub
+  DB_TZ: "+07:00"
+  MQTT_URL: mqtt://mqtt.data.svc.cluster.local:1883
+  ESCALATE_AFTER_MIN: "15"
+  CLEAR_AFTER_MIN: "5"
+  OFFLINE_AFTER_S: "90"
+  READINGS_RETENTION_DAYS: "30"
+  # ── Production hardening ──────────────────────────────────────────────
+  NODE_ENV: production
+  DISPLAY_TZ: Asia/Bangkok
+  JWT_SECRET: CHANGE-ME-strong-random-secret   # required in production
+  JWT_TTL: 12h
+  LOGIN_MAX_ATTEMPTS: "10"
+  LOGIN_WINDOW_MIN: "15"
+  CORS_ORIGIN: https://oneops.example          # set to your frontend origin
+  MAIL_FROM: alerts@oneops.local
+  # fill to enable real delivery
+  LINE_NOTIFY_TOKEN: ""
+  TELEGRAM_BOT_TOKEN: ""
+  TELEGRAM_CHAT_ID: ""
+  GOOGLE_CHAT_WEBHOOK: ""
+  SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_USER: ""
+  SMTP_PASS: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oneops-backend
+  namespace: data
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: oneops-backend }
+  template:
+    metadata:
+      labels: { app: oneops-backend }
+    spec:
+      containers:
+        - name: backend
+          image: registry.local/oneops-backend:latest
+          ports: [{ containerPort: 4000 }]
+          envFrom:
+            - secretRef: { name: oneops-backend-secrets }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 4000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oneops-backend
+  namespace: data
+spec:
+  selector: { app: oneops-backend }
+  ports:
+    - port: 80
+      targetPort: 4000

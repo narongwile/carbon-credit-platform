@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { getSession } from '@/lib/auth'
+import { api, apiEnabled } from '@/lib/api'
 import { UserCircle, Save, KeyRound } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -18,10 +19,20 @@ export default function ProfilePanel({ portal }: { portal: string }) {
 
   useEffect(() => {
     const s = getSession()
-    if (s) setProfile({ name: s.name, username: s.username, email: s.email, phone: '' })
+    if (!s) return
+    setProfile({ name: s.name, username: s.username, email: s.email, phone: '' })
+    if (apiEnabled) api.getMyConfig(s.id).then((r) => {
+      const p = (r?.prefs ?? {}) as { phone?: string }
+      if (p.phone) setProfile((cur) => ({ ...cur, phone: p.phone as string }))
+    })
   }, [])
 
-  const saveProfile = async () => { await new Promise((r) => setTimeout(r, 300)); setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000) }
+  const saveProfile = async () => {
+    const s = getSession()
+    if (apiEnabled && s) await api.putMyConfig(s.id, { phone: profile.phone, name: profile.name })
+    else await new Promise((r) => setTimeout(r, 300))
+    setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
+  }
   const savePwd = async () => {
     if (!pwd.next || pwd.next !== pwd.confirm) return
     await new Promise((r) => setTimeout(r, 300)); setSavedPwd(true); setPwd({ current: '', next: '', confirm: '' }); setTimeout(() => setSavedPwd(false), 2000)

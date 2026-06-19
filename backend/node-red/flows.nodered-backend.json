@@ -1,0 +1,2721 @@
+[
+  {
+    "id": "be",
+    "type": "tab",
+    "label": "ONEOPS Node-RED Backend (all-in-one)"
+  },
+  {
+    "id": "wslistener",
+    "type": "websocket-listener",
+    "path": "/ws/telemetry",
+    "wholemsg": "false"
+  },
+  {
+    "id": "mqttbroker",
+    "type": "mqtt-broker",
+    "name": "broker",
+    "broker": "mqtt.data.svc.cluster.local",
+    "port": "1883",
+    "clientid": "nr-backend"
+  },
+  {
+    "id": "startup",
+    "type": "inject",
+    "z": "be",
+    "name": "startup",
+    "props": [],
+    "once": true,
+    "onceDelay": "0.2",
+    "repeat": "",
+    "x": 130,
+    "y": 60,
+    "wires": [
+      [
+        "init"
+      ]
+    ]
+  },
+  {
+    "id": "init",
+    "type": "function",
+    "z": "be",
+    "name": "init pool + engine + guard",
+    "func": "\n// 'mysql' is injected by functionExternalModules (declared in this node's libs).\n// Records are written in DB_TZ (default ICT, +07:00): mysql2 converts JS Date in\n// this tz and each connection's session time_zone is pinned so NOW() is Bangkok.\nconst __DBTZ = env.get('DB_TZ') || '+07:00';\nif (!global.get('pool')) {\n  const __pool = mysql.createPool({\n    host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',\n    port: Number(env.get('DB_PORT') || 3306),\n    user: env.get('DB_USER') || 'admin',\n    password: env.get('DB_PASSWORD') || 'iothub.2026',\n    database: env.get('DB_NAME') || 'iothub',\n    namedPlaceholders: true, connectionLimit: 10, timezone: __DBTZ,\n  });\n  __pool.on('connection', (c) => { c.query(\"SET time_zone = '\" + __DBTZ + \"'\"); });\n  global.set('pool', __pool);\n}\nfunction breaches(v,l,d){return d==='high'?v>=l:v<=l;}\nfunction cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}\nfunction evaluate(nodeId, rule, readings){\n  const out=[];\n  for(const p of rule.params){\n    let active=null, run=0, prev=null;\n    for(const r of readings){\n      const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;\n      if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}\n      prev=v;\n      const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;\n      if(lvl){run++; if(run>=rule.dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }\n      else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}\n      else if(!lvl){run=0;}\n    }\n  }\n  return out.sort((a,b)=>b.ts-a.ts);\n}\nfunction mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}\nglobal.set('evaluate', evaluate);\n// Effective product access for a user (department grant capped by user override).\nglobal.set('accessFor', async function(userId){\n  const pool=global.get('pool'); const RANK={none:0,view:1,manage:2}; const levels={};\n  const [u]=await pool.query(\"SELECT org_id,role,department_id FROM users WHERE id=?\",[userId]);\n  const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;\n  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}\n  else{\n    const [dr]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?\",[departmentId||'']);\n    dr.forEach(r=>levels[r.domain]=r.level);\n    const [ur]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?\",[userId]);\n    ur.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]<RANK[cur]) levels[r.domain]=r.level;});\n  }\n  return {orgId:u.length?u[0].org_id:'',role,departmentId,levels};\n});\n// 'jwt' is injected. Async guard: JWT + role + org-scope + device (node) access.\nglobal.set('guard', async function(authHeader, policy, req){\n  if(policy==='public') return {ok:true,auth:null};\n  let claims;\n  try{ const tok=(authHeader||'').replace(/^Bearer /,''); if(!tok) return {ok:false,code:401,error:'authentication required'};\n       claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me'); }\n  catch(e){ return {ok:false,code:401,error:'invalid token'}; }\n  if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};\n  if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};\n  const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);\n  if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};\n  if((policy==='node'||policy==='node:manage'||policy==='event:view'||policy==='event:manage') && claims.role!=='superadmin'){\n    const pool=global.get('pool'); const isEvent=policy.indexOf('event:')===0; const needManage=(policy==='node:manage'||policy==='event:manage');\n    let nm;\n    if(isEvent) nm=(await pool.query(\"SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?\",[req.params.id]))[0];\n    else nm=(await pool.query(\"SELECT org_id,domain,department_id FROM nodes WHERE id=?\",[req.params.id]))[0];\n    if(!nm.length) return {ok:false,code:404,error:'not found'};\n    const node=nm[0];\n    if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};\n    if(claims.role!=='admin'){\n      const acc=await global.get('accessFor')(claims.userId);\n      const lvl=acc.levels[node.domain]||'none';\n      if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};\n      if(needManage && lvl!=='manage') return {ok:false,code:403,error:'manage required'};\n      if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};\n    }\n  }\n  return {ok:true, auth:claims};\n});\nnode.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      },
+      {
+        "var": "jwt",
+        "module": "jsonwebtoken"
+      }
+    ],
+    "x": 340,
+    "y": 60,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "mqttin",
+    "type": "mqtt in",
+    "z": "be",
+    "name": "telemetry/#",
+    "topic": "telemetry/#",
+    "qos": "0",
+    "datatype": "auto-detect",
+    "broker": "mqttbroker",
+    "x": 130,
+    "y": 140,
+    "wires": [
+      [
+        "normalize"
+      ]
+    ]
+  },
+  {
+    "id": "mqttout",
+    "type": "mqtt out",
+    "z": "be",
+    "name": "downlink",
+    "topic": "",
+    "qos": "",
+    "retain": "",
+    "broker": "mqttbroker",
+    "x": 980,
+    "y": 470,
+    "wires": []
+  },
+  {
+    "id": "normalize",
+    "type": "function",
+    "z": "be",
+    "name": "normalize (readings | presence | logs)",
+    "func": "\n// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);\n// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress).\n// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |\n//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nconst p = msg.payload;\nconst topo = (msg.topic||'').split('/');\nconst fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;\n// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload\nif (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {\n  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {\n    const id = p.device_id || fromTopic(2);\n    if (!id) return null;\n    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online\n    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }, null];\n  }\n  // diag/log or ota/progress → device_logs (Out3)\n  const isOta = p.pct!==undefined || p.status!==undefined;\n  const id = p.device_id || fromTopic(isOta ? 3 : 3);\n  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', payload: p, ts: p.ts||Date.now() } }];\n  return null;\n}\n// --- readings\nlet nodeId, raw = {}, ts = Date.now();\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }\nelse if (p && typeof p==='object'){ return null; }\nelse { const t=topo; nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\nconst values = {};\nfor (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }\nreturn [{ payload: { nodeId, values, ts } }, null, null];\n",
+    "outputs": 3,
+    "libs": [],
+    "x": 330,
+    "y": 140,
+    "wires": [
+      [
+        "ingest",
+        "wsbroadcast"
+      ],
+      [
+        "presence"
+      ],
+      [
+        "devlog"
+      ]
+    ]
+  },
+  {
+    "id": "ingest",
+    "type": "function",
+    "z": "be",
+    "name": "ingest + evaluate + persist",
+    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  const pfx = mm[0].mqtt_prefix;\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++;\n    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity\n    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;\n    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);\n  }\n  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
+    "outputs": 4,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 560,
+    "y": 160,
+    "wires": [
+      [
+        "dbgIngest"
+      ],
+      [
+        "notify",
+        "wsbroadcast"
+      ],
+      [
+        "readpost_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "notify",
+    "type": "function",
+    "z": "be",
+    "name": "notify (Email/LINE/Telegram/GChat · per-tenant)",
+    "func": "\nconst pool = global.get('pool');\nconst e = msg.payload;\nif (!e) return null;\nconst __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}\nconst text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' — '+(e.kind||'')+' @ '+when;\nconst subject = 'ONEOPS '+e.severity+': '+e.paramLabel;\n(async () => {\n  try {\n    // Per-tenant channels (org + dept) from DB — same routing as the Express service.\n    let channels = [];\n    if (pool && e.orgId) {\n      const [rows] = await pool.query(\"SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)\", [e.orgId, e.departmentId || null]);\n      channels = rows;\n    }\n    // Fallback: env-based single destination when no DB channels are configured.\n    if (!channels.length) {\n      if (env.get('LINE_NOTIFY_TOKEN')) channels.push({ channel:'line', target:'' });\n      if (env.get('TELEGRAM_BOT_TOKEN')) channels.push({ channel:'telegram', target:'' });\n      if (env.get('GOOGLE_CHAT_WEBHOOK')) channels.push({ channel:'googlechat', target:'' });\n    }\n    for (const c of channels) {\n      if (c.min_severity === 'CRITICAL' && e.severity !== 'CRITICAL') continue;   // severity filter\n      try {\n        if (c.channel === 'email') {\n          if (!env.get('SMTP_HOST') || !c.target) { node.warn('notify:email skipped — SMTP_HOST/target missing'); continue; }\n          let tx = global.get('mailer');\n          if (!tx) { tx = nodemailer.createTransport({ host: env.get('SMTP_HOST'), port: Number(env.get('SMTP_PORT')||587), auth: env.get('SMTP_USER') ? { user: env.get('SMTP_USER'), pass: env.get('SMTP_PASS') } : undefined }); global.set('mailer', tx); }\n          await tx.sendMail({ from: env.get('MAIL_FROM')||'alerts@oneops.local', to: c.target, subject, text });\n        } else if (c.channel === 'line') {\n          const t = c.target || env.get('LINE_NOTIFY_TOKEN');\n          if (t) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});\n        } else if (c.channel === 'telegram') {\n          const tg = env.get('TELEGRAM_BOT_TOKEN'); const chat = c.target || env.get('TELEGRAM_CHAT_ID');\n          if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text})});\n        } else if (c.channel === 'googlechat') {\n          const url = c.target || env.get('GOOGLE_CHAT_WEBHOOK');\n          if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text})});\n        }\n      } catch(err){ node.error('notify:'+c.channel+' '+err.message); }\n    }\n  } catch(err){ node.error('notify: '+err.message); }\n})();\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      },
+      {
+        "var": "nodemailer",
+        "module": "nodemailer"
+      }
+    ],
+    "x": 820,
+    "y": 200,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "wsbroadcast",
+    "type": "function",
+    "z": "be",
+    "name": "ws broadcast",
+    "func": "\nconst p = msg.payload || {};\nlet out;\nif (p.values) {\n  const v = p.values;\n  let temp = v.tempHigh; if (temp===undefined) temp = v.tempLow; if (temp===undefined) temp = v.oilTemp;\n  if (temp===undefined) { const n = Object.values(v).find(x => typeof x==='number'); temp = (n===undefined?null:n); }\n  out = { id: p.nodeId, mac: '', temperature: temp===null?null:Number(temp), doorOpen: (v.door||0)>0, values: v, timestamp: new Date(p.ts||Date.now()).toISOString() };\n} else if (p.severity) {\n  out = { type:'alarm', id: p.nodeId, paramKey: p.paramKey, severity: p.severity, value: p.value, timestamp: p.time || new Date().toISOString() };\n} else { return null; }\nmsg.payload = out;\nreturn msg;\n",
+    "outputs": 1,
+    "libs": [],
+    "x": 820,
+    "y": 280,
+    "wires": [
+      [
+        "wsout"
+      ]
+    ]
+  },
+  {
+    "id": "wsout",
+    "type": "websocket out",
+    "z": "be",
+    "name": "telemetry ws",
+    "server": "wslistener",
+    "client": "",
+    "x": 1030,
+    "y": 280,
+    "wires": []
+  },
+  {
+    "id": "dbgIngest",
+    "type": "debug",
+    "z": "be",
+    "name": "ingest",
+    "active": true,
+    "complete": "payload",
+    "x": 830,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "presence",
+    "type": "function",
+    "z": "be",
+    "name": "presence upsert",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?,?,NOW(3),?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw)\",\n    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null]);\n  // offline-recovery: device back online ⇒ clear any open offline alarm\n  if (e.online) await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE node_id=? AND kind='offline' AND cleared_at IS NULL\", [e.nodeId]);\n})().catch(err => node.error('presence: ' + err.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 560,
+    "y": 80,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "devlog",
+    "type": "function",
+    "z": "be",
+    "name": "device log store",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_logs (node_id, kind, level, payload, ts) VALUES (?,?,?,?,NOW(3))\",\n    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), JSON.stringify(e.payload||{})]);\n})().catch(err => node.error('devlog: ' + err.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 560,
+    "y": 20,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "catchall",
+    "type": "catch",
+    "z": "be",
+    "name": "catch all",
+    "scope": null,
+    "uncaught": false,
+    "x": 130,
+    "y": 540,
+    "wires": [
+      [
+        "deadletter"
+      ]
+    ]
+  },
+  {
+    "id": "deadletter",
+    "type": "function",
+    "z": "be",
+    "name": "dead-letter",
+    "func": "\nconst pool = global.get('pool');\nconst err = msg.error || {}; const src = (err.source && err.source.id) || 'unknown';\nif (pool) pool.query(\"INSERT INTO dead_letter (source, error, payload) VALUES (?,?,?)\",\n  [String(src).slice(0,120), String(err.message||'').slice(0,500), JSON.stringify(msg.payload||null)]).catch(()=>{});\nnode.warn('dead-letter from ' + src + ': ' + (err.message||''));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 540,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rettick",
+    "type": "inject",
+    "z": "be",
+    "name": "hourly",
+    "props": [],
+    "repeat": "3600",
+    "x": 130,
+    "y": 600,
+    "wires": [
+      [
+        "retention"
+      ]
+    ]
+  },
+  {
+    "id": "retention",
+    "type": "function",
+    "z": "be",
+    "name": "readings retention",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);\n(async () => {\n  await pool.query(\"INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max) \" +\n    \"SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, COUNT(*), AVG(value), MIN(value), MAX(value) \" +\n    \"FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key, bucket \" +\n    \"ON DUPLICATE KEY UPDATE n=VALUES(n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)\", [DAYS]);\n  const [res] = await pool.query(\"DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY)\", [DAYS]);\n  if (res.affectedRows) node.warn('retention: rolled up + purged ' + res.affectedRows + ' raw readings');\n})().catch(e => node.error('retention: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 600,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "rpttick",
+    "type": "inject",
+    "z": "be",
+    "name": "every 15m",
+    "props": [],
+    "repeat": "900",
+    "x": 130,
+    "y": 660,
+    "wires": [
+      [
+        "reportrun"
+      ]
+    ]
+  },
+  {
+    "id": "reportrun",
+    "type": "function",
+    "z": "be",
+    "name": "report scheduler",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\n(async () => {\n  const [due] = await pool.query(\"SELECT * FROM report_schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=NOW(3))\");\n  for (const s of due) {\n    let nodeIds = [];\n    if (s.scope==='device' && s.scope_id) nodeIds = [s.scope_id];\n    else { const args = (s.scope==='department' && s.scope_id) ? [s.org_id, s.scope_id] : [s.org_id];\n      const [ns] = await pool.query(\"SELECT id FROM nodes WHERE org_id=?\"+((s.scope==='department'&&s.scope_id)?\" AND department_id=?\":\"\"), args); nodeIds = ns.map(n=>n.id); }\n    const days = s.sequence==='weekly'?7 : s.sequence==='monthly'?30 : 1;\n    let csv = 'node_id,param_key,n,avg,min,max\\n';\n    if (nodeIds.length) {\n      const [rows] = await pool.query(\"SELECT node_id,param_key,COUNT(*) n,AVG(value) a,MIN(value) mn,MAX(value) mx FROM readings WHERE node_id IN (?) AND taken_at>(NOW(3)-INTERVAL ? DAY) GROUP BY node_id,param_key ORDER BY node_id,param_key\", [nodeIds, days]);\n      for (const r of rows) csv += r.node_id+','+r.param_key+','+r.n+','+Number(r.a).toFixed(2)+','+Number(r.mn).toFixed(2)+','+Number(r.mx).toFixed(2)+'\\n';\n    }\n    const to = (s.recipients||'').trim();\n    if (to && env.get('SMTP_HOST')) {\n      let tx = global.get('mailer');\n      if (!tx) { tx = nodemailer.createTransport({ host: env.get('SMTP_HOST'), port: Number(env.get('SMTP_PORT')||587), auth: env.get('SMTP_USER')?{user:env.get('SMTP_USER'),pass:env.get('SMTP_PASS')}:undefined }); global.set('mailer', tx); }\n      await tx.sendMail({ from: env.get('MAIL_FROM')||'alerts@oneops.local', to, subject: 'ONEOPS Report: '+s.name, text: 'Automated '+s.sequence+' '+s.scope+' report.', attachments: [{ filename: String(s.name).replace(/\\s+/g,'_')+'.csv', content: csv }] });\n    } else { node.warn('report '+s.name+': email skipped (no SMTP/recipients), '+nodeIds.length+' nodes'); }\n    const iv = s.sequence==='weekly'?'7 DAY' : s.sequence==='monthly'?'1 MONTH' : '1 DAY';\n    await pool.query(\"UPDATE report_schedules SET last_run_at=NOW(3), next_run_at=(NOW(3)+INTERVAL \"+iv+\") WHERE id=?\", [s.id]);\n  }\n})().catch(e => node.error('report-run: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      },
+      {
+        "var": "nodemailer",
+        "module": "nodemailer"
+      }
+    ],
+    "x": 350,
+    "y": 660,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "esctick",
+    "type": "inject",
+    "z": "be",
+    "name": "every 60s",
+    "props": [],
+    "repeat": "60",
+    "x": 130,
+    "y": 260,
+    "wires": [
+      [
+        "escalate"
+      ]
+    ]
+  },
+  {
+    "id": "escalate",
+    "type": "function",
+    "z": "be",
+    "name": "escalation scan",
+    "func": "\nconst pool = global.get('pool'); if(!pool) return null;\n(async()=>{\n  const [rows]=await pool.query(\"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL AND escalated=0 AND raised_at<(NOW(3)-INTERVAL 15 MINUTE)\");\n  for(const r of rows){ node.send({ payload: { nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'ESCALATION · '+r.param_label, kind:r.kind, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }\n  if(rows.length){ await pool.query('UPDATE alarm_events SET escalated=1 WHERE id IN (?)',[rows.map(r=>r.id)]); }\n})().catch(e=>node.error(e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 260,
+    "wires": [
+      [
+        "notify"
+      ]
+    ]
+  },
+  {
+    "id": "offtick",
+    "type": "inject",
+    "z": "be",
+    "name": "every 60s",
+    "props": [],
+    "repeat": "60",
+    "x": 130,
+    "y": 330,
+    "wires": [
+      [
+        "offlinesweep"
+      ]
+    ]
+  },
+  {
+    "id": "offlinesweep",
+    "type": "function",
+    "z": "be",
+    "name": "offline sweep",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst AFTER = Number(env.get('OFFLINE_AFTER_S') || 90);\n(async () => {\n  const [rows] = await pool.query(\n    \"SELECT p.node_id, n.org_id, n.department_id FROM device_presence p JOIN nodes n ON n.id = p.node_id WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)\",\n    [AFTER]);\n  for (const r of rows) {\n    await pool.query(\"UPDATE device_presence SET online = 0 WHERE node_id = ?\", [r.node_id]);\n    const id = 'ev-offline-' + r.node_id + '-' + Date.now();\n    await pool.query(\"INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))\",\n      [id, r.node_id, r.org_id, r.department_id, 'online', 'Device Offline', 'CRITICAL', 'offline', 0, 0, '']);\n    node.send({ payload: { id, nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'Device Offline', kind:'offline', value:0, unit:'', threshold:0, severity:'CRITICAL', time:new Date().toISOString() } });\n  }\n})().catch(e => node.error('offline-sweep: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 330,
+    "wires": [
+      [
+        "notify"
+      ]
+    ]
+  },
+  {
+    "id": "cleartick",
+    "type": "inject",
+    "z": "be",
+    "name": "every 60s",
+    "props": [],
+    "repeat": "60",
+    "x": 130,
+    "y": 400,
+    "wires": [
+      [
+        "clearsweep"
+      ]
+    ]
+  },
+  {
+    "id": "clearsweep",
+    "type": "function",
+    "z": "be",
+    "name": "auto-clear sweep",
+    "func": "\nconst pool = global.get('pool'); if (!pool) return null;\nconst CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);\n(async () => {\n  const [evs] = await pool.query(\"SELECT e.id, e.node_id, e.param_key, n.mqtt_prefix FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.cleared_at IS NULL AND e.kind IN ('threshold','rate')\");\n  for (const ev of evs) {\n    const [rr] = await pool.query(\"SELECT rule_json FROM alarm_rules WHERE node_id=?\", [ev.node_id]);\n    if (!rr.length) continue;\n    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;\n    const param = (rule.params||[]).find(p => p.key===ev.param_key);\n    if (!param) continue;\n    const hys = rule.hysteresis || 0;\n    const [rows] = await pool.query(\"SELECT value FROM readings WHERE node_id=? AND param_key=? AND taken_at > (NOW(3) - INTERVAL ? MINUTE)\", [ev.node_id, ev.param_key, CLEAR_MIN]);\n    if (!rows.length) continue;   // no fresh data ⇒ don't clear yet\n    const stillBreaching = rows.some(r => { const v = Number(r.value); return param.direction==='high' ? v >= (param.warn - hys) : v <= (param.warn + hys); });\n    if (!stillBreaching) {\n      await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?\", [ev.id]);\n      // §9: clear the retained alarm topic so subscribers see NORMAL\n      if (ev.mqtt_prefix) node.send({ topic: ev.mqtt_prefix+'/alarm/'+ev.param_key, payload: { sid:ev.param_key, state:'NORMAL', ts:Date.now() }, qos:1, retain:true });\n    }\n  }\n})().catch(e => node.error('clear-sweep: ' + e.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 350,
+    "y": 400,
+    "wires": [
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "health_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/health",
+    "method": "get",
+    "x": 150,
+    "y": 360,
+    "wires": [
+      [
+        "health_fn"
+      ]
+    ]
+  },
+  {
+    "id": "health_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/health",
+    "func": "const __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool');\n(async()=>{ let db=false; try{const c=await pool.getConnection(); await c.ping(); c.release(); db=true;}catch(e){} msg.headers=__CORS; msg.statusCode=200; msg.payload={ok:true,db,ts:Date.now()}; node.send(msg);})(); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 360,
+    "wires": [
+      [
+        "health_resp"
+      ]
+    ]
+  },
+  {
+    "id": "health_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 360,
+    "wires": []
+  },
+  {
+    "id": "login_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/auth/login",
+    "method": "post",
+    "x": 150,
+    "y": 410,
+    "wires": [
+      [
+        "login_fn"
+      ]
+    ]
+  },
+  {
+    "id": "login_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/auth/login",
+    "func": "const __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nconst ip=((msg.req.headers['x-forwarded-for']||'').split(',')[0].trim())||(msg.req.ip)||'unknown';\nconst rl=global.get('loginRL')||{}; const max=Number(env.get('LOGIN_MAX_ATTEMPTS')||10); const win=Number(env.get('LOGIN_WINDOW_MIN')||15)*60000; const now=Date.now(); const rec=rl[ip];\nif(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;msg.payload={error:'too many login attempts — try again later'};return msg;}\n(async()=>{const[u]=await pool.query(\"SELECT id,org_id,role,name,email,password_hash FROM users WHERE email=?\",[b.email||'']);\n  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){rl[ip]=(!rec||now>rec.resetAt)?{n:1,resetAt:now+win}:{n:rec.n+1,resetAt:rec.resetAt}; global.set('loginRL',rl); msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'invalid credentials'};node.send(msg);return;}\n  delete rl[ip]; global.set('loginRL',rl);\n  const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};\n  const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});\n  msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      },
+      {
+        "var": "jwt",
+        "module": "jsonwebtoken"
+      },
+      {
+        "var": "bcrypt",
+        "module": "bcryptjs"
+      }
+    ],
+    "x": 420,
+    "y": 410,
+    "wires": [
+      [
+        "login_resp"
+      ]
+    ]
+  },
+  {
+    "id": "login_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 410,
+    "wires": []
+  },
+  {
+    "id": "getrule_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/rule",
+    "method": "get",
+    "x": 150,
+    "y": 460,
+    "wires": [
+      [
+        "getrule_fn"
+      ]
+    ]
+  },
+  {
+    "id": "getrule_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/nodes/:id/rule",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[id]); msg.headers=__CORS; msg.statusCode=r.length?200:404; msg.payload=r.length?(typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json):{error:'no rule'}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 460,
+    "wires": [
+      [
+        "getrule_resp"
+      ]
+    ]
+  },
+  {
+    "id": "getrule_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 460,
+    "wires": []
+  },
+  {
+    "id": "putrule_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/rule",
+    "method": "put",
+    "x": 150,
+    "y": 510,
+    "wires": [
+      [
+        "putrule_fn"
+      ]
+    ]
+  },
+  {
+    "id": "putrule_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/nodes/:id/rule",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const {orgId,rule,updatedBy}=msg.payload||{};\nif(!orgId||!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and rule required'};return msg;}\n(async()=>{await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 510,
+    "wires": [
+      [
+        "putrule_resp"
+      ]
+    ]
+  },
+  {
+    "id": "putrule_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 510,
+    "wires": []
+  },
+  {
+    "id": "orgrule_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/rule",
+    "method": "put",
+    "x": 150,
+    "y": 560,
+    "wires": [
+      [
+        "orgrule_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgrule_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/orgs/:orgId/rule",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId; const {rule,updatedBy}=msg.payload||{};\nif(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule.domain required'};return msg;}\n(async()=>{const[n]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=?',[orgId,rule.domain]);\n  for(const row of n){ await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),updated_by=VALUES(updated_by)',[row.id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); }\n  msg.headers=__CORS; msg.payload={ok:true,applied:n.length}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 560,
+    "wires": [
+      [
+        "orgrule_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgrule_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 560,
+    "wires": []
+  },
+  {
+    "id": "events_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/events",
+    "method": "get",
+    "x": 150,
+    "y": 610,
+    "wires": [
+      [
+        "events_fn"
+      ]
+    ]
+  },
+  {
+    "id": "events_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/nodes/:id/events",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 610,
+    "wires": [
+      [
+        "events_resp"
+      ]
+    ]
+  },
+  {
+    "id": "events_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 610,
+    "wires": []
+  },
+  {
+    "id": "ack_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/events/:id/ack",
+    "method": "post",
+    "x": 150,
+    "y": 660,
+    "wires": [
+      [
+        "ack_fn"
+      ]
+    ]
+  },
+  {
+    "id": "ack_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/events/:id/ack",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','event:view',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};\n(async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 660,
+    "wires": [
+      [
+        "ack_resp"
+      ]
+    ]
+  },
+  {
+    "id": "ack_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 660,
+    "wires": []
+  },
+  {
+    "id": "readget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/readings",
+    "method": "get",
+    "x": 150,
+    "y": 710,
+    "wires": [
+      [
+        "readget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "readget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/nodes/:id/readings",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const since=Number((msg.req.query&&msg.req.query.sinceMin)||360);\n(async()=>{const[r]=await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL ? MINUTE) ORDER BY taken_at ASC',[id,since]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 710,
+    "wires": [
+      [
+        "readget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "readget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 710,
+    "wires": []
+  },
+  {
+    "id": "docsget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/documents",
+    "method": "get",
+    "x": 150,
+    "y": 760,
+    "wires": [
+      [
+        "docsget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "docsget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/nodes/:id/documents",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const dept=(msg.req.query&&msg.req.query.departmentId)||'';\n(async()=>{const[r]=await pool.query('SELECT id,name,size,uploaded_by,created_at FROM documents WHERE node_id=? AND department_id=? ORDER BY created_at DESC',[id,dept]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 760,
+    "wires": [
+      [
+        "docsget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "docsget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 760,
+    "wires": []
+  },
+  {
+    "id": "docspost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/documents",
+    "method": "post",
+    "x": 150,
+    "y": 810,
+    "wires": [
+      [
+        "docspost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "docspost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/documents",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const {departmentId,name,size,uploadedBy,dataBase64}=msg.payload||{};\nif(!departmentId||!name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'departmentId and name required'};return msg;}\n(async()=>{const docId='doc-'+Date.now(); await pool.query('INSERT INTO documents (id,node_id,department_id,name,size,uploaded_by,data) VALUES (?,?,?,?,?,?,?)',[docId,id,departmentId,name,size||null,uploadedBy||null,dataBase64?Buffer.from(dataBase64,'base64'):null]); msg.headers=__CORS; msg.payload={ok:true,id:docId}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 810,
+    "wires": [
+      [
+        "docspost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "docspost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 810,
+    "wires": []
+  },
+  {
+    "id": "bbjourneyget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/transits/:id/journey",
+    "method": "get",
+    "x": 150,
+    "y": 860,
+    "wires": [
+      [
+        "bbjourneyget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbjourneyget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/bloodbox/transits/:id/journey",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const tid=msg.req.params.id;\n(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_journey_events WHERE transit_id=? ORDER BY ts ASC',[tid]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 860,
+    "wires": [
+      [
+        "bbjourneyget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbjourneyget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 860,
+    "wires": []
+  },
+  {
+    "id": "bbjourneypost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/transits/:id/journey",
+    "method": "post",
+    "x": 150,
+    "y": 910,
+    "wires": [
+      [
+        "bbjourneypost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbjourneypost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/bloodbox/transits/:id/journey",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const tid=msg.req.params.id; const b=msg.payload||{};\nif(!b.eventType||!b.signal){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'eventType and signal required'};node.send([msg,null]);return null;}\n(async()=>{const id='je-'+Date.now(); await pool.query('INSERT INTO blood_box_journey_events (id,transit_id,floor_id,event_type,label,signal,lat,lng,pos_x_m,pos_y_m,temp_c,battery_pct) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',[id,tid,b.floorId||null,b.eventType,b.label||null,b.signal,b.lat||null,b.lng||null,b.posX||null,b.posY||null,b.tempC||null,b.batteryPct||null]);\n  let bridge=null;\n  if(typeof b.tempC==='number'){const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[tid]); if(tr.length&&tr[0].box_id){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.batteryPct==='number')v.battery=b.batteryPct; bridge={payload:{nodeId:tr[0].box_id,values:v,ts:Date.now()}};}}\n  msg.headers=__CORS; msg.payload={ok:true,id}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;\n})();",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 910,
+    "wires": [
+      [
+        "bbjourneypost_resp"
+      ],
+      [
+        "ingest"
+      ]
+    ]
+  },
+  {
+    "id": "bbjourneypost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 910,
+    "wires": []
+  },
+  {
+    "id": "bbtemp_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/transits/:id/temp",
+    "method": "post",
+    "x": 150,
+    "y": 960,
+    "wires": [
+      [
+        "bbtemp_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbtemp_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/bloodbox/transits/:id/temp",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};\nif(typeof b.tempC!=='number'){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'tempC (number) required'};node.send([msg,null]);return null;}\n(async()=>{const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[id]);\n  if(!tr.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'transit not found'};node.send([msg,null]);return;}\n  await pool.query('UPDATE blood_box_transits SET current_temp_c=?, temp_max_c=GREATEST(COALESCE(temp_max_c,?),?) WHERE id=?',[b.tempC,b.tempC,b.tempC,id]);\n  const boxId=tr[0].box_id; let bridge=null;\n  if(boxId){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.battery==='number')v.battery=b.battery; bridge={payload:{nodeId:boxId,values:v,ts:b.ts||Date.now()}};}\n  msg.headers=__CORS; msg.payload={ok:true,bridged:boxId?'queued':'no linked node'}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;\n})();",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 960,
+    "wires": [
+      [
+        "bbtemp_resp"
+      ],
+      [
+        "ingest"
+      ]
+    ]
+  },
+  {
+    "id": "bbtemp_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 960,
+    "wires": []
+  },
+  {
+    "id": "bbtransit_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/transits/:id",
+    "method": "get",
+    "x": 150,
+    "y": 1010,
+    "wires": [
+      [
+        "bbtransit_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbtransit_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/bloodbox/transits/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_transits WHERE id=?',[id]); msg.headers=__CORS; msg.statusCode=r.length?200:404; msg.payload=r.length?r[0]:{error:'not found'}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1010,
+    "wires": [
+      [
+        "bbtransit_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbtransit_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1010,
+    "wires": []
+  },
+  {
+    "id": "bbtransits_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/transits",
+    "method": "get",
+    "x": 150,
+    "y": 1060,
+    "wires": [
+      [
+        "bbtransits_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbtransits_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/bloodbox/transits",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','org',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||'';\n(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_transits WHERE org_id=? ORDER BY current_eta_min ASC',[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1060,
+    "wires": [
+      [
+        "bbtransits_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbtransits_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1060,
+    "wires": []
+  },
+  {
+    "id": "bbfloors_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/floors",
+    "method": "get",
+    "x": 150,
+    "y": 1110,
+    "wires": [
+      [
+        "bbfloors_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbfloors_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/bloodbox/floors",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','org',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||'';\n(async()=>{const[r]=await pool.query('SELECT * FROM building_floors WHERE org_id=? ORDER BY floor_number DESC',[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1110,
+    "wires": [
+      [
+        "bbfloors_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbfloors_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1110,
+    "wires": []
+  },
+  {
+    "id": "bbbeacondel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/beacons/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 1160,
+    "wires": [
+      [
+        "bbbeacondel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbbeacondel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/bloodbox/beacons/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query('DELETE FROM ble_beacons WHERE id=?',[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1160,
+    "wires": [
+      [
+        "bbbeacondel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbbeacondel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1160,
+    "wires": []
+  },
+  {
+    "id": "bbbeaconsget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/beacons",
+    "method": "get",
+    "x": 150,
+    "y": 1210,
+    "wires": [
+      [
+        "bbbeaconsget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbbeaconsget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/bloodbox/beacons",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','org',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||''; const floorId=msg.req.query&&msg.req.query.floorId;\n(async()=>{const sql='SELECT * FROM ble_beacons WHERE org_id=?'+(floorId?' AND floor_id=?':'')+' ORDER BY id'; const a=floorId?[orgId,floorId]:[orgId]; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1210,
+    "wires": [
+      [
+        "bbbeaconsget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbbeaconsget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1210,
+    "wires": []
+  },
+  {
+    "id": "bbbeaconspost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/beacons",
+    "method": "post",
+    "x": 150,
+    "y": 1260,
+    "wires": [
+      [
+        "bbbeaconspost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bbbeaconspost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/bloodbox/beacons",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.orgId||!b.floorId||!b.uuid){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId, floorId and uuid required'};return msg;}\n(async()=>{const id=b.id||'bcn-'+Date.now(); await pool.query('INSERT INTO ble_beacons (id,org_id,floor_id,uuid,major,minor,pos_x_m,pos_y_m,tx_power_dbm,battery_pct,status) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE floor_id=VALUES(floor_id),pos_x_m=VALUES(pos_x_m),pos_y_m=VALUES(pos_y_m),tx_power_dbm=VALUES(tx_power_dbm),battery_pct=VALUES(battery_pct),status=VALUES(status)',[id,b.orgId,b.floorId,b.uuid,b.major||null,b.minor||null,b.posX||null,b.posY||null,b.txPower||null,b.battery||null,b.status||'active']); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1260,
+    "wires": [
+      [
+        "bbbeaconspost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bbbeaconspost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1260,
+    "wires": []
+  },
+  {
+    "id": "bblocget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/boxes/:id/location",
+    "method": "get",
+    "x": 150,
+    "y": 1310,
+    "wires": [
+      [
+        "bblocget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bblocget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/bloodbox/boxes/:id/location",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query('SELECT * FROM blood_box_locations WHERE box_id=? AND is_current=1 ORDER BY moved_at DESC LIMIT 1',[id]); msg.headers=__CORS; msg.payload=r.length?r[0]:null; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1310,
+    "wires": [
+      [
+        "bblocget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bblocget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1310,
+    "wires": []
+  },
+  {
+    "id": "bblocpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/bloodbox/boxes/:id/location",
+    "method": "post",
+    "x": 150,
+    "y": 1360,
+    "wires": [
+      [
+        "bblocpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "bblocpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/bloodbox/boxes/:id/location",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};\nif(!b.orgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId required'};return msg;}\n(async()=>{await pool.query('UPDATE blood_box_locations SET is_current=0 WHERE box_id=? AND is_current=1',[id]);\n  await pool.query('INSERT INTO blood_box_locations (org_id,box_id,floor_id,pos_x_m,pos_y_m,room_label,moved_by) VALUES (?,?,?,?,?,?,?)',[b.orgId,id,b.floorId||null,b.posX||null,b.posY||null,b.roomLabel||null,b.movedBy||null]);\n  await pool.query('UPDATE blood_boxes SET floor_id=?,pos_x_m=?,pos_y_m=? WHERE id=?',[b.floorId||null,b.posX||null,b.posY||null,id]);\n  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1360,
+    "wires": [
+      [
+        "bblocpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "bblocpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1360,
+    "wires": []
+  },
+  {
+    "id": "fleetlatest_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/fleet/:id/latest",
+    "method": "get",
+    "x": 150,
+    "y": 1410,
+    "wires": [
+      [
+        "fleetlatest_fn"
+      ]
+    ]
+  },
+  {
+    "id": "fleetlatest_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/fleet/:id/latest",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query(\"SELECT r1.param_key,r1.value,r1.taken_at FROM readings r1 JOIN (SELECT param_key,MAX(taken_at) mt FROM readings WHERE node_id=? GROUP BY param_key) r2 ON r1.param_key=r2.param_key AND r1.taken_at=r2.mt WHERE r1.node_id=?\",[id,id]);\n  const out={}; let last=null; for(const row of r){ out[row.param_key]=Number(row.value); if(!last||row.taken_at>last) last=row.taken_at; }\n  msg.headers=__CORS; msg.payload={nodeId:id, values:out, lastReadingAt:last}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1410,
+    "wires": [
+      [
+        "fleetlatest_resp"
+      ]
+    ]
+  },
+  {
+    "id": "fleetlatest_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1410,
+    "wires": []
+  },
+  {
+    "id": "fleetlist_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/fleet",
+    "method": "get",
+    "x": 150,
+    "y": 1460,
+    "wires": [
+      [
+        "fleetlist_fn"
+      ]
+    ]
+  },
+  {
+    "id": "fleetlist_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/fleet",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const au=msg.auth||{}; const domain=msg.req.query&&msg.req.query.domain;\nconst orgId = au.role==='superadmin' ? ((msg.req.query&&msg.req.query.orgId)||au.orgId) : au.orgId;\n(async()=>{\n  const acc = au.role==='superadmin' ? {role:'superadmin',orgId:orgId,departmentId:null,levels:{}} : await global.get('accessFor')(au.userId);\n  const sql=\"SELECT n.id,n.name,n.domain,n.org_id,n.site_id,n.department_id,n.lat,n.lng,p.online,p.last_seen,p.rssi,p.fw,\"+\n    \"(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm \"+\n    \"FROM nodes n LEFT JOIN device_presence p ON p.node_id=n.id WHERE n.org_id=?\"+(domain?\" AND n.domain=?\":\"\")+\" ORDER BY n.domain,n.id\";\n  const args=domain?[orgId,domain]:[orgId]; const[r]=await pool.query(sql,args);\n  const vis=r.filter(n=>{ if(acc.role==='superadmin')return true; if(n.org_id!==acc.orgId)return false; if(acc.role==='admin')return true; const lvl=acc.levels[n.domain]||'none'; if(lvl==='none')return false; if(n.department_id && n.department_id!==acc.departmentId)return false; return true; });\n  msg.headers=__CORS; msg.payload=vis; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1460,
+    "wires": [
+      [
+        "fleetlist_resp"
+      ]
+    ]
+  },
+  {
+    "id": "fleetlist_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1460,
+    "wires": []
+  },
+  {
+    "id": "rptlist_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/reports/schedules",
+    "method": "get",
+    "x": 150,
+    "y": 1510,
+    "wires": [
+      [
+        "rptlist_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rptlist_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/reports/schedules",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=(msg.req.query&&msg.req.query.orgId)||'';\n(async()=>{const[r]=await pool.query(\"SELECT * FROM report_schedules WHERE org_id=? ORDER BY name\",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1510,
+    "wires": [
+      [
+        "rptlist_resp"
+      ]
+    ]
+  },
+  {
+    "id": "rptlist_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1510,
+    "wires": []
+  },
+  {
+    "id": "rptpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/reports/schedules",
+    "method": "post",
+    "x": 150,
+    "y": 1560,
+    "wires": [
+      [
+        "rptpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rptpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/reports/schedules",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.orgId||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and name required'};return msg;}\n(async()=>{const id=b.id||'rpt-'+Date.now();\n  await pool.query(\"INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,recipients,enabled,next_run_at) VALUES (?,?,?,?,?,?,?,?,?,NOW(3)) ON DUPLICATE KEY UPDATE name=VALUES(name),scope=VALUES(scope),scope_id=VALUES(scope_id),sequence=VALUES(sequence),format=VALUES(format),recipients=VALUES(recipients),enabled=VALUES(enabled)\",\n    [id,b.orgId,b.name,b.scope||'device',b.scopeId||null,b.sequence||'daily',b.format||'CSV',b.recipients||null,b.enabled===false?0:1]);\n  msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1560,
+    "wires": [
+      [
+        "rptpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "rptpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1560,
+    "wires": []
+  },
+  {
+    "id": "rptdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/reports/schedules/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 1610,
+    "wires": [
+      [
+        "rptdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "rptdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/reports/schedules/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM report_schedules WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1610,
+    "wires": [
+      [
+        "rptdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "rptdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1610,
+    "wires": []
+  },
+  {
+    "id": "eplist_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/event-problems",
+    "method": "get",
+    "x": 150,
+    "y": 1660,
+    "wires": [
+      [
+        "eplist_fn"
+      ]
+    ]
+  },
+  {
+    "id": "eplist_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/event-problems",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const au=msg.auth||{}; const q=msg.req.query||{};\nconst orgId = au.role==='superadmin' ? (q.orgId||au.orgId) : au.orgId;\n(async()=>{let sql=\"SELECT * FROM event_problems WHERE org_id=?\"; const a=[orgId]; if(q.departmentId){sql+=\" AND (department_id=? OR department_id IS NULL)\"; a.push(q.departmentId);} if(q.domain){sql+=\" AND (domain=? OR domain IS NULL)\"; a.push(q.domain);} sql+=\" ORDER BY label\"; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1660,
+    "wires": [
+      [
+        "eplist_resp"
+      ]
+    ]
+  },
+  {
+    "id": "eplist_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1660,
+    "wires": []
+  },
+  {
+    "id": "eppost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/event-problems",
+    "method": "post",
+    "x": 150,
+    "y": 1710,
+    "wires": [
+      [
+        "eppost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "eppost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/event-problems",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.orgId||!b.label){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and label required'};return msg;}\n(async()=>{const id=b.id||'ep-'+Date.now(); await pool.query(\"INSERT INTO event_problems (id,org_id,department_id,domain,label) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE department_id=VALUES(department_id),domain=VALUES(domain),label=VALUES(label)\",[id,b.orgId,b.departmentId||null,b.domain||null,b.label]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1710,
+    "wires": [
+      [
+        "eppost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "eppost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1710,
+    "wires": []
+  },
+  {
+    "id": "epdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/event-problems/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 1760,
+    "wires": [
+      [
+        "epdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "epdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/event-problems/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM event_problems WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1760,
+    "wires": [
+      [
+        "epdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "epdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1760,
+    "wires": []
+  },
+  {
+    "id": "meget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/me/config",
+    "method": "get",
+    "x": 150,
+    "y": 1810,
+    "wires": [
+      [
+        "meget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "meget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/me/config",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const uid=(msg.req.headers&&msg.req.headers['x-user-id'])||'';\nif(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'x-user-id header required'};return msg;}\n(async()=>{const[u]=await pool.query(\"SELECT id,org_id,email,name,role,department_id FROM users WHERE id=?\",[uid]);\n  const[pr]=await pool.query(\"SELECT prefs FROM user_prefs WHERE user_id=?\",[uid]);\n  const prefs = pr.length ? (typeof pr[0].prefs==='string'?JSON.parse(pr[0].prefs||'{}'):pr[0].prefs) : {};\n  msg.headers=__CORS; msg.payload={ user: u.length?u[0]:{id:uid}, prefs }; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1810,
+    "wires": [
+      [
+        "meget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "meget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1810,
+    "wires": []
+  },
+  {
+    "id": "meput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/me/config",
+    "method": "put",
+    "x": 150,
+    "y": 1860,
+    "wires": [
+      [
+        "meput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "meput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/me/config",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const uid=(msg.req.headers&&msg.req.headers['x-user-id'])||''; const prefs=msg.payload&&msg.payload.prefs!==undefined?msg.payload.prefs:msg.payload;\nif(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'x-user-id header required'};return msg;}\n(async()=>{await pool.query(\"INSERT INTO user_prefs (user_id,prefs) VALUES (?,?) ON DUPLICATE KEY UPDATE prefs=VALUES(prefs)\",[uid,JSON.stringify(prefs||{})]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1860,
+    "wires": [
+      [
+        "meput_resp"
+      ]
+    ]
+  },
+  {
+    "id": "meput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1860,
+    "wires": []
+  },
+  {
+    "id": "orgsget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs",
+    "method": "get",
+    "x": 150,
+    "y": 1910,
+    "wires": [
+      [
+        "orgsget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgsget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool');\n(async()=>{const[r]=await pool.query(\"SELECT * FROM organizations ORDER BY name\"); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1910,
+    "wires": [
+      [
+        "orgsget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgsget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1910,
+    "wires": []
+  },
+  {
+    "id": "orgspost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs",
+    "method": "post",
+    "x": 150,
+    "y": 1960,
+    "wires": [
+      [
+        "orgspost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgspost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}\n(async()=>{const id=b.id||'org-'+Date.now(); await pool.query(\"INSERT INTO organizations (id,name,status,logo_url) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name),status=VALUES(status),logo_url=VALUES(logo_url)\",[id,b.name,b.status||'active',b.logoUrl||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1960,
+    "wires": [
+      [
+        "orgspost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgspost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1960,
+    "wires": []
+  },
+  {
+    "id": "entget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:id/entitlements",
+    "method": "get",
+    "x": 150,
+    "y": 2010,
+    "wires": [
+      [
+        "entget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "entget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:id/entitlements",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{const[r]=await pool.query(\"SELECT platform FROM org_entitlements WHERE org_id=?\",[id]); msg.headers=__CORS; msg.payload=r.map(x=>x.platform); node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2010,
+    "wires": [
+      [
+        "entget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "entget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2010,
+    "wires": []
+  },
+  {
+    "id": "entput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:id/entitlements",
+    "method": "put",
+    "x": 150,
+    "y": 2060,
+    "wires": [
+      [
+        "entput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "entput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/orgs/:id/entitlements",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const list=(msg.payload&&msg.payload.platforms)||[];\n(async()=>{await pool.query(\"DELETE FROM org_entitlements WHERE org_id=?\",[id]); for(const p of list){ await pool.query(\"INSERT IGNORE INTO org_entitlements (org_id,platform) VALUES (?,?)\",[id,p]); } msg.headers=__CORS; msg.payload={ok:true,count:list.length}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2060,
+    "wires": [
+      [
+        "entput_resp"
+      ]
+    ]
+  },
+  {
+    "id": "entput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2060,
+    "wires": []
+  },
+  {
+    "id": "deptget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/departments",
+    "method": "get",
+    "x": 150,
+    "y": 2110,
+    "wires": [
+      [
+        "deptget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "deptget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/departments",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId;\n(async()=>{const[r]=await pool.query(\"SELECT * FROM departments WHERE org_id=? ORDER BY name\",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2110,
+    "wires": [
+      [
+        "deptget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "deptget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2110,
+    "wires": []
+  },
+  {
+    "id": "deptpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/departments",
+    "method": "post",
+    "x": 150,
+    "y": 2160,
+    "wires": [
+      [
+        "deptpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "deptpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/departments",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};\nif(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}\n(async()=>{const id=b.id||'dept-'+Date.now(); await pool.query(\"INSERT INTO departments (id,org_id,name) VALUES (?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name)\",[id,orgId,b.name]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2160,
+    "wires": [
+      [
+        "deptpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "deptpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2160,
+    "wires": []
+  },
+  {
+    "id": "usrget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/users",
+    "method": "get",
+    "x": 150,
+    "y": 2210,
+    "wires": [
+      [
+        "usrget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "usrget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/users",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId;\n(async()=>{const[r]=await pool.query(\"SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=? ORDER BY name\",[orgId]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2210,
+    "wires": [
+      [
+        "usrget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "usrget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2210,
+    "wires": []
+  },
+  {
+    "id": "usrpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/users",
+    "method": "post",
+    "x": 150,
+    "y": 2260,
+    "wires": [
+      [
+        "usrpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "usrpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/users",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};\nif(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}\n(async()=>{const id=b.id||'u-'+Date.now(); await pool.query(\"INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id)\",[id,orgId,b.email||null,b.name,b.role||'viewer',b.departmentId||null]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2260,
+    "wires": [
+      [
+        "usrpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "usrpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2260,
+    "wires": []
+  },
+  {
+    "id": "orgsdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2310,
+    "wires": [
+      [
+        "orgsdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "orgsdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/orgs/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM organizations WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2310,
+    "wires": [
+      [
+        "orgsdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "orgsdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2310,
+    "wires": []
+  },
+  {
+    "id": "deptdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/departments/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2360,
+    "wires": [
+      [
+        "deptdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "deptdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/departments/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM departments WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2360,
+    "wires": [
+      [
+        "deptdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "deptdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2360,
+    "wires": []
+  },
+  {
+    "id": "usrdel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/users/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2410,
+    "wires": [
+      [
+        "usrdel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "usrdel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/users/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM users WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2410,
+    "wires": [
+      [
+        "usrdel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "usrdel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2410,
+    "wires": []
+  },
+  {
+    "id": "paget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/product-access",
+    "method": "get",
+    "x": 150,
+    "y": 2460,
+    "wires": [
+      [
+        "paget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "paget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/product-access",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const q=msg.req.query||{};\n(async()=>{const[r]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope=? AND scope_id=?\",[q.scope||'department',q.scopeId||'']); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2460,
+    "wires": [
+      [
+        "paget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "paget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2460,
+    "wires": []
+  },
+  {
+    "id": "paput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/product-access",
+    "method": "put",
+    "x": 150,
+    "y": 2510,
+    "wires": [
+      [
+        "paput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "paput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/product-access",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.scope||!b.scopeId||!b.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'scope, scopeId, domain required'};return msg;}\n(async()=>{await pool.query(\"INSERT INTO product_access (scope,scope_id,domain,level) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE level=VALUES(level)\",[b.scope,b.scopeId,b.domain,b.level||'view']); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2510,
+    "wires": [
+      [
+        "paput_resp"
+      ]
+    ]
+  },
+  {
+    "id": "paput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2510,
+    "wires": []
+  },
+  {
+    "id": "nodeprov_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes",
+    "method": "post",
+    "x": 150,
+    "y": 2560,
+    "wires": [
+      [
+        "nodeprov_fn"
+      ]
+    ]
+  },
+  {
+    "id": "nodeprov_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.id||!b.orgId||!b.domain||!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'id, orgId, domain, name required'};return msg;}\n(async()=>{await pool.query(\"INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE site_id=VALUES(site_id),department_id=VALUES(department_id),domain=VALUES(domain),name=VALUES(name),mqtt_prefix=VALUES(mqtt_prefix),lat=VALUES(lat),lng=VALUES(lng)\",[b.id,b.orgId,b.siteId||null,b.departmentId||null,b.domain,b.name,b.mqttPrefix||null,b.lat??null,b.lng??null]); msg.headers=__CORS; msg.payload={ok:true,id:b.id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2560,
+    "wires": [
+      [
+        "nodeprov_resp"
+      ]
+    ]
+  },
+  {
+    "id": "nodeprov_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2560,
+    "wires": []
+  },
+  {
+    "id": "cfgput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/config",
+    "method": "put",
+    "x": 150,
+    "y": 2610,
+    "wires": [
+      [
+        "cfgput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "cfgput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/nodes/:id/config",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  let payload=body; if(!body||!Object.keys(body).length){const[rr]=await pool.query(\"SELECT rule_json FROM alarm_rules WHERE node_id=?\",[id]); payload=rr.length?(typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json):{};}\n  const topic=n[0].mqtt_prefix+'/config'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload,qos:1,retain:true}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2610,
+    "wires": [
+      [
+        "cfgput_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "cfgput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2610,
+    "wires": []
+  },
+  {
+    "id": "cmdpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/cmd",
+    "method": "post",
+    "x": 150,
+    "y": 2660,
+    "wires": [
+      [
+        "cmdpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "cmdpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/cmd",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{}; const op=body.op||'reboot';\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  const topic=n[0].mqtt_prefix+'/cmd/'+op; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2660,
+    "wires": [
+      [
+        "cmdpost_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "cmdpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2660,
+    "wires": []
+  },
+  {
+    "id": "otapost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/ota",
+    "method": "post",
+    "x": 150,
+    "y": 2710,
+    "wires": [
+      [
+        "otapost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otapost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/ota",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};\nif(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'to_version and artefact_uri required'};node.send([msg,null]);return null;}\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2710,
+    "wires": [
+      [
+        "otapost_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "otapost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2710,
+    "wires": []
+  },
+  {
+    "id": "cors_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/*",
+    "method": "options",
+    "x": 150,
+    "y": 2760,
+    "wires": [
+      [
+        "cors_fn"
+      ]
+    ]
+  },
+  {
+    "id": "cors_fn",
+    "type": "function",
+    "z": "be",
+    "name": "OPTIONS /api/*",
+    "func": "const __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nmsg.headers=__CORS; msg.statusCode=204; msg.payload=''; return msg;",
+    "outputs": 1,
+    "libs": [],
+    "x": 420,
+    "y": 2760,
+    "wires": [
+      [
+        "cors_resp"
+      ]
+    ]
+  },
+  {
+    "id": "cors_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2760,
+    "wires": []
+  },
+  {
+    "id": "readpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/readings",
+    "method": "post",
+    "x": 150,
+    "y": 2810,
+    "wires": [
+      [
+        "readpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "readpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/readings",
+    "func": "msg.payload={nodeId:msg.req.params.id,values:(msg.payload&&msg.payload.values)||{},ts:(msg.payload&&msg.payload.ts)};return msg;",
+    "outputs": 1,
+    "libs": [],
+    "x": 420,
+    "y": 2810,
+    "wires": [
+      [
+        "ingest"
+      ]
+    ]
+  },
+  {
+    "id": "readpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2810,
+    "wires": []
+  }
+]

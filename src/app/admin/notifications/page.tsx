@@ -3,7 +3,13 @@
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { defaultNotificationChannels, eventProblems, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
+import { managedDevicesFromFleet, getHostsByOrg } from '@/lib/fleetData'
+import { licensedDomains } from '@/lib/entitlements'
+import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import { useAlarmDB } from '@/server/alarmStore'
+import { api } from '@/lib/api'
+import type { NodeAlarmRule } from '@/server/alarmEngine'
+import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig, EventProblem } from '@/types/org'
 import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check, ListChecks, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
@@ -25,9 +31,17 @@ export default function AlarmNotificationPage() {
   const orgId = selectedOrgId || 'org-1'
   const devices = managedDevicesFromFleet(orgId)
 
+  const orgDomains = licensedDomains(orgId)
+  const [product, setProduct] = useState<SensorDomain>(orgDomains[0] ?? 'transformer')
+  const setRuleDB = useAlarmDB((s) => s.setRule)
+  const applyRuleToOrg = (rule: NodeAlarmRule) => {
+    const targets = getHostsByOrg(orgId).filter((h) => h.domain === product)
+    targets.forEach((h) => setRuleDB(h.id, rule, orgId))
+    void api.putOrgRule(orgId, { rule })
+    toast.success(`Applied to ${targets.length} ${DOMAIN_META[product].platform} node(s) across your org`)
+  }
   const [scope, setScope] = useState<'all' | string>('all')
   const [deptScope, setDeptScope] = useState<'all' | string>('all')
-  const [limits, setLimits] = useState({ low: 2, high: 8 })
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [events, setEvents] = useState<string[]>(['ev-temp-high', 'ev-door-open', 'ev-offline'])
   const [saved, setSaved] = useState(false)
@@ -90,19 +104,21 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-[10px] text-blue-400 mb-1 uppercase tracking-wider">Low limit</label>
-              <input type="number" value={limits.low} onChange={(e) => setLimits((l) => ({ ...l, low: +e.target.value }))}
-                className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-blue-500" style={inset} />
-            </div>
-            <div>
-              <label className="block text-[10px] text-red-400 mb-1 uppercase tracking-wider">High limit</label>
-              <input type="number" value={limits.high} onChange={(e) => setLimits((l) => ({ ...l, high: +e.target.value }))}
-                className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-red-500" style={inset} />
+          {/* Domain-aware product profile */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Product alarm profile</label>
+            <div className="flex gap-2">
+              {orgDomains.map((d) => (
+                <button key={d} onClick={() => setProduct(d)}
+                  className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold transition-all', product === d ? 'text-white' : 'text-slate-500')}
+                  style={product === d ? { background: `${DOMAIN_META[d].accent}33`, border: `1px solid ${DOMAIN_META[d].accent}` } : inset}>
+                  {DOMAIN_META[d].platform}
+                </button>
+              ))}
             </div>
           </div>
-          <p className="text-[11px] text-slate-500">Triggers a notification when a reading falls below the low limit or rises above the high limit.</p>
+
+          <AlarmParamConfig domain={product} advanced orgId={orgId} onApplyAll={applyRuleToOrg} />
         </div>
 
         {/* Event selection & edit */}

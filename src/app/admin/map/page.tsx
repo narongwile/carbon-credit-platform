@@ -3,12 +3,14 @@
 import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
 import { getGeoNodes } from '@/lib/geoNodes'
+import { useLiveGeoNodes } from '@/lib/useFleetLive'
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 export default function MapPage() {
   const { selectedOrgId } = useAppStore()
-  const nodes = getGeoNodes(selectedOrgId || 'org-1')
+  const orgId = selectedOrgId || 'org-1'
+  const nodes = useLiveGeoNodes(orgId) ?? getGeoNodes(orgId)
 
   return (
     <div className="p-6 space-y-5">

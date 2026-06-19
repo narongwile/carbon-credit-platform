@@ -1,12 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Thermometer, DoorOpen, DoorClosed, CheckCircle, AlertTriangle, XCircle, Leaf, Snowflake,
 } from 'lucide-react'
 import NodeDetail from '@/components/refrigeration/NodeDetail'
 import EntitlementGuard from '@/components/EntitlementGuard'
 import { useRefrigerationData, type RefrigerationNode } from '@/lib/mockRefrigerationData'
+import { useAppStore } from '@/lib/store'
+import { useFleetLive } from '@/lib/useFleetLive'
+import { api } from '@/lib/api'
 
 // Refrigeration Overview — the CarbonBOX / RefrigerationDataLogger product's
 // dashboard, mirroring the ETERNITY transformer overview (summary stats +
@@ -76,8 +79,25 @@ function NodeCard({ node, threshold, onClick }: { node: RefrigerationNode; thres
 
 function RefrigerationOverview() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const { nodes, threshold, getHistory, isConnected } = useRefrigerationData()
+  const { nodes: mockNodes, threshold, getHistory, isConnected } = useRefrigerationData()
   const [localThreshold, setLocalThreshold] = useState(threshold)
+
+  // Live overlay: when the backend is reachable, render the real carbonNode
+  // fleet from MySQL (id/name/online + latest temp/door); else fall back to mock.
+  const { selectedOrgId } = useAppStore()
+  const liveFleet = useFleetLive(selectedOrgId || 'org-1', 'carbonNode')
+  const [liveNodes, setLiveNodes] = useState<RefrigerationNode[] | null>(null)
+  useEffect(() => {
+    if (!liveFleet.loaded || liveFleet.byId.size === 0) { setLiveNodes(null); return }
+    let cancelled = false
+    Promise.all(Array.from(liveFleet.byId.values()).map(async (n) => {
+      const lat = await api.latest(n.id)
+      const temp = lat?.values.tempHigh ?? lat?.values.tempLow ?? 4
+      return { id: n.id, name: n.name, mac: n.fw ?? '', temperature: Number(temp), doorOpen: (lat?.values.door ?? 0) > 0, online: n.online !== 0 } as RefrigerationNode
+    })).then((arr) => { if (!cancelled) setLiveNodes(arr) })
+    return () => { cancelled = true }
+  }, [liveFleet.loaded, liveFleet.byId])
+  const nodes = liveNodes ?? mockNodes
 
   const normal = nodes.filter((n) => statusOf(n, localThreshold) === 'NORMAL').length
   const warning = nodes.filter((n) => statusOf(n, localThreshold) === 'WARNING').length

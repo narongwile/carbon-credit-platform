@@ -10,9 +10,10 @@ export interface TelemetryData {
   timestamp: string
 }
 
-// Connects to a local MQTT->WebSocket bridge for real-time node telemetry.
-// Auto-reconnects; degrades gracefully to mock data when no bridge is present.
-export function useMqttTelemetry(url: string = 'ws://localhost:8080') {
+// Connects to the Node-RED WebSocket telemetry bridge for real-time node data.
+// URL defaults to NEXT_PUBLIC_WS_URL (e.g. wss://api.oneops.example/ws/telemetry);
+// auto-reconnects and degrades gracefully to mock data when no bridge is present.
+export function useMqttTelemetry(url: string = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080') {
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null)
   const [isConnected, setIsConnected] = useState(false)
 

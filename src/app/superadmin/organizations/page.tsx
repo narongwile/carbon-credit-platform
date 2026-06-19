@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { organizations } from '@/lib/mockData'
+import { api, apiEnabled } from '@/lib/api'
 import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
 import { getOrgThemeGrants } from '@/lib/orgThemes'
 import type { Organization } from '@/types'
@@ -111,6 +112,10 @@ function OrgHierarchy({ orgId }: { orgId: string }) {
   )
 }
 
+// Mock platform ids → backend platform ids (org_entitlements / platforms.ts).
+const PLATFORM_MAP: Record<string, string> = { eternity: 'eternityTransformers', carbonbox: 'refrigerationDataLogger', bloodbox: 'bloodBox' }
+const toBackendPlatform = (mockId: string) => PLATFORM_MAP[mockId] ?? mockId
+
 function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) {
   const [expandedPlatform, setExpandedPlatform] = useState<string | null>('eternity')
   const [entryPlatform, setEntryPlatform] = useState('eternity')
@@ -119,6 +124,30 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
   )
 
   const toggleFeature = (id: string) => setFeatures((prev) => ({ ...prev, [id]: !prev[id] }))
+
+  // Platform licensing ↔ backend org_entitlements (superadmin). Live-loaded.
+  const [licensed, setLicensed] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(org.platforms.map((p) => [p.platformId, p.licensed])),
+  )
+  useEffect(() => {
+    if (!apiEnabled) return
+    let cancelled = false
+    api.entitlements(org.id).then((ents) => {
+      if (cancelled || !ents) return
+      setLicensed(Object.fromEntries(org.platforms.map((p) => [p.platformId, ents.includes(toBackendPlatform(p.platformId))])))
+    })
+    return () => { cancelled = true }
+  }, [org.id])
+  const toggleLicense = (platformId: string) => {
+    setLicensed((prev) => {
+      const next = { ...prev, [platformId]: !prev[platformId] }
+      if (apiEnabled) {
+        const platforms = Object.keys(next).filter((k) => next[k]).map(toBackendPlatform)
+        api.setEntitlements(org.id, platforms)
+      }
+      return next
+    })
+  }
 
   // Per-org dashboard theme grants — super admin only.
   const [grantedThemes, setGrantedThemes] = useState<string[]>(getOrgThemeGrants(org.id))
@@ -174,14 +203,16 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
                       {expandedPlatform === platform.platformId ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
                       <span className="text-sm font-semibold text-white">{platform.platformName}</span>
                     </div>
-                    <span
-                      className="text-xs px-2.5 py-1 rounded-full font-medium"
-                      style={platform.licensed
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleLicense(platform.platformId) }}
+                      className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors hover:opacity-80"
+                      title="Toggle platform license"
+                      style={licensed[platform.platformId]
                         ? { background: 'rgba(74,222,128,0.1)', color: '#4ade80' }
                         : { background: 'rgba(107,114,128,0.1)', color: '#6b7280' }}
                     >
-                      {platform.licensed ? 'LICENSED' : 'UNLICENSED'}
-                    </span>
+                      {licensed[platform.platformId] ? 'LICENSED' : 'UNLICENSED'}
+                    </button>
                   </div>
 
                   {expandedPlatform === platform.platformId && (
@@ -254,8 +285,21 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
 export default function OrganizationsPage() {
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Organization | null>(null)
+  const [orgs, setOrgs] = useState<Organization[]>(organizations)
 
-  const filtered = organizations.filter(
+  // Live org list (name + status) from the backend; structure stays from mock.
+  useEffect(() => {
+    if (!apiEnabled) return
+    let cancelled = false
+    api.orgs().then((rows) => {
+      if (cancelled || !rows) return
+      const byId = new Map((rows as Array<{ id: string; name: string; status?: string }>).map((r) => [r.id, r]))
+      setOrgs(organizations.map((o) => (byId.has(o.id) ? { ...o, name: byId.get(o.id)!.name, status: (byId.get(o.id)!.status as Organization['status']) ?? o.status } : o)))
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const filtered = orgs.filter(
     (o) =>
       o.name.toLowerCase().includes(search.toLowerCase()) ||
       o.country.toLowerCase().includes(search.toLowerCase()) ||

@@ -4,11 +4,17 @@ import { useMemo, useState } from 'react'
 import {
   Droplet, Box, Thermometer, BatteryFull, Clock, MapPin, Phone, AlertTriangle,
   Building2, Activity, ArrowUp, CheckCircle2, ChevronUp, Hospital, Truck, Signal,
+  Radio, Plus, Trash2, BatteryLow, Wifi, Send,
 } from 'lucide-react'
 import clsx from 'clsx'
 import {
-  bloodBoxTransits, buildingFloors, getJourney, isExcursion, type BloodBoxTransit,
+  bloodBoxTransits, buildingFloors, bleBeacons, getJourney, isExcursion,
+  journeyEventTypeLabels,
+  type BloodBoxTransit, type BleBeacon, type BeaconStatus, type JourneyEvent,
+  type JourneyEventType, type JourneySignal,
 } from '@/lib/bloodboxData'
+import { bloodboxApi } from '@/lib/bloodboxApi'
+import { useAppStore } from '@/lib/store'
 import EntitlementGuard from '@/components/EntitlementGuard'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -23,7 +29,8 @@ function Spark({ data, color }: { data: number[]; color: string }) {
 }
 
 function BloodBoxModule() {
-  const [tab, setTab] = useState<'transit' | 'indoor'>('transit')
+  const { selectedOrgId } = useAppStore()
+  const [tab, setTab] = useState<'transit' | 'indoor' | 'beacons'>('transit')
   const [selectedId, setSelectedId] = useState(bloodBoxTransits[0].id)
   const selected = bloodBoxTransits.find((t) => t.id === selectedId)!
   const sorted = useMemo(() => [...bloodBoxTransits].sort((a, b) => a.etaMin - b.etaMin), [])
@@ -47,7 +54,7 @@ function BloodBoxModule() {
       {/* Tabs */}
       <div className="px-6 pt-4">
         <div className="flex gap-1 p-1 rounded-lg w-fit" style={inset}>
-          {([['transit', 'ขนส่ง (Transit)', Truck], ['indoor', 'ติดตามในอาคาร (Indoor)', Building2]] as const).map(([id, label, Icon]) => (
+          {([['transit', 'ขนส่ง (Transit)', Truck], ['indoor', 'ติดตามในอาคาร (Indoor)', Building2], ['beacons', 'BLE Beacons', Radio]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setTab(id)} className={clsx('flex items-center gap-2 px-3.5 py-2 rounded-md text-xs font-semibold transition-all', tab === id ? 'text-white' : 'text-slate-500')} style={tab === id ? { background: '#6366f1' } : {}}>
               <Icon size={14} /> {label}
             </button>
@@ -55,7 +62,9 @@ function BloodBoxModule() {
         </div>
       </div>
 
-      {tab === 'transit' ? <TransitView sorted={sorted} selected={selected} onSelect={setSelectedId} /> : <IndoorView selected={selected} />}
+      {tab === 'transit' && <TransitView sorted={sorted} selected={selected} onSelect={setSelectedId} />}
+      {tab === 'indoor' && <IndoorView selected={selected} orgId={selectedOrgId} />}
+      {tab === 'beacons' && <BeaconsView orgId={selectedOrgId} />}
     </div>
   )
 }
@@ -146,10 +155,35 @@ function TransitView({ sorted, selected, onSelect }: { sorted: BloodBoxTransit[]
 }
 
 // --- Indoor Tracking view ---------------------------------------------------
-function IndoorView({ selected }: { selected: BloodBoxTransit }) {
+const JOURNEY_TYPES: JourneyEventType[] = [
+  'gps_checkin', 'building_entered', 'security_pass', 'lift_entered', 'lift_exited', 'storage_arrived',
+]
+const JOURNEY_SIGNALS: JourneySignal[] = ['GPS', 'BLE', 'BAROMETER', 'MANUAL']
+
+function IndoorView({ selected, orgId }: { selected: BloodBoxTransit; orgId: string }) {
   const [floor, setFloor] = useState(selected.currentFloor)
-  const journey = getJourney(selected.id)
+  const [events, setEvents] = useState<JourneyEvent[]>(() => getJourney(selected.id))
+  const [logType, setLogType] = useState<JourneyEventType>('security_pass')
+  const [logSignal, setLogSignal] = useState<JourneySignal>('BLE')
+  const [saving, setSaving] = useState(false)
   const goUp = () => setFloor((f) => Math.min(selected.targetFloor, f + 1))
+
+  const logEvent = async () => {
+    setSaving(true)
+    const time = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+    const ev: JourneyEvent = {
+      id: `je-${Date.now()}`, transitId: selected.id, type: logType,
+      label: journeyEventTypeLabels[logType], floor, signal: logSignal, time, done: true,
+    }
+    // optimistic local update (works offline); persists when backend is wired
+    setEvents((prev) => [...prev, ev])
+    await bloodboxApi.logJourney(selected.id, {
+      eventType: logType, signal: logSignal, label: journeyEventTypeLabels[logType],
+      floorId: `${orgId}-floor-${floor}`, tempC: selected.currentTempC, batteryPct: selected.battery,
+    })
+    setSaving(false)
+  }
+  const journey = events
 
   return (
     <div className="p-6 grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -205,6 +239,26 @@ function IndoorView({ selected }: { selected: BloodBoxTransit }) {
 
         <div className="rounded-xl p-5" style={surface}>
           <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-4"><Clock size={15} className="text-indigo-400" /> ไทม์ไลน์การเข้าอาคาร</h3>
+
+          {/* Log scan event */}
+          <div className="rounded-xl p-3 mb-4" style={inset}>
+            <div className="text-[11px] font-bold text-slate-400 mb-2 flex items-center gap-1.5"><Radio size={12} className="text-indigo-400" /> บันทึกเหตุการณ์ (สแกน Beacon / GPS)</div>
+            <div className="grid grid-cols-2 gap-2">
+              <select value={logType} onChange={(e) => setLogType(e.target.value as JourneyEventType)}
+                className="rounded-lg px-2.5 py-2 text-xs text-white outline-none" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+                {JOURNEY_TYPES.map((t) => <option key={t} value={t}>{journeyEventTypeLabels[t]}</option>)}
+              </select>
+              <select value={logSignal} onChange={(e) => setLogSignal(e.target.value as JourneySignal)}
+                className="rounded-lg px-2.5 py-2 text-xs text-white outline-none" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+                {JOURNEY_SIGNALS.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <button onClick={logEvent} disabled={saving}
+              className="mt-2 w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-bold text-white disabled:opacity-50" style={{ background: '#6366f1' }}>
+              <Send size={13} /> {saving ? 'กำลังบันทึก…' : `บันทึกที่ชั้น ${floor}`}
+            </button>
+          </div>
+
           <div className="relative pl-7">
             <div className="absolute left-[10px] top-1 bottom-1 w-px" style={{ background: '#1e2433' }} />
             {journey.map((e) => (
@@ -225,6 +279,135 @@ function IndoorView({ selected }: { selected: BloodBoxTransit }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// --- BLE Beacon management view ---------------------------------------------
+const BEACON_STATUS_META: Record<BeaconStatus, { label: string; color: string; bg: string }> = {
+  active: { label: 'พร้อมใช้งาน', color: '#34d399', bg: 'rgba(16,185,129,0.12)' },
+  low_battery: { label: 'แบตเตอรี่ต่ำ', color: '#fbbf24', bg: 'rgba(251,191,36,0.12)' },
+  inactive: { label: 'ออฟไลน์', color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' },
+}
+
+const emptyForm = () => ({
+  floor: buildingFloors[buildingFloors.length - 1].number,
+  uuid: 'f7826da6-4fa2-4e98-8024-bc5b71e0893e',
+  major: 1, minor: 1, txPower: -59, battery: 100,
+})
+
+function BeaconsView({ orgId }: { orgId: string }) {
+  const [beacons, setBeacons] = useState<BleBeacon[]>(bleBeacons)
+  const [form, setForm] = useState(emptyForm())
+  const [adding, setAdding] = useState(false)
+
+  const floors = useMemo(() => [...buildingFloors].sort((a, b) => b.number - a.number), [])
+
+  const addBeacon = async () => {
+    setAdding(true)
+    const id = `bcn-${Date.now()}`
+    const b: BleBeacon = {
+      id, floor: form.floor, uuid: form.uuid, major: form.major, minor: form.minor,
+      x: 50, y: 50, txPower: form.txPower, battery: form.battery,
+      status: form.battery <= 0 ? 'inactive' : form.battery < 35 ? 'low_battery' : 'active',
+    }
+    setBeacons((prev) => [...prev, b])
+    setForm(emptyForm())
+    await bloodboxApi.saveBeacon({
+      id, orgId, floorId: `${orgId}-floor-${form.floor}`, uuid: form.uuid,
+      major: form.major, minor: form.minor, txPower: form.txPower, battery: form.battery, status: b.status,
+    })
+    setAdding(false)
+  }
+
+  const removeBeacon = async (id: string) => {
+    setBeacons((prev) => prev.filter((b) => b.id !== id))
+    await bloodboxApi.deleteBeacon(id)
+  }
+
+  const num = (v: string) => (v === '' ? 0 : Number(v))
+
+  return (
+    <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
+      {/* Add beacon form */}
+      <div className="rounded-xl p-5 h-fit" style={surface}>
+        <h2 className="text-sm font-bold text-white flex items-center gap-2 mb-4"><Plus size={15} className="text-indigo-400" /> เพิ่ม BLE Beacon</h2>
+        <div className="space-y-3">
+          <Field label="ชั้น (Floor)">
+            <select value={form.floor} onChange={(e) => setForm({ ...form, floor: Number(e.target.value) })}
+              className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none" style={inset}>
+              {floors.map((f) => <option key={f.number} value={f.number}>ชั้น {f.number} — {f.label}</option>)}
+            </select>
+          </Field>
+          <Field label="UUID">
+            <input value={form.uuid} onChange={(e) => setForm({ ...form, uuid: e.target.value })}
+              className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none font-mono" style={inset} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Major"><input type="number" value={form.major} onChange={(e) => setForm({ ...form, major: num(e.target.value) })} className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none" style={inset} /></Field>
+            <Field label="Minor"><input type="number" value={form.minor} onChange={(e) => setForm({ ...form, minor: num(e.target.value) })} className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none" style={inset} /></Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Tx Power (dBm)"><input type="number" value={form.txPower} onChange={(e) => setForm({ ...form, txPower: num(e.target.value) })} className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none" style={inset} /></Field>
+            <Field label="แบตเตอรี่ (%)"><input type="number" value={form.battery} onChange={(e) => setForm({ ...form, battery: num(e.target.value) })} className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none" style={inset} /></Field>
+          </div>
+          <button onClick={addBeacon} disabled={adding || !form.uuid}
+            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-bold text-white disabled:opacity-50" style={{ background: '#6366f1' }}>
+            <Plus size={14} /> {adding ? 'กำลังเพิ่ม…' : 'เพิ่ม Beacon'}
+          </button>
+        </div>
+      </div>
+
+      {/* Beacon list grouped by floor */}
+      <div className="lg:col-span-2 space-y-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-white">Beacons ที่ติดตั้ง ({beacons.length})</h2>
+          <span className="text-xs text-indigo-400 flex items-center gap-1.5"><Wifi size={12} /> Anchors สำหรับ Indoor Positioning</span>
+        </div>
+        {floors.map((fl) => {
+          const list = beacons.filter((b) => b.floor === fl.number)
+          if (!list.length) return null
+          return (
+            <div key={fl.number} className="rounded-xl p-4" style={surface}>
+              <div className="text-xs font-bold text-slate-400 mb-3 flex items-center gap-2"><Building2 size={13} className="text-indigo-400" /> ชั้น {fl.number} — {fl.label}</div>
+              <div className="space-y-2">
+                {list.map((b) => {
+                  const meta = BEACON_STATUS_META[b.status]
+                  const LowIcon = b.status === 'low_battery' || b.battery < 35 ? BatteryLow : BatteryFull
+                  return (
+                    <div key={b.id} className="flex items-center justify-between rounded-lg p-3" style={inset}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: meta.bg }}>
+                          <Radio size={16} style={{ color: meta.color }} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-white truncate">{b.id} <span className="text-slate-500 font-normal">· {b.major}/{b.minor}</span></div>
+                          <div className="text-[10px] text-slate-500 font-mono truncate">{b.uuid}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 shrink-0">
+                        <span className="text-[10px] text-slate-500 hidden sm:inline">{b.txPower} dBm</span>
+                        <span className="flex items-center gap-1 text-xs" style={{ color: meta.color }}><LowIcon size={13} /> {b.battery}%</span>
+                        <span className="text-[10px] px-2 py-1 rounded-md font-bold" style={{ background: meta.bg, color: meta.color }}>{meta.label}</span>
+                        <button onClick={() => removeBeacon(b.id)} className="text-slate-600 hover:text-red-400 transition-colors" title="ลบ Beacon"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-[11px] text-slate-500 mb-1 block">{label}</span>
+      {children}
+    </label>
   )
 }
 
