@@ -202,6 +202,7 @@ void ooDriversInit() {
   bmp280Init();
   adxlInit();
   pinMode(OO_PIN_DOOR_DI, INPUT_PULLUP);
+  pinMode(OO_PIN_COMPRESSOR, INPUT_PULLUP);
   pinMode(OO_PIN_RS485_DE, OUTPUT); digitalWrite(OO_PIN_RS485_DE, LOW);
   RS485.begin(OO_MODBUS_BAUD, SERIAL_8N1, OO_PIN_RS485_RX, OO_PIN_RS485_TX);
   analogReadResolution(12);
@@ -219,6 +220,7 @@ OoReading ooReadChannel(const OoChannel& ch) {
     case BUS_ADC:          v = adcLoadPct((uint8_t)ch.arg); ok = true; break;
     case BUS_ADC_BATT:     v = adcBattPct((uint8_t)ch.arg); ok = true; break;
     case BUS_DI:           v = diDoor((uint8_t)ch.arg); ok = true; break;
+    case BUS_DI_RAW:       v = digitalRead((uint8_t)ch.arg) ? 1.0f : 0.0f; ok = true; break;
     case BUS_MODBUS:       { uint16_t r; ok = modbusRead(ch.arg, &r); if (ok) v = r / 10.0f; break; }
     case BUS_CAN:          ok = canRead(ch.arg, &v); break;
     default:               ok = false; break;

@@ -38,8 +38,16 @@
 // ---- Digital I/O ----------------------------------------- [VERIFY] --------
 #define OO_PIN_DOOR_DI    11     // DI connector (door switch), INPUT_PULLUP
 #define OO_DOOR_ACTIVE_LOW 1     // 1 => LOW means "door open"
-#define OO_PIN_DO1        12     // DO1 (12 V driver)
-#define OO_PIN_DO2        21     // DO2 (12 V driver)
+#define OO_PIN_COMPRESSOR 12     // DI: compressor relay/contact sense (carbonbox)
+#define OO_PIN_DO1        38     // DO1 (12 V driver)  (MCU_GPIO_37 area)
+#define OO_PIN_DO2        39     // DO2 (12 V driver)  (MCU_GPIO_38 area)
+
+// ---- GPS (bloodbox outdoor transit) — UART2 -------------- [VERIFY] --------
+// Likely multiplexed with the 4G-UART header (one of GPS/4G at a time). Set to
+// the real GPS UART pins on your board.
+#define OO_PIN_GPS_RX     16
+#define OO_PIN_GPS_TX     15
+#define OO_GPS_BAUD       9600
 
 // ---- Status LEDs ----------------------------------------- [HIGH] ----------
 #define OO_LED_GREEN      47     // MCU_GPIO47 (R3 4.7k)

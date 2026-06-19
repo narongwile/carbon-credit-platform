@@ -18,7 +18,8 @@ enum OoBus : uint8_t {
   BUS_I2C_ADXL345,    // ADXL345 |a|-1g (g)
   BUS_ADC,            // analog pin (arg = gpio) -> 0..100 %
   BUS_ADC_BATT,       // battery divider (arg = gpio) -> %
-  BUS_DI,             // digital input (arg = gpio), debounced event
+  BUS_DI,             // digital input (arg = gpio), door (active-low, debounced)
+  BUS_DI_RAW,         // digital input (arg = gpio), raw level 0/1 (e.g. compressor)
   BUS_MODBUS,         // RS-485 Modbus holding reg (arg = reg), value = reg/10
   BUS_CAN,            // TWAI/CAN frame (arg = CAN id); data[0..1] int16 BE / 10
 };

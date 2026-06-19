@@ -54,6 +54,20 @@
 // quality="sim" (vs "good" for a real read, "error" if no fallback) — spec §16.
 #define OO_SIM_FALLBACK     1
 
+// ---- Edge alarm debounce (spec §8/§9) --------------------------------------
+#define OO_WARN_CONSEC       2        // WARNING needs N consecutive over-threshold
+#define OO_EVENT_DEBOUNCE_MS 30000    // event (door open) must persist before CRITICAL
+#define OO_ALARM_COOLDOWN_MS 60000    // re-fire a sustained CRITICAL at most this often
+
+// ---- Store-and-forward (LittleFS) — offline audit buffer (spec §14) --------
+#define OO_STORE_ENABLE      1
+#define OO_STORE_MAX         262144   // 256 KB cap, rotate to keep the tail
+
+// ---- BloodBOX low power + transit (spec §21 / product) ---------------------
+#define OO_LOWPOWER          1        // bloodbox: transit-aware cadence + light sleep
+#define OO_GPS_ENABLE        1        // NMEA parser on a UART (see board_pins.h)
+#define OO_BLE_ENABLE        0        // indoor-floor iBeacon scan (needs NimBLE + Wi-Fi coex)
+
 // ---- Telemetry shape -------------------------------------------------------
 // 1 -> one consolidated {nodeId,values,ts} per cycle (Node-RED compat).
 // 0 -> canonical spec: one envelope per channel on P/sensors/{sid}/raw (§6).

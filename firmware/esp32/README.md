@@ -43,6 +43,16 @@ on overflow, alarms are never dropped).
 | §20 | frozen 16 MB A/B **partition table** (`partitions.csv`) | ✅ |
 | §24 | **A/B HTTPS OTA** + rollback + version gate + download retries | ✅ |
 | §25 | config versioning (`cfg_v`) + persisted sample rate | ✅ (partial) |
+| §8/§9 | **edge-alarm debounce** (N-consecutive WARNING, immediate CRITICAL, event-dwell, cooldown/dedup) | ✅ |
+| §14 | **store-and-forward** to LittleFS when offline + replay on reconnect | ✅ |
+| §21 | **transport ranking + hysteresis** (Wi-Fi concrete; 4G/LoRa hooks) | ✅ logic / hooks |
+
+### Per-product features
+| Product | Added |
+| --- | --- |
+| **eternity** | DGA H2 **rate-of-rise** trend (`dga_h2_rate` in heartbeat); Modbus + CAN sensor mix |
+| **carbonbox** | **door-open dwell** debounce (alarm only after `OO_EVENT_DEBOUNCE_MS`); **compressor** relay sense (DI) |
+| **bloodbox** | real **battery %** in heartbeat; **transit FSM** (idle→in_transit→arrived→stored); **GPS** (NMEA RMC) lat/lng; **transit-aware power cadence** (slow when stored / low battery); `ooEnterDeepSleep()` for a duty-cycle build |
 
 ## Sensor drivers (demo — real buses, per the schematic)
 `drivers.cpp` reads each channel from the actual bus on the board (pins in
@@ -76,9 +86,16 @@ and the I²C part numbers / Modbus+CAN maps against the populated BOM.
   ESP-IDF `esp-mqtt` client (`CONFIG_MQTT_PROTOCOL_5`). Documented trade-off.
 - **secure-boot V2 + flash-encryption** (§19) — these are **eFuse EOL steps**,
   burned by the factory line, not by this build (`platformio.ini` notes it).
-- **4G/LoRa transport + §21 hysteresis** — Wi-Fi is implemented; `ooTransport()`
-  is the integration hook. The cellular/LoRa radio drivers are out of scope for
-  this carrier build (the spec §18/§21 defines the contract).
+- **4G/LoRa transport** — the ranking + **hysteresis logic** is implemented
+  (`transport.cpp`) with Wi-Fi concrete; `ooCellAvailable()`/`ooLoRaAvailable()`
+  are weak hooks returning false. Wiring the actual radios needs **TinyGSM** (4G)
+  and an **SX127x/E220 LoRa** driver + hardware — not built here.
+- **GPS** — a minimal NMEA-RMC parser is implemented (no library), but the GPS
+  UART pins are **[VERIFY]** placeholders and it needs a real receiver to validate.
+- **BLE indoor-floor beacons** — interface only (`OO_BLE_ENABLE=0`); a NimBLE scan
+  + Wi-Fi/BLE coexistence tuning is required (RAM-heavy) — left as a hook.
+- **Deep sleep** — `ooEnterDeepSleep()` exists for a duty-cycle build; the always-on
+  demo uses transit-aware cadence (not deep sleep) so MQTT/OTA stay live.
 - **Sensor drivers** — now real (Modbus/I²C/ADC/DI) with sim fallback, but the
   I²C device part numbers (SHT3x/BMP280/ADXL345) and the **[VERIFY]** pins in
   `board_pins.h` are assumptions — confirm against the populated BOM/schematic.
@@ -96,6 +113,13 @@ and the I²C part numbers / Modbus+CAN maps against the populated BOM.
 | `src/timekeeping.{h,cpp}` | NTP + DS3231 RTC + `time_src` (§10.1) |
 | `src/product_profile.{h,cpp}` | channel sets + thresholds + bus routing + severity (§6/§8) |
 | `src/drivers.{h,cpp}` | real sensor reads: Modbus / CAN(TWAI) / I²C / ADC / DI + `quality` (§6/§16) |
+| `src/alarm.{h,cpp}` | edge-alarm debounce state machine (§8/§9) |
+| `src/store.{h,cpp}` | LittleFS store-and-forward (offline audit, §14) |
+| `src/trend.{h,cpp}` | local rate-of-rise (eternity DGA) |
+| `src/transport.{h,cpp}` | transport ranking + hysteresis (§21) + 4G/LoRa hooks |
+| `src/gps.{h,cpp}` | NMEA-RMC GPS parser (bloodbox) |
+| `src/transit.{h,cpp}` | bloodbox transit state machine |
+| `src/power.{h,cpp}` | battery read + transit-aware cadence + deep-sleep helper |
 | `src/oneops.{h,cpp}` | egress queue + shared contracts (§14) |
 | `src/net_mqtt.{h,cpp}` | Wi-Fi + MQTT QoS1/LWT/mTLS + downlink (§1/§5/§7/§15) |
 | `src/ota.{h,cpp}` | A/B HTTPS OTA + rollback (§24) |

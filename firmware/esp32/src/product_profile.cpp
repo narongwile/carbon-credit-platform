@@ -16,10 +16,11 @@ static const OoChannel ETERNITY[] = {
   {"l1","oil_level_pct", "%",  false,true,  70, 60, 58, 95, BUS_MODBUS,  4},   // inverted
   {"p1","load_pct",      "%",  false,false, 80, 95, 40, 99, BUS_ADC, OO_PIN_CT_ADC},
 };
-// carbonbox: TMP117 precision probe + a door switch on a digital input.
+// carbonbox: TMP117 probe + door switch (DI) + compressor relay sense (DI raw).
 static const OoChannel CARBONBOX[] = {
-  {"t1","temp_c",    "C",    false,false, 6, 8, 2, 9, BUS_I2C_TMP117, 0},
-  {"d1","door_state","event",true, false, 0, 1, 0, 1, BUS_DI, OO_PIN_DOOR_DI},
+  {"t1","temp_c",     "C",     false,false, 6, 8, 2, 9, BUS_I2C_TMP117, 0},
+  {"d1","door_state", "event", true, false, 0, 1, 0, 1, BUS_DI, OO_PIN_DOOR_DI},
+  {"c1","compressor", "state", false,false, 0, 0, 0, 1, BUS_DI_RAW, OO_PIN_COMPRESSOR},  // info-only (no alarm)
 };
 // bloodbox: SHT31 temp+rh, BMP280 altitude, ADXL345 impact, battery on ADC.
 static const OoChannel BLOODBOX[] = {
