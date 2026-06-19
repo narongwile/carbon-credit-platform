@@ -1,5 +1,9 @@
 import mysql from 'mysql2/promise'
 
+// DB session/connection time zone. Records are written in this tz (default ICT,
+// +07:00) so NOW()/CURRENT_TIMESTAMP and JS Date values land as Bangkok time.
+const DB_TZ = process.env.DB_TZ || '+07:00'
+
 // MySQL connection pool. Defaults target the in-cluster service
 // (mysql.data.svc.cluster.local:3306, user "admin").
 export const pool = mysql.createPool({
@@ -11,8 +15,11 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   namedPlaceholders: true,
-  timezone: 'Z',
+  timezone: DB_TZ, // mysql2 converts JS Date ↔ string using this tz
 })
+
+// Pin each pooled connection's session time zone so NOW(3) writes Bangkok time.
+pool.on('connection', (conn) => { conn.query(`SET time_zone = '${DB_TZ}'`) })
 
 export async function ping(): Promise<boolean> {
   try {

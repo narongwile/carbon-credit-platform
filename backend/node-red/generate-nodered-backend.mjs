@@ -46,15 +46,20 @@ const GUARD_CLOSE = (policy) => !policy || policy === 'public' ? '' : `
 // --- init: MySQL pool + alarm engine into global context --------------------
 const initFunc = `
 // 'mysql' is injected by functionExternalModules (declared in this node's libs).
+// Records are written in DB_TZ (default ICT, +07:00): mysql2 converts JS Date in
+// this tz and each connection's session time_zone is pinned so NOW() is Bangkok.
+const __DBTZ = env.get('DB_TZ') || '+07:00';
 if (!global.get('pool')) {
-  global.set('pool', mysql.createPool({
+  const __pool = mysql.createPool({
     host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',
     port: Number(env.get('DB_PORT') || 3306),
     user: env.get('DB_USER') || 'admin',
     password: env.get('DB_PASSWORD') || 'iothub.2026',
     database: env.get('DB_NAME') || 'iothub',
-    namedPlaceholders: true, connectionLimit: 10, timezone: 'Z',
-  }));
+    namedPlaceholders: true, connectionLimit: 10, timezone: __DBTZ,
+  });
+  __pool.on('connection', (c) => { c.query("SET time_zone = '" + __DBTZ + "'"); });
+  global.set('pool', __pool);
 }
 function breaches(v,l,d){return d==='high'?v>=l:v<=l;}
 function cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}

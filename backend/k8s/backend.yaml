@@ -10,6 +10,7 @@ stringData:
   DB_USER: admin
   DB_PASSWORD: iothub.2026
   DB_NAME: iothub
+  DB_TZ: "+07:00"
   MQTT_URL: mqtt://mqtt.data.svc.cluster.local:1883
   ESCALATE_AFTER_MIN: "15"
   CLEAR_AFTER_MIN: "5"
