@@ -11,14 +11,16 @@
 // Which hardware bus / driver provides a channel (drivers.cpp).
 enum OoBus : uint8_t {
   BUS_SIM = 0,        // simulated only (no hardware)
-  BUS_I2C_TEMP,       // SHT3x temperature (C)
-  BUS_I2C_RH,         // SHT3x humidity (%)
-  BUS_I2C_BARO_ALT,   // BMP280 altitude (m)
-  BUS_I2C_IMPACT,     // ADXL345 |a|-1g (g)
+  BUS_I2C_SHT31_T,    // SHT31 temperature (C)
+  BUS_I2C_SHT31_RH,   // SHT31 humidity (%)
+  BUS_I2C_TMP117,     // TMP117 precision temperature (C)
+  BUS_I2C_BMP280,     // BMP280 altitude (m)
+  BUS_I2C_ADXL345,    // ADXL345 |a|-1g (g)
   BUS_ADC,            // analog pin (arg = gpio) -> 0..100 %
   BUS_ADC_BATT,       // battery divider (arg = gpio) -> %
   BUS_DI,             // digital input (arg = gpio), debounced event
   BUS_MODBUS,         // RS-485 Modbus holding reg (arg = reg), value = reg/10
+  BUS_CAN,            // TWAI/CAN frame (arg = CAN id); data[0..1] int16 BE / 10
 };
 
 struct OoChannel {

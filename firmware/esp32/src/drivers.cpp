@@ -2,6 +2,7 @@
 #include "config.h"
 #include <Wire.h>
 #include <math.h>
+#include "driver/twai.h"    // CAN controller
 
 #if OO_USE_REAL_SENSORS
 
@@ -20,18 +21,27 @@ static void i2cWrite8(uint8_t addr, uint8_t reg, uint8_t val) {
   Wire.beginTransmission(addr); Wire.write(reg); Wire.write(val); Wire.endTransmission();
 }
 
-// ---- SHT3x: temperature + humidity (single-shot, high repeatability) -------
-static bool sht3xRead(float* t, float* rh) {
-  Wire.beginTransmission(OO_ADDR_SHT3X);
+// ---- SHT31: temperature + humidity (single-shot, high repeatability) -------
+static bool sht31Read(float* t, float* rh) {
+  Wire.beginTransmission(OO_ADDR_SHT31);
   Wire.write(0x24); Wire.write(0x00);                 // no clock-stretch, high rep
   if (Wire.endTransmission() != 0) return false;
   delay(16);
-  if (Wire.requestFrom((uint8_t)OO_ADDR_SHT3X, (uint8_t)6) != 6) return false;
+  if (Wire.requestFrom((uint8_t)OO_ADDR_SHT31, (uint8_t)6) != 6) return false;
   uint8_t b[6]; for (int i = 0; i < 6; i++) b[i] = Wire.read();
   uint16_t rawT = ((uint16_t)b[0] << 8) | b[1];
   uint16_t rawH = ((uint16_t)b[3] << 8) | b[4];
   if (t)  *t  = -45.0f + 175.0f * rawT / 65535.0f;
   if (rh) *rh = 100.0f * rawH / 65535.0f;
+  return true;
+}
+
+// ---- TMP117: precision temperature (16-bit, 7.8125 mC/LSB) ------------------
+static bool tmp117Read(float* t) {
+  uint8_t d[2];
+  if (!i2cReadN(OO_ADDR_TMP117, 0x00, d, 2)) return false;   // temp result register
+  int16_t raw = (int16_t)(((uint16_t)d[0] << 8) | d[1]);
+  *t = raw * 0.0078125f;
   return true;
 }
 
@@ -150,6 +160,43 @@ static bool modbusRead(uint16_t reg, uint16_t* out) {
   return true;
 }
 
+// ---- CAN (TWAI) — sensors that publish frames (id -> latest value) ---------
+struct CanEntry { uint32_t id; float val; bool valid; };
+static CanEntry canCache[8];
+static int      canN = 0;
+static bool     canOk = false;
+
+static bool canInit() {
+  twai_general_config_t g = TWAI_GENERAL_CONFIG_DEFAULT(
+      (gpio_num_t)OO_PIN_CAN_TX, (gpio_num_t)OO_PIN_CAN_RX, TWAI_MODE_NORMAL);
+  twai_timing_config_t t = TWAI_TIMING_CONFIG_500KBITS();   // OO_CAN_BITRATE_K
+  twai_filter_config_t f = TWAI_FILTER_CONFIG_ACCEPT_ALL();
+  if (twai_driver_install(&g, &t, &f) != ESP_OK) return false;
+  return twai_start() == ESP_OK;
+}
+
+// Drain the rx queue into the per-id cache (non-blocking).
+static void canPoll() {
+  if (!canOk) return;
+  twai_message_t m;
+  while (twai_receive(&m, 0) == ESP_OK) {
+    if (m.rtr || m.data_length_code < 2) continue;
+    int16_t raw = (int16_t)(((uint16_t)m.data[0] << 8) | m.data[1]);   // BE int16
+    float v = raw / 10.0f;
+    int idx = -1;
+    for (int i = 0; i < canN; i++) if (canCache[i].id == m.identifier) { idx = i; break; }
+    if (idx < 0 && canN < (int)(sizeof(canCache) / sizeof(canCache[0]))) idx = canN++;
+    if (idx >= 0) { canCache[idx].id = m.identifier; canCache[idx].val = v; canCache[idx].valid = true; }
+  }
+}
+
+static bool canRead(uint32_t id, float* out) {
+  canPoll();
+  for (int i = 0; i < canN; i++)
+    if (canCache[i].id == id && canCache[i].valid) { *out = canCache[i].val; return true; }
+  return false;
+}
+
 void ooDriversInit() {
   Wire.begin(OO_I2C_SDA, OO_I2C_SCL);
   bmp280Init();
@@ -158,19 +205,22 @@ void ooDriversInit() {
   pinMode(OO_PIN_RS485_DE, OUTPUT); digitalWrite(OO_PIN_RS485_DE, LOW);
   RS485.begin(OO_MODBUS_BAUD, SERIAL_8N1, OO_PIN_RS485_RX, OO_PIN_RS485_TX);
   analogReadResolution(12);
+  canOk = canInit();                                  // CAN sensors (eternity)
 }
 
 OoReading ooReadChannel(const OoChannel& ch) {
   float v = NAN; bool ok = false;
   switch (ch.bus) {
-    case BUS_I2C_TEMP:     { float t, rh; ok = sht3xRead(&t, &rh); v = t;  break; }
-    case BUS_I2C_RH:       { float t, rh; ok = sht3xRead(&t, &rh); v = rh; break; }
-    case BUS_I2C_BARO_ALT: ok = bmp280ReadAlt(&v); break;
-    case BUS_I2C_IMPACT:   ok = adxlReadG(&v); break;
+    case BUS_I2C_SHT31_T:  { float t, rh; ok = sht31Read(&t, &rh); v = t;  break; }
+    case BUS_I2C_SHT31_RH: { float t, rh; ok = sht31Read(&t, &rh); v = rh; break; }
+    case BUS_I2C_TMP117:   ok = tmp117Read(&v); break;
+    case BUS_I2C_BMP280:   ok = bmp280ReadAlt(&v); break;
+    case BUS_I2C_ADXL345:  ok = adxlReadG(&v); break;
     case BUS_ADC:          v = adcLoadPct((uint8_t)ch.arg); ok = true; break;
     case BUS_ADC_BATT:     v = adcBattPct((uint8_t)ch.arg); ok = true; break;
     case BUS_DI:           v = diDoor((uint8_t)ch.arg); ok = true; break;
     case BUS_MODBUS:       { uint16_t r; ok = modbusRead(ch.arg, &r); if (ok) v = r / 10.0f; break; }
+    case BUS_CAN:          ok = canRead(ch.arg, &v); break;
     default:               ok = false; break;
   }
   if (ok && !isnan(v)) return { v, "good" };

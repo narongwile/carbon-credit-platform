@@ -9,6 +9,10 @@
 // ---- CAN bus — SN65HVD230 (TWAI) -------------------------- [HIGH] ----------
 #define OO_PIN_CAN_TX     14     // SN65 'D'  <- MCU_GPIO_14
 #define OO_PIN_CAN_RX     13     // SN65 'R'  -> MCU_GPIO_13
+#define OO_CAN_BITRATE_K  500    // 500 kbit/s field bus
+// Demo CAN sensor IDs (data[0..1] = int16 BE, value = raw/10) — match the sensor.
+#define OO_CAN_ID_DGA     0x201  // dissolved-H2 analyser on CAN
+#define OO_CAN_ID_AMBIENT 0x202  // ambient temperature on CAN
 
 // ---- RS-485 — MAX3485 (Modbus-RTU sensors) --------------- [HIGH] ----------
 #define OO_PIN_RS485_TX   43     // DI  <- MCU_TX0 (UART0 TXD)
@@ -16,8 +20,10 @@
 #define OO_PIN_RS485_DE   10     // DE+RE# tied -> MCU_GPIO_10  (R36 10k pull-up)
 
 // ---- I2C — LCD / RTC / sensors --------------------------- [VERIFY] --------
-#define OO_I2C_SDA        8      // MCU_SDA  (GPIO# not fully legible — verify)
-#define OO_I2C_SCL        9      // MCU_SCL
+// From the MCU sheet right column: MCU_SDA = module pin 39 = IO1, MCU_SCL =
+// module pin 38 = IO2 (ESP32-S3-WROOM-1 pinout). Verify on your board.
+#define OO_I2C_SDA        1      // MCU_SDA  (GPIO1)
+#define OO_I2C_SCL        2      // MCU_SCL  (GPIO2)
 #define OO_DS3231_ADDR    0x68
 
 // ---- UART1 — 4G modem / LoRa E220-900 -------------------- [HIGH] ----------
@@ -42,10 +48,11 @@
 // ---- Storage --------------------------------------------- [HIGH] ----------
 #define OO_PIN_SD_CS      45     // MCU_nSD_CARD
 
-// ---- Sensor I2C addresses (common parts; change per BOM) -------------------
-#define OO_ADDR_SHT3X     0x44   // temperature + humidity
-#define OO_ADDR_BMP280    0x76   // barometric pressure -> altitude
-#define OO_ADDR_ADXL345   0x53   // accelerometer -> impact (g)
+// ---- Sensor I2C parts (real models; addresses change per BOM) --------------
+#define OO_ADDR_SHT31     0x44   // Sensirion SHT31 temp+RH (bloodbox); 0x45 alt
+#define OO_ADDR_TMP117    0x48   // TI TMP117 precision temp (carbonbox cold-chain probe)
+#define OO_ADDR_BMP280    0x76   // Bosch BMP280 pressure -> altitude (bloodbox); 0x77 alt
+#define OO_ADDR_ADXL345   0x53   // Analog Devices ADXL345 accel -> impact g (bloodbox)
 
 // ---- Modbus (RS-485) sensor map (holding regs, value = reg/10) -------------
 #define OO_MODBUS_SLAVE   1

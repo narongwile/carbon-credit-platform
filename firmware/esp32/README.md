@@ -53,14 +53,19 @@ so the demo runs on a bare board. Set `OO_USE_REAL_SENSORS=0` for pure simulatio
 
 | Product | Channel → bus (driver) |
 | --- | --- |
-| **eternity** | `oil_temp_c`,`ambient_temp_c`,`dga_h2_ppm`,`moisture_ppm`,`oil_level_pct` → **RS-485 Modbus-RTU** (MAX3485, DE=GPIO10, UART0 43/44); `load_pct` → **ADC** (CT) |
-| **carbonbox** | `temp_c` → **I²C SHT3x** (0x44); `door_state` → **digital input** (debounced) |
-| **bloodbox** | `temp_c`/`rh_pct` → **I²C SHT3x**; `baro_alt_m` → **I²C BMP280** (0x76, Bosch compensation); `impact_g` → **I²C ADXL345** (0x53, \|a\|−1g); `batt_pct` → **ADC** (divider) |
+| **eternity** | `oil_temp_c`,`moisture_ppm`,`oil_level_pct` → **RS-485 Modbus-RTU** (MAX3485, DE=GPIO10, UART0 43/44); `dga_h2_ppm`,`ambient_temp_c` → **CAN / TWAI** (SN65HVD230, TX=GPIO14, RX=GPIO13, IDs 0x201/0x202); `load_pct` → **ADC** (CT) |
+| **carbonbox** | `temp_c` → **I²C TMP117** (0x48, precision cold-chain probe); `door_state` → **digital input** (debounced) |
+| **bloodbox** | `temp_c`/`rh_pct` → **I²C SHT31** (0x44); `baro_alt_m` → **I²C BMP280** (0x76, Bosch compensation); `impact_g` → **I²C ADXL345** (0x53, \|a\|−1g); `batt_pct` → **ADC** (divider) |
 
-Bus pins read from the schematic — **[HIGH]** confidence: CAN GPIO14/13, RS-485
+CAN frames carry `int16` big-endian `value*10` in `data[0..1]` (500 kbit/s) — a
+demo convention; match it to the real CAN sensor. Modbus holding registers use
+the same `reg/10` scaling.
+
+Bus pins from the schematic — **[HIGH]** confidence: CAN GPIO14/13, RS-485
 GPIO43/44 + DE GPIO10, LEDs GPIO47/48, UART1 (4G/LoRa) GPIO17/18, SD GPIO45.
-**[VERIFY]** (not fully legible — confirm before trusting reads): I²C SDA/SCL,
-CT/battery ADC pins, door DI, DO1/DO2 (`board_pins.h`).
+**I²C SDA=GPIO1, SCL=GPIO2** (derived from the WROOM-1 pinout: MCU_SDA=pin39=IO1,
+MCU_SCL=pin38=IO2). **[VERIFY]**: I²C pins, CT/battery ADC, door DI, DO1/DO2,
+and the I²C part numbers / Modbus+CAN maps against the populated BOM.
 
 ## Validation status (honest)
 - **Not compiled here** — needs `pio run` on a real toolchain. Two third-party
@@ -90,7 +95,7 @@ CT/battery ADC pins, door DI, DO1/DO2 (`board_pins.h`).
 | `src/identity.{h,cpp}` | NVS identity + mTLS certs (provisioning, §2/§13) |
 | `src/timekeeping.{h,cpp}` | NTP + DS3231 RTC + `time_src` (§10.1) |
 | `src/product_profile.{h,cpp}` | channel sets + thresholds + bus routing + severity (§6/§8) |
-| `src/drivers.{h,cpp}` | real sensor reads: Modbus / I²C / ADC / DI + `quality` (§6/§16) |
+| `src/drivers.{h,cpp}` | real sensor reads: Modbus / CAN(TWAI) / I²C / ADC / DI + `quality` (§6/§16) |
 | `src/oneops.{h,cpp}` | egress queue + shared contracts (§14) |
 | `src/net_mqtt.{h,cpp}` | Wi-Fi + MQTT QoS1/LWT/mTLS + downlink (§1/§5/§7/§15) |
 | `src/ota.{h,cpp}` | A/B HTTPS OTA + rollback (§24) |
