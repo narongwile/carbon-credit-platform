@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS blood_box_journey_events (
   floor_id    VARCHAR(64),
   event_type  ENUM('gps_checkin','building_entered','security_pass','lift_entered','lift_exited','storage_arrived') NOT NULL,
   label       VARCHAR(160),
-  signal      ENUM('GPS','BLE','BAROMETER','MANUAL') NOT NULL,
+  `signal`      ENUM('GPS','BLE','BAROMETER','MANUAL') NOT NULL,
   lat         DECIMAL(10,7),
   lng         DECIMAL(10,7),
   pos_x_m     DECIMAL(8,2),
