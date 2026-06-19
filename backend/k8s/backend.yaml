@@ -17,6 +17,7 @@ stringData:
   READINGS_RETENTION_DAYS: "30"
   # ── Production hardening ──────────────────────────────────────────────
   NODE_ENV: production
+  DISPLAY_TZ: Asia/Bangkok
   JWT_SECRET: CHANGE-ME-strong-random-secret   # required in production
   JWT_TTL: 12h
   LOGIN_MAX_ATTEMPTS: "10"

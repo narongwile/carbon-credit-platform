@@ -4,8 +4,14 @@ import type { AlarmEvent } from '../engine.js'
 
 export type Channel = 'email' | 'line' | 'telegram' | 'googlechat'
 
+// Timestamps are stored UTC; format human-facing output in the display tz (ICT).
+const DISPLAY_TZ = process.env.DISPLAY_TZ || 'Asia/Bangkok'
+function localTime(iso: string): string {
+  try { return new Date(iso).toLocaleString('en-GB', { timeZone: DISPLAY_TZ, hour12: false }) + ` (${DISPLAY_TZ})` } catch { return iso }
+}
+
 function message(ev: AlarmEvent, prefix = ''): string {
-  return `${prefix}[${ev.severity}] ${ev.paramLabel} = ${ev.value}${ev.unit} (limit ${ev.threshold}) on ${ev.nodeId} — ${ev.kind} @ ${ev.time}`
+  return `${prefix}[${ev.severity}] ${ev.paramLabel} = ${ev.value}${ev.unit} (limit ${ev.threshold}) on ${ev.nodeId} — ${ev.kind} @ ${localTime(ev.time)}`
 }
 
 // ---- Email -----------------------------------------------------------------

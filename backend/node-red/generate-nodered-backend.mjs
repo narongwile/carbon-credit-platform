@@ -172,7 +172,8 @@ const notifyFunc = `
 const pool = global.get('pool');
 const e = msg.payload;
 if (!e) return null;
-const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' — '+(e.kind||'')+' @ '+e.time;
+const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}
+const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' — '+(e.kind||'')+' @ '+when;
 const subject = 'ONEOPS '+e.severity+': '+e.paramLabel;
 (async () => {
   try {
