@@ -46,7 +46,15 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
-        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+        - name: fix-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          securityContext:
+            runAsUser: 0 # ใช้ root เพื่อปลดล็อกสิทธิ์
+          volumeMounts:
+            - name: node-red-data
+              mountPath: /data
       containers:
         - name: node-red
           image: nodered/node-red:4.0
@@ -97,11 +105,11 @@ spec:
               value: "false"
           resources:
             requests:
-              cpu: 200m
-              memory: 512Mi
+              cpu: "1"
+              memory: 1Gi
             limits:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
           # Probes — generous timing keeps editor WebSocket alive
           startupProbe:
             tcpSocket:
@@ -211,10 +219,10 @@ data:
           ]
         },
         page: {
-          title: 'Carbon Credit IoT Platform'
+          title: 'Thermexpertise IoT Platform'
         },
         header: {
-          title: 'Carbon Credit — Node-RED'
+          title: 'Thermexpertise — Node-RED'
         }
       },
 
