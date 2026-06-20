@@ -23,6 +23,7 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId, org
   const [vals, setVals] = useState(() =>
     Object.fromEntries((schema?.params ?? []).map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])) as Record<string, { warn: number; critical: number; rate?: number }>,
   )
+  const [dbVals, setDbVals] = useState<Record<string, { dwell_min?: number; cooldown_s?: number }>>({})
   const [dwell, setDwell] = useState(schema?.dwellMin ?? 3)
   const [hyst, setHyst] = useState(schema?.hysteresis ?? 1)
   const [healthIdx, setHealthIdx] = useState(schema?.healthIndexWarn ?? 60)
@@ -37,6 +38,7 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId, org
     const saved = useAlarmDB.getState().rules[nodeId]
     if (saved) {
       setVals(Object.fromEntries(saved.params.map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])))
+      if (saved.debounceJson) setDbVals(saved.debounceJson)
       setDwell(saved.dwellMin); setHyst(saved.hysteresis)
       if (saved.healthIndexWarn !== undefined) setHealthIdx(saved.healthIndexWarn)
     }
@@ -55,6 +57,7 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId, org
       dwellMin: dwell,
       hysteresis: hyst,
       healthIndexWarn: schema.healthIndexWarn !== undefined ? healthIdx : undefined,
+      debounceJson: Object.keys(dbVals).length ? dbVals : undefined,
     }
   }
   const persist = () => {
@@ -89,7 +92,7 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId, org
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: '#0a0e1a' }}>
-              {['Parameter', 'Warning', 'Critical', 'Rate-of-rise'].map((h) => (
+              {['Parameter', 'Warning', 'Critical', 'Dwell (m)', 'Cooldown (s)', 'Rate-of-rise'].map((h) => (
                 <th key={h} className="text-left py-2 px-3 text-[10px] text-slate-500 font-medium uppercase tracking-wider">{h}</th>
               ))}
             </tr>
@@ -110,7 +113,15 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId, org
                 </td>
                 <td className="py-2 px-3">
                   <input type="number" value={vals[p.key]?.critical ?? p.critical} onChange={(e) => setVal(p.key, 'critical', +e.target.value)}
-                    className="w-20 rounded-md px-2 py-1 text-xs text-red-300 outline-none focus:ring-1 focus:ring-red-500" style={inset} />
+                    className="w-16 sm:w-20 rounded-md px-2 py-1 text-xs text-red-300 outline-none focus:ring-1 focus:ring-red-500" style={inset} />
+                </td>
+                <td className="py-2 px-3">
+                  <input type="number" value={dbVals[p.key]?.dwell_min ?? ''} placeholder="-" onChange={(e) => setDbVals((s) => ({ ...s, [p.key]: { ...s[p.key], dwell_min: e.target.value ? +e.target.value : undefined } }))}
+                    className="w-12 sm:w-16 rounded-md px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500" style={inset} />
+                </td>
+                <td className="py-2 px-3">
+                  <input type="number" value={dbVals[p.key]?.cooldown_s ?? ''} placeholder="-" onChange={(e) => setDbVals((s) => ({ ...s, [p.key]: { ...s[p.key], cooldown_s: e.target.value ? +e.target.value : undefined } }))}
+                    className="w-12 sm:w-16 rounded-md px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500" style={inset} />
                 </td>
                 <td className="py-2 px-3">
                   {p.rate ? (
@@ -131,7 +142,7 @@ export default function AlarmParamConfig({ domain, advanced = false, nodeId, org
       {/* Timing + composite */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div>
-          <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider"><Timer size={11} /> Dwell (min)</label>
+          <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider"><Timer size={11} /> Global Dwell (min)</label>
           <input type="number" value={dwell} onChange={(e) => setDwell(+e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
         </div>
         <div>

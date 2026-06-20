@@ -16,6 +16,7 @@ export interface RefrigerationHistory {
   date: string;
   temperature: number;
   door_status: number;
+  bad_n: number;
 }
 
 // Generate an extended date array mimicking the image chart (1 month)
@@ -39,6 +40,7 @@ function generateHistoryData(baseTemp: number, isAnomaly: boolean): Refrigeratio
       date: d.toISOString().substring(0, 16).replace('T', ' '),
       temperature: Number(currentTemp.toFixed(1)),
       door_status: doorOpen,
+      bad_n: isAnomaly && Math.random() > 0.6 ? Math.floor(Math.random() * 5) : 0,
     });
   }
   return data;

@@ -101,6 +101,7 @@ export interface Alarm {
   acknowledged: boolean
   acknowledgedBy?: string
   acknowledgedAt?: string
+  source?: 'edge' | 'cloud'
 }
 
 export interface AuditLog {

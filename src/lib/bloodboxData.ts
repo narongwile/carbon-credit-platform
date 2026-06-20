@@ -49,6 +49,7 @@ export interface BloodBoxTransit {
   etaMin: number
   plannedEtaMin: number
   status: 'in_transit' | 'arrived' | 'delayed'
+  transitState?: 'PACKING' | 'IN_TRANSIT' | 'DELIVERED'
   currentTempC: number
   maxTempC: number
   battery: number
@@ -72,22 +73,28 @@ export const buildingFloors: BuildingFloor[] = [
 
 export const bloodBoxTransits: BloodBoxTransit[] = [
   {
-    id: 'tx-1', boxCode: 'BOX-CHY-001', courier: 'อสม. สมใจ รักดี', courierPhone: '081-xxx-xxxx',
-    fromLabel: 'รพ.สต. เชียงยืน', toLabel: 'คลังเลือด รพ.ศูนย์', etaMin: 12, plannedEtaMin: 15,
-    status: 'in_transit', currentTempC: 4.2, maxTempC: 8, battery: 85, currentFloor: 5, targetFloor: 5,
-    tempHistory: [4.0, 4.1, 4.3, 4.2, 4.1, 4.2], x: 46, y: 46, signal4g: 'สัญญาณ 4G เสถียร', lastConnection: 'เมื่อสักครู่',
+    id: 't2', boxCode: 'BBOX-18', courier: 'สมชาย ขนส่ง', courierPhone: '081-123-4567',
+    fromLabel: 'สภากาชาด', toLabel: 'รพ.ศูนย์ (คลังเลือด)',
+    etaMin: 5, plannedEtaMin: 20, status: 'in_transit', transitState: 'IN_TRANSIT',
+    currentTempC: 4.8, maxTempC: 6, battery: 65,
+    currentFloor: 1, targetFloor: 5, tempHistory: [3.9, 4.0, 4.2, 4.1, 4.5, 4.8],
+    x: 42, y: 75, signal4g: 'สัญญาณ 4G เสถียร', lastConnection: '1 นาทีที่แล้ว',
   },
   {
-    id: 'tx-2', boxCode: 'BOX-CHY-002', courier: 'อสม. สมหมาย ใจดี', courierPhone: '082-xxx-xxxx',
-    fromLabel: 'รพ.สต. โกสุมพิสัย', toLabel: 'คลังเลือด รพ.ศูนย์', etaMin: 25, plannedEtaMin: 20,
-    status: 'delayed', currentTempC: 9.5, maxTempC: 8, battery: 62, currentFloor: 1, targetFloor: 5,
-    tempHistory: [4.5, 5.2, 6.8, 7.9, 8.8, 9.5], x: 72, y: 22, signal4g: 'สัญญาณ 4G อ่อน', lastConnection: '2 นาทีที่แล้ว',
+    id: 't3', boxCode: 'BBOX-22', courier: 'พยาบาลวิภา', courierPhone: '114',
+    fromLabel: 'คลังเลือด ชั้น 1', toLabel: 'ห้องผ่าตัด ชั้น 5',
+    etaMin: 2, plannedEtaMin: 5, status: 'in_transit', transitState: 'IN_TRANSIT',
+    currentTempC: 4.5, maxTempC: 6, battery: 88,
+    currentFloor: 3, targetFloor: 5, tempHistory: [4.2, 4.2, 4.3, 4.4, 4.5],
+    x: 48, y: 55, signal4g: 'สัญญาณ 4G เสถียร', lastConnection: '1 นาทีที่แล้ว',
   },
   {
-    id: 'tx-5', boxCode: 'BOX-CHY-005', courier: 'อสม. วันดี ศรีสุข', courierPhone: '083-xxx-xxxx',
-    fromLabel: 'รพ.สต. บรบือ', toLabel: 'คลังเลือด รพ.ศูนย์', etaMin: 45, plannedEtaMin: 45,
-    status: 'in_transit', currentTempC: 3.8, maxTempC: 8, battery: 91, currentFloor: 1, targetFloor: 5,
-    tempHistory: [3.6, 3.7, 3.9, 3.8, 3.8, 3.8], x: 84, y: 78, signal4g: 'สัญญาณ 4G เสถียร', lastConnection: '1 นาทีที่แล้ว',
+    id: 't1', boxCode: 'BBOX-09', courier: 'สมศักดิ์ ขนส่ง', courierPhone: '089-987-6543',
+    fromLabel: 'ศูนย์บริจาค', toLabel: 'รพ.ศูนย์ (คลังเลือด)',
+    etaMin: 45, plannedEtaMin: 40, status: 'delayed', transitState: 'IN_TRANSIT',
+    currentTempC: 7.2, maxTempC: 6, battery: 42,
+    currentFloor: 1, targetFloor: 5, tempHistory: [4.5, 4.8, 5.2, 6.1, 6.8, 7.2],
+    x: 25, y: 60, signal4g: 'สัญญาณ 4G เสถียร', lastConnection: '1 นาทีที่แล้ว',
   },
 ]
 

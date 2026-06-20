@@ -90,7 +90,10 @@ function TransitView({ sorted, selected, onSelect }: { sorted: BloodBoxTransit[]
                   <div className="text-sm font-bold text-white">{t.boxCode}</div>
                   <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5"><MapPin size={10} /> {t.courier}</div>
                 </div>
-                <span className="text-[10px] px-2 py-1 rounded-md font-bold" style={t.status === 'delayed' ? { background: 'rgba(239,68,68,0.12)', color: RED } : { background: '#0a0e1a', color: '#94a3b8', border: '1px solid #1e2433' }}>ETA: {t.etaMin} นาที</span>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-[10px] px-2 py-1 rounded-md font-bold" style={t.status === 'delayed' ? { background: 'rgba(239,68,68,0.12)', color: RED } : { background: '#0a0e1a', color: '#94a3b8', border: '1px solid #1e2433' }}>ETA: {t.etaMin} นาที</span>
+                  {t.transitState && <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-medium border border-indigo-500/30">{t.transitState.replace('_', ' ')}</span>}
+                </div>
               </div>
               <div className="flex items-center justify-between mt-3">
                 <div className="flex items-center gap-1.5"><Thermometer size={13} style={{ color: exc ? RED : '#60a5fa' }} /><span className="text-base font-bold" style={{ color: exc ? RED : '#fff' }}>{t.currentTempC.toFixed(1)}°C</span></div>
@@ -131,7 +134,10 @@ function TransitView({ sorted, selected, onSelect }: { sorted: BloodBoxTransit[]
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.15)' }}><Box size={20} className="text-indigo-400" /></div>
               <div>
-                <div className="text-base font-bold text-white">{selected.boxCode}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-base font-bold text-white">{selected.boxCode}</div>
+                  {selected.transitState && <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-medium border border-indigo-500/30">{selected.transitState.replace('_', ' ')}</span>}
+                </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 mt-0.5">
                   <span className="flex items-center gap-1"><MapPin size={10} /> {selected.courier}</span>
                   <span className="flex items-center gap-1"><Phone size={10} /> {selected.courierPhone}</span>

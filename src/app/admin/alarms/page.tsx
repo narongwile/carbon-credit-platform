@@ -43,6 +43,7 @@ function AlarmRow({ alarm, onAck }: { alarm: Alarm; onAck: (id: string) => void 
         <div className="flex items-center gap-1 text-xs text-slate-500">
           <Clock size={10} />
           {new Date(alarm.timestamp).toLocaleString()}
+          {alarm.source === 'edge' && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-300 font-medium">EDGE</span>}
         </div>
       </td>
       <td className="py-3 px-4">

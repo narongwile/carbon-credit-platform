@@ -445,17 +445,36 @@ const healthFunc = CORS + `const pool=global.get('pool');
 (async()=>{ let db=false; try{const c=await pool.getConnection(); await c.ping(); c.release(); db=true;}catch(e){} msg.headers=__CORS; msg.statusCode=200; msg.payload={ok:true,db,ts:Date.now()}; node.send(msg);})(); return null;`
 
 const getRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
-(async()=>{const[r]=await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[id]); msg.headers=__CORS; msg.statusCode=r.length?200:404; msg.payload=r.length?(typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json):{error:'no rule'}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+(async()=>{const[r]=await pool.query('SELECT rule_json, debounce_json FROM alarm_rules WHERE node_id=?',[id]);
+  if(!r.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'no rule'};node.send(msg);return;}
+  const rule=typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json;
+  let debounce=null; try{debounce=r[0].debounce_json?(typeof r[0].debounce_json==='string'?JSON.parse(r[0].debounce_json):r[0].debounce_json):null;}catch(e){}
+  if(debounce) rule.debounceJson = debounce;
+  msg.headers=__CORS; msg.statusCode=200; msg.payload=rule; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const putRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {orgId,rule,updatedBy}=msg.payload||{};
 if(!orgId||!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and rule required'};return msg;}
-(async()=>{await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+(async()=>{
+  const debounceJson = rule.debounceJson ? JSON.stringify(rule.debounceJson) : null;
+  const ruleJson = JSON.stringify({...rule, debounceJson:undefined});
+  await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),debounce_json=VALUES(debounce_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,orgId,rule.domain,ruleJson,debounceJson,updatedBy||null]);
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const orgRuleFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId; const {rule,updatedBy}=msg.payload||{};
 if(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule.domain required'};return msg;}
-(async()=>{const[n]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=?',[orgId,rule.domain]);
-  for(const row of n){ await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,updated_by) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),updated_by=VALUES(updated_by)',[row.id,orgId,rule.domain,JSON.stringify(rule),updatedBy||null]); }
-  msg.headers=__CORS; msg.payload={ok:true,applied:n.length}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+(async()=>{
+  const debounceJson = rule.debounceJson ? JSON.stringify(rule.debounceJson) : null;
+  const ruleJson = JSON.stringify({...rule, debounceJson:undefined});
+  const [nodes]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=?',[orgId,rule.domain]);
+  let applied=0;
+  for(const n of nodes){
+    await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),debounce_json=VALUES(debounce_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[n.id,orgId,rule.domain,ruleJson,debounceJson,updatedBy||null]);
+    applied++;
+  }
+  msg.headers=__CORS; msg.payload={applied}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const getEventsFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
 (async()=>{const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`

@@ -1,6 +1,6 @@
 import React from 'react';
 import { RefrigerationHistory } from '@/lib/mockRefrigerationData';
-import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { AreaChart, Area, ComposedChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 interface Props {
   data: RefrigerationHistory[];
@@ -24,19 +24,24 @@ export default function AnalyticsChart({ data, nodeName }: Props) {
         
         {/* Temperature Line Chart */}
         <div className="relative border-b border-slate-700/50 pb-4">
-          <h4 className="absolute top-0 right-4 text-[10px] font-bold tracking-widest uppercase text-slate-400 z-10 bg-[#1e293b] px-2">Temperature History (°C)</h4>
+          <div className="absolute top-0 right-4 z-10 flex gap-4">
+            <h4 className="text-[10px] font-bold tracking-widest uppercase text-slate-400 bg-[#1e293b] px-2 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#3b82f6]" /> Temperature (°C)</h4>
+            <h4 className="text-[10px] font-bold tracking-widest uppercase text-rose-400 bg-[#1e293b] px-2 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-rose-500" /> Sensor Errors (bad_n)</h4>
+          </div>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={renderData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+            <ComposedChart data={renderData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} opacity={0.4} />
               <XAxis dataKey="date" stroke="#64748b" fontSize={10} tickFormatter={(val) => val.split(' ')[0]} minTickGap={30} tickMargin={12} height={30} />
-              <YAxis stroke="#64748b" fontSize={11} domain={['dataMin - 0.5', 'dataMax + 0.5']} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="left" stroke="#64748b" fontSize={11} domain={['dataMin - 0.5', 'dataMax + 0.5']} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="right" orientation="right" stroke="#f43f5e" fontSize={11} domain={[0, 'dataMax']} axisLine={false} tickLine={false} />
               <Tooltip 
                 contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.85)', backdropFilter: 'blur(12px)', borderColor: '#334155', borderRadius: '12px', color: '#f8fafc', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)' }}
-                itemStyle={{ color: '#60a5fa', fontWeight: 'bold' }}
+                itemStyle={{ fontWeight: 'bold' }}
                 cursor={{ stroke: '#475569', strokeWidth: 1, strokeDasharray: '5 5' }}
               />
-              <Line type="monotone" dataKey="temperature" stroke="#3b82f6" strokeWidth={3} dot={false} isAnimationActive={false} />
-            </LineChart>
+              <Line yAxisId="left" type="monotone" dataKey="temperature" name="Temp (°C)" stroke="#3b82f6" strokeWidth={3} dot={false} isAnimationActive={false} />
+              <Area yAxisId="right" type="monotone" dataKey="bad_n" name="Bad Samples" stroke="#f43f5e" fill="#f43f5e" fillOpacity={0.2} strokeWidth={2} isAnimationActive={false} />
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
 

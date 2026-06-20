@@ -1,7 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
+import { api } from '@/lib/api'
 import { fleetDevices, deviceInterfaces, sites } from '@/lib/fleetData'
 import { deviceFirmwareHistory, cellularLinks, loraPeers, getFirmwareByDevice, getCellularByDevice } from '@/lib/fleetExtra'
 import {
@@ -38,6 +39,15 @@ export default function FleetPage() {
   const fw = active ? getFirmwareByDevice(active.id) : []
   const cell = active ? getCellularByDevice(active.id) : undefined
   const siteName = (id: string) => sites.find((s) => s.id === id)?.name ?? id
+
+  const [deployments, setDeployments] = useState<{release_id:string, status:string, updated_at:string}[]>([])
+  useEffect(() => {
+    if (activeId) {
+      api.otaDeployments().then(deps => {
+        if (deps) setDeployments(deps.filter(d => d.node_id === activeId))
+      })
+    }
+  }, [activeId])
 
   return (
     <div className="p-6 space-y-5">
@@ -143,19 +153,45 @@ export default function FleetPage() {
 
             {/* Firmware OTA history */}
             <div className="rounded-xl p-5" style={surface}>
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><History size={14} className="text-indigo-400" /> Firmware OTA History</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-white flex items-center gap-2"><History size={14} className="text-indigo-400" /> Firmware OTA History</h3>
+                <a href="/admin/ota" className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">Manage OTA</a>
+              </div>
               <div className="space-y-2">
-                {fw.length ? fw.map((f) => {
-                  const r = fwResult[f.result]
+                {deployments.length ? deployments.map((d) => {
+                  const r = d.status === 'success' ? fwResult['success'] : d.status === 'failed' ? fwResult['failed'] : fwResult['abandoned']
                   return (
-                    <div key={f.id} className="flex items-center gap-3 p-3 rounded-lg" style={inset}>
-                      <span style={{ color: r.color }}>{r.icon}</span>
-                      <span className="text-sm text-slate-300 flex items-center gap-1.5">{f.fromVersion} <ChevronRight size={12} className="text-slate-600" /> {f.toVersion}</span>
-                      <span className="text-[11px] text-slate-600 font-mono ml-auto">{f.artefactSha256}</span>
-                      <span className="text-[11px] font-bold uppercase" style={{ color: r.color }}>{f.result.replace('_', ' ')}</span>
+                    <div key={d.release_id + d.updated_at} className="flex items-center justify-between p-3 rounded-lg" style={inset}>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded flex items-center justify-center bg-black/20" style={{ color: r.color }}>{r.icon}</div>
+                        <div>
+                          <div className="text-sm font-medium text-white">{d.release_id.slice(0, 8)}</div>
+                          <div className="text-[10px] text-slate-500">{new Date(d.updated_at).toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs font-bold" style={{ color: r.color }}>{d.status.toUpperCase()}</div>
+                      </div>
                     </div>
                   )
-                }) : <p className="text-xs text-slate-600">No firmware history.</p>}
+                }) : fw.length ? fw.map((f) => {
+                  // Fallback to mock data if no real deployments
+                  const r = fwResult[f.result]
+                  return (
+                    <div key={f.id} className="flex items-center justify-between p-3 rounded-lg" style={inset}>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded flex items-center justify-center bg-black/20" style={{ color: r.color }}>{r.icon}</div>
+                        <div>
+                          <div className="text-sm font-medium text-white">{f.toVersion}</div>
+                          <div className="text-[10px] text-slate-500">{new Date().toLocaleString()}</div>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs font-bold" style={{ color: r.color }}>{f.result.replace('_', ' ').toUpperCase()}</div>
+                      </div>
+                    </div>
+                  )
+                }) : <p className="text-xs text-slate-600">No OTA history available.</p>}
               </div>
             </div>
           </div>

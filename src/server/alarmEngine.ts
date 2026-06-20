@@ -25,6 +25,7 @@ export interface NodeAlarmRule {
   dwellMin: number      // samples a condition must persist before it fires
   hysteresis: number    // value must recover past (threshold ∓ hysteresis) to clear
   healthIndexWarn?: number
+  debounceJson?: Record<string, { dwell_min?: number; cooldown_s?: number }>
 }
 
 export interface Reading {
@@ -45,6 +46,7 @@ export interface AlarmEvent {
   unit: string
   time: string
   ts: number
+  source?: 'edge' | 'cloud'
 }
 
 const breaches = (v: number, limit: number, dir: 'high' | 'low') => (dir === 'high' ? v >= limit : v <= limit)
@@ -100,6 +102,7 @@ function mkEvent(nodeId: string, p: ParamRule, severity: Severity, kind: 'thresh
     id: `ev-${nodeId}-${p.key}-${r.ts}-${kind}`,
     nodeId, paramKey: p.key, paramLabel: p.label, severity, kind,
     value: +value.toFixed(2), threshold, unit: p.unit, time: r.time, ts: r.ts,
+    source: 'cloud', // local evaluation is cloud
   }
 }
 

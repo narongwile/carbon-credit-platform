@@ -71,6 +71,15 @@ export const api = {
   sendOta: (nodeId: string, body: { to_version: string; artefact_uri: string; sha256?: string }) =>
     req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/ota`, { method: 'POST', body: JSON.stringify(body) }),
 
+  // Fleet OTA Management
+  otaReleases: () => req<{id:string; version:string; target_hw:string; artefact_uri:string; released_at:string; release_notes:string}[]>(`/api/ota/releases`),
+  saveOtaRelease: (body: { version: string; target_hw: string; artefact_uri: string; release_notes?: string }) =>
+    req<{ id: string }>(`/api/ota/releases`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteOtaRelease: (id: string) => req(`/api/ota/releases/${id}`, { method: 'DELETE' }),
+  otaDeployments: () => req<{node_id:string; release_id:string; status:string; updated_at:string}[]>(`/api/ota/deployments`),
+  deployFleetOta: (body: { release_id: string; target_hw: string; org_id?: string }) =>
+    req<{ applied: number }>(`/api/ota/deploy-fleet`, { method: 'POST', body: JSON.stringify(body) }),
+
   // Scheduled reports (cron-generated CSV emailed to recipients)
   listSchedules: (orgId: string) => req<ReportSchedule[]>(`/api/reports/schedules?orgId=${encodeURIComponent(orgId)}`),
   saveSchedule: (body: Partial<ReportSchedule> & { orgId: string; name: string }) =>

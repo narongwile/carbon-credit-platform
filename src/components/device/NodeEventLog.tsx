@@ -10,6 +10,12 @@ import { Check, Bell } from 'lucide-react'
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
+const mockTransportEvents = [
+  { id: '1', time: new Date(Date.now() - 25 * 60000).toISOString().slice(5, 16).replace('T', ' '), type: 'FALLBACK_4G', desc: 'WiFi lost. Switched to Cellular (4G)', isOfflineSync: false },
+  { id: '2', time: new Date(Date.now() - 40 * 60000).toISOString().slice(5, 16).replace('T', ' '), type: 'OFFLINE_SYNC', desc: 'Flushed 42 offline records to cloud', isOfflineSync: true },
+  { id: '3', time: new Date(Date.now() - 180 * 60000).toISOString().slice(5, 16).replace('T', ' '), type: 'LINK_RESTORE', desc: 'WiFi restored. Active link: WiFi', isOfflineSync: false },
+]
+
 // Engine-driven event log for a node — reusable on the admin/superadmin twin.
 export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }: { nodeId: string; domain?: SensorDomain; baseValue: number; by?: string }) {
   const dbRules = useAlarmDB((s) => s.rules)
@@ -55,7 +61,10 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
               const sc = ev.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24'
               return (
                 <tr key={ev.id} style={{ borderTop: '1px solid #1e2433' }}>
-                  <td className="py-2.5 px-3 text-slate-400 text-xs">{ev.time}</td>
+                  <td className="py-2.5 px-3 text-slate-400 text-xs">
+                    {ev.time}
+                    {ev.source === 'edge' && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-300 font-medium">EDGE</span>}
+                  </td>
                   <td className="py-2.5 px-3 text-slate-300 text-xs">{ev.paramLabel}{ev.kind === 'rate' && <span className="text-indigo-400"> · rate</span>}</td>
                   <td className="py-2.5 px-3"><span style={{ color: sc }}>{ev.value} {ev.unit}</span><span className="text-slate-600 text-[10px]"> /{ev.threshold}</span></td>
                   <td className="py-2.5 px-3"><span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: sc, background: `${sc}1f` }}>{ev.severity}</span></td>
@@ -69,6 +78,36 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
             }) : <tr><td colSpan={6} className="py-6 text-center text-slate-600 text-xs">No events — readings within all alarm rules.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bell size={14} className="text-indigo-400" /> Transport & Connectivity</h3>
+          <span className="text-[11px] text-slate-500">System network link changes and offline backlogs</span>
+        </div>
+        <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr style={{ background: '#0a0e1a' }}>
+                <th className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium w-1/4">Time</th>
+                <th className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">Event Type</th>
+                <th className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mockTransportEvents.map((te) => (
+                <tr key={te.id} style={{ borderTop: '1px solid #1e2433' }}>
+                  <td className="py-2.5 px-3 text-slate-400 text-xs">{te.time}</td>
+                  <td className="py-2.5 px-3 text-xs font-bold text-slate-300">
+                    {te.type}
+                    {te.isOfflineSync && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-400 font-medium animate-pulse">OFFLINE SYNCING</span>}
+                  </td>
+                  <td className="py-2.5 px-3 text-slate-400 text-xs">{te.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

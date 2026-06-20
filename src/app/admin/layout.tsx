@@ -36,6 +36,7 @@ const NAV: NavItem[] = [
   { href: '/admin/users', label: 'User Management', icon: Users },
   { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
   { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu },
+  { href: '/admin/ota', label: 'OTA Firmware', icon: HardDrive },
   { href: '/admin/ai-search', label: 'AI Search', icon: Search, requires: { feature: 'AI Predictive Diagnostics' } },
   { href: '/admin/sql', label: 'SQL AI', icon: Database, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
