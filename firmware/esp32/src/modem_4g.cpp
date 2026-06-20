@@ -32,6 +32,21 @@ bool ooCellAvailable() {
   return gReady && modem.isNetworkConnected() && modem.isGprsConnected();
 }
 
+// Network time from the tower (AT+CCLK). Cheaper/firewall-proof vs NTP on 4G.
+bool ooCellTime(time_t* outEpoch) {
+  if (!gReady) return false;
+  int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0;
+  float tz = 0;
+  if (!modem.getNetworkTime(&year, &month, &day, &hour, &minute, &second, &tz)) return false;
+  if (year < 2024) return false;
+  struct tm t = {};
+  t.tm_year = year - 1900; t.tm_mon = month - 1; t.tm_mday = day;
+  t.tm_hour = hour; t.tm_min = minute; t.tm_sec = second;
+  time_t local = mktime(&t);                       // tm is in network-local tz
+  *outEpoch = local - (time_t)(tz * 3600);         // -> UTC epoch
+  return true;
+}
+
 #else  // ---- OO_HAVE_TINYGSM == 0 : no cellular radio in this build ----------
 
 void ooCellInit() {}   // ooCellAvailable() stays the weak `false` stub (transport.cpp)

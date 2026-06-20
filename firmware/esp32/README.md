@@ -86,10 +86,17 @@ and the I²C part numbers / Modbus+CAN maps against the populated BOM.
   ESP-IDF `esp-mqtt` client (`CONFIG_MQTT_PROTOCOL_5`). Documented trade-off.
 - **secure-boot V2 + flash-encryption** (§19) — these are **eFuse EOL steps**,
   burned by the factory line, not by this build (`platformio.ini` notes it).
-- **4G modem** — `modem_4g.cpp` provides the strong `ooCellAvailable()` override
-  (modem bring-up + registration check via TinyGSM), gated by `OO_HAVE_TINYGSM`.
-  Routing the MQTT/TLS session itself over the modem (TinyGsmClient in
-  `net_mqtt.cpp`) is the remaining integration step.
+- **4G modem** — `modem_4g.cpp` provides strong `ooCellAvailable()` + `ooCellTime()`
+  (modem bring-up, registration, tower clock) via TinyGSM, gated by `OO_HAVE_TINYGSM`;
+  timekeeping uses the modem clock when NTP can't run (4G). Remaining 4G work:
+  (a) route the MQTT/TLS session over the modem (TinyGsmClient in `net_mqtt.cpp`),
+  (b) **OTA** — `esp_https_ota` needs LwIP, so 4G OTA requires bringing the modem up
+  as an **ESP-IDF PPP netif** (recommended) or a manual `esp_ota_*` download; and
+  (c) prefer the **modem's hardware TLS** (load certs into the SIM7600 via AT) over
+  software TLS, which is RAM-heavy on the ESP32.
+- **Wake-on-impact** — in deep sleep the ADXL345 activity interrupt (INT1 → ext0)
+  wakes the bloodbox; `setup()` checks `ooWokeOnImpact()` and `SensorTask` rushes the
+  `impact_g` reading + edge alarm out before the normal cadence.
 - **4G/LoRa transport** — the ranking + **hysteresis logic** is implemented
   (`transport.cpp`) with Wi-Fi concrete; `ooCellAvailable()`/`ooLoRaAvailable()`
   are weak hooks returning false. Wiring the actual radios needs **TinyGSM** (4G)

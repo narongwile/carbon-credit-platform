@@ -73,6 +73,7 @@
 // transit (live GPS/temp). Set 0 to keep the device always-on (e.g. bench/OTA).
 #define OO_DEEPSLEEP_ENABLE  1
 #define OO_DEEPSLEEP_S       300      // wake every 5 min while STORED
+#define OO_DEEPSLEEP_IMU_WAKE 1       // also wake on an ADXL345 impact (ext0 on OO_PIN_IMU_INT)
 #define OO_GPS_ENABLE        1        // NMEA parser on a UART (see board_pins.h)
 #define OO_BLE_ENABLE        0        // indoor-floor iBeacon scan (needs NimBLE + Wi-Fi coex)
 

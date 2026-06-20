@@ -11,4 +11,5 @@
 void     ooPowerInit();
 float    ooBatteryPct();                              // real ADC %, or 100 if no batt pin
 uint32_t ooPowerSampleMs(uint32_t baseMs, OoTransit state, float battPct);
-void     ooEnterDeepSleep(uint32_t seconds);          // RTC-timer wake (duty-cycle mode)
+void     ooEnterDeepSleep(uint32_t seconds);          // timer (+ IMU ext0) wake
+bool     ooWokeOnImpact();                            // true if this boot woke from the IMU INT

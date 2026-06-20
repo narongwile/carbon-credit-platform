@@ -21,13 +21,8 @@ bool ooEnqueue(const char* topicSuffix, const char* payload, size_t len,
   QueueHandle_t q = prio ? gEgressHi : gEgressLo;
   if (q == nullptr) return false;
   if (xQueueSend(q, &m, 0) == pdTRUE) return true;
-
-  // Overflow policy (spec §14): NEVER drop alarms; for telemetry drop the
-  // OLDEST to make room for the newest (FIFO drop-oldest).
-  if (prio == 0) {
-    EgressMsg dropped;
-    xQueueReceive(q, &dropped, 0);
-    return xQueueSend(q, &m, 0) == pdTRUE;
-  }
+  // Full: return false so the caller (publishOrStore) spills to the SD/LittleFS
+  // store-and-forward buffer — a far larger, persistent buffer than dropping the
+  // oldest in-RAM message would be (spec §14). Alarms were never dropped anyway.
   return false;
 }

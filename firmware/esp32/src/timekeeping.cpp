@@ -1,5 +1,6 @@
 #include "timekeeping.h"
 #include "config.h"
+#include "transport.h"          // ooCellTime() — modem clock source
 #include <Wire.h>
 #include <time.h>
 #include <sys/time.h>
@@ -71,12 +72,23 @@ void ooTimeTick() {
   gLastNtpCheck = millis();
 
   time_t now = time(nullptr);
-  if (now > 1700000000 && !gNtpLocked) {
-    // SNTP has stepped the clock. Promote source and discipline the RTC.
+  if (now > 1700000000) {
+    // SNTP (Wi-Fi) has stepped the clock. Promote source and discipline the RTC.
     gSrc = "ntp";
     gNtpLocked = true;
 #if OO_RTC_ENABLE
     if (gRtcPresent) ds3231Write(now);
+#endif
+    return;
+  }
+  // No NTP (e.g. on 4G, where UDP/NTP is blocked): take the time from the modem.
+  time_t cell;
+  if (ooCellTime(&cell)) {
+    setSystemTime(cell);
+    gSrc = "cell";
+    gNtpLocked = true;                              // stop polling; modem clock is authoritative
+#if OO_RTC_ENABLE
+    if (gRtcPresent) ds3231Write(cell);
 #endif
   }
 }

@@ -25,5 +25,13 @@ uint32_t ooPowerSampleMs(uint32_t baseMs, OoTransit state, float battPct) {
 
 void ooEnterDeepSleep(uint32_t seconds) {
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+#if OO_DEEPSLEEP_IMU_WAKE
+  // Wake immediately on an ADXL345 activity (impact) interrupt — INT1 active-high.
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)OO_PIN_IMU_INT, 1);
+#endif
   esp_deep_sleep_start();                                       // resets on wake; RTC mem persists
+}
+
+bool ooWokeOnImpact() {
+  return esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
 }

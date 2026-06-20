@@ -34,6 +34,7 @@ static bool      isBlood = false, isEternity = false;
 // bloodbox resumes the duty cycle instead of restarting the transit FSM.
 RTC_DATA_ATTR static int rtcTransit = TRANSIT_IDLE;
 static OoTransit transitState = TRANSIT_IDLE;
+static bool      gWokeImpact = false;   // this boot resumed from an IMU impact (ext0)
 static OoTr      curTransport = TR_WIFI;
 #define DGA_KEY 0
 
@@ -42,8 +43,10 @@ static volatile uint32_t gHb[HB_COUNT] = {0};
 
 // Publish when connected, else persist to the offline store (spec §14).
 static void publishOrStore(const char* suffix, const char* json, size_t n, uint8_t qos, uint8_t prio) {
-  if (ooMqttConnected()) ooEnqueue(suffix, json, n, qos, false, prio);
-  else                   ooStoreAppend(suffix, json, n);
+  // Offline, OR online but the egress queue is full (slow link / MqttTask can't
+  // drain fast enough) -> persist to the SD/LittleFS buffer instead of dropping.
+  if (!ooMqttConnected() || !ooEnqueue(suffix, json, n, qos, false, prio))
+    ooStoreAppend(suffix, json, n);
 }
 
 // ---- telemetry builders ----------------------------------------------------
@@ -85,11 +88,27 @@ static void buildHeartbeat() {
 }
 
 // ---- tasks -----------------------------------------------------------------
+// Woken by an impact: rush the impact_g reading + edge alarm out before anything
+// else, then resume the normal loop (bypasses the sample-cadence wait). §5.
+static void fastImpactReport(uint64_t epoch) {
+  for (size_t i = 0; i < profile->count; i++) {
+    const OoChannel& ch = profile->channels[i];
+    if (strcmp(ch.channel, "impact_g") != 0) continue;
+    OoReading r = ooReadChannel(ch);
+    buildReading(ch, r);
+    if (!isnan(r.value) && r.value >= ch.warn)
+      buildEdgeAlarm(ch, r.value, r.value >= ch.crit ? OO_CRITICAL : OO_WARNING);
+  }
+  buildHeartbeat();
+}
+
 static void sensorTask(void*) {
   uint32_t lastSample = 0, lastBeat = 0;
+  bool fast = gWokeImpact;                          // handle an impact-wake first
   for (;;) {
     uint32_t now = millis();
     uint64_t epoch = ooEpochMs();
+    if (fast) { fast = false; fastImpactReport(epoch); }
     if (isBlood) ooGpsTick();
     ooCanPoll();   // drain CAN RX queue every 50 ms (no-op if CAN inactive) — avoids overflow
 
@@ -173,6 +192,7 @@ void setup() {
   profile = &ooGetProfile(ooId().product.c_str());
   isBlood    = strcmp(ooId().product.c_str(), "bloodbox") == 0;
   isEternity = strcmp(ooId().product.c_str(), "eternity") == 0;
+  gWokeImpact = isBlood && ooWokeOnImpact();        // resumed from an impact interrupt?
 
   ooDriversInit();                                  // real sensor buses (drivers.cpp)
   ooAlarmInit(profile);                             // edge-alarm state machine (§8/§9)

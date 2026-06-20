@@ -19,3 +19,9 @@ const char* ooTransportName(OoTr t);
 // Radio availability hooks (override in a 4G/LoRa build).
 bool ooCellAvailable();
 bool ooLoRaAvailable();
+
+// Network time from the cellular modem (AT+CCLK / TinyGSM getNetworkTime). NTP
+// over UDP does not work through a TinyGSM AT-socket, so on 4G the modem clock
+// is the online time source (spec §10.1). Weak default returns false.
+#include <time.h>
+bool ooCellTime(time_t* outEpoch);

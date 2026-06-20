@@ -100,11 +100,17 @@ static bool bmp280ReadAlt(float* alt) {
 static bool adxlInit() {
   if (i2cReg8(OO_ADDR_ADXL345, 0x00) != 0xE5) return false;  // devid
   i2cWrite8(OO_ADDR_ADXL345, 0x31, 0x0B);                    // full-res, ±16 g
+  // Activity interrupt -> INT1 so an impact can wake the chip from deep sleep.
+  i2cWrite8(OO_ADDR_ADXL345, 0x24, 8);                       // THRESH_ACT = 8*62.5mg = 0.5 g
+  i2cWrite8(OO_ADDR_ADXL345, 0x27, 0x70);                    // ACT_INACT_CTL: AC-coupled, X/Y/Z
+  i2cWrite8(OO_ADDR_ADXL345, 0x2F, 0x00);                    // INT_MAP: activity -> INT1
+  i2cWrite8(OO_ADDR_ADXL345, 0x2E, 0x10);                    // INT_ENABLE: activity
   i2cWrite8(OO_ADDR_ADXL345, 0x2D, 0x08);                    // measure
   return true;
 }
 static bool adxlReadG(float* g) {
   uint8_t d[6];
+  i2cReg8(OO_ADDR_ADXL345, 0x30);                            // read INT_SOURCE to clear the latch
   if (!i2cReadN(OO_ADDR_ADXL345, 0x32, d, 6)) return false;
   int16_t x = (int16_t)(d[0] | (d[1] << 8));
   int16_t y = (int16_t)(d[2] | (d[3] << 8));

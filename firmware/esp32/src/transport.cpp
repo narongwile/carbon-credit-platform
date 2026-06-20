@@ -9,6 +9,7 @@ static OoTr     current = TR_NONE;
 // Default radio hooks — false until a 4G/LoRa driver overrides them.
 bool __attribute__((weak)) ooCellAvailable() { return false; }
 bool __attribute__((weak)) ooLoRaAvailable() { return false; }
+bool __attribute__((weak)) ooCellTime(time_t*) { return false; }
 
 static bool available(OoTr t) {
   switch (t) {

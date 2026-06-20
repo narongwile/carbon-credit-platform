@@ -61,6 +61,7 @@
 #define OO_ADDR_TMP117    0x48   // TI TMP117 precision temp (carbonbox cold-chain probe)
 #define OO_ADDR_BMP280    0x76   // Bosch BMP280 pressure -> altitude (bloodbox); 0x77 alt
 #define OO_ADDR_ADXL345   0x53   // Analog Devices ADXL345 accel -> impact g (bloodbox)
+#define OO_PIN_IMU_INT    6      // ADXL345 INT1 -> ESP32 (RTC GPIO for ext0 deep-sleep wake) [VERIFY]
 
 // ---- Modbus (RS-485) sensor map (holding regs, value = reg/10) -------------
 #define OO_MODBUS_SLAVE   1

@@ -8,6 +8,12 @@
 #include "esp_https_ota.h"
 #include "esp_http_client.h"
 
+// ⚠️ esp_https_ota() runs over the ESP-IDF HTTP client / LwIP, i.e. Wi-Fi (or a
+// PPP netif). It CANNOT see a TinyGSM AT-socket, so OTA does not work over a
+// TinyGSM 4G link. For 4G OTA either (1) bring the modem up as an ESP-IDF PPP
+// netif (esp_modem) so this code works unchanged — recommended — or (2) download
+// the .bin via TinyGsmClient and write it with esp_ota_begin/write/end. Until
+// then, schedule OTA only while the active transport is Wi-Fi.
 static QueueHandle_t gOtaQueue = nullptr;   // carries descriptor JSON strings
 static bool gPendingVerify = false;
 
