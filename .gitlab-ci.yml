@@ -1,0 +1,35 @@
+image: python:3.11
+
+stages:
+  - build
+
+variables:
+  # Instruct pip and PlatformIO to use directories inside the project workspace 
+  # so that GitLab CI can cache them properly.
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PLATFORMIO_CORE_DIR: "$CI_PROJECT_DIR/.platformio"
+
+# Cache dependencies to speed up subsequent builds
+cache:
+  key: pio-${CI_COMMIT_REF_SLUG}
+  paths:
+    - .cache/pip
+    - .platformio/
+
+before_script:
+  - cd firmware/esp32
+  - pip install --upgrade pip
+  - pip install --upgrade platformio
+
+build_firmware:
+  stage: build
+  script:
+    - echo "Building WROOM-1 N16R8 environment..."
+    - pio run -e wroom1-n16r8
+    - echo "Building devkitc-1 environment..."
+    - pio run -e devkitc-1
+  rules:
+    # Run this job only when firmware source files or the CI config itself changes
+    - changes:
+        - firmware/esp32/**/*
+        - .gitlab-ci.yml
