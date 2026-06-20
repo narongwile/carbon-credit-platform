@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: registry.ci.svc.cluster.local/carbon-credit/frontend-next:latest  # CONFIRM registry/path
+        image: registry.ci.svc.cluster.local/iiotplatform/frontend-next:latest
         ports:
         - containerPort: 80
         resources:
