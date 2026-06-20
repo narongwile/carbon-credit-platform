@@ -34,8 +34,8 @@ spec:
       #     --docker-server=registry.gitlab.com \
       #     --docker-username=<deploy-token-user> --docker-password=<deploy-token>
       # (Or make the project's registry public and drop imagePullSecrets.)
-      imagePullSecrets:
-        - name: gitlab-registry
+      # imagePullSecrets:
+      #   - name: gitlab-registry
       containers:
       - name: frontend
         image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:latest
