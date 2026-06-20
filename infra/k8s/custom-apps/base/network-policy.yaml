@@ -28,6 +28,10 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: traefik
+    # app namespace — frontend pod nginx same-origin proxies /api,/ws to Node-RED
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: app
     # Allow direct external access via externalIPs Service (port 1880)
     - ipBlock:
         cidr: 0.0.0.0/0
@@ -112,11 +116,33 @@ metadata:
   namespace: app
 spec:
   podSelector: {}
+  policyTypes:
+  - Egress
   egress:
+  # DNS (CoreDNS in kube-system) — required to resolve cluster Service names
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # data namespace (EMQX, MySQL, …)
   - to:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: data
+  # carbon-credit namespace — Node-RED backend on :1880, so the frontend pod's
+  # nginx can same-origin reverse-proxy /api and /ws to it.
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: carbon-credit
+    ports:
+    - protocol: TCP
+      port: 1880
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
