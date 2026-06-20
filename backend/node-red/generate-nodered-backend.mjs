@@ -687,7 +687,7 @@ const downlinkEndpoint = (idBase, method, url, handlerFunc, policy = 'auth') => 
   const y = yREST; yREST += 50
   return [
     { id: `${idBase}_in`, type: 'http in', z: 'be', name: '', url, method, x: 150, y, wires: [[`${idBase}_fn`]] },
-    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD_OPEN(policy) + handlerFunc + GUARD_CLOSE(policy), 420, y, [[`${idBase}_resp`], ['mqttout']], 2, { libs: LIBS }),
+    fn(`${idBase}_fn`, `${method.toUpperCase()} ${url}`, GUARD_OPEN(policy) + handlerFunc + GUARD_CLOSE(policy), 420, y, [[`${idBase}_resp`], ['mqttout', 'dbgMqttOut']], 2, { libs: LIBS }),
     { id: `${idBase}_resp`, type: 'http response', z: 'be', statusCode: '', x: 700, y, wires: [] },
   ]
 }
@@ -822,11 +822,15 @@ const flow = [
   fn('init', 'init pool + engine + guard', initFunc, 340, 60, [[]], 1, { libs: INIT_LIBS }),
 
   // ingest pipeline
-  { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
+  { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize', 'dbgMqttIn']] },
+  { id: 'dbgMqttIn', type: 'debug', z: 'be', name: 'mqtt RX', active: true, complete: 'true', x: 310, y: 100, wires: [] },
+  
   // downlink publisher: topic/qos/retain taken from each msg (config/cmd/ota)
   { id: 'mqttout', type: 'mqtt out', z: 'be', name: 'downlink', topic: '', qos: '', retain: '', broker: 'mqttbroker', x: 980, y: 470, wires: [] },
+  { id: 'dbgMqttOut', type: 'debug', z: 'be', name: 'mqtt TX', active: true, complete: 'true', x: 980, y: 430, wires: [] },
+
   fn('normalize', 'normalize (readings | presence | logs | edge-alarm)', normalizeFunc, 330, 140, [['ingest', 'wsbroadcast'], ['presence'], ['devlog'], ['edgealarm']], 4),
-  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify', 'wsbroadcast'], [], ['mqttout']], 4, { libs: LIBS }),
+  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify', 'wsbroadcast'], [], ['mqttout', 'dbgMqttOut']], 4, { libs: LIBS }),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
   // WebSocket bridge → frontend useMqttTelemetry (NEXT_PUBLIC_WS_URL)
   fn('wsbroadcast', 'ws broadcast', wsBroadcastFunc, 820, 280, [['wsout']], 1),
@@ -862,7 +866,7 @@ const flow = [
 
   // auto-clear sweep: close events whose param returned to NORMAL (spec §9)
   { id: 'cleartick', type: 'inject', z: 'be', name: 'every 60s', props: [], repeat: '60', x: 130, y: 400, wires: [['clearsweep']] },
-  fn('clearsweep', 'auto-clear sweep', clearSweepFunc, 350, 400, [['mqttout']], 1, { libs: LIBS }),
+  fn('clearsweep', 'auto-clear sweep', clearSweepFunc, 350, 400, [['mqttout', 'dbgMqttOut']], 1, { libs: LIBS }),
 
   // REST API (each endpoint = http in → fn → http response)
   ...endpoint('health', 'get', '/api/health', healthFunc, 'public'),
@@ -953,7 +957,7 @@ httpIngest[1].name = 'POST /api/nodes/:id/readings'
 flow.push(...httpIngest)                 // keep the http response node (readpost_resp)
 // ingest output 3 → readings http response (only fired for HTTP-origin msgs)
 const ingestNode = flow.find((n) => n.id === 'ingest')
-ingestNode.wires = [['dbgIngest'], ['notify', 'wsbroadcast'], ['readpost_resp'], ['mqttout']]
+ingestNode.wires = [['dbgIngest'], ['notify', 'wsbroadcast'], ['readpost_resp'], ['mqttout', 'dbgMqttOut']]
 
 const out = join(dirname(fileURLToPath(import.meta.url)), 'flows.nodered-backend.json')
 writeFileSync(out, JSON.stringify(flow, null, 2) + '\n')

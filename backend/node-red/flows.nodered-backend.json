@@ -71,9 +71,21 @@
     "y": 140,
     "wires": [
       [
-        "normalize"
+        "normalize",
+        "dbgMqttIn"
       ]
     ]
+  },
+  {
+    "id": "dbgMqttIn",
+    "type": "debug",
+    "z": "be",
+    "name": "mqtt RX",
+    "active": true,
+    "complete": "true",
+    "x": 310,
+    "y": 100,
+    "wires": []
   },
   {
     "id": "mqttout",
@@ -86,6 +98,17 @@
     "broker": "mqttbroker",
     "x": 980,
     "y": 470,
+    "wires": []
+  },
+  {
+    "id": "dbgMqttOut",
+    "type": "debug",
+    "z": "be",
+    "name": "mqtt TX",
+    "active": true,
+    "complete": "true",
+    "x": 980,
+    "y": 430,
     "wires": []
   },
   {
@@ -141,7 +164,8 @@
         "readpost_resp"
       ],
       [
-        "mqttout"
+        "mqttout",
+        "dbgMqttOut"
       ]
     ]
   },
@@ -473,7 +497,8 @@
     "y": 400,
     "wires": [
       [
-        "mqttout"
+        "mqttout",
+        "dbgMqttOut"
       ]
     ]
   },
@@ -2551,7 +2576,8 @@
         "cfgput_resp"
       ],
       [
-        "mqttout"
+        "mqttout",
+        "dbgMqttOut"
       ]
     ]
   },
@@ -2599,7 +2625,8 @@
         "cmdpost_resp"
       ],
       [
-        "mqttout"
+        "mqttout",
+        "dbgMqttOut"
       ]
     ]
   },
@@ -2647,7 +2674,8 @@
         "otapost_resp"
       ],
       [
-        "mqttout"
+        "mqttout",
+        "dbgMqttOut"
       ]
     ]
   },
@@ -2875,7 +2903,8 @@
         "otafleet_resp"
       ],
       [
-        "mqttout"
+        "mqttout",
+        "dbgMqttOut"
       ]
     ]
   },
