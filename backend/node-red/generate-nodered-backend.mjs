@@ -67,16 +67,21 @@ if (!currentPool || typeof currentPool.query !== 'function') {
 }
 function breaches(v,l,d){return d==='high'?v>=l:v<=l;}
 function cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}
-function evaluate(nodeId, rule, readings){
+function evaluate(nodeId, rule, readings, debounceJson){
   const out=[];
+  // debounce_json overrides per-param dwell if present (§8 production debounce)
+  const db = debounceJson || {};
   for(const p of rule.params){
     let active=null, run=0, prev=null;
+    const paramDb = db[p.key] || {};
+    const dwellMin = paramDb.dwell_min ?? rule.dwellMin ?? 3;
+    const cooldownS = paramDb.cooldown_s ?? 0;
     for(const r of readings){
       const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;
       if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}
       prev=v;
       const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;
-      if(lvl){run++; if(run>=rule.dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }
+      if(lvl){run++; if(run>=dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }
       else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}
       else if(!lvl){run=0;}
     }
@@ -174,11 +179,14 @@ const taken = new Date(ts || Date.now());
   const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);
   if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }
   const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;
+  // Read debounce_json for per-param dwell/cooldown overrides (§8)
+  let debounceJson = null;
+  try { debounceJson = rr[0].debounce_json ? (typeof rr[0].debounce_json==='string' ? JSON.parse(rr[0].debounce_json) : rr[0].debounce_json) : null; } catch(_){}
   const [rows] = await pool.query("SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) AND quality IN ('good','sim') ORDER BY taken_at ASC",[nodeId]);  // a dead sensor (quality=error) must not raise/clear alarms (§16)
   const byTs=new Map();
   for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}
   const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);
-  const events = evaluate(nodeId, rule, readings);
+  const events = evaluate(nodeId, rule, readings, debounceJson);
   const pfx = mm[0].mqtt_prefix;
   let inserted=0;
   for (const e of events){
@@ -243,7 +251,8 @@ return null;
 
 const normalizeFunc = `
 // Out1 = readings (→ ingest); Out2 = presence (→ device_presence);
-// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress).
+// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress);
+// Out4 = edge alarms (→ edge_alarm_log: P/alarm/{sid} with edge:true).
 // Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |
 //          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.
 const MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',
@@ -252,6 +261,12 @@ const MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hy
 const p = msg.payload;
 const topo = (msg.topic||'').split('/');
 const fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;
+// --- edge alarm: firmware publishes {edge:true, severity, sid, value, device_id} on P/alarm/{sid}
+if (p && typeof p==='object' && p.edge === true && p.severity && p.sid) {
+  const id = p.device_id || fromTopic(3);
+  if (id) return [null, null, null, { payload: { nodeId:id, paramKey:p.sid, severity:p.severity, value:p.value, channel:p.channel, ts:p.ts||Date.now() } }];
+  return null;
+}
 // --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload
 if (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {
   if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {
@@ -260,12 +275,12 @@ if (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {
     const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online
     return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt,
       uptime:p.uptime, heap:p.heap, time_src:p.time_src, transport:p.transport,
-      transit:p.transit, lat:p.lat, lng:p.lng, ts:p.ts||Date.now() } }, null];
+      transit:p.transit, lat:p.lat, lng:p.lng, ts:p.ts||Date.now() } }, null, null];
   }
   // diag/log or ota/progress → device_logs (Out3)
   const isOta = p.pct!==undefined || p.status!==undefined;
   const id = p.device_id || fromTopic(isOta ? 3 : 3);
-  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', code: p.code||null, payload: p, ts: p.ts||Date.now() } }];
+  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', code: p.code||null, payload: p, ts: p.ts||Date.now() } }, null];
   return null;
 }
 // --- readings (carry per-channel quality, spec §16)
@@ -279,7 +294,7 @@ const values = {}, qual = {};
 for (const k of Object.keys(raw)) { const v = raw[k]; const q = rawQ[k]||'good';
   if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; qual.tempHigh=q; qual.tempLow=q; }
   else { const mk=MAP[k]||k; values[mk]=v; qual[mk]=q; } }
-return [{ payload: { nodeId, values, qual, ts } }, null, null];
+return [{ payload: { nodeId, values, qual, ts } }, null, null, null];
 `
 
 // Presence upsert: heartbeat/status keep device_presence fresh (last_seen, online).
@@ -377,15 +392,18 @@ node.warn('dead-letter from ' + src + ': ' + (err.message||''));
 return null;
 `
 
-// Retention: roll raw readings into hourly buckets, then purge raw older than N days.
+// Retention: roll raw readings into hourly buckets (with bad_n count), then purge raw older than N days.
 const retentionFunc = `
 const pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;
 const DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);
 (async () => {
-  await pool.query("INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max) " +
-    "SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, COUNT(*), AVG(value), MIN(value), MAX(value) " +
+  await pool.query(
+    "INSERT INTO readings_rollup (node_id, param_key, bucket, n, bad_n, v_avg, v_min, v_max) " +
+    "SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, " +
+    "COUNT(*), SUM(CASE WHEN quality NOT IN ('good') THEN 1 ELSE 0 END), " +
+    "AVG(value), MIN(value), MAX(value) " +
     "FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key, bucket " +
-    "ON DUPLICATE KEY UPDATE n=VALUES(n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)", [DAYS]);
+    "ON DUPLICATE KEY UPDATE n=VALUES(n), bad_n=VALUES(bad_n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)", [DAYS]);
   const [res] = await pool.query("DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY)", [DAYS]);
   if (res.affectedRows) node.warn('retention: rolled up + purged ' + res.affectedRows + ' raw readings');
 })().catch(e => node.error('retention: ' + e.message));
@@ -480,13 +498,16 @@ if(!b.eventType||!b.signal){msg.headers=__CORS;msg.statusCode=400;msg.payload={e
   if(typeof b.tempC==='number'){const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[tid]); if(tr.length&&tr[0].box_id){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.batteryPct==='number')v.battery=b.batteryPct; bridge={payload:{nodeId:tr[0].box_id,values:v,ts:Date.now()}};}}
   msg.headers=__CORS; msg.payload={ok:true,id}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;`
 
-// Report a transit telemetry sample → persist on the transit + bridge into the
-// central alarm engine (out2 → ingest) for real excursion alerts in transit.
+// Report a transit telemetry sample → persist on the transit + continuous telemetry
+// table (blood_box_transit_telemetry) + bridge into the alarm engine (out2 → ingest).
 const bbTempFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};
 if(typeof b.tempC!=='number'){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'tempC (number) required'};node.send([msg,null]);return null;}
 (async()=>{const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[id]);
   if(!tr.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'transit not found'};node.send([msg,null]);return;}
   await pool.query('UPDATE blood_box_transits SET current_temp_c=?, temp_max_c=GREATEST(COALESCE(temp_max_c,?),?) WHERE id=?',[b.tempC,b.tempC,b.tempC,id]);
+  // Continuous high-freq transit telemetry log (§ blood_box_transit_telemetry)
+  await pool.query('INSERT INTO blood_box_transit_telemetry (transit_id,box_id,temp_c,rh_pct,batt_pct,lat,lng,transport,transit_state) VALUES (?,?,?,?,?,?,?,?,?)',
+    [id, tr[0].box_id||null, b.tempC, b.rh??null, b.battery??null, b.lat??null, b.lng??null, b.transport??'wifi', b.transitState??null]);
   const boxId=tr[0].box_id; let bridge=null;
   if(boxId){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.battery==='number')v.battery=b.battery; bridge={payload:{nodeId:boxId,values:v,ts:b.ts||Date.now()}};}
   msg.headers=__CORS; msg.payload={ok:true,bridged:boxId?'queued':'no linked node'}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;`
@@ -588,6 +609,51 @@ const otaDepListFunc = CORS + `const pool=global.get('pool'); const q=msg.req.qu
   if(where.length) sql+=' WHERE '+where.join(' AND ');
   sql+=' ORDER BY d.started_at DESC LIMIT 100'; const[r]=await pool.query(sql,args);
   msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const otaRelDelFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+(async()=>{await pool.query("DELETE FROM ota_releases WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
+// Group OTA deploy: push a release to all nodes of a given product at once.
+const otaFleetFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.release_id){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'release_id required'};return msg;}
+(async()=>{
+  const [rel]=await pool.query("SELECT id,product,version,artefact_uri FROM ota_releases WHERE id=?",[b.release_id]);
+  if(!rel.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'release not found'};node.send([msg,null]);return;}
+  const r=rel[0]; const [nodes]=await pool.query("SELECT n.id,n.mqtt_prefix FROM nodes n WHERE n.domain=?",[r.product]);
+  const deployed=[];
+  for(const nd of nodes){
+    if(!nd.mqtt_prefix) continue;
+    const depId='dep-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
+    await pool.query("INSERT INTO ota_deployments (id,node_id,release_id,status,progress_pct) VALUES (?,?,?,'pending',0)",[depId,nd.id,r.id]);
+    const payload={to_version:r.version, artefact_uri:r.artefact_uri, deployment_id:depId};
+    node.send([null,{topic:nd.mqtt_prefix+'/ota/cmd',payload,qos:1,retain:false}]);
+    deployed.push({nodeId:nd.id,deploymentId:depId});
+  }
+  msg.headers=__CORS; msg.payload={ok:true,count:deployed.length,deployments:deployed}; node.send([msg,null]);
+})()` + bbErr
+
+// Edge alarm persistence: firmware sends edge-evaluated alarms (P/alarm/{sid})
+// with {edge:true, severity, sid, value}. Persist to edge_alarm_log so the
+// dashboard can show "device decided alarm before cloud".
+const edgeAlarmFunc = `
+const pool = global.get('pool'); const e = msg.payload;
+if (!pool || !e || !e.nodeId) return null;
+(async () => {
+  const sev = (e.severity === 'CRITICAL' || e.severity === 'WARNING') ? e.severity : 'WARNING';
+  // Find the alarm threshold from the rule for context
+  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?', [e.nodeId]);
+  let threshold = null, dwellCount = null;
+  if (rr.length) {
+    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;
+    const param = (rule.params||[]).find(p => p.key === e.paramKey);
+    if (param) { threshold = sev === 'CRITICAL' ? param.critical : param.warn; dwellCount = rule.dwellMin; }
+  }
+  await pool.query(
+    "INSERT INTO edge_alarm_log (node_id, param_key, severity, value, threshold, dwell_count, ts) VALUES (?,?,?,?,?,?,NOW(3))",
+    [e.nodeId, e.paramKey, sev, e.value ?? null, threshold, dwellCount]);
+})().catch(err => node.error('edge-alarm: ' + err.message));
+return null;
+`
 
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 // notify node also needs nodemailer (SMTP email), like the Express service
@@ -759,7 +825,7 @@ const flow = [
   { id: 'mqttin', type: 'mqtt in', z: 'be', name: MQTT_TOPIC, topic: MQTT_TOPIC, qos: '0', datatype: 'auto-detect', broker: 'mqttbroker', x: 130, y: 140, wires: [['normalize']] },
   // downlink publisher: topic/qos/retain taken from each msg (config/cmd/ota)
   { id: 'mqttout', type: 'mqtt out', z: 'be', name: 'downlink', topic: '', qos: '', retain: '', broker: 'mqttbroker', x: 980, y: 470, wires: [] },
-  fn('normalize', 'normalize (readings | presence | logs)', normalizeFunc, 330, 140, [['ingest', 'wsbroadcast'], ['presence'], ['devlog']], 3),
+  fn('normalize', 'normalize (readings | presence | logs | edge-alarm)', normalizeFunc, 330, 140, [['ingest', 'wsbroadcast'], ['presence'], ['devlog'], ['edgealarm']], 4),
   fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify', 'wsbroadcast'], [], ['mqttout']], 4, { libs: LIBS }),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
   // WebSocket bridge → frontend useMqttTelemetry (NEXT_PUBLIC_WS_URL)
@@ -771,6 +837,8 @@ const flow = [
   fn('presence', 'presence upsert', presenceFunc, 560, 80, [[]], 1, { libs: LIBS }),
   // device logs: P/diag/log + P/ota/progress → device_logs
   fn('devlog', 'device log store', devlogFunc, 560, 20, [[]], 1, { libs: LIBS }),
+  // edge alarm persistence: P/alarm/{sid} → edge_alarm_log
+  fn('edgealarm', 'edge alarm persist', edgeAlarmFunc, 560, -40, [[]], 1, { libs: LIBS }),
 
   // global error catch → dead-letter (persist + warn); robustness
   { id: 'catchall', type: 'catch', z: 'be', name: 'catch all', scope: null, uncaught: false, x: 130, y: 540, wires: [['deadletter']] },
@@ -863,7 +931,9 @@ const flow = [
   // OTA release management + deployment tracking
   ...endpoint('otarellist', 'get', '/api/ota/releases', otaRelListFunc, 'admin'),
   ...endpoint('otarelpost', 'post', '/api/ota/releases', otaRelPostFunc, 'admin'),
+  ...endpoint('otareldel', 'delete', '/api/ota/releases/:id', otaRelDelFunc, 'admin'),
   ...endpoint('otadeplist', 'get', '/api/ota/deployments', otaDepListFunc, 'admin'),
+  ...downlinkEndpoint('otafleet', 'post', '/api/ota/deploy-fleet', otaFleetFunc, 'admin'),
 
   ...endpoint('cors', 'options', '/api/*', optionsFunc, 'public'),
 ]
@@ -893,7 +963,7 @@ console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:org
 console.log('BloodBOX: GET /bloodbox/transits · GET /bloodbox/transits/:id · GET|POST /bloodbox/transits/:id/journey · POST /bloodbox/transits/:id/temp (→engine bridge) · GET /bloodbox/floors · GET|POST|DELETE /bloodbox/beacons · GET|POST /bloodbox/boxes/:id/location')
 console.log('Fleet (all products): GET /fleet?orgId=&domain= · GET /fleet/:id/latest')
 console.log('Downlink (→device): PUT /nodes/:id/config (retained) · POST /nodes/:id/cmd · POST /nodes/:id/ota')
-console.log('OTA Mgmt: GET|POST /ota/releases · GET /ota/deployments?nodeId=&status= (progress tracked from device P/ota/progress)')
-console.log('Observability: transport_events (WiFi↔4G switches) · offline_sync_log (Store-and-Forward backlog detection)')
+console.log('OTA Mgmt: GET|POST|DELETE /ota/releases · GET /ota/deployments · POST /ota/deploy-fleet (group OTA)')
+console.log('Observability: transport_events (WiFi↔4G) · offline_sync_log (backlog) · edge_alarm_log (firmware alarms)')
 console.log('Reports: GET|POST /reports/schedules · DELETE /reports/schedules/:id (cron 15m → CSV email)')
 console.log('Realtime: WebSocket bridge on listener path /ws/telemetry (tap normalize + ingest)')

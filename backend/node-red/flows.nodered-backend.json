@@ -40,7 +40,7 @@
     "type": "function",
     "z": "be",
     "name": "init pool + engine + guard",
-    "func": "\n// 'mysql' is injected by functionExternalModules (declared in this node's libs).\n// Records are written in DB_TZ (default ICT, +07:00): mysql2 converts JS Date in\n// this tz and each connection's session time_zone is pinned so NOW() is Bangkok.\nconst __DBTZ = env.get('DB_TZ') || '+07:00';\nlet currentPool = global.get('pool');\nif (!currentPool || typeof currentPool.query !== 'function') {\n  currentPool = mysql.createPool({\n    host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',\n    port: Number(env.get('DB_PORT') || 3306),\n    user: env.get('DB_USER') || 'admin',\n    password: env.get('DB_PASSWORD') || 'iothub.2026',\n    database: env.get('DB_NAME') || 'iothub',\n    namedPlaceholders: true, connectionLimit: 10, timezone: __DBTZ,\n  });\n  // mysql2/promise createPool() returns a PromisePool whose EventEmitter is the\n  // underlying core pool (.pool); binding .on() on the wrapper throws, so guard it.\n  try { (currentPool.pool || currentPool).on('connection', (c) => { c.query(\"SET time_zone = '\" + __DBTZ + \"'\"); }); }\n  catch (e) { node.warn('tz hook skipped: ' + e.message); }\n  global.set('pool', currentPool);\n}\nfunction breaches(v,l,d){return d==='high'?v>=l:v<=l;}\nfunction cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}\nfunction evaluate(nodeId, rule, readings){\n  const out=[];\n  for(const p of rule.params){\n    let active=null, run=0, prev=null;\n    for(const r of readings){\n      const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;\n      if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}\n      prev=v;\n      const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;\n      if(lvl){run++; if(run>=rule.dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }\n      else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}\n      else if(!lvl){run=0;}\n    }\n  }\n  return out.sort((a,b)=>b.ts-a.ts);\n}\nfunction mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}\nglobal.set('evaluate', evaluate);\n// Effective product access for a user (department grant capped by user override).\nglobal.set('accessFor', async function(userId){\n  const pool=global.get('pool'); const RANK={none:0,view:1,manage:2}; const levels={};\n  const [u]=await pool.query(\"SELECT org_id,role,department_id FROM users WHERE id=?\",[userId]);\n  const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;\n  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}\n  else{\n    const [dr]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?\",[departmentId||'']);\n    dr.forEach(r=>levels[r.domain]=r.level);\n    const [ur]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?\",[userId]);\n    ur.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]<RANK[cur]) levels[r.domain]=r.level;});\n  }\n  return {orgId:u.length?u[0].org_id:'',role,departmentId,levels};\n});\n// 'jwt' is injected. Async guard: JWT + role + org-scope + device (node) access.\nglobal.set('guard', async function(authHeader, policy, req){\n  if(policy==='public') return {ok:true,auth:null};\n  let claims;\n  try{ const tok=(authHeader||'').replace(/^Bearer /,''); if(!tok) return {ok:false,code:401,error:'authentication required'};\n       claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me'); }\n  catch(e){ return {ok:false,code:401,error:'invalid token'}; }\n  if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};\n  if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};\n  const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);\n  if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};\n  if((policy==='node'||policy==='node:manage'||policy==='event:view'||policy==='event:manage') && claims.role!=='superadmin'){\n    const pool=global.get('pool'); const isEvent=policy.indexOf('event:')===0; const needManage=(policy==='node:manage'||policy==='event:manage');\n    let nm;\n    if(isEvent) nm=(await pool.query(\"SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?\",[req.params.id]))[0];\n    else nm=(await pool.query(\"SELECT org_id,domain,department_id FROM nodes WHERE id=?\",[req.params.id]))[0];\n    if(!nm.length) return {ok:false,code:404,error:'not found'};\n    const node=nm[0];\n    if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};\n    if(claims.role!=='admin'){\n      const acc=await global.get('accessFor')(claims.userId);\n      const lvl=acc.levels[node.domain]||'none';\n      if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};\n      if(needManage && lvl!=='manage') return {ok:false,code:403,error:'manage required'};\n      if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};\n    }\n  }\n  return {ok:true, auth:claims};\n});\nnode.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');\n",
+    "func": "\n// 'mysql' is injected by functionExternalModules (declared in this node's libs).\n// Records are written in DB_TZ (default ICT, +07:00): mysql2 converts JS Date in\n// this tz and each connection's session time_zone is pinned so NOW() is Bangkok.\nconst __DBTZ = env.get('DB_TZ') || '+07:00';\nlet currentPool = global.get('pool');\nif (!currentPool || typeof currentPool.query !== 'function') {\n  currentPool = mysql.createPool({\n    host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',\n    port: Number(env.get('DB_PORT') || 3306),\n    user: env.get('DB_USER') || 'admin',\n    password: env.get('DB_PASSWORD') || 'iothub.2026',\n    database: env.get('DB_NAME') || 'iothub',\n    namedPlaceholders: true, connectionLimit: 10, timezone: __DBTZ,\n  });\n  // mysql2/promise createPool() returns a PromisePool whose EventEmitter is the\n  // underlying core pool (.pool); binding .on() on the wrapper throws, so guard it.\n  try { (currentPool.pool || currentPool).on('connection', (c) => { c.query(\"SET time_zone = '\" + __DBTZ + \"'\"); }); }\n  catch (e) { node.warn('tz hook skipped: ' + e.message); }\n  global.set('pool', currentPool);\n}\nfunction breaches(v,l,d){return d==='high'?v>=l:v<=l;}\nfunction cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}\nfunction evaluate(nodeId, rule, readings, debounceJson){\n  const out=[];\n  // debounce_json overrides per-param dwell if present (§8 production debounce)\n  const db = debounceJson || {};\n  for(const p of rule.params){\n    let active=null, run=0, prev=null;\n    const paramDb = db[p.key] || {};\n    const dwellMin = paramDb.dwell_min ?? rule.dwellMin ?? 3;\n    const cooldownS = paramDb.cooldown_s ?? 0;\n    for(const r of readings){\n      const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;\n      if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}\n      prev=v;\n      const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;\n      if(lvl){run++; if(run>=dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }\n      else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}\n      else if(!lvl){run=0;}\n    }\n  }\n  return out.sort((a,b)=>b.ts-a.ts);\n}\nfunction mk(nodeId,p,sev,kind,value,thr,r){return {id:'ev-'+nodeId+'-'+p.key+'-'+r.ts+'-'+kind,nodeId:nodeId,paramKey:p.key,paramLabel:p.label,severity:sev,kind:kind,value:+value.toFixed(2),threshold:thr,unit:p.unit,time:r.time,ts:r.ts};}\nglobal.set('evaluate', evaluate);\n// Effective product access for a user (department grant capped by user override).\nglobal.set('accessFor', async function(userId){\n  const pool=global.get('pool'); const RANK={none:0,view:1,manage:2}; const levels={};\n  const [u]=await pool.query(\"SELECT org_id,role,department_id FROM users WHERE id=?\",[userId]);\n  const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;\n  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}\n  else{\n    const [dr]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?\",[departmentId||'']);\n    dr.forEach(r=>levels[r.domain]=r.level);\n    const [ur]=await pool.query(\"SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?\",[userId]);\n    ur.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]<RANK[cur]) levels[r.domain]=r.level;});\n  }\n  return {orgId:u.length?u[0].org_id:'',role,departmentId,levels};\n});\n// 'jwt' is injected. Async guard: JWT + role + org-scope + device (node) access.\nglobal.set('guard', async function(authHeader, policy, req){\n  if(policy==='public') return {ok:true,auth:null};\n  let claims;\n  try{ const tok=(authHeader||'').replace(/^Bearer /,''); if(!tok) return {ok:false,code:401,error:'authentication required'};\n       claims=jwt.verify(tok, env.get('JWT_SECRET')||'dev-secret-change-me'); }\n  catch(e){ return {ok:false,code:401,error:'invalid token'}; }\n  if(policy==='super' && claims.role!=='superadmin') return {ok:false,code:403,error:'superadmin only'};\n  if(policy==='admin' && claims.role!=='admin' && claims.role!=='superadmin') return {ok:false,code:403,error:'admin only'};\n  const oid=(req.params&&req.params.orgId)||(policy==='org'&&req.query&&req.query.orgId);\n  if(claims.role!=='superadmin' && oid && oid!==claims.orgId) return {ok:false,code:403,error:'outside your organization'};\n  if((policy==='node'||policy==='node:manage'||policy==='event:view'||policy==='event:manage') && claims.role!=='superadmin'){\n    const pool=global.get('pool'); const isEvent=policy.indexOf('event:')===0; const needManage=(policy==='node:manage'||policy==='event:manage');\n    let nm;\n    if(isEvent) nm=(await pool.query(\"SELECT n.org_id,n.domain,n.department_id FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.id=?\",[req.params.id]))[0];\n    else nm=(await pool.query(\"SELECT org_id,domain,department_id FROM nodes WHERE id=?\",[req.params.id]))[0];\n    if(!nm.length) return {ok:false,code:404,error:'not found'};\n    const node=nm[0];\n    if(node.org_id!==claims.orgId) return {ok:false,code:403,error:'no access to this device'};\n    if(claims.role!=='admin'){\n      const acc=await global.get('accessFor')(claims.userId);\n      const lvl=acc.levels[node.domain]||'none';\n      if(lvl==='none') return {ok:false,code:403,error:'no access to this device'};\n      if(needManage && lvl!=='manage') return {ok:false,code:403,error:'manage required'};\n      if(node.department_id && node.department_id!==acc.departmentId) return {ok:false,code:403,error:'no access to this device'};\n    }\n  }\n  return {ok:true, auth:claims};\n});\nnode.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');\n",
     "outputs": 1,
     "libs": [
       {
@@ -92,9 +92,9 @@
     "id": "normalize",
     "type": "function",
     "z": "be",
-    "name": "normalize (readings | presence | logs)",
-    "func": "\n// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);\n// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress).\n// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |\n//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nconst p = msg.payload;\nconst topo = (msg.topic||'').split('/');\nconst fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;\n// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload\nif (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {\n  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {\n    const id = p.device_id || fromTopic(2);\n    if (!id) return null;\n    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online\n    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt,\n      uptime:p.uptime, heap:p.heap, time_src:p.time_src, transport:p.transport,\n      transit:p.transit, lat:p.lat, lng:p.lng, ts:p.ts||Date.now() } }, null];\n  }\n  // diag/log or ota/progress → device_logs (Out3)\n  const isOta = p.pct!==undefined || p.status!==undefined;\n  const id = p.device_id || fromTopic(isOta ? 3 : 3);\n  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', code: p.code||null, payload: p, ts: p.ts||Date.now() } }];\n  return null;\n}\n// --- readings (carry per-channel quality, spec §16)\nlet nodeId, raw = {}, rawQ = {}, ts = Date.now();\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; rawQ=p.qual||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; rawQ={[p.channel]:p.quality||'good'}; }\nelse if (p && typeof p==='object'){ return null; }\nelse { const t=topo; nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\nconst values = {}, qual = {};\nfor (const k of Object.keys(raw)) { const v = raw[k]; const q = rawQ[k]||'good';\n  if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; qual.tempHigh=q; qual.tempLow=q; }\n  else { const mk=MAP[k]||k; values[mk]=v; qual[mk]=q; } }\nreturn [{ payload: { nodeId, values, qual, ts } }, null, null];\n",
-    "outputs": 3,
+    "name": "normalize (readings | presence | logs | edge-alarm)",
+    "func": "\n// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);\n// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress);\n// Out4 = edge alarms (→ edge_alarm_log: P/alarm/{sid} with edge:true).\n// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |\n//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.\nconst MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', dga_h2_ppm:'hydrogen',\n  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',\n  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };\nconst p = msg.payload;\nconst topo = (msg.topic||'').split('/');\nconst fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;\n// --- edge alarm: firmware publishes {edge:true, severity, sid, value, device_id} on P/alarm/{sid}\nif (p && typeof p==='object' && p.edge === true && p.severity && p.sid) {\n  const id = p.device_id || fromTopic(3);\n  if (id) return [null, null, null, { payload: { nodeId:id, paramKey:p.sid, severity:p.severity, value:p.value, channel:p.channel, ts:p.ts||Date.now() } }];\n  return null;\n}\n// --- presence: status (has state) or heartbeat (rssi/uptime/heap), no reading payload\nif (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {\n  if (p.state || p.rssi!==undefined || p.uptime!==undefined || p.heap!==undefined) {\n    const id = p.device_id || fromTopic(2);\n    if (!id) return null;\n    const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online\n    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt,\n      uptime:p.uptime, heap:p.heap, time_src:p.time_src, transport:p.transport,\n      transit:p.transit, lat:p.lat, lng:p.lng, ts:p.ts||Date.now() } }, null, null];\n  }\n  // diag/log or ota/progress → device_logs (Out3)\n  const isOta = p.pct!==undefined || p.status!==undefined;\n  const id = p.device_id || fromTopic(isOta ? 3 : 3);\n  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', code: p.code||null, payload: p, ts: p.ts||Date.now() } }, null];\n  return null;\n}\n// --- readings (carry per-channel quality, spec §16)\nlet nodeId, raw = {}, rawQ = {}, ts = Date.now();\nif (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; rawQ=p.qual||{}; ts=p.ts||ts; }\nelse if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; rawQ={[p.channel]:p.quality||'good'}; }\nelse if (p && typeof p==='object'){ return null; }\nelse { const t=topo; nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }\nif(!nodeId) return null;\nconst values = {}, qual = {};\nfor (const k of Object.keys(raw)) { const v = raw[k]; const q = rawQ[k]||'good';\n  if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; qual.tempHigh=q; qual.tempLow=q; }\n  else { const mk=MAP[k]||k; values[mk]=v; qual[mk]=q; } }\nreturn [{ payload: { nodeId, values, qual, ts } }, null, null, null];\n",
+    "outputs": 4,
     "libs": [],
     "x": 330,
     "y": 140,
@@ -108,6 +108,9 @@
       ],
       [
         "devlog"
+      ],
+      [
+        "edgealarm"
       ]
     ]
   },
@@ -116,7 +119,7 @@
     "type": "function",
     "z": "be",
     "name": "ingest + evaluate + persist",
-    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, qual, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  // --- Offline backlog detection (Store-and-Forward observability) ---\n  // If the device timestamp is >30 s behind server time, this reading came from\n  // the LittleFS offline store.  Log it to offline_sync_log so the dashboard can\n  // show \"device X just uploaded N stale records from <oldest> to <newest>\".\n  const BACKLOG_THRESH_MS = 30000;   // 30 seconds\n  const now = Date.now();\n  const deviceTs = ts || now;\n  const isBacklog = (now - deviceTs) > BACKLOG_THRESH_MS;\n  if (isBacklog) {\n    const batchId = (msg.payload && msg.payload.batch_id) || ('auto-' + nodeId + '-' + now);\n    const count = Object.keys(values).length;\n    await pool.query(\n      \"INSERT INTO offline_sync_log (node_id, batch_id, records_count, oldest_ts, newest_ts, sync_at) VALUES (?,?,?,?,?,NOW(3)) \" +\n      \"ON DUPLICATE KEY UPDATE records_count = records_count + VALUES(records_count), \" +\n      \"oldest_ts = LEAST(oldest_ts, VALUES(oldest_ts)), newest_ts = GREATEST(newest_ts, VALUES(newest_ts))\",\n      [nodeId, batchId, count, taken, taken]\n    );\n  }\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at,quality) VALUES (?,?,?,?,?)',[nodeId,k,v,taken,(qual&&qual[k])||'good']); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query(\"SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) AND quality IN ('good','sim') ORDER BY taken_at ASC\",[nodeId]);  // a dead sensor (quality=error) must not raise/clear alarms (§16)\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  const pfx = mm[0].mqtt_prefix;\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++;\n    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity\n    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;\n    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);\n  }\n  msg.headers = __H; msg.payload = { inserted, backlog: isBacklog }; node.send([msg, null, __http?msg:null, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
+    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, qual, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  // --- Offline backlog detection (Store-and-Forward observability) ---\n  // If the device timestamp is >30 s behind server time, this reading came from\n  // the LittleFS offline store.  Log it to offline_sync_log so the dashboard can\n  // show \"device X just uploaded N stale records from <oldest> to <newest>\".\n  const BACKLOG_THRESH_MS = 30000;   // 30 seconds\n  const now = Date.now();\n  const deviceTs = ts || now;\n  const isBacklog = (now - deviceTs) > BACKLOG_THRESH_MS;\n  if (isBacklog) {\n    const batchId = (msg.payload && msg.payload.batch_id) || ('auto-' + nodeId + '-' + now);\n    const count = Object.keys(values).length;\n    await pool.query(\n      \"INSERT INTO offline_sync_log (node_id, batch_id, records_count, oldest_ts, newest_ts, sync_at) VALUES (?,?,?,?,?,NOW(3)) \" +\n      \"ON DUPLICATE KEY UPDATE records_count = records_count + VALUES(records_count), \" +\n      \"oldest_ts = LEAST(oldest_ts, VALUES(oldest_ts)), newest_ts = GREATEST(newest_ts, VALUES(newest_ts))\",\n      [nodeId, batchId, count, taken, taken]\n    );\n  }\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at,quality) VALUES (?,?,?,?,?)',[nodeId,k,v,taken,(qual&&qual[k])||'good']); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  // Read debounce_json for per-param dwell/cooldown overrides (§8)\n  let debounceJson = null;\n  try { debounceJson = rr[0].debounce_json ? (typeof rr[0].debounce_json==='string' ? JSON.parse(rr[0].debounce_json) : rr[0].debounce_json) : null; } catch(_){}\n  const [rows] = await pool.query(\"SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) AND quality IN ('good','sim') ORDER BY taken_at ASC\",[nodeId]);  // a dead sensor (quality=error) must not raise/clear alarms (§16)\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings, debounceJson);\n  const pfx = mm[0].mqtt_prefix;\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++;\n    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity\n    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;\n    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);\n  }\n  msg.headers = __H; msg.payload = { inserted, backlog: isBacklog }; node.send([msg, null, __http?msg:null, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
     "outputs": 4,
     "libs": [
       {
@@ -242,6 +245,25 @@
     ]
   },
   {
+    "id": "edgealarm",
+    "type": "function",
+    "z": "be",
+    "name": "edge alarm persist",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  const sev = (e.severity === 'CRITICAL' || e.severity === 'WARNING') ? e.severity : 'WARNING';\n  // Find the alarm threshold from the rule for context\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?', [e.nodeId]);\n  let threshold = null, dwellCount = null;\n  if (rr.length) {\n    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;\n    const param = (rule.params||[]).find(p => p.key === e.paramKey);\n    if (param) { threshold = sev === 'CRITICAL' ? param.critical : param.warn; dwellCount = rule.dwellMin; }\n  }\n  await pool.query(\n    \"INSERT INTO edge_alarm_log (node_id, param_key, severity, value, threshold, dwell_count, ts) VALUES (?,?,?,?,?,?,NOW(3))\",\n    [e.nodeId, e.paramKey, sev, e.value ?? null, threshold, dwellCount]);\n})().catch(err => node.error('edge-alarm: ' + err.message));\nreturn null;\n",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 560,
+    "y": -40,
+    "wires": [
+      []
+    ]
+  },
+  {
     "id": "catchall",
     "type": "catch",
     "z": "be",
@@ -295,7 +317,7 @@
     "type": "function",
     "z": "be",
     "name": "readings retention",
-    "func": "\nconst pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;\nconst DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);\n(async () => {\n  await pool.query(\"INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max) \" +\n    \"SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, COUNT(*), AVG(value), MIN(value), MAX(value) \" +\n    \"FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key, bucket \" +\n    \"ON DUPLICATE KEY UPDATE n=VALUES(n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)\", [DAYS]);\n  const [res] = await pool.query(\"DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY)\", [DAYS]);\n  if (res.affectedRows) node.warn('retention: rolled up + purged ' + res.affectedRows + ' raw readings');\n})().catch(e => node.error('retention: ' + e.message));\nreturn null;\n",
+    "func": "\nconst pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;\nconst DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);\n(async () => {\n  await pool.query(\n    \"INSERT INTO readings_rollup (node_id, param_key, bucket, n, bad_n, v_avg, v_min, v_max) \" +\n    \"SELECT node_id, param_key, DATE_FORMAT(taken_at,'%Y-%m-%d %H:00:00.000') bucket, \" +\n    \"COUNT(*), SUM(CASE WHEN quality NOT IN ('good') THEN 1 ELSE 0 END), \" +\n    \"AVG(value), MIN(value), MAX(value) \" +\n    \"FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY) GROUP BY node_id, param_key, bucket \" +\n    \"ON DUPLICATE KEY UPDATE n=VALUES(n), bad_n=VALUES(bad_n), v_avg=VALUES(v_avg), v_min=VALUES(v_min), v_max=VALUES(v_max)\", [DAYS]);\n  const [res] = await pool.query(\"DELETE FROM readings WHERE taken_at < (NOW(3) - INTERVAL ? DAY)\", [DAYS]);\n  if (res.affectedRows) node.warn('retention: rolled up + purged ' + res.affectedRows + ' raw readings');\n})().catch(e => node.error('retention: ' + e.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -1026,7 +1048,7 @@
     "type": "function",
     "z": "be",
     "name": "POST /api/bloodbox/transits/:id/temp",
-    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};\nif(typeof b.tempC!=='number'){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'tempC (number) required'};node.send([msg,null]);return null;}\n(async()=>{const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[id]);\n  if(!tr.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'transit not found'};node.send([msg,null]);return;}\n  await pool.query('UPDATE blood_box_transits SET current_temp_c=?, temp_max_c=GREATEST(COALESCE(temp_max_c,?),?) WHERE id=?',[b.tempC,b.tempC,b.tempC,id]);\n  const boxId=tr[0].box_id; let bridge=null;\n  if(boxId){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.battery==='number')v.battery=b.battery; bridge={payload:{nodeId:boxId,values:v,ts:b.ts||Date.now()}};}\n  msg.headers=__CORS; msg.payload={ok:true,bridged:boxId?'queued':'no linked node'}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;\n})();",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const b=msg.payload||{};\nif(typeof b.tempC!=='number'){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'tempC (number) required'};node.send([msg,null]);return null;}\n(async()=>{const[tr]=await pool.query('SELECT box_id FROM blood_box_transits WHERE id=?',[id]);\n  if(!tr.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'transit not found'};node.send([msg,null]);return;}\n  await pool.query('UPDATE blood_box_transits SET current_temp_c=?, temp_max_c=GREATEST(COALESCE(temp_max_c,?),?) WHERE id=?',[b.tempC,b.tempC,b.tempC,id]);\n  // Continuous high-freq transit telemetry log (§ blood_box_transit_telemetry)\n  await pool.query('INSERT INTO blood_box_transit_telemetry (transit_id,box_id,temp_c,rh_pct,batt_pct,lat,lng,transport,transit_state) VALUES (?,?,?,?,?,?,?,?,?)',\n    [id, tr[0].box_id||null, b.tempC, b.rh??null, b.battery??null, b.lat??null, b.lng??null, b.transport??'wifi', b.transitState??null]);\n  const boxId=tr[0].box_id; let bridge=null;\n  if(boxId){const v={tempHigh:b.tempC,tempLow:b.tempC}; if(typeof b.battery==='number')v.battery=b.battery; bridge={payload:{nodeId:boxId,values:v,ts:b.ts||Date.now()}};}\n  msg.headers=__CORS; msg.payload={ok:true,bridged:boxId?'queued':'no linked node'}; node.send([msg,bridge]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send([msg,null]);}); return null;\n})();",
     "outputs": 2,
     "libs": [
       {
@@ -2729,6 +2751,51 @@
     "wires": []
   },
   {
+    "id": "otareldel_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/ota/releases/:id",
+    "method": "delete",
+    "x": 150,
+    "y": 2860,
+    "wires": [
+      [
+        "otareldel_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otareldel_fn",
+    "type": "function",
+    "z": "be",
+    "name": "DELETE /api/ota/releases/:id",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id;\n(async()=>{await pool.query(\"DELETE FROM ota_releases WHERE id=?\",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2860,
+    "wires": [
+      [
+        "otareldel_resp"
+      ]
+    ]
+  },
+  {
+    "id": "otareldel_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2860,
+    "wires": []
+  },
+  {
     "id": "otadeplist_in",
     "type": "http in",
     "z": "be",
@@ -2736,7 +2803,7 @@
     "url": "/api/ota/deployments",
     "method": "get",
     "x": 150,
-    "y": 2860,
+    "y": 2910,
     "wires": [
       [
         "otadeplist_fn"
@@ -2757,7 +2824,7 @@
       }
     ],
     "x": 420,
-    "y": 2860,
+    "y": 2910,
     "wires": [
       [
         "otadeplist_resp"
@@ -2770,7 +2837,55 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2860,
+    "y": 2910,
+    "wires": []
+  },
+  {
+    "id": "otafleet_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/ota/deploy-fleet",
+    "method": "post",
+    "x": 150,
+    "y": 2960,
+    "wires": [
+      [
+        "otafleet_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otafleet_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/ota/deploy-fleet",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.release_id){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'release_id required'};return msg;}\n(async()=>{\n  const [rel]=await pool.query(\"SELECT id,product,version,artefact_uri FROM ota_releases WHERE id=?\",[b.release_id]);\n  if(!rel.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'release not found'};node.send([msg,null]);return;}\n  const r=rel[0]; const [nodes]=await pool.query(\"SELECT n.id,n.mqtt_prefix FROM nodes n WHERE n.domain=?\",[r.product]);\n  const deployed=[];\n  for(const nd of nodes){\n    if(!nd.mqtt_prefix) continue;\n    const depId='dep-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);\n    await pool.query(\"INSERT INTO ota_deployments (id,node_id,release_id,status,progress_pct) VALUES (?,?,?,'pending',0)\",[depId,nd.id,r.id]);\n    const payload={to_version:r.version, artefact_uri:r.artefact_uri, deployment_id:depId};\n    node.send([null,{topic:nd.mqtt_prefix+'/ota/cmd',payload,qos:1,retain:false}]);\n    deployed.push({nodeId:nd.id,deploymentId:depId});\n  }\n  msg.headers=__CORS; msg.payload={ok:true,count:deployed.length,deployments:deployed}; node.send([msg,null]);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 2,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2960,
+    "wires": [
+      [
+        "otafleet_resp"
+      ],
+      [
+        "mqttout"
+      ]
+    ]
+  },
+  {
+    "id": "otafleet_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2960,
     "wires": []
   },
   {
@@ -2781,7 +2896,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 2910,
+    "y": 3010,
     "wires": [
       [
         "cors_fn"
@@ -2797,7 +2912,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2910,
+    "y": 3010,
     "wires": [
       [
         "cors_resp"
@@ -2810,7 +2925,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2910,
+    "y": 3010,
     "wires": []
   },
   {
@@ -2821,7 +2936,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 2960,
+    "y": 3060,
     "wires": [
       [
         "readpost_fn"
@@ -2837,7 +2952,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2960,
+    "y": 3060,
     "wires": [
       [
         "ingest"
@@ -2850,7 +2965,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2960,
+    "y": 3060,
     "wires": []
   }
 ]
