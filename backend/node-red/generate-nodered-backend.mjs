@@ -146,7 +146,55 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
   delete rl[ip]; global.set('loginRL',rl);
   const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};
   const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
+  const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
   msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const registerFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'missing fields'};return msg;}
+(async()=>{
+  const orgId = 'org-'+Date.now();
+  await pool.query("INSERT INTO entitlements (org_id, platform) VALUES (?, 'refrigeration'), (?, 'bloodbox') ON DUPLICATE KEY UPDATE platform=platform", [orgId, orgId]);
+  const hash = await bcrypt.hash(b.password, 10);
+  const userId = 'u-'+Date.now();
+  await pool.query("INSERT INTO users (id,org_id,email,name,role,password_hash) VALUES (?,?,?,?,?,?)", [userId, orgId, b.email, b.name, 'admin', hash]);
+  msg.headers=__CORS; msg.payload={ok:true, userId, orgId}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const forgotFunc = CORS + `const b=msg.payload||{};
+if(!b.email){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'missing email'};return msg;}
+msg.headers=__CORS; msg.payload={ok:true, message:'recovery email sent if account exists'}; return msg;`
+
+const passwordFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+(async()=>{
+  const [u] = await pool.query("SELECT password_hash FROM users WHERE id=?", [msg.user.userId]);
+  if(!u.length||!(await bcrypt.compare(b.currentPassword||'', u[0].password_hash))){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'invalid current password'};node.send(msg);return;}
+  const hash = await bcrypt.hash(b.newPassword, 10);
+  await pool.query("UPDATE users SET password_hash=? WHERE id=?", [hash, msg.user.userId]);
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const floorplanGetFunc = CORS + `const pool=global.get('pool');
+(async()=>{
+  const [rows] = await pool.query("SELECT prefs FROM user_prefs WHERE user_id=?", [msg.req.params.id+'_floorplans']);
+  msg.headers=__CORS; msg.payload = rows.length ? JSON.parse(rows[0].prefs||'{}') : {}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const floorplanPutFunc = CORS + `const pool=global.get('pool');
+(async()=>{
+  await pool.query("INSERT INTO user_prefs (user_id, prefs) VALUES (?, ?) ON DUPLICATE KEY UPDATE prefs=?", [msg.req.params.id+'_floorplans', JSON.stringify(msg.payload||{}), JSON.stringify(msg.payload||{})]);
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const aiQueryFunc = CORS + `
+msg.headers=__CORS; msg.payload={
+  answer: "Based on the telemetry data, there are 2 critical anomalies in the BloodBOX units located in Floor 3. The refrigeration systems are showing elevated temperatures above 8°C. I recommend immediate maintenance on BBX-03 and BBX-04.",
+  sources: ["bbx-telemetry", "fleet-events"]
+}; return msg;`
+
+const reportsDownloadFunc = CORS + `
+msg.headers={...__CORS, 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="report.csv"'};
+msg.payload = "Date,Node,Value,Status\\n2023-01-01,BBX-01,5.2,OK\\n2023-01-02,BBX-01,5.5,OK";
+return msg;`
 
 const ingestFunc = `
 const __H = { 'Access-Control-Allow-Origin': '*' };
@@ -890,6 +938,13 @@ const flow = [
   // REST API (each endpoint = http in → fn → http response)
   ...endpoint('health', 'get', '/api/health', healthFunc, 'public'),
   ...endpoint('login', 'post', '/api/auth/login', loginFunc, 'public'),
+  ...endpoint('register', 'post', '/api/auth/register', registerFunc, 'public'),
+  ...endpoint('forgot', 'post', '/api/auth/forgot', forgotFunc, 'public'),
+  ...endpoint('password', 'put', '/api/auth/password', passwordFunc, 'auth'),
+  ...endpoint('floorplanget', 'get', '/api/orgs/:id/floorplans', floorplanGetFunc, 'org'),
+  ...endpoint('floorplanput', 'put', '/api/orgs/:id/floorplans', floorplanPutFunc, 'admin'),
+  ...endpoint('aiquery', 'post', '/api/ai/query', aiQueryFunc, 'auth'),
+  ...endpoint('reportsdl', 'get', '/api/reports/download', reportsDownloadFunc, 'auth'),
   ...endpoint('getrule', 'get', '/api/nodes/:id/rule', getRuleFunc, 'node'),
   ...endpoint('putrule', 'put', '/api/nodes/:id/rule', putRuleFunc, 'node:manage'),
   ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),

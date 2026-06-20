@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { Send, User, Bot, FileText } from 'lucide-react'
+import { Send, User, Bot, FileText, Sparkles, Database } from 'lucide-react'
+import { api } from '@/lib/api'
+import clsx from 'clsx'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -23,23 +25,24 @@ export default function AISearchPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const send = (q?: string) => {
-    const text = (q ?? input).trim()
-    if (!text || loading) return
-    setMessages((m) => [...m, { role: 'user', content: text }])
+  const send = async (q?: string) => {
+    const query = (q ?? input).trim()
+    if (!query || loading) return
+    setMessages((m) => [...m, { role: 'user', content: query }])
     setInput('')
     setLoading(true)
-    setTimeout(() => {
+    try {
+      const res: any = await api.aiQuery(query)
       setMessages((m) => [...m, {
         role: 'bot',
-        content: 'Based on the latest TGO (Thailand Greenhouse Gas Management Organization) guidelines, carbon credits for forestry projects use the T-VER methodology. Your current organization has an accrual of 450.2 TCO₂e ready for verification.',
-        sources: [
-          { document_name: 'T-VER_Forestry_Manual_2024.pdf', page: 24 },
-          { document_name: 'Org_Emission_Report_Q1.pdf', page: 5 },
-        ],
+        content: res.answer || 'Analysis complete.',
+        sources: res.sources?.map((s: string) => ({ document_name: s, page: 1 }))
       }])
+    } catch (e) {
+      setMessages((m) => [...m, { role: 'bot', content: 'Failed to process query.' }])
+    } finally {
       setLoading(false)
-    }, 900)
+    }
   }
 
   return (

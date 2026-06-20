@@ -233,6 +233,35 @@ router.delete('/event-problems/:id', requireRole('admin'), async (req, res) => {
   await deleteEventProblem(req.params.id); res.json({ ok: true })
 })
 
+// ---- Floorplans -----------------------------------------------------------
+router.get('/orgs/:id/floorplans', orgScope('id'), async (req, res) => {
+  const data = await getPrefs(req.params.id + '_floorplans')
+  res.json(data || {})
+})
+
+router.put('/orgs/:id/floorplans', requireRole('admin'), orgScope('id'), async (req, res) => {
+  await putPrefs(req.params.id + '_floorplans', req.body)
+  res.json({ ok: true })
+})
+
+// ---- AI & SQL -------------------------------------------------------------
+router.post('/ai/query', async (req, res) => {
+  const { query } = req.body ?? {}
+  // Mock response for now, establishes the API contract for P2
+  res.json({
+    answer: "Based on the telemetry data, there are 2 critical anomalies in the BloodBOX units located in Floor 3. The refrigeration systems are showing elevated temperatures above 8°C. I recommend immediate maintenance on BBX-03 and BBX-04.",
+    sources: ["bbx-telemetry", "fleet-events"]
+  })
+})
+
+// ---- Reports Download -----------------------------------------------------
+router.get('/reports/download', async (req, res) => {
+  // Mock CSV download response
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', 'attachment; filename="report.csv"')
+  res.send("Date,Node,Value,Status\n2023-01-01,BBX-01,5.2,OK\n2023-01-02,BBX-01,5.5,OK")
+})
+
 // ---- Telemetry -------------------------------------------------------------
 router.get('/nodes/:id/readings', requireNode(), async (req, res) => {
   res.json(await recentReadings(req.params.id, Number(req.query.sinceMin || 360)))

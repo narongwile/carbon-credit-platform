@@ -5,7 +5,7 @@ import { useAppStore } from '@/lib/store'
 import { organizations } from '@/lib/mockData'
 import { Save, Upload, Trash2, Building2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import api, { apiEnabled } from '@/lib/api'
+import { api, apiEnabled } from '@/lib/api'
 
 export default function SettingsPage() {
   const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo } = useAppStore()

@@ -1,11 +1,13 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { managedDevicesFromFleet, getSitesByOrg } from '@/lib/fleetData'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
+import { api } from '@/lib/api'
 import { Upload, MapPin, Save, Image as ImageIcon, Crosshair, Check, Satellite, Radio, Wifi, Bluetooth, Gauge } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -49,6 +51,14 @@ export default function FloorPlansPage() {
   const methodOf = (n: { id: string; domain?: string }): PosMethod => posMethod[n.id] ?? (n.domain === 'bloodBox' ? 'ble' : 'wifi')
   const [saved, setSaved] = useState(false)
 
+  useEffect(() => {
+    api.getFloorplans(orgId).then((data: any) => {
+      if (data?.images) setImages(data.images)
+      if (data?.positions) setPositions(data.positions)
+      if (data?.posMethod) setPosMethod(data.posMethod)
+    })
+  }, [orgId])
+
   const img = images[activeFloor]
   const floorPos = positions[activeFloor] ?? {}
 
@@ -68,7 +78,16 @@ export default function FloorPlansPage() {
   }
 
   const placed = nodes.filter((n) => floorPos[n.id])
-  const save = async () => { await new Promise((r) => setTimeout(r, 300)); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+  const save = async () => {
+    try {
+      await api.updateFloorplans(orgId, { images, positions, posMethod })
+      setSaved(true)
+      toast.success('Floor plans saved')
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e: any) {
+      toast.error('Failed to save floor plans')
+    }
+  }
 
   return (
     <div className="p-6 space-y-5">

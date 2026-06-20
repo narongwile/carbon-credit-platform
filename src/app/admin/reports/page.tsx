@@ -42,13 +42,7 @@ export default function ReportsPage() {
   }
 
   const downloadCSV = () => {
-    const header = 'Device,Serial,Domain,Site,Status,Last Value'
-    const rows = devices.map((d) => [d.name, d.serial, d.domain ?? d.deviceType, d.location, d.status, d.lastValue ?? ''].join(','))
-    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `report_${orgId}_${fileBase().stamp}.csv`
-    document.body.appendChild(link); link.click(); document.body.removeChild(link)
+    api.downloadReport()
   }
 
   const downloadPDF = async () => {

@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Play, Copy, Table, CheckCircle2, ChevronRight, Download, Database } from 'lucide-react'
+import { Database, Play, Copy, Download, Sparkles, Terminal, Table, CheckCircle2, ChevronRight } from 'lucide-react'
+import { api } from '@/lib/api'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -28,20 +29,20 @@ export default function SqlGenPage() {
 
   const insert = (text: string) => setQuery((p) => p + (p && !p.endsWith(' ') ? ' ' : '') + text + ' ')
 
-  const generate = () => {
+  const generate = async () => {
     if (!query.trim()) return
     setLoading(true)
-    setTimeout(() => {
-      const generatedSql = `SELECT emission_type, SUM(amount_tco2e) AS total\nFROM carbon_emissions\nWHERE recorded_at > NOW() - INTERVAL '1 year'\nGROUP BY emission_type\nORDER BY total DESC;`
+    try {
+      const res: any = await api.aiQuery(query)
+      const generatedSql = res.sql || `SELECT * FROM ${res.sources?.[0] || 'data'} LIMIT 10;`
       setSql(generatedSql)
-      setResults([
-        { emission_type: 'scope1', total: 450.2 },
-        { emission_type: 'scope2', total: 210.5 },
-        { emission_type: 'scope3', total: 88.9 },
-      ])
+      setResults(res.results || [])
       setHistory((h) => [{ query, sql: generatedSql, ts: new Date() }, ...h])
+    } catch (e) {
+      toast.error('Failed to generate SQL')
+    } finally {
       setLoading(false)
-    }, 900)
+    }
   }
 
   const copy = () => { navigator.clipboard.writeText(sql); toast.success('SQL copied') }

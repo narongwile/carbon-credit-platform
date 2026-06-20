@@ -21,6 +21,8 @@ export function getToken(): string | null {
   return typeof window === 'undefined' ? null : localStorage.getItem(TOKEN_KEY)
 }
 
+const apiBase = typeof window !== 'undefined' ? window.location.origin : ''
+
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   if (!BASE) return null
   try {
@@ -78,8 +80,16 @@ export const api = {
   meConfig: () => req(`/api/me/config`),
   updateMeConfig: (b: any) => req(`/api/me/config`, { method: 'PUT', body: JSON.stringify(b) }),
   
-  // Org Rule
+  // Org Rule and Floorplans
   updateOrgRule: (orgId: string, rule: any) => req(`/api/orgs/${orgId}/rule`, { method: 'PUT', body: JSON.stringify(rule) }),
+  getFloorplans: (orgId: string) => req(`/api/orgs/${orgId}/floorplans`),
+  updateFloorplans: (orgId: string, data: any) => req(`/api/orgs/${orgId}/floorplans`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // AI & Reports
+  aiQuery: (query: string) => req(`/api/ai/query`, { method: 'POST', body: JSON.stringify({ query }) }),
+  downloadReport: () => {
+    window.location.href = `${apiBase}/api/reports/download`
+  },
 
   // Fleet OTA Management
   otaReleases: () => req<{id:string; version:string; target_hw:string; artefact_uri:string; released_at:string; release_notes:string}[]>(`/api/ota/releases`),

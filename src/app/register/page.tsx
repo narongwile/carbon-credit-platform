@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Boxes, Eye, EyeOff, UserPlus, ArrowLeft, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import api from '@/lib/api'
+import { api } from '@/lib/api'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
