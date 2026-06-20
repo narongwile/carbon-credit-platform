@@ -116,7 +116,7 @@
     "type": "function",
     "z": "be",
     "name": "ingest + evaluate + persist",
-    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, qual, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at,quality) VALUES (?,?,?,?,?)',[nodeId,k,v,taken,(qual&&qual[k])||'good']); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query(\"SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) AND quality IN ('good','sim') ORDER BY taken_at ASC\",[nodeId]);  // a dead sensor (quality=error) must not raise/clear alarms (§16)\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  const pfx = mm[0].mqtt_prefix;\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++;\n    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity\n    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;\n    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);\n  }\n  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
+    "func": "\nconst __H = { 'Access-Control-Allow-Origin': '*' };\nconst __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)\nconst pool = global.get('pool'); const evaluate = global.get('evaluate');\nconst { nodeId, values, qual, ts } = msg.payload || {};\nif (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }\nconst taken = new Date(ts || Date.now());\n(async () => {\n  // --- Offline backlog detection (Store-and-Forward observability) ---\n  // If the device timestamp is >30 s behind server time, this reading came from\n  // the LittleFS offline store.  Log it to offline_sync_log so the dashboard can\n  // show \"device X just uploaded N stale records from <oldest> to <newest>\".\n  const BACKLOG_THRESH_MS = 30000;   // 30 seconds\n  const now = Date.now();\n  const deviceTs = ts || now;\n  const isBacklog = (now - deviceTs) > BACKLOG_THRESH_MS;\n  if (isBacklog) {\n    const batchId = (msg.payload && msg.payload.batch_id) || ('auto-' + nodeId + '-' + now);\n    const count = Object.keys(values).length;\n    await pool.query(\n      \"INSERT INTO offline_sync_log (node_id, batch_id, records_count, oldest_ts, newest_ts, sync_at) VALUES (?,?,?,?,?,NOW(3)) \" +\n      \"ON DUPLICATE KEY UPDATE records_count = records_count + VALUES(records_count), \" +\n      \"oldest_ts = LEAST(oldest_ts, VALUES(oldest_ts)), newest_ts = GREATEST(newest_ts, VALUES(newest_ts))\",\n      [nodeId, batchId, count, taken, taken]\n    );\n  }\n  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at,quality) VALUES (?,?,?,?,?)',[nodeId,k,v,taken,(qual&&qual[k])||'good']); }\n  const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);\n  const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);\n  if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }\n  const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;\n  const [rows] = await pool.query(\"SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) AND quality IN ('good','sim') ORDER BY taken_at ASC\",[nodeId]);  // a dead sensor (quality=error) must not raise/clear alarms (§16)\n  const byTs=new Map();\n  for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}\n  const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);\n  const events = evaluate(nodeId, rule, readings);\n  const pfx = mm[0].mqtt_prefix;\n  let inserted=0;\n  for (const e of events){\n    const [ex]=await pool.query('SELECT id FROM alarm_events WHERE id=?',[e.id]); if (ex.length) continue;\n    await pool.query('INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',\n      [e.id,nodeId,mm[0].org_id,mm[0].department_id,e.paramKey,e.paramLabel,e.severity,e.kind,e.value,e.threshold,e.unit,new Date(e.ts)]);\n    inserted++;\n    // §9: retained per-device alarm state echo so late subscribers/actuators read current severity\n    const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;\n    node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);\n  }\n  msg.headers = __H; msg.payload = { inserted, backlog: isBacklog }; node.send([msg, null, __http?msg:null, null]);\n})().catch(err => { node.error(err.message, msg); });\nreturn null;\n",
     "outputs": 4,
     "libs": [
       {
@@ -208,7 +208,7 @@
     "type": "function",
     "z": "be",
     "name": "presence upsert",
-    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw, uptime_s, heap, time_src, transport, transit, lat, lng) VALUES (?,?,NOW(3),?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw), uptime_s=VALUES(uptime_s), heap=VALUES(heap), time_src=VALUES(time_src), transport=VALUES(transport), transit=VALUES(transit), lat=VALUES(lat), lng=VALUES(lng)\",\n    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null, e.uptime ?? null, e.heap ?? null, e.time_src ?? null, e.transport ?? null, e.transit ?? null, e.lat ?? null, e.lng ?? null]);\n  // offline-recovery: device back online ⇒ clear any open offline alarm\n  if (e.online) await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE node_id=? AND kind='offline' AND cleared_at IS NULL\", [e.nodeId]);\n})().catch(err => node.error('presence: ' + err.message));\nreturn null;\n",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  // --- Transport-switch detection (§21 observability) ---\n  // Compare current transport with the value stored in device_presence; if they\n  // differ, a failover or recovery happened — log it to transport_events.\n  if (e.transport) {\n    const [prev] = await pool.query(\"SELECT transport FROM device_presence WHERE node_id=?\", [e.nodeId]);\n    const prevTr = prev.length ? prev[0].transport : null;\n    if (prevTr && prevTr !== e.transport) {\n      const reason = (e.rssi !== undefined && e.rssi !== null && e.rssi < -80) ? 'rssi_low' : 'failover';\n      await pool.query(\n        \"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))\",\n        [e.nodeId, prevTr, e.transport, reason, e.rssi ?? null]\n      );\n      node.warn('transport switch: ' + e.nodeId + ' ' + prevTr + ' → ' + e.transport + ' (' + reason + ')');\n    }\n  }\n  // --- Presence upsert ---\n  await pool.query(\"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw, uptime_s, heap, time_src, transport, transit, lat, lng) VALUES (?,?,NOW(3),?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw), uptime_s=VALUES(uptime_s), heap=VALUES(heap), time_src=VALUES(time_src), transport=VALUES(transport), transit=VALUES(transit), lat=VALUES(lat), lng=VALUES(lng)\",\n    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null, e.uptime ?? null, e.heap ?? null, e.time_src ?? null, e.transport ?? null, e.transit ?? null, e.lat ?? null, e.lng ?? null]);\n  // offline-recovery: device back online ⇒ clear any open offline alarm\n  if (e.online) await pool.query(\"UPDATE alarm_events SET cleared_at=NOW(3) WHERE node_id=? AND kind='offline' AND cleared_at IS NULL\", [e.nodeId]);\n})().catch(err => node.error('presence: ' + err.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -227,7 +227,7 @@
     "type": "function",
     "z": "be",
     "name": "device log store",
-    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_logs (node_id, kind, level, code, payload, ts) VALUES (?,?,?,?,?,NOW(3))\",\n    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), e.code? String(e.code).slice(0,40): null, JSON.stringify(e.payload||{})]);\n})().catch(err => node.error('devlog: ' + err.message));\nreturn null;\n",
+    "func": "\nconst pool = global.get('pool'); const e = msg.payload;\nif (!pool || !e || !e.nodeId) return null;\n(async () => {\n  await pool.query(\"INSERT INTO device_logs (node_id, kind, level, code, payload, ts) VALUES (?,?,?,?,?,NOW(3))\",\n    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), e.code? String(e.code).slice(0,40): null, JSON.stringify(e.payload||{})]);\n  // --- OTA progress → ota_deployments (real-time tracking) ---\n  if (e.kind === 'ota' && e.payload) {\n    const p = e.payload;\n    const status = p.status || (typeof p.pct === 'number' ? 'downloading' : null);\n    const pct = typeof p.pct === 'number' ? Math.min(100, Math.max(0, p.pct)) : null;\n    if (status) {\n      const isFinal = ['success','failed','rolled_back'].includes(status);\n      await pool.query(\n        \"UPDATE ota_deployments SET status=?, progress_pct=?, error_msg=?\" +\n        (isFinal ? \", completed_at=NOW(3)\" : \"\") +\n        \" WHERE node_id=? AND status NOT IN ('success','failed','rolled_back') ORDER BY started_at DESC LIMIT 1\",\n        [status, pct ?? (isFinal ? 100 : 0), p.error || null, e.nodeId]\n      );\n    }\n  }\n})().catch(err => node.error('devlog: ' + err.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -2610,7 +2610,7 @@
     "type": "function",
     "z": "be",
     "name": "POST /api/nodes/:id/ota",
-    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};\nif(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'to_version and artefact_uri required'};node.send([msg,null]);return null;}\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node:manage',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const id=msg.req.params.id; const body=msg.payload||{};\nif(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'to_version and artefact_uri required'};node.send([msg,null]);return null;}\n(async()=>{const[n]=await pool.query(\"SELECT mqtt_prefix FROM nodes WHERE id=?\",[id]);\n  if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}\n  // Create a deployment record so progress/result can be tracked\n  const depId='dep-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);\n  // Find the release record (optional — may not exist if using ad-hoc URI)\n  const [rel]=await pool.query(\"SELECT id FROM ota_releases WHERE product=? AND version=? LIMIT 1\",[body.product||'',body.to_version]);\n  const releaseId=rel.length?rel[0].id:(body.release_id||depId);\n  await pool.query(\"INSERT INTO ota_deployments (id,node_id,release_id,status,progress_pct) VALUES (?,?,?,'pending',0)\",[depId,id,releaseId]);\n  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic,deploymentId:depId}; node.send([msg,{topic,payload:Object.assign({},body,{deployment_id:depId}),qos:1,retain:false}]);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
     "outputs": 2,
     "libs": [
       {
@@ -2639,6 +2639,141 @@
     "wires": []
   },
   {
+    "id": "otarellist_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/ota/releases",
+    "method": "get",
+    "x": 150,
+    "y": 2760,
+    "wires": [
+      [
+        "otarellist_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otarellist_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/ota/releases",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const q=msg.req.query||{};\n(async()=>{\n  let sql='SELECT id,product,version,artefact_uri,sha256,release_notes,is_mandatory,created_at FROM ota_releases';\n  const args=[]; if(q.product){sql+=' WHERE product=?'; args.push(q.product);}\n  sql+=' ORDER BY created_at DESC'; const[r]=await pool.query(sql,args);\n  msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2760,
+    "wires": [
+      [
+        "otarellist_resp"
+      ]
+    ]
+  },
+  {
+    "id": "otarellist_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2760,
+    "wires": []
+  },
+  {
+    "id": "otarelpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/ota/releases",
+    "method": "post",
+    "x": 150,
+    "y": 2810,
+    "wires": [
+      [
+        "otarelpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otarelpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/ota/releases",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const b=msg.payload||{};\nif(!b.product||!b.version){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'product and version required'};return msg;}\n(async()=>{\n  const id=b.id||'rel-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);\n  // artefact_uri: admin provides the HTTPS URL where the .bin is hosted\n  // (S3/GCS pre-signed, nginx static, etc.). The frontend uploads the binary\n  // to object storage first, then passes the URL here.\n  await pool.query(\n    \"INSERT INTO ota_releases (id,product,version,artefact_uri,sha256,release_notes,is_mandatory) VALUES (?,?,?,?,?,?,?) \" +\n    \"ON DUPLICATE KEY UPDATE artefact_uri=VALUES(artefact_uri),sha256=VALUES(sha256),release_notes=VALUES(release_notes),is_mandatory=VALUES(is_mandatory)\",\n    [id, b.product, b.version, b.artefact_uri||'', b.sha256||null, b.release_notes||null, b.is_mandatory?1:0]);\n  msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2810,
+    "wires": [
+      [
+        "otarelpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "otarelpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2810,
+    "wires": []
+  },
+  {
+    "id": "otadeplist_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/ota/deployments",
+    "method": "get",
+    "x": 150,
+    "y": 2860,
+    "wires": [
+      [
+        "otadeplist_fn"
+      ]
+    ]
+  },
+  {
+    "id": "otadeplist_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/ota/deployments",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool'); const q=msg.req.query||{};\n(async()=>{\n  let sql='SELECT d.*, r.product, r.version FROM ota_deployments d LEFT JOIN ota_releases r ON r.id=d.release_id';\n  const args=[]; const where=[];\n  if(q.nodeId){where.push('d.node_id=?'); args.push(q.nodeId);}\n  if(q.status){where.push('d.status=?'); args.push(q.status);}\n  if(where.length) sql+=' WHERE '+where.join(' AND ');\n  sql+=' ORDER BY d.started_at DESC LIMIT 100'; const[r]=await pool.query(sql,args);\n  msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 2860,
+    "wires": [
+      [
+        "otadeplist_resp"
+      ]
+    ]
+  },
+  {
+    "id": "otadeplist_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 2860,
+    "wires": []
+  },
+  {
     "id": "cors_in",
     "type": "http in",
     "z": "be",
@@ -2646,7 +2781,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 2760,
+    "y": 2910,
     "wires": [
       [
         "cors_fn"
@@ -2662,7 +2797,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2760,
+    "y": 2910,
     "wires": [
       [
         "cors_resp"
@@ -2675,7 +2810,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2760,
+    "y": 2910,
     "wires": []
   },
   {
@@ -2686,7 +2821,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 2810,
+    "y": 2960,
     "wires": [
       [
         "readpost_fn"
@@ -2702,7 +2837,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2810,
+    "y": 2960,
     "wires": [
       [
         "ingest"
@@ -2715,7 +2850,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2810,
+    "y": 2960,
     "wires": []
   }
 ]

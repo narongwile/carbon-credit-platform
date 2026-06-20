@@ -151,6 +151,24 @@ const { nodeId, values, qual, ts } = msg.payload || {};
 if (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }
 const taken = new Date(ts || Date.now());
 (async () => {
+  // --- Offline backlog detection (Store-and-Forward observability) ---
+  // If the device timestamp is >30 s behind server time, this reading came from
+  // the LittleFS offline store.  Log it to offline_sync_log so the dashboard can
+  // show "device X just uploaded N stale records from <oldest> to <newest>".
+  const BACKLOG_THRESH_MS = 30000;   // 30 seconds
+  const now = Date.now();
+  const deviceTs = ts || now;
+  const isBacklog = (now - deviceTs) > BACKLOG_THRESH_MS;
+  if (isBacklog) {
+    const batchId = (msg.payload && msg.payload.batch_id) || ('auto-' + nodeId + '-' + now);
+    const count = Object.keys(values).length;
+    await pool.query(
+      "INSERT INTO offline_sync_log (node_id, batch_id, records_count, oldest_ts, newest_ts, sync_at) VALUES (?,?,?,?,?,NOW(3)) " +
+      "ON DUPLICATE KEY UPDATE records_count = records_count + VALUES(records_count), " +
+      "oldest_ts = LEAST(oldest_ts, VALUES(oldest_ts)), newest_ts = GREATEST(newest_ts, VALUES(newest_ts))",
+      [nodeId, batchId, count, taken, taken]
+    );
+  }
   for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at,quality) VALUES (?,?,?,?,?)',[nodeId,k,v,taken,(qual&&qual[k])||'good']); }
   const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);
   const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);
@@ -172,7 +190,7 @@ const taken = new Date(ts || Date.now());
     const echo = pfx ? { topic: pfx+'/alarm/'+e.paramKey, payload: { sid:e.paramKey, severity:e.severity, value:e.value, thr:e.threshold, state:e.severity, ts:e.ts }, qos:1, retain:true } : null;
     node.send([null, { payload: Object.assign({}, e, { orgId: mm[0].org_id, departmentId: mm[0].department_id }) }, null, echo]);
   }
-  msg.headers = __H; msg.payload = { inserted }; node.send([msg, null, __http?msg:null, null]);
+  msg.headers = __H; msg.payload = { inserted, backlog: isBacklog }; node.send([msg, null, __http?msg:null, null]);
 })().catch(err => { node.error(err.message, msg); });
 return null;
 `
@@ -265,10 +283,27 @@ return [{ payload: { nodeId, values, qual, ts } }, null, null];
 `
 
 // Presence upsert: heartbeat/status keep device_presence fresh (last_seen, online).
+// Also detects transport switches (wifi↔4g↔lora) and logs them to transport_events.
 const presenceFunc = `
 const pool = global.get('pool'); const e = msg.payload;
 if (!pool || !e || !e.nodeId) return null;
 (async () => {
+  // --- Transport-switch detection (§21 observability) ---
+  // Compare current transport with the value stored in device_presence; if they
+  // differ, a failover or recovery happened — log it to transport_events.
+  if (e.transport) {
+    const [prev] = await pool.query("SELECT transport FROM device_presence WHERE node_id=?", [e.nodeId]);
+    const prevTr = prev.length ? prev[0].transport : null;
+    if (prevTr && prevTr !== e.transport) {
+      const reason = (e.rssi !== undefined && e.rssi !== null && e.rssi < -80) ? 'rssi_low' : 'failover';
+      await pool.query(
+        "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+        [e.nodeId, prevTr, e.transport, reason, e.rssi ?? null]
+      );
+      node.warn('transport switch: ' + e.nodeId + ' ' + prevTr + ' → ' + e.transport + ' (' + reason + ')');
+    }
+  }
+  // --- Presence upsert ---
   await pool.query("INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw, uptime_s, heap, time_src, transport, transit, lat, lng) VALUES (?,?,NOW(3),?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw), uptime_s=VALUES(uptime_s), heap=VALUES(heap), time_src=VALUES(time_src), transport=VALUES(transport), transit=VALUES(transit), lat=VALUES(lat), lng=VALUES(lng)",
     [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null, e.uptime ?? null, e.heap ?? null, e.time_src ?? null, e.transport ?? null, e.transit ?? null, e.lat ?? null, e.lng ?? null]);
   // offline-recovery: device back online ⇒ clear any open offline alarm
@@ -305,12 +340,29 @@ return null;
 `
 
 // Device logs: store P/diag/log + P/ota/progress (observability).
+// OTA progress reports also update the active ota_deployments record so the
+// dashboard shows real-time flash progress and final success/failure.
 const devlogFunc = `
 const pool = global.get('pool'); const e = msg.payload;
 if (!pool || !e || !e.nodeId) return null;
 (async () => {
   await pool.query("INSERT INTO device_logs (node_id, kind, level, code, payload, ts) VALUES (?,?,?,?,?,NOW(3))",
     [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), e.code? String(e.code).slice(0,40): null, JSON.stringify(e.payload||{})]);
+  // --- OTA progress → ota_deployments (real-time tracking) ---
+  if (e.kind === 'ota' && e.payload) {
+    const p = e.payload;
+    const status = p.status || (typeof p.pct === 'number' ? 'downloading' : null);
+    const pct = typeof p.pct === 'number' ? Math.min(100, Math.max(0, p.pct)) : null;
+    if (status) {
+      const isFinal = ['success','failed','rolled_back'].includes(status);
+      await pool.query(
+        "UPDATE ota_deployments SET status=?, progress_pct=?, error_msg=?" +
+        (isFinal ? ", completed_at=NOW(3)" : "") +
+        " WHERE node_id=? AND status NOT IN ('success','failed','rolled_back') ORDER BY started_at DESC LIMIT 1",
+        [status, pct ?? (isFinal ? 100 : 0), p.error || null, e.nodeId]
+      );
+    }
+  }
 })().catch(err => node.error('devlog: ' + err.message));
 return null;
 `
@@ -498,7 +550,44 @@ const otaPostFunc = CORS + `const pool=global.get('pool'); const id=msg.req.para
 if(!body.to_version||!body.artefact_uri){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'to_version and artefact_uri required'};node.send([msg,null]);return null;}
 (async()=>{const[n]=await pool.query("SELECT mqtt_prefix FROM nodes WHERE id=?",[id]);
   if(!n.length||!n[0].mqtt_prefix){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'node/mqtt_prefix not found'};node.send([msg,null]);return;}
-  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic}; node.send([msg,{topic,payload:body,qos:1,retain:false}]);})()` + bbErr
+  // Create a deployment record so progress/result can be tracked
+  const depId='dep-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
+  // Find the release record (optional — may not exist if using ad-hoc URI)
+  const [rel]=await pool.query("SELECT id FROM ota_releases WHERE product=? AND version=? LIMIT 1",[body.product||'',body.to_version]);
+  const releaseId=rel.length?rel[0].id:(body.release_id||depId);
+  await pool.query("INSERT INTO ota_deployments (id,node_id,release_id,status,progress_pct) VALUES (?,?,?,'pending',0)",[depId,id,releaseId]);
+  const topic=n[0].mqtt_prefix+'/ota/cmd'; msg.headers=__CORS; msg.payload={ok:true,topic,deploymentId:depId}; node.send([msg,{topic,payload:Object.assign({},body,{deployment_id:depId}),qos:1,retain:false}]);})()` + bbErr
+
+// --- OTA Release Management API (CRUD releases + list deployments) -----------
+const otaRelListFunc = CORS + `const pool=global.get('pool'); const q=msg.req.query||{};
+(async()=>{
+  let sql='SELECT id,product,version,artefact_uri,sha256,release_notes,is_mandatory,created_at FROM ota_releases';
+  const args=[]; if(q.product){sql+=' WHERE product=?'; args.push(q.product);}
+  sql+=' ORDER BY created_at DESC'; const[r]=await pool.query(sql,args);
+  msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
+
+const otaRelPostFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+if(!b.product||!b.version){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'product and version required'};return msg;}
+(async()=>{
+  const id=b.id||'rel-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
+  // artefact_uri: admin provides the HTTPS URL where the .bin is hosted
+  // (S3/GCS pre-signed, nginx static, etc.). The frontend uploads the binary
+  // to object storage first, then passes the URL here.
+  await pool.query(
+    "INSERT INTO ota_releases (id,product,version,artefact_uri,sha256,release_notes,is_mandatory) VALUES (?,?,?,?,?,?,?) " +
+    "ON DUPLICATE KEY UPDATE artefact_uri=VALUES(artefact_uri),sha256=VALUES(sha256),release_notes=VALUES(release_notes),is_mandatory=VALUES(is_mandatory)",
+    [id, b.product, b.version, b.artefact_uri||'', b.sha256||null, b.release_notes||null, b.is_mandatory?1:0]);
+  msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+
+const otaDepListFunc = CORS + `const pool=global.get('pool'); const q=msg.req.query||{};
+(async()=>{
+  let sql='SELECT d.*, r.product, r.version FROM ota_deployments d LEFT JOIN ota_releases r ON r.id=d.release_id';
+  const args=[]; const where=[];
+  if(q.nodeId){where.push('d.node_id=?'); args.push(q.nodeId);}
+  if(q.status){where.push('d.status=?'); args.push(q.status);}
+  if(where.length) sql+=' WHERE '+where.join(' AND ');
+  sql+=' ORDER BY d.started_at DESC LIMIT 100'; const[r]=await pool.query(sql,args);
+  msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
 
 const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 // notify node also needs nodemailer (SMTP email), like the Express service
@@ -771,6 +860,11 @@ const flow = [
   ...downlinkEndpoint('cmdpost', 'post', '/api/nodes/:id/cmd', cmdPostFunc, 'node:manage'),
   ...downlinkEndpoint('otapost', 'post', '/api/nodes/:id/ota', otaPostFunc, 'node:manage'),
 
+  // OTA release management + deployment tracking
+  ...endpoint('otarellist', 'get', '/api/ota/releases', otaRelListFunc, 'admin'),
+  ...endpoint('otarelpost', 'post', '/api/ota/releases', otaRelPostFunc, 'admin'),
+  ...endpoint('otadeplist', 'get', '/api/ota/deployments', otaDepListFunc, 'admin'),
+
   ...endpoint('cors', 'options', '/api/*', optionsFunc, 'public'),
 ]
 
@@ -799,5 +893,7 @@ console.log('Endpoints: GET /health · GET|PUT /nodes/:id/rule · PUT /orgs/:org
 console.log('BloodBOX: GET /bloodbox/transits · GET /bloodbox/transits/:id · GET|POST /bloodbox/transits/:id/journey · POST /bloodbox/transits/:id/temp (→engine bridge) · GET /bloodbox/floors · GET|POST|DELETE /bloodbox/beacons · GET|POST /bloodbox/boxes/:id/location')
 console.log('Fleet (all products): GET /fleet?orgId=&domain= · GET /fleet/:id/latest')
 console.log('Downlink (→device): PUT /nodes/:id/config (retained) · POST /nodes/:id/cmd · POST /nodes/:id/ota')
+console.log('OTA Mgmt: GET|POST /ota/releases · GET /ota/deployments?nodeId=&status= (progress tracked from device P/ota/progress)')
+console.log('Observability: transport_events (WiFi↔4G switches) · offline_sync_log (Store-and-Forward backlog detection)')
 console.log('Reports: GET|POST /reports/schedules · DELETE /reports/schedules/:id (cron 15m → CSV email)')
 console.log('Realtime: WebSocket bridge on listener path /ws/telemetry (tap normalize + ingest)')
