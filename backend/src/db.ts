@@ -19,7 +19,14 @@ export const pool = mysql.createPool({
 })
 
 // Pin each pooled connection's session time zone so NOW(3) writes Bangkok time.
-pool.on('connection', (conn) => { conn.query(`SET time_zone = '${DB_TZ}'`) })
+// mysql2/promise's PromisePool exposes its EventEmitter as `.pool`; binding on
+// the wrapper throws ("pool.on is not a function") and would crash on import.
+try {
+  ;(pool as unknown as { pool: { on(ev: string, cb: (c: { query(sql: string): void }) => void): void } }).pool
+    .on('connection', (conn) => { conn.query(`SET time_zone = '${DB_TZ}'`) })
+} catch (e) {
+  console.warn('[db] session-tz hook skipped:', (e as Error).message)
+}
 
 export async function ping(): Promise<boolean> {
   try {

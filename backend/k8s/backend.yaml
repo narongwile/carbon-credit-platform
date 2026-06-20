@@ -48,6 +48,24 @@ spec:
     metadata:
       labels: { app: oneops-backend }
     spec:
+      # Init: wait for MySQL, then run idempotent migrations before the app starts.
+      # With the ArgoCD PreSync Job (migrate-job.yaml) these have usually already
+      # been applied, so db-migrate is a fast no-op; it also covers non-ArgoCD
+      # (plain `kubectl apply`) deploys. The runner is idempotent (schema_migrations
+      # table + duplicate-column/key tolerance), so concurrent replica starts are safe.
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z "$DB_HOST" "$DB_PORT"; do echo "waiting for $DB_HOST:$DB_PORT"; sleep 2; done; echo db-up']
+          envFrom:
+            - secretRef: { name: oneops-backend-secrets }
+        - name: db-migrate
+          image: registry.local/oneops-backend:latest
+          command: ['node', 'dist/migrate.js']
+          env:
+            - { name: AUTO_SEED, value: "0" }   # never seed demo data in prod
+          envFrom:
+            - secretRef: { name: oneops-backend-secrets }
       containers:
         - name: backend
           image: registry.local/oneops-backend:latest

@@ -326,10 +326,10 @@ export async function markEscalated(ids: string[]): Promise<void> {
 }
 
 // ---- Readings (telemetry ingest) ------------------------------------------
-export async function insertReading(nodeId: string, paramKey: string, value: number, takenAt: Date): Promise<void> {
+export async function insertReading(nodeId: string, paramKey: string, value: number, takenAt: Date, quality: 'good' | 'sim' | 'error' | 'stale' = 'good'): Promise<void> {
   await pool.query(
-    'INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES (:n, :p, :v, :t)',
-    { n: nodeId, p: paramKey, v: value, t: takenAt },
+    'INSERT IGNORE INTO readings (node_id, param_key, value, taken_at, quality) VALUES (:n, :p, :v, :t, :q)',
+    { n: nodeId, p: paramKey, v: value, t: takenAt, q: quality },
   )
 }
 
