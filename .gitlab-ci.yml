@@ -60,11 +60,10 @@ build_frontend:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - echo "Building Frontend Docker Image..."
-    # Build with the production backend origin baked in. The backend is Node-RED
-    # (carbon-credit ns), reached by the BROWSER directly via CORS — the frontend
-    # pod can't proxy it (app-ns NetworkPolicy). api.ts paths already start with
-    # /api, so NEXT_PUBLIC_API_URL is the Node-RED origin with no /api suffix.
-    - docker build --build-arg NEXT_PUBLIC_API_URL=https://nodered.thermexpertise.com --build-arg NEXT_PUBLIC_WS_URL=wss://nodered.thermexpertise.com/ws/telemetry -t $CI_REGISTRY_IMAGE/frontend:latest -t $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA .
+    # Same-origin build: nginx in the frontend pod reverse-proxies /api and /ws
+    # to Node-RED (app-ns NetworkPolicy opened for egress to carbon-credit:1880).
+    # api.ts paths already start with /api, so the origin carries no /api suffix.
+    - docker build --build-arg NEXT_PUBLIC_API_URL=https://iiotplatform.thermexpertise.com --build-arg NEXT_PUBLIC_WS_URL=wss://iiotplatform.thermexpertise.com/ws/telemetry -t $CI_REGISTRY_IMAGE/frontend:latest -t $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA .
     - echo "Pushing image to registry..."
     - docker push $CI_REGISTRY_IMAGE/frontend:latest
     - docker push $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA
