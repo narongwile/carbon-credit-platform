@@ -65,8 +65,21 @@
 
 // ---- BloodBOX low power + transit (spec §21 / product) ---------------------
 #define OO_LOWPOWER          1        // bloodbox: transit-aware cadence + light sleep
+// Deep-sleep duty cycle: when a bloodbox is STORED (stationary at destination),
+// sleep between cycles instead of holding Wi-Fi up — saves battery. Disabled in
+// transit (live GPS/temp). Set 0 to keep the device always-on (e.g. bench/OTA).
+#define OO_DEEPSLEEP_ENABLE  1
+#define OO_DEEPSLEEP_S       300      // wake every 5 min while STORED
 #define OO_GPS_ENABLE        1        // NMEA parser on a UART (see board_pins.h)
 #define OO_BLE_ENABLE        0        // indoor-floor iBeacon scan (needs NimBLE + Wi-Fi coex)
+
+// ---- 4G modem (TinyGSM) — cellular failover (spec §18/§21) -----------------
+// 0 = compile without the radio (ooCellAvailable() stays the weak `false` stub);
+// 1 = build modem_4g.cpp (needs the TinyGSM library + the modem model set there).
+#define OO_HAVE_TINYGSM      0
+#define OO_GSM_APN           "internet"
+#define OO_GSM_USER          ""
+#define OO_GSM_PASS          ""
 
 // ---- Telemetry shape -------------------------------------------------------
 // 1 -> one consolidated {nodeId,values,ts} per cycle (Node-RED compat).

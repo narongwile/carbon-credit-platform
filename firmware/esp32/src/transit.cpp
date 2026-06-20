@@ -6,7 +6,7 @@ static uint64_t  gSince    = 0;     // time the current state was entered
 
 static void enter(OoTransit s, uint64_t now) { if (s != gState) { gState = s; gSince = now; } }
 
-void ooTransitInit() { gState = TRANSIT_IDLE; gLastMove = 0; gSince = 0; }
+void ooTransitInit(OoTransit initial) { gState = initial; gLastMove = 0; gSince = 0; }
 
 OoTransit ooTransitTick(float impactG, float gpsSpeedKnots, uint64_t now) {
   bool moving = (impactG > 0.15f) || (gpsSpeedKnots > 2.0f);   // accel noise floor / walking pace

@@ -4,6 +4,7 @@
 #include <LittleFS.h>
 
 static const char* PATH = "/buf.ndjson";
+static const char* TMP  = "/buf.tmp";     // replay scratch (unsent remainder)
 static bool gReady = false;
 
 void ooStoreInit() {
@@ -44,19 +45,27 @@ size_t ooStoreReplay() {
   if (!gReady) return 0;
   File f = LittleFS.open(PATH, "r");
   if (!f) return 0;
+  File tmp = LittleFS.open(TMP, "w");               // collects the UNSENT remainder
   size_t n = 0;
+  bool full = false;                                // egress filled up -> keep the rest
   while (f.available()) {
     String line = f.readStringUntil('\n');
-    int tab = line.indexOf('\t');
-    if (tab <= 0) continue;
-    String suffix = line.substring(0, tab);
-    String json   = line.substring(tab + 1);
-    if (ooEnqueue(suffix.c_str(), json.c_str(), json.length(), /*qos*/1, false, /*prio*/0)) n++;
-    else break;                                   // egress full — keep the rest for next time
+    if (line.length() == 0) continue;
+    if (!full) {
+      int tab = line.indexOf('\t');
+      if (tab <= 0) continue;                        // drop malformed line
+      String suffix = line.substring(0, tab);
+      String json   = line.substring(tab + 1);
+      if (ooEnqueue(suffix.c_str(), json.c_str(), json.length(), /*qos*/1, false, /*prio*/0)) { n++; continue; }
+      full = true;                                   // from here on, persist instead of resend
+    }
+    if (tmp) { tmp.print(line); tmp.write('\n'); }   // keep this + all following lines
   }
-  bool drainedAll = !f.available();
   f.close();
-  if (drainedAll) LittleFS.remove(PATH);          // all replayed -> clear
+  if (tmp) tmp.close();
+  LittleFS.remove(PATH);
+  if (full) LittleFS.rename(TMP, PATH);              // unsent remainder becomes the new buffer
+  else      LittleFS.remove(TMP);                    // everything replayed -> clear both
   return n;
 #else
   return 0;

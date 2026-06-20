@@ -197,6 +197,8 @@ static bool canRead(uint32_t id, float* out) {
   return false;
 }
 
+void ooCanPoll() { canPoll(); }   // public: call frequently to avoid RX overflow
+
 void ooDriversInit() {
   Wire.begin(OO_I2C_SDA, OO_I2C_SCL);
   bmp280Init();
@@ -237,5 +239,6 @@ OoReading ooReadChannel(const OoChannel& ch) {
 
 void ooDriversInit() {}
 OoReading ooReadChannel(const OoChannel& ch) { return { ooSimRead(ch), "good" }; }
+void ooCanPoll() {}
 
 #endif

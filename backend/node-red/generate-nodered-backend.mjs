@@ -51,7 +51,7 @@ const initFunc = `
 const __DBTZ = env.get('DB_TZ') || '+07:00';
 let currentPool = global.get('pool');
 if (!currentPool || typeof currentPool.query !== 'function') {
-  currentPool = mysql.createPool({         // <--- อัปเดตตัวแปร currentPool ตรงนี้
+  currentPool = mysql.createPool({
     host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',
     port: Number(env.get('DB_PORT') || 3306),
     user: env.get('DB_USER') || 'admin',
@@ -59,14 +59,11 @@ if (!currentPool || typeof currentPool.query !== 'function') {
     database: env.get('DB_NAME') || 'iothub',
     namedPlaceholders: true, connectionLimit: 10, timezone: __DBTZ,
   });
-  global.set('pool', currentPool);         // <--- แล้วค่อยเอาไปเซฟลง Global
-}
   // mysql2/promise createPool() returns a PromisePool whose EventEmitter is the
-  // underlying core pool at .pool — binding .on() on the wrapper throws and would
-  // leave the pool unset. Guard it so global.set('pool') always runs.
+  // underlying core pool (.pool); binding .on() on the wrapper throws, so guard it.
   try { (currentPool.pool || currentPool).on('connection', (c) => { c.query("SET time_zone = '" + __DBTZ + "'"); }); }
   catch (e) { node.warn('tz hook skipped: ' + e.message); }
-  // global.set('pool', currentPool);
+  global.set('pool', currentPool);
 }
 function breaches(v,l,d){return d==='high'?v>=l:v<=l;}
 function cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}

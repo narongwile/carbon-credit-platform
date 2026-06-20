@@ -8,6 +8,6 @@
 // ===========================================================================
 enum OoTransit { TRANSIT_IDLE = 0, TRANSIT_IN_TRANSIT, TRANSIT_ARRIVED, TRANSIT_STORED };
 
-void        ooTransitInit();
+void        ooTransitInit(OoTransit initial = TRANSIT_IDLE);  // seed (restore across deep sleep)
 OoTransit   ooTransitTick(float impactG, float gpsSpeedKnots, uint64_t nowMs);
 const char* ooTransitName(OoTransit s);

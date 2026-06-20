@@ -52,7 +52,7 @@ on overflow, alarms are never dropped).
 | --- | --- |
 | **eternity** | DGA H2 **rate-of-rise** trend (`dga_h2_rate` in heartbeat); Modbus + CAN sensor mix |
 | **carbonbox** | **door-open dwell** debounce (alarm only after `OO_EVENT_DEBOUNCE_MS`); **compressor** relay sense (DI) |
-| **bloodbox** | real **battery %** in heartbeat; **transit FSM** (idle→in_transit→arrived→stored); **GPS** (NMEA RMC) lat/lng; **transit-aware power cadence** (slow when stored / low battery); `ooEnterDeepSleep()` for a duty-cycle build |
+| **bloodbox** | real **battery %** in heartbeat; **transit FSM** (idle→in_transit→arrived→stored); **GPS** (NMEA RMC) lat/lng; **transit-aware power cadence**; **deep-sleep duty cycle when STORED** (`OO_DEEPSLEEP_ENABLE`, transit state persisted in RTC memory across the reset); **4G failover hook** (`modem_4g.cpp`) |
 
 ## Sensor drivers (demo — real buses, per the schematic)
 `drivers.cpp` reads each channel from the actual bus on the board (pins in
@@ -86,6 +86,10 @@ and the I²C part numbers / Modbus+CAN maps against the populated BOM.
   ESP-IDF `esp-mqtt` client (`CONFIG_MQTT_PROTOCOL_5`). Documented trade-off.
 - **secure-boot V2 + flash-encryption** (§19) — these are **eFuse EOL steps**,
   burned by the factory line, not by this build (`platformio.ini` notes it).
+- **4G modem** — `modem_4g.cpp` provides the strong `ooCellAvailable()` override
+  (modem bring-up + registration check via TinyGSM), gated by `OO_HAVE_TINYGSM`.
+  Routing the MQTT/TLS session itself over the modem (TinyGsmClient in
+  `net_mqtt.cpp`) is the remaining integration step.
 - **4G/LoRa transport** — the ranking + **hysteresis logic** is implemented
   (`transport.cpp`) with Wi-Fi concrete; `ooCellAvailable()`/`ooLoRaAvailable()`
   are weak hooks returning false. Wiring the actual radios needs **TinyGSM** (4G)
@@ -120,6 +124,7 @@ and the I²C part numbers / Modbus+CAN maps against the populated BOM.
 | `src/gps.{h,cpp}` | NMEA-RMC GPS parser (bloodbox) |
 | `src/transit.{h,cpp}` | bloodbox transit state machine |
 | `src/power.{h,cpp}` | battery read + transit-aware cadence + deep-sleep helper |
+| `src/modem_4g.{h,cpp}` | 4G modem (TinyGSM) — `ooCellAvailable()` for failover |
 | `src/oneops.{h,cpp}` | egress queue + shared contracts (§14) |
 | `src/net_mqtt.{h,cpp}` | Wi-Fi + MQTT QoS1/LWT/mTLS + downlink (§1/§5/§7/§15) |
 | `src/ota.{h,cpp}` | A/B HTTPS OTA + rollback (§24) |

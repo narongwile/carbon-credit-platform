@@ -19,3 +19,7 @@ struct OoReading {
 
 void      ooDriversInit();
 OoReading ooReadChannel(const OoChannel& ch);
+// Drain the CAN/TWAI RX queue into the cache. MUST be called frequently
+// (e.g. every 50 ms in SensorTask) so the hardware RX queue never overflows —
+// not only at sample time. No-op if CAN is not active.
+void      ooCanPoll();

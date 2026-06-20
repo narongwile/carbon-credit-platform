@@ -23,12 +23,16 @@
 #include "gps.h"
 #include "transit.h"
 #include "power.h"
+#include "modem_4g.h"
 #include "net_mqtt.h"
 #include "ota.h"
 
 static const OoProfile* profile = nullptr;
 static uint32_t  bootMs = 0;
 static bool      isBlood = false, isEternity = false;
+// Persisted across deep sleep (RTC slow memory survives the reset) so a STORED
+// bloodbox resumes the duty cycle instead of restarting the transit FSM.
+RTC_DATA_ATTR static int rtcTransit = TRANSIT_IDLE;
 static OoTransit transitState = TRANSIT_IDLE;
 static OoTr      curTransport = TR_WIFI;
 #define DGA_KEY 0
@@ -87,11 +91,7 @@ static void sensorTask(void*) {
     uint32_t now = millis();
     uint64_t epoch = ooEpochMs();
     if (isBlood) ooGpsTick();
-    // ให้มันกวาดข้อมูลจาก CAN Bus ทิ้งตลอดเวลา (ทุกๆ 50ms)
-    // ถ้ามี Driver CAN คืนค่าออกมาเป็นฟังก์ชันให้เรียกใช้ เช่น ooCanPoll()
-    #if defined(isEternity) // หรือเช็ค profile
-       ooCanPoll(); 
-    #endif
+    ooCanPoll();   // drain CAN RX queue every 50 ms (no-op if CAN inactive) — avoids overflow
 
     uint32_t period = isBlood ? ooPowerSampleMs(ooCfgSampleMs(), transitState, ooBatteryPct())
                               : ooCfgSampleMs();
@@ -113,6 +113,17 @@ static void sensorTask(void*) {
       if (isBlood) transitState = ooTransitTick(impactG, ooGpsSpeedKnots(), epoch);
     }
     if (now - lastBeat >= OO_HEARTBEAT_MS) { lastBeat = now; buildHeartbeat(); }
+#if OO_DEEPSLEEP_ENABLE
+    // BloodBox battery saver: once STORED (stationary at destination), publish a
+    // cycle then deep-sleep. The `now > 8000` gate guarantees each wake stays up
+    // long enough to sample + connect + publish before sleeping again.
+    if (isBlood && transitState == TRANSIT_STORED && now > 8000) {
+      rtcTransit = transitState;                      // survive the reset
+      buildHeartbeat();                               // last state before sleeping
+      vTaskDelay(pdMS_TO_TICKS(4000));                // let MqttTask drain (else it's in the store)
+      ooEnterDeepSleep(OO_DEEPSLEEP_S);               // resets; wakes -> sample -> publish -> sleep
+    }
+#endif
     gHb[HB_SENSOR]++;
     ooTimeTick();
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -168,7 +179,8 @@ void setup() {
   ooStoreInit();                                    // offline store-and-forward (§14)
   ooPowerInit();
   ooTransportInit();
-  if (isBlood) { ooGpsInit(); ooTransitInit(); }    // transit position + FSM
+  if (isBlood) { ooGpsInit(); ooTransitInit((OoTransit)rtcTransit); }  // restore state across deep sleep
+  ooCellInit();                                     // 4G modem (no-op unless OO_HAVE_TINYGSM)
 
   Serial.printf("\n[boot] %s fw %s product=%s channels=%u provisioned=%d rtc=%d store=%uB\n",
                 ooId().device.c_str(), ooId().fw.c_str(), ooId().product.c_str(),
