@@ -49,8 +49,9 @@ const initFunc = `
 // Records are written in DB_TZ (default ICT, +07:00): mysql2 converts JS Date in
 // this tz and each connection's session time_zone is pinned so NOW() is Bangkok.
 const __DBTZ = env.get('DB_TZ') || '+07:00';
-if (!global.get('pool')) {
-  const __pool = mysql.createPool({
+let currentPool = global.get('pool');
+if (!currentPool || typeof currentPool.query !== 'function') {
+    global.set('pool', mysql.createPool({
     host: env.get('DB_HOST') || 'mysql.data.svc.cluster.local',
     port: Number(env.get('DB_PORT') || 3306),
     user: env.get('DB_USER') || 'admin',
