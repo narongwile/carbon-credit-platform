@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Boxes, ArrowLeft, Mail, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import api from '@/lib/api'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
@@ -15,9 +16,16 @@ export default function ForgotPasswordPage() {
   const submit = async () => {
     if (!email) { toast.error('Please enter your email'); return }
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 700))
-    setLoading(false); setSent(true)
-    toast.success('Reset link sent')
+    try {
+      const r = await api.forgotPassword(email)
+      if (!r || (r as any).error) throw new Error((r as any)?.error || 'Failed to send request')
+      setSent(true)
+      toast.success('Reset link sent')
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send request')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

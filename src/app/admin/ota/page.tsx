@@ -18,6 +18,8 @@ export default function OTAManagementPage() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ version: '', target_hw: '', artefact_uri: '', release_notes: '' })
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [deployConfirm, setDeployConfirm] = useState<{ id: string, hw: string } | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -41,15 +43,15 @@ export default function OTAManagementPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this release?')) return
     await api.deleteOtaRelease(id)
     toast.success('Deleted')
+    setDeleteConfirm(null)
     load()
   }
 
   const handleDeploy = async (release_id: string, target_hw: string) => {
-    if (!confirm(`Deploy release to all ${target_hw} devices?`)) return
     const res = await api.deployFleetOta({ release_id, target_hw })
+    setDeployConfirm(null)
     if (res?.applied !== undefined) {
       toast.success(`Deployment initiated for ${res.applied} devices`)
       load()
@@ -105,8 +107,8 @@ export default function OTAManagementPage() {
                     <span className="text-xs text-slate-400">{r.target_hw}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => handleDeploy(r.id, r.target_hw)} className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 px-3 py-1.5 rounded-md transition-colors"><ArrowRightCircle size={14}/> Deploy to Fleet</button>
-                    <button onClick={() => handleDelete(r.id)} className="text-red-400 hover:text-red-300 p-1.5 rounded-md hover:bg-red-400/10 transition-colors"><Trash2 size={14} /></button>
+                    <button onClick={() => setDeployConfirm({ id: r.id, hw: r.target_hw })} className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 px-3 py-1.5 rounded-md transition-colors"><ArrowRightCircle size={14}/> Deploy to Fleet</button>
+                    <button onClick={() => setDeleteConfirm(r.id)} className="text-red-400 hover:text-red-300 p-1.5 rounded-md hover:bg-red-400/10 transition-colors"><Trash2 size={14} /></button>
                   </div>
                 </div>
                 <div className="text-xs text-slate-500 font-mono mb-2 truncate">{r.artefact_uri}</div>
@@ -149,6 +151,34 @@ export default function OTAManagementPage() {
           </div>
         </div>
       </div>
+
+      {/* Delete Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+            <h3 className="text-lg font-bold text-white">Delete Release?</h3>
+            <p className="text-sm text-slate-400">This action cannot be undone. Are you sure you want to delete this release?</p>
+            <div className="flex gap-3 justify-end pt-2">
+              <button onClick={() => setDeleteConfirm(null)} className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => handleDelete(deleteConfirm)} className="px-4 py-2 text-sm text-white bg-red-500/20 hover:bg-red-500/30 border border-red-500/50 rounded-lg transition-colors">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deploy Modal */}
+      {deployConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Server size={18} className="text-indigo-400" /> Deploy to Fleet</h3>
+            <p className="text-sm text-slate-400">Are you sure you want to deploy this release to all <strong className="text-white">{deployConfirm.hw}</strong> devices?</p>
+            <div className="flex gap-3 justify-end pt-2">
+              <button onClick={() => setDeployConfirm(null)} className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors">Cancel</button>
+              <button onClick={() => handleDeploy(deployConfirm.id, deployConfirm.hw)} className="px-4 py-2 text-sm text-white rounded-lg transition-colors" style={gradient}>Deploy Now</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Boxes, Eye, EyeOff, UserPlus, ArrowLeft, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import api from '@/lib/api'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
@@ -20,9 +21,16 @@ export default function RegisterPage() {
     if (!form.username || !form.email || !form.password) { toast.error('Please fill in all fields'); return }
     if (form.password !== form.confirm) { toast.error('Passwords do not match'); return }
     setLoading(true)
-    await new Promise((r) => setTimeout(r, 700))
-    setLoading(false); setDone(true)
-    toast.success('Account created')
+    try {
+      const r = await api.register({ name: form.username, email: form.email, password: form.password })
+      if (!r || (r as any).error) throw new Error((r as any)?.error || 'Registration failed')
+      setDone(true)
+      toast.success('Account created')
+    } catch (err: any) {
+      toast.error(err.message || 'Registration failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

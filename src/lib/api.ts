@@ -42,6 +42,9 @@ export const api = {
     if (r?.token) setToken(r.token)
     return r
   },
+  register: async (b: any) => req(`/api/auth/register`, { method: 'POST', body: JSON.stringify(b) }),
+  forgotPassword: async (email: string) => req(`/api/auth/forgot`, { method: 'POST', body: JSON.stringify({ email }) }),
+  updatePassword: async (b: any) => req(`/api/auth/password`, { method: 'PUT', body: JSON.stringify(b) }),
   logout: () => setToken(null),
 
   getRule: (nodeId: string) => req<NodeAlarmRule>(`/api/nodes/${nodeId}/rule`),
@@ -70,6 +73,13 @@ export const api = {
     req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/cmd`, { method: 'POST', body: JSON.stringify({ op, ...args }) }),
   sendOta: (nodeId: string, body: { to_version: string; artefact_uri: string; sha256?: string }) =>
     req<{ ok: boolean; topic: string }>(`/api/nodes/${nodeId}/ota`, { method: 'POST', body: JSON.stringify(body) }),
+  saveNodeDocuments: (id: string, docs: any[]) => req(`/api/nodes/${id}/documents`, { method: 'POST', body: JSON.stringify(docs) }),
+
+  meConfig: () => req(`/api/me/config`),
+  updateMeConfig: (b: any) => req(`/api/me/config`, { method: 'PUT', body: JSON.stringify(b) }),
+  
+  // Org Rule
+  updateOrgRule: (orgId: string, rule: any) => req(`/api/orgs/${orgId}/rule`, { method: 'PUT', body: JSON.stringify(rule) }),
 
   // Fleet OTA Management
   otaReleases: () => req<{id:string; version:string; target_hw:string; artefact_uri:string; released_at:string; release_notes:string}[]>(`/api/ota/releases`),

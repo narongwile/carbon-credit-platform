@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { getSession } from '@/lib/auth'
 import { api, apiEnabled } from '@/lib/api'
 import { UserCircle, Save, KeyRound } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -29,13 +30,23 @@ export default function ProfilePanel({ portal }: { portal: string }) {
 
   const saveProfile = async () => {
     const s = getSession()
-    if (apiEnabled && s) await api.putMyConfig(s.id, { phone: profile.phone, name: profile.name })
-    else await new Promise((r) => setTimeout(r, 300))
-    setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
+    if (s) {
+      try {
+        await api.updateMeConfig({ phone: profile.phone, name: profile.name })
+        setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
+      } catch (e: any) { toast.error('Failed to update profile') }
+    }
   }
   const savePwd = async () => {
-    if (!pwd.next || pwd.next !== pwd.confirm) return
-    await new Promise((r) => setTimeout(r, 300)); setSavedPwd(true); setPwd({ current: '', next: '', confirm: '' }); setTimeout(() => setSavedPwd(false), 2000)
+    if (!pwd.current || !pwd.next || pwd.next !== pwd.confirm) return
+    try {
+      const r = await api.updatePassword({ currentPassword: pwd.current, newPassword: pwd.next })
+      if (!r || (r as any).error) throw new Error((r as any)?.error || 'Failed to update')
+      setSavedPwd(true); setPwd({ current: '', next: '', confirm: '' }); setTimeout(() => setSavedPwd(false), 2000)
+      toast.success('Password updated')
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update password')
+    }
   }
 
   return (

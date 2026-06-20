@@ -8,13 +8,13 @@ import {
   listOrgs, upsertOrg, deleteOrg, getEntitlements, setEntitlements,
   listEventProblems, upsertEventProblem, deleteEventProblem,
   listDepartments, upsertDepartment, deleteDepartment,
-  listUsers, upsertUser, deleteUser, getProductAccess, putProductAccess, provisionNode,
+  listUsers, upsertUser, deleteUser, updateUserPassword, getProductAccess, putProductAccess, provisionNode,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
 import { publishDownlink } from './mqtt.js'
 import { userByEmail } from './repo.js'
-import { signToken, checkPassword, requireAuth, requireRole, orgScope, requireNode, requireEvent, loginRateLimit, noteLoginFailure, noteLoginSuccess } from './auth.js'
+import { signToken, checkPassword, hashPassword, requireAuth, requireRole, orgScope, requireNode, requireEvent, loginRateLimit, noteLoginFailure, noteLoginSuccess } from './auth.js'
 import { effectiveAccess, canSeeNode } from './repo.js'
 
 export const router = Router()
@@ -36,8 +36,37 @@ router.post('/auth/login', loginRateLimit, async (req, res) => {
   res.json({ token: signToken(claims), user: { id: claims.userId, orgId: claims.orgId, role: claims.role, name: u.name, email: u.email } })
 })
 
+router.post('/auth/register', async (req, res) => {
+  const { name, email, password, orgName } = req.body ?? {}
+  if (!name || !email || !password) return res.status(400).json({ error: 'missing fields' })
+  // For demonstration, we create a default org and add the user
+  const orgId = `org-${Date.now()}`
+  await setEntitlements(orgId, ['refrigeration', 'bloodbox']) // default access
+  const hash = await hashPassword(password)
+  const userId = await upsertUser(orgId, { name, email, role: 'admin', passwordHash: hash })
+  res.json({ ok: true, userId, orgId })
+})
+
+router.post('/auth/forgot', async (req, res) => {
+  const { email } = req.body ?? {}
+  if (!email) return res.status(400).json({ error: 'missing email' })
+  // In production, send email here. For now, pretend success.
+  res.json({ ok: true, message: 'recovery email sent if account exists' })
+})
+
 // Everything below requires a valid token.
 router.use(requireAuth)
+
+router.put('/auth/password', async (req, res) => {
+  const { currentPassword, newPassword } = req.body ?? {}
+  const u = await getUser(req.user!.userId)
+  if (!u || !u.password_hash || !(await checkPassword(currentPassword || '', u.password_hash as string))) {
+    return res.status(401).json({ error: 'invalid current password' })
+  }
+  const hash = await hashPassword(newPassword)
+  await updateUserPassword(req.user!.userId, hash)
+  res.json({ ok: true })
+})
 
 // ---- BloodBOX domain (transits, journey, floors, beacons, locations) -------
 router.use('/bloodbox', bloodboxRouter)

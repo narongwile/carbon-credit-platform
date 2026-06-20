@@ -1,10 +1,11 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { organizations } from '@/lib/mockData'
 import { Save, Upload, Trash2, Building2 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import api from '@/lib/api'
 
 export default function SettingsPage() {
   const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo } = useAppStore()
@@ -31,12 +32,20 @@ export default function SettingsPage() {
     loadWarn: 80,
     loadCrit: 95,
   })
+  const [emailAlerts, setEmailAlerts] = useState(true)
+  const [autoAck, setAutoAck] = useState(false)
   const [saved, setSaved] = useState(false)
 
   const save = async () => {
-    await new Promise((r) => setTimeout(r, 500))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      await api.updateOrgRule(selectedOrgId, { thresholds, autoAck })
+      await api.updateMeConfig({ emailAlerts })
+      setSaved(true)
+      toast.success('Settings saved')
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to save settings')
+    }
   }
 
   const inputStyle = {
@@ -161,18 +170,22 @@ export default function SettingsPage() {
                   <div className="text-sm text-slate-300">Email Alerts</div>
                   <div className="text-xs text-slate-600">Critical alarm emails</div>
                 </div>
-                <div className="w-10 h-5 rounded-full relative bg-indigo-500">
-                  <div className="absolute top-0.5 translate-x-5 w-4 h-4 rounded-full bg-white transition-transform" />
-                </div>
+                <button onClick={() => setEmailAlerts(!emailAlerts)} className="transition-transform hover:scale-110">
+                  <div className={`w-10 h-5 rounded-full relative transition-colors ${emailAlerts ? 'bg-indigo-500' : 'bg-slate-700'}`}>
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${emailAlerts ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </div>
+                </button>
               </div>
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-sm text-slate-300">Auto-acknowledge</div>
                   <div className="text-xs text-slate-600">After 24 hours</div>
                 </div>
-                <div className="w-10 h-5 rounded-full relative bg-slate-700">
-                  <div className="absolute top-0.5 translate-x-0.5 w-4 h-4 rounded-full bg-white" />
-                </div>
+                <button onClick={() => setAutoAck(!autoAck)} className="transition-transform hover:scale-110">
+                  <div className={`w-10 h-5 rounded-full relative transition-colors ${autoAck ? 'bg-indigo-500' : 'bg-slate-700'}`}>
+                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${autoAck ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </div>
+                </button>
               </div>
             </div>
           </div>

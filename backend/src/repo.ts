@@ -162,11 +162,15 @@ export async function listUsers(orgId: string): Promise<RowDataPacket[]> {
   const [r] = await pool.query<RowDataPacket[]>('SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=:o ORDER BY name', { o: orgId })
   return r
 }
-export async function upsertUser(orgId: string, b: { id?: string; email?: string; name: string; role?: string; departmentId?: string }): Promise<string> {
+export async function upsertUser(orgId: string, b: { id?: string; email?: string; name: string; role?: string; departmentId?: string; passwordHash?: string }): Promise<string> {
   const id = b.id || `u-${Date.now()}`
-  await pool.query('INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (:id,:o,:e,:n,:r,:d) ON DUPLICATE KEY UPDATE email=:e,name=:n,role=:r,department_id=:d',
-    { id, o: orgId, e: b.email ?? null, n: b.name, r: b.role ?? 'viewer', d: b.departmentId ?? null })
+  await pool.query('INSERT INTO users (id,org_id,email,name,role,department_id,password_hash) VALUES (:id,:o,:e,:n,:r,:d,:p) ON DUPLICATE KEY UPDATE email=:e,name=:n,role=:r,department_id=:d' + (b.passwordHash ? ',password_hash=:p' : ''),
+    { id, o: orgId, e: b.email ?? null, n: b.name, r: b.role ?? 'viewer', d: b.departmentId ?? null, p: b.passwordHash ?? null })
   return id
+}
+
+export async function updateUserPassword(userId: string, hash: string): Promise<void> {
+  await pool.query('UPDATE users SET password_hash=:h WHERE id=:id', { h: hash, id: userId })
 }
 export async function deleteUser(id: string): Promise<void> { await pool.query('DELETE FROM users WHERE id=:id', { id }) }
 export async function getProductAccess(scope: string, scopeId: string): Promise<RowDataPacket[]> {

@@ -65,7 +65,19 @@ export default function AlarmNotificationPage() {
   const setTarget = (id: string, target: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, target } : x)))
   const toggleEvent = (id: string) => setEvents((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]))
 
-  const save = async () => { await new Promise((r) => setTimeout(r, 400)); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+  const save = async () => {
+    try {
+      await api.updateMeConfig({
+        notificationChannels: chans,
+        notificationEvents: events
+      })
+      setSaved(true)
+      toast.success('Notification preferences saved')
+      setTimeout(() => setSaved(false), 2000)
+    } catch (e: any) {
+      toast.error('Failed to save preferences')
+    }
+  }
 
   return (
     <div className="p-6 space-y-5">
