@@ -1,0 +1,85 @@
+# ============================================================
+# Next.js platform UI — THE production frontend at iiotplatform.thermexpertise.com.
+# Its own Deployment (separate from the parked Vite frontend-web, which stays
+# commented out in kustomization for separate future development).
+# Static export served by nginx. API/telemetry run in the user's BROWSER and
+# call Node-RED's public ingress directly (httpNodeCors '*'), so no in-pod
+# egress to carbon-credit is needed (app-ns NetworkPolicy only allows ->data).
+# Build the image with NEXT_PUBLIC_API_URL / NEXT_PUBLIC_WS_URL baked in
+# (Next.js inlines them at build time):
+#   NEXT_PUBLIC_API_URL=https://nodered.thermexpertise.com
+#   NEXT_PUBLIC_WS_URL=wss://nodered.thermexpertise.com/ws/telemetry
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-next
+  namespace: app
+  labels:
+    app: frontend-next
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend-next
+  template:
+    metadata:
+      labels:
+        app: frontend-next
+    spec:
+      containers:
+      - name: frontend
+        image: registry.ci.svc.cluster.local/carbon-credit/frontend-next:latest  # CONFIRM registry/path
+        ports:
+        - containerPort: 80
+        resources:
+          requests: { cpu: "50m", memory: "128Mi" }
+          limits:   { cpu: "500m", memory: "512Mi" }
+        livenessProbe:
+          httpGet: { path: /, port: 80 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet: { path: /, port: 80 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-next
+  namespace: app
+spec:
+  selector:
+    app: frontend-next
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend-next
+  namespace: app
+  annotations:
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: iiotplatform.thermexpertise.com          # production host (Vite frontend-web is parked, not deployed)
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-next
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - iiotplatform.thermexpertise.com
+    secretName: frontend-next-tls

@@ -44,3 +44,11 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 3
+  # ── Next.js platform UI ──
+  - target:
+      kind: Deployment
+      name: frontend-next
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
