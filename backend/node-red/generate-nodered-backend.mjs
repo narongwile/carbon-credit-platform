@@ -58,7 +58,11 @@ if (!global.get('pool')) {
     database: env.get('DB_NAME') || 'iothub',
     namedPlaceholders: true, connectionLimit: 10, timezone: __DBTZ,
   });
-  __pool.on('connection', (c) => { c.query("SET time_zone = '" + __DBTZ + "'"); });
+  // mysql2/promise createPool() returns a PromisePool whose EventEmitter is the
+  // underlying core pool at .pool — binding .on() on the wrapper throws and would
+  // leave the pool unset. Guard it so global.set('pool') always runs.
+  try { (__pool.pool || __pool).on('connection', (c) => { c.query("SET time_zone = '" + __DBTZ + "'"); }); }
+  catch (e) { node.warn('tz hook skipped: ' + e.message); }
   global.set('pool', __pool);
 }
 function breaches(v,l,d){return d==='high'?v>=l:v<=l;}
@@ -276,7 +280,7 @@ return null;
 // Auto-clear: an open threshold/rate event whose param has stayed NORMAL for the
 // whole CLEAR_AFTER_MIN window (deadband = hysteresis) is closed (spec §9 CLEAR).
 const clearSweepFunc = `
-const pool = global.get('pool'); if (!pool) return null;
+const pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;
 const CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);
 (async () => {
   const [evs] = await pool.query("SELECT e.id, e.node_id, e.param_key, n.mqtt_prefix FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.cleared_at IS NULL AND e.kind IN ('threshold','rate')");
@@ -323,7 +327,7 @@ return null;
 
 // Retention: roll raw readings into hourly buckets, then purge raw older than N days.
 const retentionFunc = `
-const pool = global.get('pool'); if (!pool) return null;
+const pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;
 const DAYS = Number(env.get('READINGS_RETENTION_DAYS') || 30);
 (async () => {
   await pool.query("INSERT INTO readings_rollup (node_id, param_key, bucket, n, v_avg, v_min, v_max) " +
@@ -339,7 +343,7 @@ return null;
 // Offline detection: any device online but unseen > OFFLINE_AFTER_S ⇒ mark offline,
 // raise a CRITICAL offline event, and route to notify (per-tenant, like any alarm).
 const offlineSweepFunc = `
-const pool = global.get('pool'); if (!pool) return null;
+const pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;
 const AFTER = Number(env.get('OFFLINE_AFTER_S') || 90);
 (async () => {
   const [rows] = await pool.query(
@@ -357,7 +361,7 @@ return null;
 `
 
 const escalationFunc = `
-const pool = global.get('pool'); if(!pool) return null;
+const pool = global.get('pool'); if(!pool || typeof pool.query !== 'function') return null;
 (async()=>{
   const [rows]=await pool.query("SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL AND escalated=0 AND raised_at<(NOW(3)-INTERVAL ${ESCALATE_MIN} MINUTE)");
   for(const r of rows){ node.send({ payload: { nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'ESCALATION · '+r.param_label, kind:r.kind, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }
@@ -553,7 +557,7 @@ return msg;
 
 // --- Scheduled reports: cron → CSV summary → email (notify) ------------------
 const reportRunFunc = `
-const pool = global.get('pool'); if (!pool) return null;
+const pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') return null;
 (async () => {
   const [due] = await pool.query("SELECT * FROM report_schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=NOW(3))");
   for (const s of due) {
