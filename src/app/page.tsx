@@ -178,26 +178,7 @@ export default function LoginPage() {
             <a href="/register/" className="text-slate-400 hover:text-white transition-colors">Create an account →</a>
           </div>
 
-          {/* Demo hints */}
-          <div className="mt-6 pt-5" style={{ borderTop: '1px solid #1e2433' }}>
-            <p className="text-xs text-slate-600 mb-3 text-center uppercase tracking-wider">Demo Credentials</p>
-            <div className="grid grid-cols-3 gap-2">
-              {ROLE_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => fillHint(tab.id)}
-                  className="p-2.5 rounded-lg text-center hover:border-indigo-500/50 transition-all group"
-                  style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
-                >
-                  <div className="flex justify-center mb-1 text-slate-500 group-hover:text-indigo-400 transition-colors">
-                    {tab.icon}
-                  </div>
-                  <div className="text-xs font-medium text-slate-300 group-hover:text-white">{tab.label}</div>
-                  <div className="text-[10px] text-slate-600 mt-0.5">{tab.hint.user}</div>
-                </button>
-              ))}
-            </div>
-          </div>
+          {/* Demo hints removed for production */}
         </div>
 
         <p className="text-center text-slate-700 text-xs mt-6">

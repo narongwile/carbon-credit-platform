@@ -20,16 +20,25 @@ spec:
         image: registry.ci.svc.cluster.local/carbon-credit/frontend:latest
         ports:
         - containerPort: 80
-        env:
-        - name: VITE_API_URL
-          value: "http://backend-api.app.svc.cluster.local:3000"
         resources:
           requests:
             cpu: "50m"
             memory: "128Mi"
           limits:
-            cpu: "200m"
-            memory: "256Mi"
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -53,7 +62,8 @@ metadata:
     # Tell Traefik to handle this ingress
     kubernetes.io/ingress.class: traefik
     # Optional: Redirect HTTP to HTTPS if needed
-    # traefik.ingress.kubernetes.io/router.entrypoints: web, websecure
+    traefik.ingress.kubernetes.io/router.entrypoints: web, websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   rules:
   - host: iiotplatform.thermexpertise.com
@@ -66,3 +76,7 @@ spec:
             name: frontend-web
             port:
               number: 80
+  tls:
+  - hosts:
+    - iiotplatform.thermexpertise.com
+    secretName: frontend-web-tls
