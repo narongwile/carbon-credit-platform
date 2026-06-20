@@ -87,6 +87,11 @@ static void sensorTask(void*) {
     uint32_t now = millis();
     uint64_t epoch = ooEpochMs();
     if (isBlood) ooGpsTick();
+    // ให้มันกวาดข้อมูลจาก CAN Bus ทิ้งตลอดเวลา (ทุกๆ 50ms)
+    // ถ้ามี Driver CAN คืนค่าออกมาเป็นฟังก์ชันให้เรียกใช้ เช่น ooCanPoll()
+    #if defined(isEternity) // หรือเช็ค profile
+       ooCanPoll(); 
+    #endif
 
     uint32_t period = isBlood ? ooPowerSampleMs(ooCfgSampleMs(), transitState, ooBatteryPct())
                               : ooCfgSampleMs();
