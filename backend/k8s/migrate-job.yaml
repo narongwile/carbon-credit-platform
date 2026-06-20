@@ -1,0 +1,49 @@
+# ===========================================================================
+#  ArgoCD auto-migration — PreSync hook Job.
+#
+#  Runs `node dist/migrate.js` (schema.sql + bloodbox.sql + migrate-v*.sql)
+#  against MySQL BEFORE the backend Deployment syncs, so the app never starts
+#  against an old schema. The runner is idempotent (schema_migrations table +
+#  duplicate-column/key tolerance) so this is safe to run on every sync.
+#
+#  Ordering: sync-wave -1 + the wait-for-db init guarantee MySQL is reachable
+#  first. AUTO_SEED=0 keeps demo seed data out of production.
+# ===========================================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: oneops-db-migrate
+  namespace: data
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 5                 # retry (e.g. DB still starting) before failing the sync
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 600    # auto-clean finished Jobs
+  template:
+    metadata:
+      labels: { app: oneops-backend, job: db-migrate }
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command: ['sh', '-c', 'until nc -z "$DB_HOST" "$DB_PORT"; do echo "waiting for $DB_HOST:$DB_PORT"; sleep 2; done; echo db-up']
+          envFrom:
+            - secretRef: { name: oneops-backend-secrets }
+      containers:
+        - name: migrate
+          # MUST be the same image/tag as the backend Deployment so dist/migrate.js
+          # and the bundled backend/sql/*.sql match the app version being deployed.
+          image: registry.local/oneops-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'dist/migrate.js']
+          env:
+            - { name: AUTO_SEED, value: "0" }   # never seed demo data in prod
+          envFrom:
+            - secretRef: { name: oneops-backend-secrets }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 256Mi }

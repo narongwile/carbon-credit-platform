@@ -143,16 +143,16 @@ const ingestFunc = `
 const __H = { 'Access-Control-Allow-Origin': '*' };
 const __http = !!(msg.req && msg.res);   // only HTTP-origin msgs get a response (out 3)
 const pool = global.get('pool'); const evaluate = global.get('evaluate');
-const { nodeId, values, ts } = msg.payload || {};
+const { nodeId, values, qual, ts } = msg.payload || {};
 if (!pool || !evaluate || !nodeId || !values) { msg.headers = __H; msg.statusCode = 400; msg.payload = { error: 'bad input' }; node.send([msg, null, __http ? msg : null, null]); return null; }
 const taken = new Date(ts || Date.now());
 (async () => {
-  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at) VALUES (?,?,?,?)',[nodeId,k,v,taken]); }
+  for (const [k,v] of Object.entries(values)) { if(typeof v==='number') await pool.query('INSERT IGNORE INTO readings (node_id,param_key,value,taken_at,quality) VALUES (?,?,?,?,?)',[nodeId,k,v,taken,(qual&&qual[k])||'good']); }
   const [rr] = await pool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?',[nodeId]);
   const [mm] = await pool.query('SELECT org_id, department_id, mqtt_prefix FROM nodes WHERE id=?',[nodeId]);
   if (!rr.length || !mm.length) { msg.headers=__H; msg.payload={inserted:0,reason:'no rule/node'}; node.send([msg,null,__http?msg:null,null]); return; }
   const rule = typeof rr[0].rule_json==='string'?JSON.parse(rr[0].rule_json):rr[0].rule_json;
-  const [rows] = await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) ORDER BY taken_at ASC',[nodeId]);
+  const [rows] = await pool.query("SELECT param_key,value,taken_at FROM readings WHERE node_id=? AND taken_at>(NOW(3)-INTERVAL 360 MINUTE) AND quality IN ('good','sim') ORDER BY taken_at ASC",[nodeId]);  // a dead sensor (quality=error) must not raise/clear alarms (§16)
   const byTs=new Map();
   for(const r of rows){const t=new Date(r.taken_at).getTime(); if(!byTs.has(t))byTs.set(t,{time:new Date(t).toISOString(),ts:t,values:{}}); byTs.get(t).values[r.param_key]=Number(r.value);}
   const readings=[...byTs.values()].sort((a,b)=>a.ts-b.ts);
@@ -236,24 +236,28 @@ if (p && typeof p==='object' && !p.nodeId && p.channel===undefined) {
     const id = p.device_id || fromTopic(2);
     if (!id) return null;
     const online = p.state ? (p.state==='online'?1:0) : 1;   // heartbeat ⇒ online
-    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt, ts:p.ts||Date.now() } }, null];
+    return [null, { payload: { nodeId:id, online, rssi:p.rssi, fw:p.fw, batt:p.batt,
+      uptime:p.uptime, heap:p.heap, time_src:p.time_src, transport:p.transport,
+      transit:p.transit, lat:p.lat, lng:p.lng, ts:p.ts||Date.now() } }, null];
   }
   // diag/log or ota/progress → device_logs (Out3)
   const isOta = p.pct!==undefined || p.status!==undefined;
   const id = p.device_id || fromTopic(isOta ? 3 : 3);
-  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', payload: p, ts: p.ts||Date.now() } }];
+  if (id) return [null, null, { payload: { nodeId:id, kind: isOta?'ota':'diag', level: p.level||p.status||'info', code: p.code||null, payload: p, ts: p.ts||Date.now() } }];
   return null;
 }
-// --- readings
-let nodeId, raw = {}, ts = Date.now();
-if (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; ts=p.ts||ts; }
-else if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; }
+// --- readings (carry per-channel quality, spec §16)
+let nodeId, raw = {}, rawQ = {}, ts = Date.now();
+if (p && typeof p==='object' && p.nodeId){ nodeId=p.nodeId; raw=p.values||{}; rawQ=p.qual||{}; ts=p.ts||ts; }
+else if (p && typeof p==='object' && p.device_id && p.channel!==undefined){ nodeId=p.device_id; ts=p.ts||ts; raw={[p.channel]:Number(p.value)}; rawQ={[p.channel]:p.quality||'good'}; }
 else if (p && typeof p==='object'){ return null; }
 else { const t=topo; nodeId=t[1]; raw={[t[2]]:Number(msg.payload)}; }
 if(!nodeId) return null;
-const values = {};
-for (const k of Object.keys(raw)) { const v = raw[k]; if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; } else values[MAP[k]||k]=v; }
-return [{ payload: { nodeId, values, ts } }, null, null];
+const values = {}, qual = {};
+for (const k of Object.keys(raw)) { const v = raw[k]; const q = rawQ[k]||'good';
+  if (k==='temp_c'){ values.tempHigh=v; values.tempLow=v; qual.tempHigh=q; qual.tempLow=q; }
+  else { const mk=MAP[k]||k; values[mk]=v; qual[mk]=q; } }
+return [{ payload: { nodeId, values, qual, ts } }, null, null];
 `
 
 // Presence upsert: heartbeat/status keep device_presence fresh (last_seen, online).
@@ -261,8 +265,8 @@ const presenceFunc = `
 const pool = global.get('pool'); const e = msg.payload;
 if (!pool || !e || !e.nodeId) return null;
 (async () => {
-  await pool.query("INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?,?,NOW(3),?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw)",
-    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null]);
+  await pool.query("INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw, uptime_s, heap, time_src, transport, transit, lat, lng) VALUES (?,?,NOW(3),?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), rssi=VALUES(rssi), batt=VALUES(batt), fw=VALUES(fw), uptime_s=VALUES(uptime_s), heap=VALUES(heap), time_src=VALUES(time_src), transport=VALUES(transport), transit=VALUES(transit), lat=VALUES(lat), lng=VALUES(lng)",
+    [e.nodeId, e.online?1:0, e.rssi ?? null, e.batt ?? null, e.fw ?? null, e.uptime ?? null, e.heap ?? null, e.time_src ?? null, e.transport ?? null, e.transit ?? null, e.lat ?? null, e.lng ?? null]);
   // offline-recovery: device back online ⇒ clear any open offline alarm
   if (e.online) await pool.query("UPDATE alarm_events SET cleared_at=NOW(3) WHERE node_id=? AND kind='offline' AND cleared_at IS NULL", [e.nodeId]);
 })().catch(err => node.error('presence: ' + err.message));
@@ -301,8 +305,8 @@ const devlogFunc = `
 const pool = global.get('pool'); const e = msg.payload;
 if (!pool || !e || !e.nodeId) return null;
 (async () => {
-  await pool.query("INSERT INTO device_logs (node_id, kind, level, payload, ts) VALUES (?,?,?,?,NOW(3))",
-    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), JSON.stringify(e.payload||{})]);
+  await pool.query("INSERT INTO device_logs (node_id, kind, level, code, payload, ts) VALUES (?,?,?,?,?,NOW(3))",
+    [e.nodeId, e.kind||'diag', String(e.level||'info').slice(0,32), e.code? String(e.code).slice(0,40): null, JSON.stringify(e.payload||{})]);
 })().catch(err => node.error('devlog: ' + err.message));
 return null;
 `
