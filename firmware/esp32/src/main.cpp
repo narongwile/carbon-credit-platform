@@ -80,7 +80,7 @@ static void buildHeartbeat() {
     if (ooGpsFix()) { d["lat"] = ooGpsLat(); d["lng"] = ooGpsLng(); }
   }
   if (isEternity) { float r = ooTrendPerHour(DGA_KEY); if (!isnan(r)) d["dga_h2_rate"] = r; }
-  char buf[320]; size_t n = serializeJson(d, buf);
+  char buf[384]; size_t n = serializeJson(d, buf);   // room for bloodbox transit/gps fields
   if (ooMqttConnected()) ooEnqueue("heartbeat", buf, n, /*qos*/0, false, /*prio*/0);  // §3 (drop if offline)
 }
 

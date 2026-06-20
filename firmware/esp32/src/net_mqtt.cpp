@@ -49,8 +49,17 @@ void ooNetInit() {
 
 #if OO_MQTT_TLS
   const OoCerts& c = ooCerts();
-  if (c.ca.length())          net.setCACert(c.ca.c_str());
-  else                        net.setInsecure();        // DEV ONLY (no CA pinned)
+  if (c.ca.length()) {
+    net.setCACert(c.ca.c_str());                        // verify the broker cert (production)
+  } else {
+#if OO_TLS_ALLOW_INSECURE
+    Serial.println("[mqtt] WARNING: no CA pinned — TLS server validation DISABLED (dev only)");
+    net.setInsecure();
+#else
+    Serial.println("[mqtt] ERROR: TLS enabled but no CA provisioned — refusing to connect");
+    return;                                             // fail closed: never MITM-able in production
+#endif
+  }
   if (c.haveClient) {                                    // mutual TLS (spec §2)
     net.setCertificate(c.clientCert.c_str());
     net.setPrivateKey(c.clientKey.c_str());

@@ -5,6 +5,7 @@
 static OoIdentity gId;
 static OoCerts    gCerts;
 static Preferences gNvs;
+static volatile uint32_t gSampleMs = 1500;   // RAM cache of the config sample rate
 
 static String nvsStr(const char* key, const char* dflt) {
   String v = gNvs.getString(key, "");
@@ -33,15 +34,16 @@ void ooIdentityInit() {
 
   gId.provisioned = gNvs.getString("cert", "").length() > 0;
 
-  // Seed sample-rate default once.
+  // Seed sample-rate default once, then load into the RAM cache.
   if (!gNvs.isKey("sample_ms"))
     gNvs.putUInt("sample_ms", OO_SAMPLE_MS ? OO_SAMPLE_MS : 1500);
+  gSampleMs = gNvs.getUInt("sample_ms", OO_SAMPLE_MS ? OO_SAMPLE_MS : 1500);
 }
 
 const OoIdentity& ooId()    { return gId; }
 const OoCerts&    ooCerts() { return gCerts; }
 
-uint32_t ooCfgSampleMs()            { return gNvs.getUInt("sample_ms", OO_SAMPLE_MS ? OO_SAMPLE_MS : 1500); }
-void     ooCfgSetSampleMs(uint32_t ms) { if (ms >= 200 && ms <= 600000) gNvs.putUInt("sample_ms", ms); }
+uint32_t ooCfgSampleMs()            { return gSampleMs; }   // RAM cache (no flash read per loop)
+void     ooCfgSetSampleMs(uint32_t ms) { if (ms >= 200 && ms <= 600000) { gSampleMs = ms; gNvs.putUInt("sample_ms", ms); } }
 uint32_t ooCfgVersion()             { return gNvs.getUInt("cfg_v", 0); }
 void     ooCfgSetVersion(uint32_t v){ gNvs.putUInt("cfg_v", v); }

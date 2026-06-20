@@ -30,6 +30,9 @@
 #define OO_MQTT_USER   ""             // empty = anonymous / cert-only auth
 #define OO_MQTT_PASS   ""
 #define OO_MQTT_TLS    1              // 1 = TLS/mTLS (prod); 0 = plain dev broker
+// 1 = allow setInsecure() when no CA is provisioned (bench/dev). Set 0 in
+// production so a missing CA fails closed instead of accepting any server cert.
+#define OO_TLS_ALLOW_INSECURE 1
 
 // ---- Topic root ------------------------------------------------------------
 // ""          -> spec form  P = {tenant}/{product}/{device}        (production)
