@@ -185,6 +185,15 @@ const floorplanPutFunc = CORS + `const pool=global.get('pool');
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
+// Per-company branding logo (org-admin scoped). Mirrors the Express
+// PUT /orgs/:id/branding so the static frontend can persist a logo on prod.
+const brandingPutFunc = CORS + `const pool=global.get('pool');
+(async()=>{
+  const logo = (msg.payload && typeof msg.payload.logoUrl==='string') ? msg.payload.logoUrl : '';
+  await pool.query("UPDATE organizations SET logo_url=? WHERE id=?", [logo||null, msg.req.params.id]);
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
 const aiQueryFunc = CORS + `
 msg.headers=__CORS; msg.payload={
   answer: "Based on the telemetry data, there are 2 critical anomalies in the BloodBOX units located in Floor 3. The refrigeration systems are showing elevated temperatures above 8°C. I recommend immediate maintenance on BBX-03 and BBX-04.",
@@ -943,6 +952,7 @@ const flow = [
   ...endpoint('password', 'put', '/api/auth/password', passwordFunc, 'auth'),
   ...endpoint('floorplanget', 'get', '/api/orgs/:id/floorplans', floorplanGetFunc, 'org'),
   ...endpoint('floorplanput', 'put', '/api/orgs/:id/floorplans', floorplanPutFunc, 'admin'),
+  ...endpoint('branding', 'put', '/api/orgs/:id/branding', brandingPutFunc, 'admin'),
   ...endpoint('aiquery', 'post', '/api/ai/query', aiQueryFunc, 'auth'),
   ...endpoint('reportsdl', 'get', '/api/reports/download', reportsDownloadFunc, 'auth'),
   ...endpoint('getrule', 'get', '/api/nodes/:id/rule', getRuleFunc, 'node'),
