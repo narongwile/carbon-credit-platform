@@ -67,7 +67,12 @@ static esp_err_t runHttpsOta(const char* uri) {
 
   int total = esp_https_ota_get_image_size(h);
   int lastPct = -5;
+  uint32_t start = millis();
   while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+    if (millis() - start > 600000) {                 // hard 10-min cap (OtaTask isn't watchdog-fed)
+      esp_https_ota_abort(h);
+      return ESP_ERR_TIMEOUT;
+    }
     if (total > 0) {
       int pct = esp_https_ota_get_image_len_read(h) * 100 / total;
       if (pct >= lastPct + 5) { lastPct = pct; otaProgress(pct, "downloading"); }

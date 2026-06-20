@@ -5,11 +5,15 @@ One firmware image, three product profiles — **eternity** (transformer),
 MQTT/EMQX contract in [`docs/esp32-platform-spec.tex`](../../docs/esp32-platform-spec.tex)
 (PR #6). Target board: **ESP32-S3-WROOM-1 (N16R8)** — 16 MB flash, 8 MB OPI PSRAM.
 
-> ⚠️ **Build status:** this revision was written and **statically analysed**
-> (cppcheck, clean) but **was NOT compiled/flashed in this environment** — the
-> PlatformIO platform/toolchain download is network-blocked here. It must be
-> built on a real toolchain and bench-validated on N16R8 hardware before field
-> use. See *Validation status* below.
+> ⚠️ **Build status:** statically analysed (cppcheck, clean) but not compiled in
+> this sandbox (PlatformIO registry is network-blocked here). The
+> **`firmware-ci` GitHub Action** (`.github/workflows/firmware-ci.yml`) compiles
+> both envs on push — that is the real build gate. Bench-validate on N16R8 before
+> field use. See *Validation status* below.
+>
+> **UART map (distinct controllers, no peripheral clash):** RS-485 = UART1
+> (GPIO43/44), GPS = UART2 (GPIO16/15), 4G modem = UART0 (GPIO17/18). Only the
+> **pins** are `[VERIFY]` against the schematic.
 
 ## Architecture (FreeRTOS task split, spec §14)
 ```

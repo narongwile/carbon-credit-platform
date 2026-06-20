@@ -1,0 +1,41 @@
+name: firmware-ci
+
+# Compiles the ESP32-S3 firmware with PlatformIO. GitHub runners can reach the
+# PlatformIO registry/toolchain (unlike the sandbox), so this is the real build
+# gate that validates what cppcheck can't.
+on:
+  push:
+    paths: ['firmware/esp32/**', '.github/workflows/firmware-ci.yml']
+  pull_request:
+    paths: ['firmware/esp32/**', '.github/workflows/firmware-ci.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware/esp32
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/esp32/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build (WROOM-1 N16R8)
+        run: pio run -e wroom1-n16r8
+
+      - name: Build (devkitc-1)
+        run: pio run -e devkitc-1

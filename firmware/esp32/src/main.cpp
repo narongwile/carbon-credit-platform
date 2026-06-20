@@ -10,6 +10,7 @@
 // ===========================================================================
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "esp_system.h"     // esp_reset_reason()
 #include "config.h"
 #include "oneops.h"
 #include "identity.h"
@@ -32,10 +33,12 @@ static uint32_t  bootMs = 0;
 static bool      isBlood = false, isEternity = false;
 // Persisted across deep sleep (RTC slow memory survives the reset) so a STORED
 // bloodbox resumes the duty cycle instead of restarting the transit FSM.
-RTC_DATA_ATTR static int rtcTransit = TRANSIT_IDLE;
+RTC_DATA_ATTR static int      rtcTransit = TRANSIT_IDLE;
+RTC_DATA_ATTR static uint32_t rtcCrash   = 0;   // consecutive abnormal resets (boot-loop guard)
 static OoTransit transitState = TRANSIT_IDLE;
 static bool      gWokeImpact = false;   // this boot resumed from an IMU impact (ext0)
-static OoTr      curTransport = TR_WIFI;
+static volatile bool gSleepReq = false; // SensorTask -> MqttTask: graceful-sleep request
+static volatile OoTr curTransport = TR_WIFI;   // written by MqttTask, read by SensorTask
 #define DGA_KEY 0
 
 enum { HB_SENSOR = 0, HB_MQTT = 1, HB_COUNT };
@@ -138,9 +141,9 @@ static void sensorTask(void*) {
     // long enough to sample + connect + publish before sleeping again.
     if (isBlood && transitState == TRANSIT_STORED && now > 8000) {
       rtcTransit = transitState;                      // survive the reset
-      buildHeartbeat();                               // last state before sleeping
-      vTaskDelay(pdMS_TO_TICKS(4000));                // let MqttTask drain (else it's in the store)
-      ooEnterDeepSleep(OO_DEEPSLEEP_S);               // resets; wakes -> sample -> publish -> sleep
+      buildHeartbeat();                               // last state into egress
+      gSleepReq = true;                               // MqttTask flushes + graceful-disconnects + sleeps
+      vTaskDelay(pdMS_TO_TICKS(2000));                // give MqttTask time to act
     }
 #endif
     gHb[HB_SENSOR]++;
@@ -155,10 +158,17 @@ static void mqttTask(void*) {
     ooMqttService();
     curTransport = ooTransportSelect(millis());                  // hysteresis (§21)
     bool up = ooMqttConnected();
-    if (up && !everConnected) { everConnected = true; ooOtaConfirmHealthy(); }  // §24
+    if (up && !everConnected) { everConnected = true; ooOtaConfirmHealthy(); rtcCrash = 0; }  // §24 + healthy -> clear boot-loop count
     if (up && !wasConnected) ooStoreReplay();                    // flush offline buffer (§14)
     digitalWrite(OO_LED_GREEN, up ? HIGH : LOW);
     wasConnected = up;
+#if OO_DEEPSLEEP_ENABLE
+    if (gSleepReq) {                                            // SensorTask asked us to sleep
+      ooMqttService();                                          // final drain
+      ooMqttGracefulSleep();                                    // retained "asleep" + clean DISCONNECT (§2)
+      ooEnterDeepSleep(OO_DEEPSLEEP_S);                         // never returns
+    }
+#endif
     gHb[HB_MQTT]++;
     vTaskDelay(pdMS_TO_TICKS(20));
   }
@@ -184,6 +194,21 @@ void setup() {
   bootMs = millis();
   randomSeed(esp_random());
   pinMode(OO_LED_GREEN, OUTPUT); pinMode(OO_LED_RED, OUTPUT);
+
+  // Boot-loop guard (spec §23): count consecutive abnormal resets; after a run
+  // of them, cool off in deep sleep instead of crash-looping the battery flat.
+  // rtcCrash is cleared once the device reaches a healthy MQTT connect (MqttTask).
+  switch (esp_reset_reason()) {
+    case ESP_RST_PANIC: case ESP_RST_INT_WDT: case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:   case ESP_RST_BROWNOUT: rtcCrash++; break;
+    case ESP_RST_DEEPSLEEP: break;                  // intentional duty-cycle wake
+    default: rtcCrash = 0; break;                   // clean power-on / external reset
+  }
+  if (rtcCrash >= 5) {
+    digitalWrite(OO_LED_RED, HIGH);
+    rtcCrash = 0;
+    ooEnterDeepSleep(3600);                         // 1 h cool-off to break the loop
+  }
 
   ooIdentityInit();                                 // identity + mTLS certs (§2/§13)
   ooOtaInit();                                      // arm/confirm A/B rollback (§24)

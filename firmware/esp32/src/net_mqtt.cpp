@@ -86,6 +86,12 @@ static bool wifiUp() {
 
 static bool mqttConnect() {
   if (!wifiUp()) return false;
+#if OO_MQTT_TLS
+  // mTLS validates the broker cert's validity dates, which needs a real clock.
+  // Defer while time is still "uptime" (un-synced) — but don't brick forever:
+  // after 30 s of trying, proceed anyway (RTC/NTP/cell usually arrive < 30 s).
+  if (ooTimeSrc()[0] == 'u' && millis() < 30000) return false;
+#endif
   const OoIdentity& id = ooId();
   bool ok = strlen(OO_MQTT_USER)
               ? mqtt.connect(id.clientId.c_str(), OO_MQTT_USER, OO_MQTT_PASS)
@@ -126,6 +132,20 @@ void ooMqttService() {
   mqtt.loop();
   drainQueue(gEgressHi);     // alarms / status / diag first (spec §14)
   drainQueue(gEgressLo);     // telemetry / heartbeat
+}
+
+// Intentional offline for deep sleep: publish a retained "asleep" status, then a
+// clean DISCONNECT so the broker discards the Will (no false "offline" alarm).
+// Call only from the MQTT task.
+void ooMqttGracefulSleep() {
+  if (!mqtt.connected()) return;
+  JsonDocument d;
+  d["ts"] = ooEpochMs(); d["device_id"] = ooId().device;
+  d["state"] = "asleep"; d["reason"] = "duty_cycle";
+  char buf[160]; size_t n = serializeJson(d, buf);
+  mqtt.publish(full("status").c_str(), buf, (int)n, /*retained=*/true, /*qos=*/1);
+  mqtt.loop();
+  mqtt.disconnect();
 }
 
 bool        ooMqttConnected() { return mqtt.connected(); }

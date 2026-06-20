@@ -12,5 +12,6 @@
 void        ooNetInit();             // Wi-Fi + TLS/mTLS + MQTT client setup
 bool        ooMqttConnected();
 void        ooMqttService();         // call from MqttTask: loop() + drain egress
+void        ooMqttGracefulSleep();   // retained "asleep" + clean DISCONNECT (MQTT task only)
 const char* ooTransport();           // "wifi" (active) | "none"
 int         ooRssi();
