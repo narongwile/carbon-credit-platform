@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors'
 import { router } from './routes.js'
 import { startMqtt } from './mqtt.js'
+import { startWsBridge } from './ws.js'
 import { startEscalation } from './escalation.js'
 import { startClearance } from './clearance.js'
 import { startRetention } from './retention.js'
@@ -51,7 +52,8 @@ async function main() {
   startClearance()
   startRetention()
   startReports()
-  app.listen(port, () => console.log(`[http] ONEOPS backend on :${port}`))
+  const server = app.listen(port, () => console.log(`[http] ONEOPS backend on :${port}`))
+  startWsBridge(server)   // real-time telemetry WebSocket on /ws/telemetry
 }
 
 // Safety net: async route rejections surface here in Express 4 → dead-letter.

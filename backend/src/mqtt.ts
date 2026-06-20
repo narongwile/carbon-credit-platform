@@ -1,5 +1,6 @@
 import mqtt, { type MqttClient } from 'mqtt'
 import { ingest } from './ingest.js'
+import { broadcastTelemetry } from './ws.js'
 
 let client: MqttClient | null = null
 
@@ -27,12 +28,12 @@ export function startMqtt(): void {
       const text = buf.toString()
       if (text.trim().startsWith('{')) {
         const m = JSON.parse(text) as { nodeId: string; values: Record<string, number>; ts?: number }
-        if (m.nodeId && m.values) await ingest(m.nodeId, m.values, m.ts)
+        if (m.nodeId && m.values) { await ingest(m.nodeId, m.values, m.ts); broadcastTelemetry(m.nodeId, m.values, m.ts) }
       } else {
         const parts = t.split('/') // telemetry/<nodeId>/<param>
         const nodeId = parts[1], param = parts[2]
         const val = Number(text)
-        if (nodeId && param && !Number.isNaN(val)) await ingest(nodeId, { [param]: val })
+        if (nodeId && param && !Number.isNaN(val)) { await ingest(nodeId, { [param]: val }); broadcastTelemetry(nodeId, { [param]: val }) }
       }
     } catch (e) {
       console.error('[mqtt:message]', (e as Error).message)

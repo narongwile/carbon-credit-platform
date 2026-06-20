@@ -52,14 +52,6 @@ export default function LoginPage() {
     router.push(getDashboardRoute(user))
   }
 
-  const fillHint = (role: RoleTab) => {
-    const tab = ROLE_TABS.find((t) => t.id === role)!
-    setUsername(tab.hint.user)
-    setPassword(tab.hint.pass)
-    setActiveRole(role)
-    setError('')
-  }
-
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: '#0a0e1a' }}>
       {/* Background grid */}
