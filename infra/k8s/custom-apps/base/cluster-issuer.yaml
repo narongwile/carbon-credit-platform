@@ -1,0 +1,18 @@
+# Let's Encrypt production issuer referenced by the frontend Ingress annotation
+# (cert-manager.io/cluster-issuer: letsencrypt-prod). Requires cert-manager to
+# be installed in the cluster. HTTP-01 solver is served through Traefik, which
+# already fronts the Ingress.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: me.a08311@gmail.com          # ACME account + expiry notices
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key  # cert-manager stores the ACME key here
+    solvers:
+      - http01:
+          ingress:
+            class: traefik

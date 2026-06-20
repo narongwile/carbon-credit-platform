@@ -8,6 +8,7 @@ import { useAppStore } from '@/lib/store'
 import { useRealtimeData } from '@/lib/realtime'
 import { isEntitled, type Entitlement } from '@/lib/entitlements'
 import { organizations } from '@/lib/mockData'
+import api, { apiEnabled } from '@/lib/api'
 import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
@@ -56,7 +57,7 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { alarms, selectedOrgId, setSelectedOrgId, orgLogos } = useAppStore()
+  const { alarms, selectedOrgId, setSelectedOrgId, orgLogos, setOrgLogos } = useAppStore()
   const orgLogo = orgLogos[selectedOrgId]
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
 
@@ -66,6 +67,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       router.replace('/')
     }
   }, [router])
+
+  // Hydrate per-company logos from the backend (set in admin Settings).
+  useEffect(() => {
+    if (!apiEnabled) return
+    api.orgs().then((rows) => {
+      if (!rows) return
+      const map: Record<string, string> = {}
+      for (const o of rows) if (o.logo_url) map[o.id] = o.logo_url
+      if (Object.keys(map).length) setOrgLogos(map)
+    })
+  }, [setOrgLogos])
 
   const unackedAlarms = alarms.filter((a) => !a.acknowledged && a.orgId === selectedOrgId)
   const criticalCount = unackedAlarms.filter((a) => a.severity === 'CRITICAL').length

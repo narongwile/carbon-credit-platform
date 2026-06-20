@@ -140,6 +140,9 @@ export async function upsertOrg(b: { id?: string; name: string; status?: string;
   return id
 }
 export async function deleteOrg(id: string): Promise<void> { await pool.query('DELETE FROM organizations WHERE id=:id', { id }) }
+export async function updateOrgLogo(orgId: string, logoUrl: string | null): Promise<void> {
+  await pool.query('UPDATE organizations SET logo_url=:l WHERE id=:id', { l: logoUrl, id: orgId })
+}
 export async function getEntitlements(orgId: string): Promise<string[]> {
   const [r] = await pool.query<RowDataPacket[]>('SELECT platform FROM org_entitlements WHERE org_id=:o', { o: orgId })
   return r.map((x) => x.platform as string)

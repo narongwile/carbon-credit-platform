@@ -5,7 +5,7 @@ import { useAppStore } from '@/lib/store'
 import { organizations } from '@/lib/mockData'
 import { Save, Upload, Trash2, Building2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import api from '@/lib/api'
+import api, { apiEnabled } from '@/lib/api'
 
 export default function SettingsPage() {
   const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo } = useAppStore()
@@ -16,9 +16,20 @@ export default function SettingsPage() {
   const currentLogo = orgLogos[selectedOrgId]
   const onLogo = (file?: File) => {
     if (!file) return
+    if (file.size > 512 * 1024) { toast.error('Logo too large (max 512 KB)'); return }
     const reader = new FileReader()
-    reader.onload = () => { setOrgLogo(selectedOrgId, String(reader.result)); toast.success('Organization logo updated') }
+    reader.onload = async () => {
+      const dataUrl = String(reader.result)
+      setOrgLogo(selectedOrgId, dataUrl)                                  // instant local UX
+      if (apiEnabled) await api.updateOrgBranding(selectedOrgId, dataUrl) // persist per-company
+      toast.success('Organization logo updated')
+    }
     reader.readAsDataURL(file)
+  }
+  const removeLogo = async () => {
+    setOrgLogo(selectedOrgId, '')
+    if (apiEnabled) await api.updateOrgBranding(selectedOrgId, '')
+    toast.success('Logo removed')
   }
   const [thresholds, setThresholds] = useState({
     oilTempWarn: 80,
@@ -75,7 +86,7 @@ export default function SettingsPage() {
               <Upload size={15} /> {currentLogo ? 'Change Logo' : 'Upload Logo'}
             </button>
             {currentLogo && (
-              <button onClick={() => { setOrgLogo(selectedOrgId, ''); toast.success('Logo removed') }} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-red-400" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+              <button onClick={removeLogo} className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-red-400" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
                 <Trash2 size={14} /> Remove
               </button>
             )}

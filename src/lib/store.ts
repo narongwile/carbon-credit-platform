@@ -20,6 +20,8 @@ interface AppState {
   setUser: (user: User | null) => void
   setViewerUserId: (id: string) => void
   setOrgLogo: (orgId: string, dataUrl: string) => void
+  /** Bulk-hydrate logos from the backend (orgId -> logo data URL / URL). */
+  setOrgLogos: (map: Record<string, string>) => void
   addDocument: (doc: NodeDocument) => void
   removeDocument: (id: string) => void
   setSelectedOrgId: (orgId: string) => void
@@ -46,6 +48,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setUser: (user) => set({ user }),
   setViewerUserId: (id) => set({ viewerUserId: id }),
   setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
+  setOrgLogos: (map) => set((s) => ({ orgLogos: { ...s.orgLogos, ...map } })),
   addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
   removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
   setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),

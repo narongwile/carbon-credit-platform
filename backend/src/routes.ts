@@ -8,7 +8,7 @@ import {
   listOrgs, upsertOrg, deleteOrg, getEntitlements, setEntitlements,
   listEventProblems, upsertEventProblem, deleteEventProblem,
   listDepartments, upsertDepartment, deleteDepartment,
-  listUsers, upsertUser, deleteUser, updateUserPassword, getProductAccess, putProductAccess, provisionNode,
+  listUsers, upsertUser, deleteUser, updateUserPassword, updateOrgLogo, getProductAccess, putProductAccess, provisionNode,
 } from './repo.js'
 import { ping, pool } from './db.js'
 import { bloodboxRouter } from './bloodbox.js'
@@ -39,8 +39,12 @@ router.post('/auth/login', loginRateLimit, async (req, res) => {
 router.post('/auth/register', async (req, res) => {
   const { name, email, password, orgName } = req.body ?? {}
   if (!name || !email || !password) return res.status(400).json({ error: 'missing fields' })
-  // For demonstration, we create a default org and add the user
+  if (String(password).length < 8) return res.status(400).json({ error: 'password too short (min 8)' })
+  if (await userByEmail(email)) return res.status(409).json({ error: 'email already registered' })
+  // Self-service signup: create the org row first (so the user's FK resolves
+  // and the org appears in listings), grant default access, then add the admin.
   const orgId = `org-${Date.now()}`
+  await upsertOrg({ id: orgId, name: orgName || `${name}'s Organization` })
   await setEntitlements(orgId, ['refrigeration', 'bloodbox']) // default access
   const hash = await hashPassword(password)
   const userId = await upsertUser(orgId, { name, email, role: 'admin', passwordHash: hash })
@@ -59,12 +63,13 @@ router.use(requireAuth)
 
 router.put('/auth/password', async (req, res) => {
   const { currentPassword, newPassword } = req.body ?? {}
-  const u = await getUser(req.user!.userId)
+  if (!newPassword || String(newPassword).length < 8) return res.status(400).json({ error: 'new password too short (min 8)' })
+  const u = await getUser(req.auth!.userId)
   if (!u || !u.password_hash || !(await checkPassword(currentPassword || '', u.password_hash as string))) {
     return res.status(401).json({ error: 'invalid current password' })
   }
   const hash = await hashPassword(newPassword)
-  await updateUserPassword(req.user!.userId, hash)
+  await updateUserPassword(req.auth!.userId, hash)
   res.json({ ok: true })
 })
 
@@ -116,6 +121,14 @@ router.post('/orgs', requireRole(), async (req, res) => {
   res.json({ ok: true, id: await upsertOrg(req.body) })
 })
 router.delete('/orgs/:id', requireRole(), async (req, res) => { await deleteOrg(req.params.id); res.json({ ok: true }) })
+// Per-company branding logo. Org admins may set their OWN org's logo (org-scoped),
+// so the static-export frontend doesn't need superadmin POST /orgs. logoUrl is a
+// data URL or hosted URL; empty string clears it.
+router.put('/orgs/:id/branding', requireRole('admin'), orgScope('id'), async (req, res) => {
+  const logo = typeof req.body?.logoUrl === 'string' ? req.body.logoUrl : ''
+  await updateOrgLogo(req.params.id, logo || null)
+  res.json({ ok: true })
+})
 router.get('/orgs/:id/entitlements', orgScope('id'), async (req, res) => res.json(await getEntitlements(req.params.id)))
 router.put('/orgs/:id/entitlements', requireRole(), async (req, res) => { await setEntitlements(req.params.id, req.body?.platforms ?? []); res.json({ ok: true }) })
 router.get('/orgs/:orgId/departments', orgScope('orgId'), async (req, res) => res.json(await listDepartments(req.params.orgId)))

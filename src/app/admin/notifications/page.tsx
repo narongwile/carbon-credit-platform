@@ -68,7 +68,7 @@ export default function AlarmNotificationPage() {
   const save = async () => {
     try {
       await api.updateMeConfig({
-        notificationChannels: chans,
+        notificationChannels: channels,
         notificationEvents: events
       })
       setSaved(true)

@@ -7,6 +7,7 @@ import { getSession, clearSession } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
+import api, { apiEnabled } from '@/lib/api'
 import { viewerDepartments } from '@/lib/viewer'
 import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
 import clsx from 'clsx'
@@ -28,8 +29,9 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { viewerUserId, setViewerUserId, orgLogos } = useAppStore()
-  const orgLogo = orgLogos['org-1']
+  const { viewerUserId, setViewerUserId, orgLogos, setOrgLogos } = useAppStore()
+  const orgId = getSession()?.orgId || 'org-1'
+  const orgLogo = orgLogos[orgId]
   const orgUsers = getUsersByOrg('org-1').filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)
 
@@ -39,6 +41,17 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
       router.replace('/')
     }
   }, [router])
+
+  // Hydrate this company's logo from the backend (set by its admin in Settings).
+  useEffect(() => {
+    if (!apiEnabled) return
+    api.orgs().then((rows) => {
+      if (!rows) return
+      const map: Record<string, string> = {}
+      for (const o of rows) if (o.logo_url) map[o.id] = o.logo_url
+      if (Object.keys(map).length) setOrgLogos(map)
+    })
+  }, [setOrgLogos])
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href

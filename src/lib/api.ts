@@ -103,10 +103,13 @@ export const api = {
     req<{ ok: boolean }>(`/api/me/config`, { method: 'PUT', headers: { 'x-user-id': userId }, body: JSON.stringify({ prefs }) }),
 
   // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
-  orgs: () => req<unknown[]>(`/api/orgs`),
+  orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null }[]>(`/api/orgs`),
   saveOrg: (body: { id?: string; name: string; status?: string; logoUrl?: string }) =>
     req<{ id: string }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOrg: (id: string) => req(`/api/orgs/${id}`, { method: 'DELETE' }),
+  // Per-company branding: org admins set their own org's logo (data URL or hosted URL).
+  updateOrgBranding: (orgId: string, logoUrl: string) =>
+    req<{ ok: boolean }>(`/api/orgs/${orgId}/branding`, { method: 'PUT', body: JSON.stringify({ logoUrl }) }),
   entitlements: (orgId: string) => req<string[]>(`/api/orgs/${orgId}/entitlements`),
   setEntitlements: (orgId: string, platforms: string[]) =>
     req(`/api/orgs/${orgId}/entitlements`, { method: 'PUT', body: JSON.stringify({ platforms }) }),
@@ -162,3 +165,5 @@ export interface ReportSchedule {
   last_run_at: string | null
   next_run_at: string | null
 }
+
+export default api
