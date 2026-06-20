@@ -27,9 +27,18 @@ spec:
       labels:
         app: frontend-next
     spec:
+      # GitLab Container Registry is private by default — the cluster needs a
+      # pull secret. Create it once (GitLab project → Deploy Token, scope
+      # read_registry), then it's referenced here:
+      #   kubectl create secret docker-registry gitlab-registry -n app \
+      #     --docker-server=registry.gitlab.com \
+      #     --docker-username=<deploy-token-user> --docker-password=<deploy-token>
+      # (Or make the project's registry public and drop imagePullSecrets.)
+      imagePullSecrets:
+        - name: gitlab-registry
       containers:
       - name: frontend
-        image: registry.ci.svc.cluster.local/iiotplatform/frontend-next:latest
+        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:latest
         ports:
         - containerPort: 80
         resources:
