@@ -19,6 +19,18 @@ static HardwareSerial SerialAT(0);
 static TinyGsm        modem(SerialAT);
 static bool           gReady = false;
 
+// MQTT-over-4G transport. When the broker uses TLS and the modem supports
+// modem-side SSL (e.g. SIM7600/A7670), use the secure client — the broker CA
+// (and any client cert for mTLS) is uploaded to the modem's certificate store
+// out of band via AT+CCERTDOWN, NOT via setCACert(). Plain TCP otherwise.
+#if OO_MQTT_TLS && defined(TINY_GSM_MODEM_HAS_SSL)
+static TinyGsmClientSecure gCellClient(modem);
+#else
+static TinyGsmClient       gCellClient(modem);
+#endif
+
+Client* ooCellClient() { return &gCellClient; }
+
 void ooCellInit() {
   SerialAT.begin(115200, SERIAL_8N1, OO_PIN_RX1, OO_PIN_TX1);
   delay(100);
@@ -49,6 +61,7 @@ bool ooCellTime(time_t* outEpoch) {
 
 #else  // ---- OO_HAVE_TINYGSM == 0 : no cellular radio in this build ----------
 
-void ooCellInit() {}   // ooCellAvailable() stays the weak `false` stub (transport.cpp)
+void    ooCellInit()  {}        // ooCellAvailable() stays the weak `false` stub (transport.cpp)
+Client* ooCellClient() { return nullptr; }   // no cellular transport in this build
 
 #endif

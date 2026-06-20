@@ -157,6 +157,7 @@ static void mqttTask(void*) {
   for (;;) {
     ooMqttService();
     curTransport = ooTransportSelect(millis());                  // hysteresis (§21)
+    ooMqttSetTransport(curTransport);                            // bind MQTT to Wi-Fi / 4G (§21)
     bool up = ooMqttConnected();
     if (up && !everConnected) { everConnected = true; ooOtaConfirmHealthy(); rtcCrash = 0; }  // §24 + healthy -> clear boot-loop count
     if (up && !wasConnected) ooStoreReplay();                    // flush offline buffer (§14)

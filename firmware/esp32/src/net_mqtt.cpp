@@ -8,6 +8,9 @@
 #include <WiFiClientSecure.h>
 #include <MQTT.h>            // 256dpi/arduino-mqtt: QoS 1 + LWT
 #include <ArduinoJson.h>
+#if OO_HAVE_TINYGSM
+#include "modem_4g.h"        // ooCellClient(): TinyGSM TCP/TLS client for 4G
+#endif
 
 #if OO_MQTT_TLS
 static WiFiClientSecure net;
@@ -19,8 +22,24 @@ static MQTTClient mqtt(1024);
 static uint32_t backoffMs   = 1000;     // reconnect backoff (cap + jitter, §15)
 static uint32_t lastAttempt = 0;
 static String   PFX;                    // device prefix P
+static OoTr     gBound = TR_WIFI;       // transport the MQTT session is bound to
+
+// LWT (set on the client before each connect; re-applied when the transport
+// rebinds because begin() resets the client reference).
+static String willTopic;
+static char   willBuf[128];
 
 static String full(const char* suffix) { return PFX + "/" + suffix; }
+static void applyWill();
+
+// Underlying transport client for a given link. Falls back to Wi-Fi whenever
+// the cellular client is unavailable (no radio in this build, or not up yet).
+static Client* clientFor(OoTr t) {
+#if OO_HAVE_TINYGSM
+  if (t == TR_CELL) { Client* c = ooCellClient(); if (c) return c; }
+#endif
+  return &net;
+}
 
 // ---- downlink (config / cmd / ota) — runs in MQTT task context -------------
 static void onMessage(String& topic, String& payload) {
@@ -69,13 +88,31 @@ void ooNetInit() {
   mqtt.begin(OO_MQTT_HOST, OO_MQTT_PORT, net);
   mqtt.setOptions(60, /*cleanSession=*/false, 5000);     // keepalive 60s, persistent session (§1)
   mqtt.onMessage(onMessage);
+  applyWill();
+}
 
-  // Last Will: retained offline status, fired by the broker on ungraceful drop.
-  static String willTopic = full("status");
-  static char willBuf[128];
+// Last Will: retained offline status, fired by the broker on ungraceful drop.
+// Re-applied after every begin() (transport rebind clears the client's will).
+static void applyWill() {
+  willTopic = full("status");
   JsonDocument w; w["state"] = "offline"; w["reason"] = "lwt"; w["device_id"] = ooId().device;
   serializeJson(w, willBuf, sizeof(willBuf));
   mqtt.setWill(willTopic.c_str(), willBuf, /*retained=*/true, /*qos=*/1);
+}
+
+// Bind the MQTT session to a transport (Wi-Fi or 4G). Called by MqttTask after
+// the hysteresis picks a link (spec §21). On change: drop the current session
+// and re-point the MQTT client at the new transport's TCP/TLS client; the next
+// ooMqttService() reconnects over it. MQTT task only.
+void ooMqttSetTransport(OoTr t) {
+  if (t != TR_WIFI && t != TR_CELL) return;   // LoRa has no MQTT client; keep current
+  if (t == gBound) return;
+  if (mqtt.connected()) mqtt.disconnect();
+  gBound = t;
+  mqtt.begin(OO_MQTT_HOST, OO_MQTT_PORT, *clientFor(t));
+  mqtt.setOptions(60, /*cleanSession=*/false, 5000);
+  applyWill();
+  backoffMs = 1000; lastAttempt = 0;          // reconnect promptly on the new link
 }
 
 static bool wifiUp() {
@@ -85,7 +122,10 @@ static bool wifiUp() {
 }
 
 static bool mqttConnect() {
-  if (!wifiUp()) return false;
+  // Link must be up first. On Wi-Fi nudge the STA; on 4G the modem is brought
+  // up by ooCellInit()/the hysteresis, so just require it to be available.
+  if (gBound == TR_WIFI) { if (!wifiUp()) return false; }
+  else if (!ooCellAvailable())          return false;
 #if OO_MQTT_TLS
   // mTLS validates the broker cert's validity dates, which needs a real clock.
   // Defer while time is still "uptime" (un-synced) — but don't brick forever:
@@ -101,7 +141,9 @@ static bool mqttConnect() {
   // Birth: retained online status clears the Will (spec §5).
   JsonDocument b;
   b["ts"] = ooEpochMs(); b["device_id"] = id.device; b["product"] = id.product;
-  b["state"] = "online"; b["fw"] = id.fw; b["ip"] = WiFi.localIP().toString();
+  b["state"] = "online"; b["fw"] = id.fw;
+  b["ip"] = (gBound == TR_WIFI) ? WiFi.localIP().toString() : String("cell");
+  b["transport"] = ooTransportName(gBound);
   char buf[224]; size_t n = serializeJson(b, buf);
   mqtt.publish(full("status").c_str(), buf, (int)n, /*retained=*/true, /*qos=*/1);
 
@@ -149,5 +191,5 @@ void ooMqttGracefulSleep() {
 }
 
 bool        ooMqttConnected() { return mqtt.connected(); }
-const char* ooTransport()     { return WiFi.status() == WL_CONNECTED ? "wifi" : "none"; }
+const char* ooTransport()     { return mqtt.connected() ? ooTransportName(gBound) : "none"; }
 int         ooRssi()          { return WiFi.RSSI(); }

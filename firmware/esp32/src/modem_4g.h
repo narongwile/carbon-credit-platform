@@ -5,8 +5,14 @@
 //  to cellular when Wi-Fi drops. Guarded by OO_HAVE_TINYGSM (config.h) so the
 //  firmware still compiles without the library.
 //
-//  Scope: this brings the modem online and reports availability. Routing the
-//  MQTT/TLS session itself over the modem (TinyGsmClient as the transport in
-//  net_mqtt.cpp) is the remaining integration step — see README.
+//  Scope: brings the modem online, reports availability, and exposes the
+//  TinyGSM TCP client so net_mqtt.cpp can route the MQTT session over 4G when
+//  the transport hysteresis selects cellular (ooMqttSetTransport / spec §21).
 // ===========================================================================
+#include <Client.h>
+
 void ooCellInit();
+
+// The modem's TCP(/TLS) client, ready for MQTTClient::begin(). Returns nullptr
+// when this build has no cellular radio (OO_HAVE_TINYGSM == 0).
+Client* ooCellClient();
