@@ -60,10 +60,11 @@ build_frontend:
     - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
     - echo "Building Frontend Docker Image..."
-    # Build using standard GitLab CI environment variables and inject build-time ENVs
-    # NEXT_PUBLIC_API_URL is the bare public origin (NO /api suffix): api.ts
-    # paths already start with /api, and nginx reverse-proxies /api -> backend.
-    - docker build --build-arg NEXT_PUBLIC_API_URL=https://iiotplatform.thermexpertise.com --build-arg NEXT_PUBLIC_WS_URL=wss://iiotplatform.thermexpertise.com/ws/telemetry -t $CI_REGISTRY_IMAGE/frontend:latest -t $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA .
+    # Build with the production backend origin baked in. The backend is Node-RED
+    # (carbon-credit ns), reached by the BROWSER directly via CORS — the frontend
+    # pod can't proxy it (app-ns NetworkPolicy). api.ts paths already start with
+    # /api, so NEXT_PUBLIC_API_URL is the Node-RED origin with no /api suffix.
+    - docker build --build-arg NEXT_PUBLIC_API_URL=https://nodered.thermexpertise.com --build-arg NEXT_PUBLIC_WS_URL=wss://nodered.thermexpertise.com/ws/telemetry -t $CI_REGISTRY_IMAGE/frontend:latest -t $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA .
     - echo "Pushing image to registry..."
     - docker push $CI_REGISTRY_IMAGE/frontend:latest
     - docker push $CI_REGISTRY_IMAGE/frontend:$CI_COMMIT_SHORT_SHA
