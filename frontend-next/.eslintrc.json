@@ -1,0 +1,4 @@
+{
+  "extends": "next/core-web-vitals",
+  "ignorePatterns": ["backend/", "out/", ".next/", "node_modules/", "eternity_iot_platform_demo.tsx"]
+}

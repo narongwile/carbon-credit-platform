@@ -79,6 +79,9 @@ spec:
               value: nodered
             - name: MQTT_PASSWORD
               value: "iothub.2026"
+            # Lock API CORS to the production frontend origin (flows read env.CORS_ORIGIN)
+            - name: CORS_ORIGIN
+              value: "https://iiotplatform.thermexpertise.com"
             # Dashboard admin auth (from seeded Secret)
             - name: NODE_RED_USERNAME
               valueFrom:

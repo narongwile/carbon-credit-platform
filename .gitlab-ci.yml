@@ -1,5 +1,10 @@
 image: node:20
 
+stages:
+  - build
+  - deploy
+
+# ── Vite app (parked) → GitLab Pages, unchanged ──
 pages:
   stage: deploy
   script:
@@ -15,3 +20,33 @@ pages:
       - public
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
+
+# ── Next.js production frontend (frontend-next/) → GitLab Container Registry ──
+# Builds the static-export image and pushes it to this project's GitLab registry
+# ($CI_REGISTRY_IMAGE/frontend-next). Runs on GitLab.com SHARED runners (no tags),
+# which auto-authenticate to the registry via the predefined CI_REGISTRY_* vars.
+build_frontend_next:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    IMAGE: $CI_REGISTRY_IMAGE/frontend-next
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - cd frontend-next
+    # Same-origin build: nginx in the pod reverse-proxies /api,/ws to Node-RED.
+    - docker build
+        --build-arg NEXT_PUBLIC_API_URL=https://iiotplatform.thermexpertise.com
+        --build-arg NEXT_PUBLIC_WS_URL=wss://iiotplatform.thermexpertise.com/ws/telemetry
+        -t "$IMAGE:latest" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$IMAGE:latest"
+    - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - frontend-next/**/*
+    # Allow building from the integration branch too (so the first image exists).
+    - if: $CI_COMMIT_BRANCH == "claude/frontend-next-deploy"
