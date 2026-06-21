@@ -626,6 +626,14 @@
       {
         "var": "mysql",
         "module": "mysql2/promise"
+      },
+      {
+        "var": "jwt",
+        "module": "jsonwebtoken"
+      },
+      {
+        "var": "bcrypt",
+        "module": "bcryptjs"
       }
     ],
     "x": 420,
@@ -711,6 +719,14 @@
       {
         "var": "mysql",
         "module": "mysql2/promise"
+      },
+      {
+        "var": "jwt",
+        "module": "jsonwebtoken"
+      },
+      {
+        "var": "bcrypt",
+        "module": "bcryptjs"
       }
     ],
     "x": 420,

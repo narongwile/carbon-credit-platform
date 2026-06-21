@@ -1031,6 +1031,8 @@ const flow = [
 for (const n of flow) if (n.type === 'function' && /pool\.query|global\.get\('pool'\)/.test(n.func) && !(n.libs && n.libs.length)) n.libs = LIBS
 // login also needs jwt + bcrypt (the guard closure's jwt lives in the init node)
 const loginFn = flow.find((n) => n.id === 'login_fn'); if (loginFn) loginFn.libs = LOGIN_LIBS
+const regFn = flow.find((n) => n.id === 'register_fn'); if (regFn) regFn.libs = LOGIN_LIBS
+const passFn = flow.find((n) => n.id === 'password_fn'); if (passFn) passFn.libs = LOGIN_LIBS
 
 // POST /readings ingest → reuse the engine ingest node, then reply via its
 // own http response node. ingest re-emits the original msg (req/res preserved
