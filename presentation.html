@@ -14,35 +14,37 @@
 			:root { --accent:#818cf8; --accent2:#a78bfa; --ok:#34d399; --warn:#fbbf24; --crit:#f87171; }
 			.reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
 			.reveal h1 { color: #fff; }
-			.reveal h2 { color: var(--accent); font-size: 1.5em; }
+			.reveal h2 { color: var(--accent); font-size: 1.45em; }
 			.reveal h3 { color: var(--accent2); }
-			.reveal section { font-size: 0.92em; }
+			.reveal section { font-size: 0.9em; }
 			.reveal code { color: #93c5fd; }
-			.highlight { color: var(--accent); }
-			.small-text { font-size: 0.68em; color:#cbd5e1; }
-			.tiny { font-size: 0.55em; color:#94a3b8; }
+			.small-text { font-size: 0.66em; color:#cbd5e1; }
+			.tiny { font-size: 0.5em; color:#94a3b8; }
 			.left-align { text-align: left; }
-			.pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.5em; font-weight:700; vertical-align:middle; }
+			.pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:0.48em; font-weight:700; vertical-align:middle; }
 			.pill.ok { background:rgba(52,211,153,0.15); color:var(--ok); }
 			.pill.partial { background:rgba(251,191,36,0.15); color:var(--warn); }
 			.pill.todo { background:rgba(248,113,113,0.15); color:var(--crit); }
 			.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; text-align:left; }
 			.grid3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; text-align:left; }
 			.card { background:#0d1117; border:1px solid #1e2433; border-radius:14px; padding:16px 18px; }
-			.card h3 { margin-top:0; font-size:0.8em; }
-			.card ul { font-size:0.62em; line-height:1.5; margin:0; padding-left:1.1em; color:#cbd5e1; }
-			.reveal ul.flow { list-style:none; padding-left:0; font-size:0.62em; line-height:1.6; }
+			.card h3 { margin-top:0; font-size:0.78em; }
+			.card ul { font-size:0.6em; line-height:1.5; margin:0; padding-left:1.1em; color:#cbd5e1; }
+			.reveal ul.flow { list-style:none; padding-left:0; font-size:0.6em; line-height:1.6; }
 			.reveal ul.flow li::before { content:"▸ "; color:var(--accent); }
-			.mermaid-container { background:#0d1117; padding:14px; border-radius:14px; margin-top:14px; border:1px solid #1e2433; }
-			.reveal .mermaid-container svg { max-width:100%; max-height:54vh; margin:0 auto; display:block; }
-			table.status { font-size:0.5em; width:100%; border-collapse:collapse; }
-			table.status td, table.status th { border:1px solid #1e2433; padding:6px 10px; text-align:left; }
+			/* mermaid: let it size naturally; htmlLabels prevent text clipping */
+			.mermaid-container { background:#0d1117; padding:10px; border-radius:14px; margin-top:12px; border:1px solid #1e2433; }
+			.reveal .mermaid { font-size:15px; }
+			.reveal .mermaid-container svg { max-width:100%; height:auto; max-height:60vh; margin:0 auto; display:block; }
+			.reveal .mermaid .nodeLabel, .reveal .mermaid .edgeLabel { white-space:nowrap; }
+			table.status { font-size:0.46em; width:100%; border-collapse:collapse; }
+			table.status td, table.status th { border:1px solid #1e2433; padding:5px 9px; text-align:left; }
 			table.status th { color:var(--accent); background:#0d1117; }
 			.kpi { display:flex; gap:24px; justify-content:center; margin-top:18px; }
 			.kpi div { background:#0d1117; border:1px solid #1e2433; border-radius:12px; padding:12px 20px; }
 			.kpi b { font-size:1.4em; color:var(--accent); display:block; }
 			.kpi span { font-size:0.5em; color:#94a3b8; }
-			.foot { position:fixed; bottom:8px; left:14px; font-size:11px; color:#475569; }
+			.foot { position:fixed; bottom:8px; left:14px; font-size:11px; color:#475569; z-index:30; }
 		</style>
 	</head>
 	<body>
@@ -68,65 +70,63 @@
 					<p class="small-text">Three separate sensor products merged into one multi-tenant operations console.</p>
 					<div class="mermaid-container">
 						<div class="mermaid">
-graph LR
-  A["CarbonBOX<br/>Refrigeration"]:::p --> D
-  B["ETERNITY<br/>Transformers"]:::p --> D
-  C["BloodBOX<br/>Cold-Chain"]:::p --> D
-  D(("ONEOPS<br/>Unified Platform")):::core
+flowchart LR
+  A["CarbonBOX&nbsp;·&nbsp;Refrigeration"]:::p --> D
+  B["ETERNITY&nbsp;·&nbsp;Transformers"]:::p --> D
+  C["BloodBOX&nbsp;·&nbsp;Cold-Chain"]:::p --> D
+  D(("ONEOPS")):::core
   D --> E["JWT Auth + RBAC"]:::n
   D --> F["Shared UI + 3D Twins"]:::n
   D --> G["Node-RED Backend + MySQL"]:::n
   classDef p fill:#0d1117,stroke:#6c8ebf,color:#dbe5ff;
   classDef n fill:#13233a,stroke:#818cf8,color:#e0e7ff;
-  classDef core fill:#4f46e5,stroke:#a78bfa,color:#fff;
+  classDef core fill:#4f46e5,stroke:#a78bfa,color:#ffffff;
 						</div>
 					</div>
 				</section>
 
-				<!-- 3. Full-stack architecture (UPDATED) -->
+				<!-- 3. Full-stack architecture -->
 				<section data-background-color="#0a0e1a">
 					<h2>Full-Stack Architecture <span class="pill ok">built</span></h2>
-					<p class="small-text">From mock-only frontend → real end-to-end system. Frontend works with OR without the backend.</p>
+					<p class="small-text">From mock-only frontend to a real end-to-end system. Frontend works with OR without the backend.</p>
 					<div class="mermaid-container">
 						<div class="mermaid">
-graph LR
-  ESP["ESP32-S3 Firmware<br/>3 product profiles"] -->|"MQTT / mTLS QoS1"| BR["EMQX / Mosquitto<br/>broker"]
-  BR --> NR["Node-RED ALL-IN-ONE<br/>ingest · engine · REST · auth"]
-  NR --> DB[("MySQL<br/>iothub")]
-  NR -->|"WebSocket /ws/telemetry"| FE["Next.js Frontend<br/>static export"]
-  NR -->|"Email/LINE/TG/GChat"| NT["Notifications"]
-  FE -->|"REST + Bearer JWT"| NR
-  EX["Express service<br/>(parity option)"] -.alt.- NR
+flowchart LR
+  ESP["ESP32-S3&nbsp;firmware"]:::d -->|"MQTT&nbsp;mTLS&nbsp;QoS1"| BR["EMQX&nbsp;broker"]:::b
+  BR --> NR["Node-RED&nbsp;all-in-one"]:::b
+  NR --> DB[("MySQL&nbsp;iothub")]:::s
+  NR -->|"WebSocket&nbsp;live"| FE["Next.js&nbsp;frontend"]:::s
+  FE -->|"REST&nbsp;+&nbsp;Bearer&nbsp;JWT"| NR
+  NR -->|"Email&nbsp;LINE&nbsp;TG&nbsp;GChat"| NT["Notifications"]:::s
+  EX["Express&nbsp;service"]:::b -.->|"parity"| NR
   classDef d fill:#0d1117,stroke:#82b366,color:#dfeede;
   classDef b fill:#13233a,stroke:#818cf8,color:#e0e7ff;
   classDef s fill:#1a1530,stroke:#9673a6,color:#ece5f7;
-  class ESP d; class BR,NR,EX b; class DB,FE,NT s;
 						</div>
 					</div>
-					<p class="tiny">Two backend options, same contract: <b>Node-RED all-in-one</b> (deploy one tool) or <b>Express</b> service — feature-parity.</p>
+					<p class="tiny">Two backend options, same contract: <b>Node-RED all-in-one</b> (one tool) or <b>Express</b> service — feature-parity.</p>
 				</section>
 
-				<!-- 4. End-to-end data flow -->
+				<!-- 4. Telemetry loop -->
 				<section data-background-color="#0a0e1a">
 					<h2>Telemetry → Alarm → Action Loop</h2>
 					<div class="mermaid-container">
 						<div class="mermaid">
-graph TD
-  T["device reading"] --> N["normalize<br/>map channel→param"]
-  N --> I["ingest + evaluate<br/>(threshold · rate · dwell · hysteresis)"]
-  I --> R[("readings / alarm_events")]
-  I --> NO["notify<br/>per-tenant + severity"]
-  I --> EC["P/alarm retained echo"]
-  N --> P["presence<br/>heartbeat/status"]
-  P --> OFF["offline sweep → CRITICAL"]
-  I --> CL["auto-clear sweep<br/>NORMAL sustained"]
-  N --> WS["WebSocket → live UI"]
-  classDef a fill:#0d1117,stroke:#818cf8,color:#e0e7ff;
+flowchart TD
+  T["device&nbsp;reading"]:::a --> N["normalize&nbsp;channel→param"]:::a
+  N --> I["ingest&nbsp;+&nbsp;evaluate"]:::a
+  I --> R[("readings&nbsp;/&nbsp;events")]:::b
+  I --> NO["notify&nbsp;per-tenant"]:::b
+  I --> EC["retained&nbsp;alarm&nbsp;echo"]:::b
+  I --> CL["auto-clear&nbsp;sweep"]:::b
+  N --> P["presence"]:::a
+  P --> OFF["offline&nbsp;sweep&nbsp;→&nbsp;CRITICAL"]:::b
+  N --> WS["WebSocket&nbsp;→&nbsp;live&nbsp;UI"]:::b
+  classDef a fill:#13233a,stroke:#818cf8,color:#e0e7ff;
   classDef b fill:#1a1530,stroke:#9673a6,color:#ece5f7;
-  class T,N,I,P a; class R,NO,EC,OFF,CL,WS b;
 						</div>
 					</div>
-					<p class="tiny">Plus: escalation (unacked CRITICAL), dead-letter (errors), retention rollup, scheduled CSV reports.</p>
+					<p class="tiny">Engine: threshold · rate-of-rise · dwell · hysteresis. Plus escalation, dead-letter, retention rollup, scheduled CSV reports.</p>
 				</section>
 
 				<!-- 5. Auth + RBAC -->
@@ -134,37 +134,35 @@ graph TD
 					<h2>Auth &amp; RBAC — enforced server-side <span class="pill ok">JWT</span></h2>
 					<div class="mermaid-container">
 						<div class="mermaid">
-graph TD
-  L["POST /auth/login<br/>email + bcrypt"] --> J["JWT<br/>userId · orgId · role"]
-  J --> G{"Guard per endpoint"}
-  G --> S["super: orgs, entitlements, provision nodes"]
-  G --> AD["admin (own org): departments, users, product-access, rules, downlink, reports"]
-  G --> V["viewer: read + acknowledge (root cause)"]
-  G --> SCOPE["org-scope + device access<br/>org → domain → department → manage"]
+flowchart TD
+  L["POST&nbsp;/auth/login&nbsp;·&nbsp;bcrypt"]:::a --> J["JWT&nbsp;·&nbsp;userId&nbsp;orgId&nbsp;role"]:::a
+  J --> G{"Guard&nbsp;per&nbsp;endpoint"}
+  G --> S["superadmin&nbsp;·&nbsp;orgs&nbsp;·&nbsp;entitlements&nbsp;·&nbsp;provision"]:::b
+  G --> AD["admin&nbsp;own-org&nbsp;·&nbsp;users&nbsp;·&nbsp;rules&nbsp;·&nbsp;downlink"]:::b
+  G --> V["viewer&nbsp;·&nbsp;read&nbsp;+&nbsp;acknowledge"]:::b
+  G --> SC["scope&nbsp;·&nbsp;org→domain→department→manage"]:::b
   classDef a fill:#13233a,stroke:#818cf8,color:#e0e7ff;
   classDef b fill:#0d1117,stroke:#6c8ebf,color:#dbe5ff;
-  class L,J,G a; class S,AD,V,SCOPE b;
 						</div>
 					</div>
 					<p class="tiny">Devices visible only within the org; admin limits per <b>department</b> &amp; per <b>user</b>; writes need <code>manage</code>, reads need <code>view</code>. Brute-force throttle + security headers + CORS lock.</p>
 				</section>
 
-				<!-- 6. Multi-tenant model -->
+				<!-- 6. Multi-tenant model (FIXED: no parens/commas/arrows in labels) -->
 				<section data-background-color="#0a0e1a">
 					<h2>Multi-Tenant Data Model <span class="pill ok">persisted</span></h2>
 					<div class="mermaid-container">
 						<div class="mermaid">
-graph TD
-  ORG["organizations"] --> ENT["org_entitlements<br/>licensed platforms"]
-  ORG --> DEP["departments"]
-  DEP --> USR["users (role)"]
-  DEP --> PAd["product_access (department→domain→level)"]
-  USR --> PAu["product_access (user override, restrict)"]
-  ORG --> NODE["nodes (device, mqtt_prefix, geo)"]
-  DEP --> EP["event_problems (root-cause catalog)"]
+flowchart TD
+  ORG["organizations"]:::a --> ENT["org_entitlements"]:::b
+  ORG --> DEP["departments"]:::a
+  ORG --> NODE["nodes&nbsp;·&nbsp;device"]:::b
+  DEP --> USR["users&nbsp;·&nbsp;role"]:::a
+  DEP --> PAd["product_access&nbsp;·&nbsp;department"]:::b
+  USR --> PAu["product_access&nbsp;·&nbsp;user&nbsp;override"]:::b
+  DEP --> EP["event_problems&nbsp;·&nbsp;root&nbsp;cause"]:::b
   classDef a fill:#13233a,stroke:#818cf8,color:#e0e7ff;
   classDef b fill:#0d1117,stroke:#82b366,color:#dfeede;
-  class ORG,DEP,USR a; class ENT,PAd,PAu,NODE,EP b;
 						</div>
 					</div>
 					<p class="tiny">Effective access = department grant <b>capped</b> by per-user override (none &lt; view &lt; manage). admin/superadmin manage their whole org.</p>
@@ -178,22 +176,22 @@ graph TD
 							<h3>Cross-tenant provisioning</h3>
 							<ul>
 								<li>Create / suspend <b>organizations</b> (live <code>api.orgs</code>)</li>
-								<li><b>License platforms</b> per org — toggle entitlements (<code>setEntitlements</code>)</li>
-								<li><b>Provision platform wizard</b> → creates org + licenses product</li>
+								<li><b>License platforms</b> per org — toggle entitlements</li>
+								<li><b>Provision wizard</b> → creates org + licenses product</li>
 								<li>Provision device <b>nodes</b> (id, mqtt_prefix, geo)</li>
 							</ul>
 						</div>
 						<div class="card">
 							<h3>Cross-tenant operations</h3>
 							<ul>
-								<li><b>Monitoring</b>: live status across every org (filter org/domain/status)</li>
+								<li><b>Monitoring</b>: live status across every org</li>
 								<li>Drill into any node twin / event log</li>
 								<li>Theme grants per org <span class="pill partial">display</span></li>
 								<li>Audit / logs / license views</li>
 							</ul>
 						</div>
 					</div>
-					<p class="tiny">Enforcement: <code>requireRole()</code> = superadmin-only on org/entitlement/node-provisioning routes.</p>
+					<p class="tiny">Enforcement: <code>requireRole()</code> = superadmin-only on org / entitlement / node-provisioning routes.</p>
 				</section>
 
 				<!-- 8. Admin workflows -->
@@ -213,46 +211,46 @@ graph TD
 							<h3>Alarms &amp; events</h3>
 							<ul>
 								<li><b>Domain-aware alarm config</b> + apply-to-all-org</li>
-								<li><b>Event-problem catalog</b> (root causes per dept/domain)</li>
+								<li><b>Event-problem catalog</b> (root causes)</li>
 								<li>Org-wide notifications + escalation</li>
-								<li>Downlink: push <b>config/cmd/OTA</b> to devices</li>
+								<li>Downlink: push <b>config / cmd / OTA</b></li>
 							</ul>
 						</div>
 						<div class="card">
 							<h3>Reports &amp; assets</h3>
 							<ul>
 								<li><b>Scheduled reports</b> (CSV email, cron)</li>
-								<li>Org logo upload</li>
-								<li>Live fleet / device location map</li>
-								<li>Refrigeration &amp; transformer overviews (live)</li>
+								<li>Org logo / branding</li>
+								<li>Live fleet + device-location map</li>
+								<li>Refrigeration / transformer overviews</li>
 							</ul>
 						</div>
 					</div>
 					<p class="tiny">Enforcement: <code>requireRole('admin')</code> + <b>org-scope</b> — an admin can never touch another tenant.</p>
 				</section>
 
-				<!-- 9. Viewer workflow (sequence) -->
+				<!-- 9. Viewer workflow -->
 				<section data-background-color="#0a0e1a">
 					<h2>Viewer Workflow — Acknowledge with Root Cause</h2>
 					<div class="mermaid-container">
 						<div class="mermaid">
 sequenceDiagram
   autonumber
-  actor V as Viewer (view access)
+  actor V as Viewer
   participant UI as Device Detail
   participant API as Node-RED API
   participant DB as MySQL
   V->>UI: open device event log
-  UI->>API: GET /event-problems?dept&domain
+  UI->>API: GET event-problems by dept and domain
   API-->>UI: admin-managed root-cause list
-  V->>UI: pick root cause + Acknowledge
-  UI->>API: POST /events/:id/ack {eventProblemId}
-  API->>API: guard event:view (org·domain·dept)
+  V->>UI: pick root cause then Acknowledge
+  UI->>API: POST events ack with eventProblemId
+  API->>API: guard event-view (org domain dept)
   API->>DB: ack + acknowledged_by + root cause
-  API-->>UI: ok (auto-clear/escalation continue)
+  API-->>UI: ok, auto-clear and escalation continue
 						</div>
 					</div>
-					<p class="tiny">Viewer can <b>acknowledge &amp; classify</b> (all 3 products) but cannot change device settings (needs <code>manage</code>). Plus: FIX vs Free-Style dashboards, realtime values, documents, personal alerts, profile.</p>
+					<p class="tiny">Viewer can <b>acknowledge &amp; classify</b> (all 3 products) but cannot change device settings (needs <code>manage</code>). Plus FIX vs Free-Style dashboards, realtime values, documents, personal alerts, profile.</p>
 				</section>
 
 				<!-- 10. Per-product -->
@@ -262,32 +260,32 @@ sequenceDiagram
 						<div class="card">
 							<h3>⚡ Transformer</h3>
 							<ul>
-								<li>oilTemp, windingTemp, H₂ DGA + rate, moisture, oilLevel (low), load</li>
+								<li>oilTemp, windingTemp, H₂ DGA + rate, moisture, oilLevel, load</li>
 								<li>Health index · Transformer3D twin</li>
-								<li>Overview + node twin</li>
+								<li>Modbus + CAN sensor mix (firmware)</li>
 							</ul>
 						</div>
 						<div class="card">
 							<h3>❄ refrigeDataLogger</h3>
 							<ul>
-								<li>tempHigh/Low, door-open, online/offline</li>
+								<li>tempHigh/Low, door-open dwell, online/offline</li>
 								<li>Fridge3D twin · cold-chain min/max</li>
-								<li>Refrigeration overview (live)</li>
+								<li>TMP117 probe + compressor sense (firmware)</li>
 							</ul>
 						</div>
 						<div class="card">
 							<h3>🩸 BloodBOX</h3>
 							<ul>
 								<li>temp, RH, battery, impact, GPS, baro</li>
-								<li>Transit map + indoor BLE beacons + journey log</li>
-								<li>Temp→engine bridge for excursions</li>
+								<li>Transit map + indoor beacons + journey log</li>
+								<li>Transit FSM + deep-sleep + GPS (firmware)</li>
 							</ul>
 						</div>
 					</div>
 					<p class="tiny">One firmware, one ingest pipeline, one engine — product differs only by channel set + thresholds (domain-aware schema).</p>
 				</section>
 
-				<!-- 11. Backend feature pipeline -->
+				<!-- 11. Backend capabilities -->
 				<section data-background-color="#0a0e1a">
 					<h2>Backend Capabilities <span class="pill ok">Node-RED + Express parity</span></h2>
 					<div class="grid2">
@@ -297,44 +295,47 @@ sequenceDiagram
 								<li>MQTT + HTTP ingest → pure alarm engine</li>
 								<li>Notifications: Email · LINE · Telegram · Google Chat (per-tenant + severity)</li>
 								<li>Escalation · auto-clear · presence · offline detection</li>
-								<li>Dead-letter catch · readings retention/rollup</li>
+								<li>Dead-letter catch · readings retention / rollup</li>
 							</ul>
 						</div>
 						<div class="card">
 							<h3>Downlink &amp; services</h3>
 							<ul>
 								<li>config (retained) · cmd · OTA push to device</li>
-								<li>Retained <code>P/alarm</code> echo (spec §9)</li>
+								<li>Retained <code>P/alarm</code> echo</li>
 								<li>Scheduled reports (cron → CSV email)</li>
 								<li>WebSocket realtime bridge · fleet + geo API</li>
+								<li>Auto-migration on boot (idempotent) + k8s migrate Job</li>
 							</ul>
 						</div>
 					</div>
-					<p class="tiny">177-node Node-RED flow (auto-generated) · 63 function nodes · validated (compile + no dangling wires).</p>
+					<p class="tiny">177-node Node-RED flow (auto-generated) · validated (compile + no dangling wires). Storage timezone Asia/Bangkok.</p>
 				</section>
 
 				<!-- 12. ESP32 firmware -->
 				<section data-background-color="#0a0e1a">
-					<h2>ESP32-S3 Firmware <span class="pill partial">written · bench-validate</span></h2>
+					<h2>ESP32-S3 Firmware <span class="pill partial">code-complete · bench next</span></h2>
 					<div class="grid2">
 						<div class="card">
-							<h3>Production build (v2)</h3>
+							<h3>Implemented (v2)</h3>
 							<ul>
-								<li>FreeRTOS task split + priority egress queue + watchdog</li>
-								<li>MQTT QoS1 + LWT/birth · <b>mutual TLS</b> (X.509 from NVS)</li>
-								<li><b>A/B HTTPS OTA</b> + rollback · partition table</li>
-								<li>One image, 3 product profiles · edge-alarm fast-path</li>
-								<li>DS3231 RTC + NTP (audit time)</li>
+								<li>FreeRTOS tasks + priority egress queue + watchdog</li>
+								<li>MQTT QoS1 + LWT · <b>mutual TLS</b> (X.509 from NVS)</li>
+								<li><b>A/B HTTPS OTA</b> + rollback · A/B partitions</li>
+								<li><b>Real sensor drivers</b>: Modbus · CAN · I²C · ADC · DI</li>
+								<li>Edge-alarm debounce · store-and-forward (LittleFS)</li>
+								<li>Transport ranking + hysteresis · GPS · deep-sleep · firmware CI</li>
 							</ul>
 						</div>
 						<div class="card">
-							<h3>Pending hardware steps</h3>
+							<h3>Remaining (hardware)</h3>
 							<ul>
-								<li>Compile/flash on real toolchain + bench on N16R8</li>
-								<li>4G / LoRa transport drivers (Wi-Fi done)</li>
-								<li>MQTT5 session-expiry (ESP-IDF)</li>
+								<li>Compile + <b>bench-validate on N16R8</b> hardware</li>
+								<li>Route MQTT/TLS + OTA <b>over 4G modem</b> (PPP netif)</li>
+								<li>BLE indoor-floor beacons (NimBLE + Wi-Fi coex)</li>
+								<li>MQTT5 session-expiry (ESP-IDF esp-mqtt)</li>
 								<li>secure-boot / flash-encryption (eFuse, EOL line)</li>
-								<li>Real sensor drivers (sim today)</li>
+								<li>Verify I²C / ADC / DI pins vs populated BOM</li>
 							</ul>
 						</div>
 					</div>
@@ -351,15 +352,16 @@ sequenceDiagram
 								<li>CORS env-locked (both backends)</li>
 								<li>Login rate-limit (per-IP 429) · security headers</li>
 								<li>Per-tenant + per-device authorization</li>
+								<li>Self-service register + change-password</li>
 							</ul>
 						</div>
 						<div class="card">
 							<h3>Operations</h3>
 							<ul>
 								<li>Timezone: storage <b>Asia/Bangkok (+07:00)</b> + ICT notifications</li>
-								<li>k8s Secret + Deployment manifest</li>
+								<li>k8s: Secret + Deployment + DB-migrate init/Job</li>
 								<li>SQL install order: <code>schema → bloodbox → seeds</code></li>
-								<li>Static-export frontend (GitHub Pages) — no API needed to demo</li>
+								<li>Static-export frontend (no API needed to demo)</li>
 							</ul>
 						</div>
 					</div>
@@ -377,27 +379,66 @@ sequenceDiagram
 						<tr><td>Downlink · reports · realtime WS · fleet/geo</td><td>✅ Done</td><td>config/cmd/ota, CSV cron</td></tr>
 						<tr><td>Provisioning · entitlements · event catalog</td><td>✅ Done</td><td>orgs/depts/users/access</td></tr>
 						<tr><td>Frontend ↔ backend wiring</td><td>✅ Done</td><td>login, admin, superadmin, viewer, profile</td></tr>
-						<tr><td>ESP32 firmware (production)</td><td>🚧 Partial</td><td>written; needs HW compile/flash + bench</td></tr>
-						<tr><td>Superadmin themes page</td><td>🚧 Display</td><td>no backend model yet</td></tr>
-						<tr><td>Tests/CI · password reset · token refresh</td><td>⬜ Todo</td><td>hardening backlog</td></tr>
-						<tr><td>HTTPS/WSS · SealedSecrets · migration Job</td><td>⬜ Todo</td><td>infra / GitOps</td></tr>
+						<tr><td>DB auto-migration + k8s migrate Job</td><td>✅ Done</td><td>idempotent on boot + PreSync</td></tr>
+						<tr><td>Register · change-password</td><td>✅ Done</td><td>forgot-password = stub (no email yet)</td></tr>
+						<tr><td>ESP32 firmware (drivers, store-fwd, transport)</td><td>🚧 Partial</td><td>code-complete; needs HW bench</td></tr>
+						<tr><td>4G/LoRa radio · BLE beacons · MQTT5</td><td>🚧 Hooks</td><td>logic done, radios/drivers pending</td></tr>
+						<tr><td>Automated tests/CI (backend + frontend)</td><td>⬜ Todo</td><td>firmware CI exists; app tests todo</td></tr>
+						<tr><td>HTTPS/WSS · SealedSecrets · token refresh</td><td>⬜ Todo</td><td>infra / GitOps hardening</td></tr>
+						<tr><td>Superadmin themes backend model</td><td>⬜ Todo</td><td>UI present, no DB table yet</td></tr>
 					</table>
 				</section>
 
-				<!-- 15. Deploy -->
+				<!-- 15. Remaining to complete (NEW) -->
+				<section data-background-color="#0a0e1a">
+					<h2>Remaining to Complete <span class="pill partial">roadmap</span></h2>
+					<div class="grid3">
+						<div class="card">
+							<h3>🔧 Firmware / hardware</h3>
+							<ul>
+								<li>Bench-validate on real N16R8 board</li>
+								<li>4G: MQTT/TLS + OTA over modem (PPP netif)</li>
+								<li>BLE indoor-floor beacons (NimBLE)</li>
+								<li>MQTT5 session-expiry · secure-boot eFuse</li>
+								<li>Verify I²C/ADC/DI pins vs BOM</li>
+							</ul>
+						</div>
+						<div class="card">
+							<h3>🔒 Backend / security</h3>
+							<ul>
+								<li>Forgot-password real email flow</li>
+								<li>Token refresh / rotation</li>
+								<li>Automated tests + CI (engine, RBAC, routes)</li>
+								<li>Rate-limit on a shared store (multi-replica)</li>
+							</ul>
+						</div>
+						<div class="card">
+							<h3>🚀 Infra / UX</h3>
+							<ul>
+								<li>HTTPS / WSS termination at ingress</li>
+								<li>JWT_SECRET via SealedSecrets / SOPS</li>
+								<li>Superadmin themes → real backend table</li>
+								<li>Wire any remaining mock-only display pages</li>
+							</ul>
+						</div>
+					</div>
+					<p class="tiny" style="margin-top:14px;">Core platform (device → cloud → RBAC → UI) is production-ready. Remaining items are hardware validation, infra hardening, and test coverage.</p>
+				</section>
+
+				<!-- 16. Deploy -->
 				<section data-background-color="#0a0e1a">
 					<h2>Deployment Path</h2>
 					<ul class="flow">
 						<li><b>Node-RED-only</b>: import <code>flows.nodered-backend.json</code> (do <u>not</u> also import <code>flows.json</code>)</li>
-						<li><b>DB</b>: fresh install → <code>schema.sql → bloodbox.sql → seed-nodes.sql → seed-tenancy.sql</code> (migrate-v* are upgrade-only)</li>
+						<li><b>DB</b>: fresh install → <code>schema → bloodbox → seed-nodes → seed-tenancy</code> (or auto-migrate on boot; migrate-v* = upgrade-only)</li>
 						<li><b>Env</b>: <code>JWT_SECRET</code>, <code>CORS_ORIGIN</code>, <code>DB_TZ=+07:00</code>, SMTP / LINE / Telegram / Google Chat</li>
 						<li><b>Frontend</b>: set <code>NEXT_PUBLIC_API_URL</code> + <code>NEXT_PUBLIC_WS_URL</code>; else runs on mock</li>
-						<li><b>ArgoCD</b>: tracks default branch — feature branch unaffected until merged; run DB migration + image build separately</li>
+						<li><b>ArgoCD</b>: tracks default branch — feature branch unaffected until merged; migrate Job runs PreSync</li>
 					</ul>
 					<p class="tiny" style="margin-top:18px;">Demo logins (after seed-tenancy, pwd <code>demo1234</code>): <code>super@oneops.demo</code> · <code>admin@kmutt.demo</code> · <code>viewer@kmutt.demo</code></p>
 				</section>
 
-				<!-- 16. Close -->
+				<!-- 17. Close -->
 				<section data-background-color="#0a0e1a">
 					<h2>Summary</h2>
 					<p class="small-text">From a mock-only UI prototype to a <b>production-ready, multi-tenant, end-to-end IoT operations platform</b>:</p>
@@ -416,12 +457,17 @@ sequenceDiagram
 		<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/4.6.1/reveal.min.js"></script>
 		<script src="https://cdn.jsdelivr.net/npm/mermaid@10.6.1/dist/mermaid.min.js"></script>
 		<script>
+			// htmlLabels:true renders labels as HTML (no SVG text clipping);
+			// useMaxWidth:true lets the SVG scale to the slide without cutting nodes.
 			mermaid.initialize({
 				startOnLoad: true,
 				theme: 'dark',
-				themeVariables: { fontFamily: 'Inter, system-ui, sans-serif', primaryColor: '#0d1117', lineColor: '#64748b' }
+				securityLevel: 'loose',
+				flowchart: { htmlLabels: true, useMaxWidth: true, nodeSpacing: 45, rankSpacing: 55, padding: 12, curve: 'basis' },
+				sequence: { useMaxWidth: true, wrap: true, width: 200 },
+				themeVariables: { fontSize: '15px' }
 			});
-			Reveal.initialize({ hash: true, slideNumber: 'c/t', transition: 'slide', width: 1280, height: 760 });
+			Reveal.initialize({ hash: true, slideNumber: 'c/t', transition: 'slide', width: 1320, height: 770, margin: 0.04 });
 		</script>
 	</body>
 </html>
