@@ -1,17 +1,6 @@
 # ONEOPS ingest worker — device MQTT → MySQL (readings/pending/alarms) → Redpanda
 # → internal/telemetry/live/# for the Node-RED WS dashboard. Without it nothing
 # persists and the UI stays empty.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ingest-worker-secrets
-  namespace: carbon-credit
-type: Opaque
-stringData:
-  # Prefer `kubectl create secret` / a SealedSecret over committing real values.
-  MQTT_PASS: "CHANGE-ME"
-  DB_DSN: "admin:CHANGE-ME@tcp(mysql.data.svc.cluster.local:3306)/iothub?parseTime=true"
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

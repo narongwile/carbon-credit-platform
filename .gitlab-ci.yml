@@ -70,3 +70,4 @@ build_ingest_worker:
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - worker/**/*
+    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
