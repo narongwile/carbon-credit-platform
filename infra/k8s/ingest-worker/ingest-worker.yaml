@@ -5,7 +5,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ingest-worker
-  namespace: carbon-credit
+  namespace: iiot-uat
   labels:
     app: ingest-worker
     app.kubernetes.io/name: ingest-worker
