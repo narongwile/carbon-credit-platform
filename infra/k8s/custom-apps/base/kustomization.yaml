@@ -26,7 +26,6 @@ resources:
   # ── IoT Services ──
   # - mosquitto.yaml         # replaced by EMQX (data namespace)
   - node-red.yaml
-  - ingest-worker.yaml
   # ── Next.js platform UI (separate app; browser -> nodered ingress) ──
   - frontend-next.yaml
   # ── Observability ──
