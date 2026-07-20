@@ -1,0 +1,72 @@
+# ONEOPS ingest worker — device MQTT → MySQL (readings/pending/alarms) → Redpanda
+# → internal/telemetry/live/# for the Node-RED WS dashboard. Without it nothing
+# persists and the UI stays empty.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ingest-worker-secrets
+  namespace: carbon-credit
+type: Opaque
+stringData:
+  # Prefer `kubectl create secret` / a SealedSecret over committing real values.
+  MQTT_PASS: "CHANGE-ME"
+  DB_DSN: "admin:CHANGE-ME@tcp(mysql.data.svc.cluster.local:3306)/iothub?parseTime=true"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest-worker
+  namespace: carbon-credit
+  labels:
+    app: ingest-worker
+    app.kubernetes.io/name: ingest-worker
+    app.kubernetes.io/component: iot-ingest
+spec:
+  # Single instance + shared subscription. To scale: raise replicas — the
+  # "$share/..." topic load-balances each message to exactly one worker (EMQX).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ingest-worker
+  template:
+    metadata:
+      labels:
+        app: ingest-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/ingest-worker:latest
+          imagePullPolicy: Always
+          env:
+            - name: TZ
+              value: Asia/Bangkok
+            # Prod broker = EMQX (supports shared subscriptions).
+            - name: MQTT_BROKER
+              value: "tcp://emqx.data.svc.cluster.local:1883"
+            - name: MQTT_USER
+              value: ingest
+            - name: MQTT_SUB_TOPIC
+              value: "$share/ingest-worker/telemetry/#"
+            - name: TENANT_DB_MODE
+              value: "off"
+            - name: KAFKA_BROKERS
+              value: "redpanda.platform-services.svc.cluster.local:9092"
+            # Unique client id per pod so replicas never kick each other.
+            - name: MQTT_CLIENT_ID
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          envFrom:
+            - secretRef: { name: ingest-worker-secrets }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      terminationGracePeriodSeconds: 20

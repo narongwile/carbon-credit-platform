@@ -1,0 +1,604 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"regexp"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/twmb/franz-go/pkg/kgo"
+)
+
+type AlarmRule struct {
+	NodeID   string
+	OrgID    string
+	Domain   string
+	RuleJSON string
+}
+
+type TelemetryPayload struct {
+	NodeID    string             `json:"nodeId"`
+	Timestamp int64              `json:"ts"`
+	Values    map[string]float64 `json:"values"`
+}
+
+type RuleParam struct {
+	Key       string  `json:"key"`
+	Label     string  `json:"label"`
+	Warn      float64 `json:"warn"`
+	Critical  float64 `json:"critical"`
+	Direction string  `json:"direction"`
+	Unit      string  `json:"unit"`
+	Rate      *struct {
+		Warn float64 `json:"warn"`
+	} `json:"rate,omitempty"`
+}
+
+type RuleDefinition struct {
+	DwellMin   int         `json:"dwellMin"`
+	Hysteresis float64     `json:"hysteresis"`
+	Params     []RuleParam `json:"params"`
+}
+
+type AlarmParamState struct {
+	ActiveLevel string
+	RunCount    int
+	PrevValue   *float64
+}
+
+type AlarmNodeState struct {
+	Params map[string]*AlarmParamState
+	Mu     sync.Mutex
+}
+
+var (
+	controlDB   *sql.DB
+	tenantMode  bool
+	kafkaClient *kgo.Client
+	mqttClient  mqtt.Client
+
+	// Caches
+	nodeToOrg       sync.Map // string (nodeId) -> OrgCacheEntry
+	tenantDBs       sync.Map // string (orgId) -> *sql.DB
+	rulesCache      sync.Map // string (nodeId) -> RuleCacheEntry
+	alarmStateCache sync.Map // string (nodeId) -> *AlarmNodeState
+	orgExistsCache  sync.Map // string (orgId) -> orgExistEntry
+
+	// Regex for DB name sanitization
+	nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
+)
+
+type OrgCacheEntry struct {
+	OrgID        string
+	DepartmentID string
+	Status       string // active | pending | rejected
+	ExpiresAt    time.Time
+}
+
+type orgExistEntry struct {
+	exists    bool
+	expiresAt time.Time
+}
+
+// UnassignedOrg is the claimable pool a device lands in when its MQTT topic
+// carries an org segment that is not a real, active organization. Devices here
+// are invisible to tenant admins but visible to superadmins, who reassign each
+// to exactly one real org during approval.
+const UnassignedOrg = "__unassigned__"
+
+type RuleCacheEntry struct {
+	Rule      AlarmRule
+	ExpiresAt time.Time
+}
+
+func main() {
+	// 1. Connect to Control MySQL DB
+	var err error
+	dsn := getEnv("DB_DSN", "root:password@tcp(mysql:3306)/iothub?parseTime=true")
+	tenantMode = strings.EqualFold(getEnv("TENANT_DB_MODE", ""), "on")
+	controlDB, err = sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatalf("MySQL Control DB Error: %v", err)
+	}
+	controlDB.SetMaxOpenConns(50)
+	controlDB.SetMaxIdleConns(10)
+	defer controlDB.Close()
+	log.Printf("Worker DB-per-tenant mode: %v", tenantMode)
+
+	// 2. Connect Redpanda
+	brokers := []string{getEnv("KAFKA_BROKERS", "redpanda.platform-services.svc.cluster.local:9092")}
+	kafkaClient, err = kgo.NewClient(
+		kgo.SeedBrokers(brokers...),
+	)
+	if err != nil {
+		log.Fatalf("Redpanda Error: %v", err)
+	}
+	defer kafkaClient.Close()
+
+	// 3. Connect EMQX (MQTT)
+	opts := mqtt.NewClientOptions().
+		AddBroker(getEnv("MQTT_BROKER", "tcp://emqx:1883")).
+		SetClientID("golang-ingest-worker").
+		SetUsername(getEnv("MQTT_USER", "admin")).
+		SetPassword(getEnv("MQTT_PASS", "public"))
+
+	opts.OnConnect = func(c mqtt.Client) {
+		log.Println("Connected to EMQX")
+		// Use EMQX Shared Subscription feature
+		if token := c.Subscribe("$share/ingest-worker/telemetry/#", 1, handleTelemetry); token.Wait() && token.Error() != nil {
+			log.Fatalf("Subscribe Error: %v", token.Error())
+		}
+	}
+
+	mqttClient = mqtt.NewClient(opts)
+	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
+		log.Fatalf("MQTT Connect Error: %v", token.Error())
+	}
+
+	log.Println("Worker started. Press Ctrl+C to exit.")
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+	<-sig
+}
+
+func orgDbName(orgID string) string {
+	clean := strings.ToLower(orgID)
+	clean = nonAlphanumericRegex.ReplaceAllString(clean, "_")
+	clean = strings.Trim(clean, "_")
+	if clean == "" {
+		return ""
+	}
+	name := "iothub_" + clean
+	if len(name) > 64 {
+		name = name[:64]
+	}
+	return name
+}
+
+func resolvePool(orgID string) *sql.DB {
+	// Flag off (or no org) → single control DB, exactly like the row-level build.
+	if !tenantMode || orgID == "" {
+		return controlDB
+	}
+
+	// Check cache
+	if db, ok := tenantDBs.Load(orgID); ok {
+		return db.(*sql.DB)
+	}
+
+	// Create new connection pool for this tenant
+	dbName := orgDbName(orgID)
+
+	dsnBase := getEnv("DB_DSN_BASE", "")
+	if dsnBase == "" {
+		fullDSN := getEnv("DB_DSN", "root:password@tcp(mysql:3306)/iothub?parseTime=true")
+		parts := strings.Split(fullDSN, "/iothub")
+		if len(parts) > 0 {
+			dsnBase = parts[0] + "/"
+		} else {
+			dsnBase = "root:password@tcp(mysql:3306)/"
+		}
+	}
+
+	dsn := fmt.Sprintf("%s%s?parseTime=true", dsnBase, dbName)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("Failed to open connection to %s: %v", dbName, err)
+		return nil
+	}
+
+	if err := db.Ping(); err != nil {
+		log.Printf("Failed to ping DB %s: %v", dbName, err)
+		return nil
+	}
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(2)
+	db.SetConnMaxLifetime(time.Hour)
+
+	tenantDBs.Store(orgID, db)
+	log.Printf("Created DB connection pool for tenant: %s", dbName)
+	return db
+}
+
+// nodeInfo resolves org/department/status from the control routing index (cached).
+// A short TTL keeps admin approvals (pending → active) reflecting quickly. Returns
+// ("","","") for an unknown node so the caller can auto-register it.
+func nodeInfo(nodeID string) (orgID, depID, status string) {
+	if cached, ok := nodeToOrg.Load(nodeID); ok {
+		entry := cached.(OrgCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.OrgID, entry.DepartmentID, entry.Status
+		}
+	}
+
+	var org, dep, st sql.NullString
+	err := controlDB.QueryRow("SELECT org_id, department_id, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("Error resolving node %s: %v", nodeID, err)
+		}
+		return "", "", "" // unknown → caller auto-registers as pending
+	}
+
+	nodeToOrg.Store(nodeID, OrgCacheEntry{
+		OrgID:        org.String,
+		DepartmentID: dep.String,
+		Status:       st.String,
+		ExpiresAt:    time.Now().Add(2 * time.Minute),
+	})
+	return org.String, dep.String, st.String
+}
+
+// domainFromProduct maps the MQTT topic's product segment to a nodes.domain enum.
+func domainFromProduct(p string) string {
+	switch strings.ToLower(p) {
+	case "transformer", "eternity", "eternitytransformers":
+		return "transformer"
+	case "carbonnode", "carbonbox", "refrigeration", "refrigerationdatalogger":
+		return "carbonNode"
+	case "bloodbox":
+		return "bloodBox"
+	default:
+		return "transformer" // ETERNITY-first default
+	}
+}
+
+// orgExists reports whether orgID is a real, active organization in the control
+// DB (cached with a short TTL). Auto-registration uses this to validate the org
+// segment of a device's MQTT topic — an unrecognized org would otherwise create
+// a pending node under a phantom org id that no admin (only a raw DB query)
+// could ever surface.
+func orgExists(orgID string) bool {
+	if orgID == "" || orgID == UnassignedOrg {
+		return false
+	}
+	if c, ok := orgExistsCache.Load(orgID); ok {
+		e := c.(orgExistEntry)
+		if time.Now().Before(e.expiresAt) {
+			return e.exists
+		}
+	}
+	var one int
+	err := controlDB.QueryRow("SELECT 1 FROM organizations WHERE id=? AND status='active'", orgID).Scan(&one)
+	if err != nil && err != sql.ErrNoRows {
+		// Transient DB error: don't cache. Treat as unknown so the device lands
+		// in the claimable pool (visible to superadmins) rather than a phantom org.
+		log.Printf("orgExists check failed for %s: %v", orgID, err)
+		return false
+	}
+	exists := err == nil
+	orgExistsCache.Store(orgID, orgExistEntry{exists: exists, expiresAt: time.Now().Add(5 * time.Minute)})
+	return exists
+}
+
+// autoRegisterPending creates a PENDING node for an unknown device. Org + product
+// come from the topic convention telemetry/{orgId}/{product}/{nodeId}. The topic
+// org is validated against the control DB; an empty or unrecognized org routes
+// the device to the claimable UnassignedOrg pool. The device's data is not
+// stored until an admin approves it (status → active).
+func autoRegisterPending(nodeID, topic string, sample []byte) {
+	parts := strings.Split(topic, "/")
+	orgID, product := "", ""
+	if len(parts) >= 2 {
+		orgID = parts[1]
+	}
+	if len(parts) >= 3 {
+		product = parts[2]
+	}
+	if orgID == "" || !orgExists(orgID) {
+		if orgID != "" {
+			log.Printf("Auto-register: node %s topic org %q is not a known active org — routing to %s pool", nodeID, orgID, UnassignedOrg)
+		}
+		orgID = UnassignedOrg
+	}
+	prefix := topic
+	if len(parts) >= 4 {
+		prefix = strings.Join(parts[:4], "/")
+	}
+	if _, err := controlDB.Exec(
+		"INSERT IGNORE INTO nodes (id, org_id, domain, name, mqtt_prefix, status) VALUES (?, ?, ?, ?, ?, 'pending')",
+		nodeID, orgID, domainFromProduct(product), nodeID, prefix); err != nil {
+		log.Printf("Auto-register failed for node %s: %v", nodeID, err)
+		return
+	}
+	log.Printf("Auto-registered PENDING node %s (org=%s domain=%s) — awaiting approval", nodeID, orgID, domainFromProduct(product))
+	touchPending(nodeID, sample)
+}
+
+// touchPending refreshes a pending device's presence (control DB) so the approval
+// screen shows it is still transmitting, and stores the latest sample values so
+// the admin can sanity-check the readings before approving.
+func touchPending(nodeID string, sample []byte) {
+	if len(sample) == 0 {
+		_, _ = controlDB.Exec(
+			"INSERT INTO device_presence (node_id, online, last_seen) VALUES (?, 1, NOW(3)) ON DUPLICATE KEY UPDATE online=1, last_seen=NOW(3)",
+			nodeID)
+		return
+	}
+	_, _ = controlDB.Exec(
+		"INSERT INTO device_presence (node_id, online, last_seen, last_sample) VALUES (?, 1, NOW(3), ?) ON DUPLICATE KEY UPDATE online=1, last_seen=NOW(3), last_sample=VALUES(last_sample)",
+		nodeID, string(sample))
+}
+
+func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
+	if cached, ok := rulesCache.Load(nodeID); ok {
+		entry := cached.(RuleCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.Rule, true
+		}
+	}
+
+	var r AlarmRule
+	err := tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json FROM alarm_rules WHERE node_id=?", nodeID).
+		Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON)
+
+	if err != nil {
+		if err != sql.ErrNoRows {
+			// This is normal if the device has no alarm rule configured
+			// log.Printf("Error fetching alarm rule for node %s: %v", nodeID, err)
+		}
+		return AlarmRule{}, false
+	}
+
+	rulesCache.Store(nodeID, RuleCacheEntry{
+		Rule:      r,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	})
+	return r, true
+}
+
+func breaches(v, l float64, dir string) bool {
+	if dir == "high" {
+		return v >= l
+	}
+	return v <= l
+}
+
+func cleared(v, l, h float64, dir string) bool {
+	if dir == "high" {
+		return v < l-h
+	}
+	return v > l+h
+}
+
+func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, rule AlarmRule) {
+	var ruleDef RuleDefinition
+	if err := json.Unmarshal([]byte(rule.RuleJSON), &ruleDef); err != nil {
+		log.Printf("Failed to unmarshal rule JSON for node %s: %v", t.NodeID, err)
+		return
+	}
+
+	stateVal, _ := alarmStateCache.LoadOrStore(t.NodeID, &AlarmNodeState{
+		Params: make(map[string]*AlarmParamState),
+	})
+	ns := stateVal.(*AlarmNodeState)
+
+	ns.Mu.Lock()
+	defer ns.Mu.Unlock()
+
+	for _, p := range ruleDef.Params {
+		val, exists := t.Values[p.Key]
+		if !exists {
+			continue
+		}
+
+		ps, ok := ns.Params[p.Key]
+		if !ok {
+			ps = &AlarmParamState{}
+			ns.Params[p.Key] = ps
+		}
+
+		// Rate Check
+		if p.Rate != nil && ps.PrevValue != nil {
+			var d float64
+			if p.Direction == "high" {
+				d = val - *ps.PrevValue
+			} else {
+				d = *ps.PrevValue - val
+			}
+			if d >= p.Rate.Warn {
+				emitAlarm(tenantDB, client, orgID, depID, t, ts, p, "WARNING", "rate", val, p.Rate.Warn)
+			}
+		}
+
+		valCopy := val
+		ps.PrevValue = &valCopy
+
+		// Threshold Check
+		lvl := ""
+		if breaches(val, p.Critical, p.Direction) {
+			lvl = "CRITICAL"
+		} else if breaches(val, p.Warn, p.Direction) {
+			lvl = "WARNING"
+		}
+
+		dwellMin := ruleDef.DwellMin
+		if dwellMin <= 0 {
+			dwellMin = 3 // default
+		}
+
+		if lvl != "" {
+			ps.RunCount++
+			if ps.RunCount >= dwellMin && lvl != ps.ActiveLevel {
+				if ps.ActiveLevel == "" || (ps.ActiveLevel == "WARNING" && lvl == "CRITICAL") {
+					thresh := p.Warn
+					if lvl == "CRITICAL" {
+						thresh = p.Critical
+					}
+					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, lvl, "threshold", val, thresh)
+				}
+				ps.ActiveLevel = lvl
+			}
+		} else if ps.ActiveLevel != "" && cleared(val, p.Warn, ruleDef.Hysteresis, p.Direction) {
+			ps.ActiveLevel = ""
+			ps.RunCount = 0
+		} else if lvl == "" {
+			ps.RunCount = 0
+		}
+	}
+}
+
+func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64) {
+	// Deterministic id (matches Node-RED) → INSERT IGNORE is idempotent.
+	id := fmt.Sprintf("ev-%s-%s-%d-%s", t.NodeID, p.Key, ts.UnixMilli(), kind)
+
+	// Columns + NOT-NULLs must match schema.sql alarm_events (id PK, org_id,
+	// param_label, raised_at are NOT NULL; the timestamp column is raised_at, not ts).
+	var dep interface{}
+	if depID != "" {
+		dep = depID
+	}
+	_, err := tenantDB.Exec(`
+		INSERT IGNORE INTO alarm_events
+		  (id, node_id, org_id, department_id, param_key, param_label, severity, kind, value, threshold, unit, raised_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, t.NodeID, orgID, dep, p.Key, p.Label, sev, kind, val, thresh, p.Unit, ts)
+
+	if err != nil {
+		log.Printf("Failed to insert alarm event: %v", err)
+	}
+
+	// Publish WebSocket Enrichment Event
+	ev := map[string]interface{}{
+		"id":           id,
+		"nodeId":       t.NodeID,
+		"orgId":        orgID,
+		"departmentId": depID,
+		"paramKey":     p.Key,
+		"paramLabel":   p.Label,
+		"severity":     sev,
+		"kind":         kind,
+		"value":        val,
+		"threshold":    thresh,
+		"unit":         p.Unit,
+		"ts":           ts.UnixMilli(),
+	}
+
+	evBytes, _ := json.Marshal(ev)
+
+	dispOrg := orgID
+	if dispOrg == "" {
+		dispOrg = "default"
+	}
+	client.Publish(fmt.Sprintf("internal/alarms/live/%s/%s", dispOrg, t.NodeID), 0, false, evBytes)
+}
+
+func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Recovered in handleTelemetry: %v", r)
+		}
+	}()
+
+	payload := msg.Payload()
+
+	var t TelemetryPayload
+	if err := json.Unmarshal(payload, &t); err != nil {
+		log.Printf("Failed to parse telemetry: %v", err)
+		return
+	}
+
+	if t.NodeID == "" {
+		log.Printf("Missing nodeId in telemetry payload")
+		return
+	}
+
+	var ts time.Time
+	if t.Timestamp > 0 {
+		// Assume timestamp in milliseconds
+		ts = time.UnixMilli(t.Timestamp)
+	} else {
+		ts = time.Now()
+		t.Timestamp = ts.UnixMilli()
+	}
+
+	record := &kgo.Record{
+		Topic: "telemetry-events",
+		Key:   []byte(t.NodeID),
+		Value: payload,
+	}
+	kafkaClient.Produce(context.Background(), record, nil)
+
+	orgID, depID, status := nodeInfo(t.NodeID)
+
+	// Zero-touch onboarding: an unknown device is auto-registered as a PENDING
+	// node (org from its topic) and awaits admin approval — its data is dropped
+	// until approved. Known-but-not-approved (pending/rejected) devices are kept
+	// "alive" for the approval screen but likewise store no readings/alarms.
+	if orgID == "" {
+		sample, _ := json.Marshal(t.Values)
+		autoRegisterPending(t.NodeID, msg.Topic(), sample)
+		return
+	}
+	if status == "pending" || status == "rejected" {
+		if status == "pending" {
+			sample, _ := json.Marshal(t.Values)
+			touchPending(t.NodeID, sample)
+		}
+		return
+	}
+
+	tenantDB := resolvePool(orgID)
+	if tenantDB == nil {
+		log.Printf("Dropped telemetry: could not connect to tenant DB for org %s", orgID)
+		return
+	}
+
+	// Backlog Check
+	if time.Since(ts) > 30*time.Second {
+		// Columns must match migrate-v9 offline_sync_log (sync_at defaults to NOW;
+		// there is no unique key on node_id, so the old ON DUPLICATE never fired).
+		_, err := tenantDB.Exec(
+			"INSERT INTO offline_sync_log (node_id, records_count, oldest_ts, newest_ts) VALUES (?, 1, ?, ?)",
+			t.NodeID, ts, ts)
+		if err != nil {
+			log.Printf("Failed to insert offline_sync_log: %v", err)
+		}
+	}
+
+	for key, val := range t.Values {
+		_, err := tenantDB.Exec("INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES (?, ?, ?, ?)",
+			t.NodeID, key, val, ts)
+		if err != nil {
+			log.Printf("DB Insert Error for org %s: %v", orgID, err)
+		}
+	}
+
+	// Enrichment for WebSocket UI
+	var enrichedPayload map[string]interface{}
+	json.Unmarshal(payload, &enrichedPayload)
+	enrichedPayload["orgId"] = orgID
+	enrichedPayload["departmentId"] = depID
+	enrichedPayload["ts"] = t.Timestamp // ensure ts is numeric
+	enrichedBytes, _ := json.Marshal(enrichedPayload)
+
+	dispOrg := orgID
+	if dispOrg == "" {
+		dispOrg = "default"
+	}
+	client.Publish(fmt.Sprintf("internal/telemetry/live/%s/%s", dispOrg, t.NodeID), 0, false, enrichedBytes)
+
+	rule, ok := getAlarmRule(tenantDB, t.NodeID)
+	if ok {
+		evaluateAlarms(tenantDB, client, orgID, depID, t, ts, rule)
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
