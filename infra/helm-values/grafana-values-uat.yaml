@@ -1,0 +1,169 @@
+# ============================================================
+# Grafana — official chart values
+# Chart: https://grafana.github.io/helm-charts  chart=grafana
+# Pre-existing secrets (namespace monitoring):
+#   grafana-admin        — admin-user, admin-password
+#   mysql-credentials    — mysql-password (for MySQL datasource file mount)
+# Public URL: https://grafana.${DOMAIN}
+# ============================================================
+replicas: 1
+
+image:
+  tag: "11.4.0"
+
+admin:
+  existingSecret: grafana-admin
+  userKey: admin-user
+  passwordKey: admin-password
+
+service:
+  type: NodePort
+  port: 80
+  targetPort: 3000
+  nodePort: 3000
+  portName: http
+
+persistence:
+  enabled: true
+  type: pvc
+  storageClassName: local-path
+  size: 10Gi
+  accessModes: [ReadWriteOnce]
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+  hosts:
+    - grafana.27.254.143.144.nip.io
+  tls:
+    - secretName: grafana-tls
+      hosts:
+        - grafana.27.254.143.144.nip.io
+
+# Main container — 128Mi is too tight for Grafana 11 on a slow node
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi
+
+# Chart default readiness has no initialDelay; fails while Grafana still boots
+readinessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 12
+
+livenessProbe:
+  httpGet:
+    path: /api/health
+    port: 3000
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 6
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 472
+  fsGroup: 472
+
+# monitoring-quota requires every container to declare cpu/memory.
+# Disable optional init/sidecars — datasources below are provisioned via ConfigMap.
+initChownData:
+  enabled: false
+
+downloadDashboards:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+sidecar:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+  dashboards:
+    enabled: false
+  datasources:
+    enabled: false
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: MySQL
+        type: mysql
+        url: mysql.data.svc.cluster.local:3306
+        database: carbon_credit
+        user: app
+        secureJsonData:
+          password: $__file{/etc/secrets/mysql/mysql-password}
+        jsonData:
+          maxOpenConns: 25
+          maxIdleConns: 25
+          connMaxLifetime: 14400
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc.cluster.local
+        access: proxy
+        isDefault: true
+
+extraSecretMounts:
+  - name: mysql-credentials
+    secretName: mysql-credentials     # MUST exist in monitoring namespace
+    defaultMode: 0440                 # K8s does NOT support cross-namespace
+    mountPath: /etc/secrets/mysql     # secret mounts — see extraObjects below
+    readOnly: true
+
+# Create monitoring/mysql-credentials by mirroring data/mysql-credentials.
+# This avoids ManualCopy drift — chart manages the mirror.
+extraObjects:
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: mysql-credentials
+      namespace: monitoring
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+        app.kubernetes.io/managed-by: Helm
+      annotations:
+        # WARNING: this stores the password in the chart values. For prod,
+        # replace with SealedSecrets / External Secrets Operator (ESO).
+        description: "Mirror of data/mysql-credentials for Grafana MySQL datasource"
+    type: Opaque
+    stringData:
+      mysql-password: "iothub.2026"
+      mysql-root-password: "iothub.2026"
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: default
+        orgId: 1
+        folder: ""
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+
+# gnetId init container downloads dashboards at startup — skip on memory-tight nodes
+dashboards: {}

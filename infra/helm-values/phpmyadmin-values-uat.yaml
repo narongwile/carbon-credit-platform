@@ -1,0 +1,74 @@
+# ============================================================
+# phpMyAdmin — Bitnami chart values
+# Chart: oci://registry-1.docker.io/bitnamicharts/phpmyadmin
+# Connects to mysql.data.svc.cluster.local:3306
+# Public URL: https://pma.${DOMAIN}
+# ============================================================
+
+# Use chart-default bitnami/phpmyadmin image (do not pin removed docker.io tags)
+
+db:
+  allowArbitraryServer: false
+  host: mysql.data.svc.cluster.local
+  port: 3306
+  bundleTestDB: false
+
+extraEnvVars:
+  - name: PHPMYADMIN_ABSOLUTE_URI
+    value: https://pma-iiot.27.254.143.144.nip.io/
+  - name: PHP_UPLOAD_MAX_FILESIZE
+    value: 256M
+  - name: PHP_POST_MAX_SIZE
+    value: 256M
+
+service:
+  type: NodePort
+  ports:
+    http: 80
+  nodePorts:
+    http: 30808
+
+ingress:
+  enabled: true
+  ingressClassName: traefik
+  hostname: pma-iiot.27.254.143.144.nip.io
+  path: /
+  pathType: Prefix
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: data-phpmyadmin-basicauth@kubernetescrd
+  tls: true
+  extraTls:
+    - secretName: phpmyadmin-tls
+      hosts:
+        - pma-iiot.27.254.143.144.nip.io
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  enabled: true
+
+containerSecurityContext:
+  enabled: true
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+
+extraDeploy:
+  - apiVersion: traefik.io/v1alpha1
+    kind: Middleware
+    metadata:
+      name: phpmyadmin-basicauth
+      namespace: data
+    spec:
+      basicAuth:
+        secret: phpmyadmin-basicauth

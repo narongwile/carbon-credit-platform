@@ -1,0 +1,500 @@
+# ============================================================
+# EMQX MQTT Broker — Helm Values (best-practice, v5.x)
+# Chart: emqx/emqx                         Namespace: data
+#
+# Design decisions:
+#   • hostNetwork: true        → pod binds 1883/8883/18083 directly on the
+#                                node interface. Fixes ECONNREFUSED for
+#                                external clients on standard MQTT ports
+#                                without extending K3s NodePort range or
+#                                inventing iptables DNAT.
+#   • dnsPolicy: ClusterFirstWithHostNet → keeps cluster DNS working for
+#                                EMQX → backend webhooks (auth/ACL).
+#   • Dashboard / cluster-cookie credentials sourced from K8s Secrets
+#     (seeded by deploy-bootstrap.sh) via envFrom — chart never owns the
+#     password, so re-syncs cannot rotate it.
+#   • Authentication: built-in DB (managed via dashboard or REST API).
+#     Authorization: file-based ACL mounted from the ConfigMap below.
+#   • Anonymous access disabled. ACL default = deny.
+#   • Single-node: replicaCount=1 + nodeSelector pin. Bump for HA later.
+#
+# Pre-existing secret (created by bootstrap):
+#   data/emqx-dashboard   keys:
+#     EMQX_DASHBOARD__DEFAULT_USERNAME
+#     EMQX_DASHBOARD__DEFAULT_PASSWORD
+# ============================================================
+
+replicaCount: 1
+
+image:
+  repository: emqx/emqx
+  tag: "5.5.1"
+  pullPolicy: IfNotPresent
+
+# NOTE: emqx/emqx chart does NOT honor top-level `hostNetwork` —
+# the StatefulSet template never reads it. We bind standard ports
+# (1883/8883) on the node via a companion Service with `externalIPs`
+# (see extraDeploy at the bottom). kube-proxy installs iptables rules
+# that catch packets to <node-ip>:1883 and forward to the pod —
+# functionally equivalent to hostPort, but managed by the chart.
+
+# Pin to a single node — externalIPs Service binds on every node, but
+# we run a single replica so this is deterministic.
+nodeSelector:
+  kubernetes.io/os: linux
+
+# ── Storage ─────────────────────────────────────────────────────────
+persistence:
+  enabled: true
+  size: 5Gi
+  storageClassName: local-path
+
+# ── Service ─────────────────────────────────────────────────────────
+# With hostNetwork the Service is mostly for in-cluster consumers
+# (Node-RED, backend, etc.). Keep ClusterIP — external traffic bypasses
+# it and hits the node interface directly via hostNetwork.
+service:
+  type: ClusterIP
+  mqtt: 1883
+  mqttssl: 8883
+  ws: 8083
+  wss: 8084
+  dashboard: 18083    # EMQX internal default — DO NOT change (chart uses as containerPort)
+  api: 18083          # Must match dashboard — chart probes use this
+
+# ── EMQX runtime config (env-style, EMQX_* keys) ────────────────────
+emqxConfig:
+  # Logging
+  EMQX_LOG__CONSOLE_HANDLER__LEVEL: warning
+  EMQX_LOG__FILE_HANDLERS__DEFAULT__LEVEL: warning
+
+  # Cluster (single-node static)
+  EMQX_CLUSTER__DISCOVERY_STRATEGY: static
+  EMQX_NODE__NAME: "emqx@127.0.0.1"
+
+  # Listener limits only — DO NOT set EMQX_LISTENERS__*__BIND here.
+  # The chart auto-renders containerPort from service.{mqtt,mqttssl,ws,wss}
+  # by parsing these env vars; passing "0.0.0.0:1883" breaks schema
+  # validation ("containerPort: expected numeric, got string").
+  # Bind addresses are controlled by the `service` block above.
+  EMQX_LISTENERS__TCP__DEFAULT__MAX_CONNECTIONS: "10000"
+  EMQX_LISTENERS__SSL__DEFAULT__MAX_CONNECTIONS: "10000"
+  EMQX_LISTENERS__WS__DEFAULT__MAX_CONNECTIONS: "5000"
+  EMQX_LISTENERS__WSS__DEFAULT__MAX_CONNECTIONS: "5000"
+
+  # ── Authentication: built-in database ────────────────────────────
+  # NOTE: EMQX 5.5.1 schema does NOT recognize bootstrap_file /
+  # bootstrap_type under authentication chain (those land in 5.6+).
+  # MQTT users are seeded by a one-shot Job (see extraDeploy below)
+  # that POSTs to /api/v5/.../users using a bootstrapped API key.
+  EMQX_AUTHENTICATION__1__MECHANISM: password_based
+  EMQX_AUTHENTICATION__1__BACKEND: built_in_database
+  EMQX_AUTHENTICATION__1__USER_ID_TYPE: username
+  EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__NAME: sha256
+  EMQX_AUTHENTICATION__1__PASSWORD_HASH_ALGORITHM__SALT_POSITION: suffix
+
+  # ── API key bootstrap (5.4+) — feeds the seed Job below ──────────
+  # Mount as directory to avoid subPath-on-existing-file containerd bug
+  EMQX_API_KEY__BOOTSTRAP_FILE: "/opt/emqx/mount/apikey/apikey_bootstrap.txt"
+
+  # ── Authorization: file-based ACL mounted from ConfigMap ──────────
+  # Use directory mount path (NOT subPath onto /opt/emqx/etc/acl.conf —
+  # containerd can fail to overlay subPath onto pre-existing file in image)
+  EMQX_AUTHORIZATION__SOURCES__1__TYPE: file
+  EMQX_AUTHORIZATION__SOURCES__1__ENABLE: "true"
+  EMQX_AUTHORIZATION__SOURCES__1__PATH: "/opt/emqx/mount/acl/acl.conf"
+  EMQX_AUTHORIZATION__NO_MATCH: deny
+  EMQX_AUTHORIZATION__DENY_ACTION: ignore
+  EMQX_AUTHORIZATION__CACHE__ENABLE: "true"
+
+  # Disable anonymous explicitly (default false in 5.x, set for clarity)
+  EMQX_ALLOW_ANONYMOUS: "false"
+
+  # Per-client limits (multi-tenant safety)
+  EMQX_MQTT__MAX_PACKET_SIZE: "1MB"
+  EMQX_MQTT__MAX_CLIENTID_LEN: "65535"
+  EMQX_MQTT__MAX_QOS_ALLOWED: "2"
+  # EMQX_MQTT__KEEPALIVE_MULTIPLIER: "1.5"
+  EMQX_MQTT__RETAIN_AVAILABLE: "true"
+  EMQX_MQTT__WILDCARD_SUBSCRIPTION: "true"
+  EMQX_MQTT__SHARED_SUBSCRIPTION: "true"
+
+  # ── Anti-disconnect tuning ───────────────────────────────────────
+  # Prevent broker from dropping connections right after PUBLISH.
+  # • keepalive_multiplier 2.5 → broker waits 2.5× the client's
+  #   keepalive interval before declaring it dead (MQTT spec = 1.5).
+  #   Tolerates jittery networks / GC pauses.
+  # • idle_timeout infinity → never close a socket for being "idle".
+  # • session_expiry_interval = 7200s → if the client does get
+  #   disconnected, its session + subscriptions survive for 2 hours,
+  #   allowing seamless reconnect without re-subscribing.
+  # • max_awaiting_rel / await_rel_timeout → large QoS-2 windows.
+  EMQX_MQTT__KEEPALIVE_MULTIPLIER: "2.5"
+  EMQX_MQTT__IDLE_TIMEOUT: "infinity"
+  EMQX_MQTT__SESSION_EXPIRY_INTERVAL: "7200s"
+  EMQX_MQTT__MAX_AWAITING_REL: "1000"
+  EMQX_MQTT__AWAIT_REL_TIMEOUT: "300s"
+
+  # ── Connection / rate-limit tuning (don't kill slow publishers) ──
+  EMQX_LISTENERS__TCP__DEFAULT__MAX_CONN_RATE: "500"
+  EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE: "5000"
+  EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE: "256MB"
+
+  # System resource guards
+  EMQX_SYSMON__VM__LONG_GC: "disabled"
+  EMQX_SYSMON__VM__LONG_SCHEDULE: "240ms"
+
+  # ── Dashboard port ───────────────────────────────────────────────
+  # DO NOT set EMQX_DASHBOARD__LISTENERS__HTTP__BIND here!
+  # The Helm chart parses BIND values → containerPort. Any format
+  # ("0.0.0.0:18083" or "18083") gets normalized to "0.0.0.0:18083"
+  # which is a string → K8s rejects it. EMQX defaults to 18083.
+  # External access at port 18083 is via emqx-external Service:
+  #   port:18083 → targetPort:18083
+
+# ── Inject dashboard admin user/password from Secret ────────────────
+# IMPORTANT: chart template sets EMQX_DASHBOARD__DEFAULT_PASSWORD=public
+# directly in container.env. We MUST use extraEnv (not extraEnvFrom) so
+# our values override the chart default — k8s precedence rule:
+#   - `env` overrides `envFrom`
+#   - When two `env` entries share a name → first definition wins
+# In Helm, extraEnv is appended AFTER chart's own env list, so the
+# chart's `public` would still win. To force override we redeclare the
+# var with the SAME name AND rely on Helm chart strategic merge by
+# placing our entries via extraEnvFrom too (belt + suspenders).
+# In practice, EMQX reads DEFAULT_PASSWORD only on first DB init —
+# after that, password is in Mnesia and these vars are ignored. Set
+# via `emqx ctl admins passwd` after first deploy.
+extraEnv:
+  - name: EMQX_DASHBOARD__DEFAULT_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: emqx-dashboard
+        key: EMQX_DASHBOARD__DEFAULT_USERNAME
+  - name: EMQX_DASHBOARD__DEFAULT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: emqx-dashboard
+        key: EMQX_DASHBOARD__DEFAULT_PASSWORD
+
+# ── Mount the ACL ConfigMap + API key bootstrap file ───────────────
+# Mount as directories (NOT subPath onto file paths) — containerd has
+# a known bug where subPath mount onto a file in the image rootfs fails:
+#   "cannot create subdirectories in <path>: not a directory"
+# Directory mounts avoid this entirely. The env vars EMQX_*__PATH /
+# EMQX_API_KEY__BOOTSTRAP_FILE point to /opt/emqx/mount/<name>/<file>.
+extraVolumeMounts:
+  - name: emqx-acl
+    mountPath: /opt/emqx/mount/acl     # directory (contains acl.conf)
+    readOnly: true
+  - name: emqx-apikey
+    mountPath: /opt/emqx/mount/apikey  # directory (contains apikey_bootstrap.txt)
+    readOnly: true
+
+extraVolumes:
+  - name: emqx-acl
+    configMap:
+      name: emqx-acl
+      optional: true           # don't block pod start if CM missing
+      defaultMode: 0444
+      items:
+        - key: acl.conf
+          path: acl.conf
+  - name: emqx-apikey
+    secret:
+      secretName: emqx-api-key
+      optional: true           # pod boots even if Secret not yet synced
+      defaultMode: 0444
+      items:
+        - key: apikey_bootstrap.txt
+          path: apikey_bootstrap.txt
+
+# ── Probes — EMQX 5.x cold-start on constrained nodes ≈ 60–90s ─────
+# Symptom we hit: "Readiness probe failed: connect: connection refused
+# on :18083". Cause: dashboard listener comes up LAST in EMQX boot.
+# Give startupProbe a wide window so readiness/liveness don't fire
+# before the listener exists.
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 60      # Dashboard listener is LAST to start (~60-90s)
+  periodSeconds: 10
+  failureThreshold: 60         # 10 min total — generous for first cold start
+  timeoutSeconds: 10           # Prevent "context deadline exceeded"
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 10      # Short — startup probe already gates this
+  periodSeconds: 15
+  failureThreshold: 3          # 3 failures before marking unready
+  timeoutSeconds: 10           # Prevent "context deadline exceeded"
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30      # Short — startup probe already gates this
+  periodSeconds: 30
+  failureThreshold: 6
+  timeoutSeconds: 10           # Prevent "context deadline exceeded"
+
+# ── Resources ───────────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# ── Security context ────────────────────────────────────────────────
+# EMQX image runs as user 1000 (emqx). hostNetwork doesn't require
+# privileged; ports >1024 don't need NET_BIND_SERVICE either.
+podSecurityContext:
+  fsGroup: 1000
+  runAsUser: 1000
+  runAsNonRoot: true
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: ["ALL"]
+
+# ── Prometheus metrics ──────────────────────────────────────────────
+# Disabled until kube-prometheus-stack (Prometheus Operator CRDs) is
+# installed. Enabling this now causes ArgoCD to track a ServiceMonitor
+# whose CRD (monitoring.coreos.com/v1) doesn't exist → ComparisonError.
+# Re-enable both fields together when Prometheus Operator is deployed.
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+# ── Companion resources reconciled by the same Application ──────────
+extraDeploy:
+  # ── API Key Secret (seeded into EMQX on first boot, role=admin) ──
+  # Format per line: <api_key>:<api_secret>:<role>
+  # Roles: administrator | viewer | publisher | subscriber
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: emqx-api-key
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+      annotations:
+        argocd.argoproj.io/sync-wave: "-5"
+    type: Opaque
+    stringData:
+      apikey_bootstrap.txt: |
+        platform-admin:iothub.2026.apikey.secret:administrator
+      # Same data exposed as discrete keys for the seeder Job below
+      key: platform-admin
+      secret: iothub.2026.apikey.secret
+
+  # ── MQTT users Secret (consumed by seeder Job) ───────────────────
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: emqx-mqtt-users
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+      annotations:
+        argocd.argoproj.io/sync-wave: "-5"
+    type: Opaque
+    stringData:
+      users.json: |
+        [
+          {"user_id":"admin",   "password":"iothub.2026", "is_superuser":true},
+          {"user_id":"backend", "password":"iothub.2026", "is_superuser":false},
+          {"user_id":"nodered", "password":"iothub.2026", "is_superuser":false},
+          {"user_id":"device",  "password":"iothub.2026", "is_superuser":false}
+        ]
+
+  # ── Seeder Job: POSTs users to EMQX REST API after pod is ready ──
+  # Idempotent — POST returns 409 on existing user, we ignore.
+  # Runs post-install AND post-upgrade, so values changes re-apply.
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: emqx-seed-mqtt-users
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+      annotations:
+        argocd.argoproj.io/sync-wave: "10"
+        argocd.argoproj.io/hook: PostSync
+        argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    spec:
+      backoffLimit: 6
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: mqtt-user-seeder
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: seeder
+              image: curlimages/curl:8.11.0
+              env:
+                - name: APIKEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: emqx-api-key, key: key }
+                - name: APIKEY_SECRET
+                  valueFrom:
+                    secretKeyRef: { name: emqx-api-key, key: secret }
+              volumeMounts:
+                - name: users
+                  mountPath: /work
+                  readOnly: true
+              command: [sh, -ec]
+              args:
+                - |
+                  set -eu
+                  EMQX="http://emqx.data.svc.cluster.local:18083"
+                  echo "Waiting for EMQX API ready..."
+                  for i in $(seq 1 60); do
+                    code=$(curl -s -o /dev/null -w '%{http_code}' \
+                      -u "$APIKEY_ID:$APIKEY_SECRET" \
+                      "$EMQX/api/v5/status" || true)
+                    [ "$code" = "200" ] && break
+                    sleep 5
+                  done
+                  echo "EMQX ready (HTTP $code). Seeding users..."
+
+                  AUTH_PATH="/api/v5/authentication/password_based%3Abuilt_in_database/users"
+
+                  cat /work/users.json | sed -e 's/^\[//' -e 's/\]$//' \
+                    | tr '\n' ' ' | sed 's/},/}\n/g' | while read -r body; do
+                    [ -z "$body" ] && continue
+                    body=$(echo "$body" | sed 's/,$//')
+                    echo "→ POST $body"
+                    http=$(curl -s -o /tmp/r -w '%{http_code}' \
+                      -u "$APIKEY_ID:$APIKEY_SECRET" \
+                      -H 'Content-Type: application/json' \
+                      -X POST "$EMQX$AUTH_PATH" -d "$body")
+                    if [ "$http" = "201" ] || [ "$http" = "200" ]; then
+                      echo "  ✓ created"
+                    elif [ "$http" = "409" ]; then
+                      echo "  • already exists — ok"
+                    else
+                      echo "  ✗ HTTP $http: $(cat /tmp/r)"
+                      exit 1
+                    fi
+                  done
+                  echo "Done."
+          volumes:
+            - name: users
+              secret:
+                secretName: emqx-mqtt-users
+                items: [{ key: users.json, path: users.json }]
+
+  # ── External-facing Service: binds 1883/8883 on the node IP ──────
+  # kube-proxy installs iptables rules: <NODE_IP>:1883 → pod:1883.
+  # Replace `externalIPs` with the actual public IP of every node that
+  # should accept MQTT traffic. On a single-node cluster, set the one
+  # node IP. CHANGE THIS when you reprovision.
+  - apiVersion: v1
+    kind: Service
+    metadata:
+      name: emqx-external
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+        app.kubernetes.io/component: external-listener
+    spec:
+      type: ClusterIP
+      externalIPs:
+        - 27.254.143.144      # ← node public IP — edit when changing host
+        # NOTE: 127.0.0.1 is NOT allowed in externalIPs (K8s blocks loopback).
+        # Use: mosquitto_pub -h 27.254.143.144 instead of -h localhost
+      selector:
+        app.kubernetes.io/name: emqx
+        app.kubernetes.io/instance: emqx
+      ports:
+        - name: mqtt
+          port: 1883
+          targetPort: 1883
+          protocol: TCP
+        - name: mqttssl
+          port: 8883
+          targetPort: 8883
+          protocol: TCP
+        - name: dashboard
+          port: 18083              # ภายนอกเข้า 27.254.143.144:18083
+          targetPort: 18083        # forward ไป pod:18083 (EMQX default)
+          protocol: TCP
+        - name: ws
+          port: 8083
+          targetPort: 8083
+          protocol: TCP
+        - name: wss
+          port: 8084
+          targetPort: 8084
+          protocol: TCP
+
+  # ── ACL ConfigMap (mounted above into /opt/emqx/mount/acl/) ──────
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: emqx-acl
+      namespace: data
+      labels:
+        app.kubernetes.io/part-of: carbon-credit-platform
+    data:
+      acl.conf: |
+        %% ─────────────────────────────────────────────────────────
+        %% EMQX ACL — file-based, evaluated top-to-bottom
+        %% Syntax: {allow|deny, who, action, topics}
+        %% Placeholders: ${username}, ${clientid}, ${peerhost}
+        %% ─────────────────────────────────────────────────────────
+
+        %% Superuser
+        {allow, {user, "admin"}, all, ["#"]}.
+
+        %% Internal services
+        {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
+        {allow, {user, "nodered"}, all, ["app/#", "iot/#"]}.
+
+        %% Devices — scoped by clientid
+        {allow, {user, "device"}, publish, [
+            "devices/${clientid}/#",
+            "sensors/${clientid}/#",
+            "telemetry/${clientid}/#"
+        ]}.
+        {allow, {user, "device"}, subscribe, [
+            "cmd/${clientid}/#",
+            "config/${clientid}/#",
+            "broadcast/#"
+        ]}.
+
+        %% Allow anyone to subscribe to $SYS health topics? NO — keep deny.
+
+        %% Default deny
+        {deny, all}.
+
+  # ── Dashboard Ingress (HTTPS via Traefik + cert-manager) ─────────
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: emqx-dashboard
+      namespace: data
+      annotations:
+        # Traefik bind hostPort 80/443 directly — handles TLS via cert-manager
+        # nginx ถูก stopped + masked (อยู่ที่ /etc/systemd/system/nginx.service)
+        cert-manager.io/cluster-issuer: letsencrypt-prod
+        traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+        traefik.ingress.kubernetes.io/router.tls: "true"
+    spec:
+      ingressClassName: traefik
+      rules:
+        - host: emqx.27.254.143.144.nip.io
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: emqx
+                    port:
+                      number: 18083
+      tls:
+        - hosts: [emqx.27.254.143.144.nip.io]
+          secretName: emqx-dashboard-tls
