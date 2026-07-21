@@ -60,3 +60,24 @@ patches:
       - op: replace
         path: /spec/externalIPs/0
         value: 27.254.143.144
+  # ── Ingress Host Patches for UAT (nip.io) ──
+  - target:
+      kind: Ingress
+      name: frontend-next
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: iiotplatform.27.254.143.144.nip.io
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: iiotplatform.27.254.143.144.nip.io
+  - target:
+      kind: Ingress
+      name: node-red
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: nodered.27.254.143.144.nip.io
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: nodered.27.254.143.144.nip.io
