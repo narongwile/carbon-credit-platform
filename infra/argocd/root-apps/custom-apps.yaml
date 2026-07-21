@@ -16,7 +16,7 @@ spec:
   project: default
   source:
     repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
-    targetRevision: develop
+    targetRevision: feature/deploy-ingest-worker
     path: infra/k8s/custom-apps/overlays/uat
   destination:
     server: https://kubernetes.default.svc
