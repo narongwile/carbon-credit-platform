@@ -52,3 +52,11 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 1
+  # ── Node-RED External IP for UAT ──
+  - target:
+      kind: Service
+      name: node-red-external
+    patch: |-
+      - op: replace
+        path: /spec/externalIPs/0
+        value: 27.254.143.144
