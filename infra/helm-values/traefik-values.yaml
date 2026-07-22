@@ -31,7 +31,7 @@ ports:
     expose:
       default: true
     exposedPort: 80
-    hostPort: 80            # bind host:80
+    nodePort: 30080         # Use NodePort instead of hostPort
     protocol: TCP
     redirectTo:
       port: websecure       # auto-redirect HTTP → HTTPS
@@ -41,7 +41,7 @@ ports:
     expose:
       default: true
     exposedPort: 443
-    hostPort: 443           # bind host:443
+    nodePort: 30443         # Use NodePort instead of hostPort
     protocol: TCP
     tls:
       enabled: true
@@ -60,10 +60,10 @@ ports:
     exposedPort: 9000
     protocol: TCP
 
-# ── Service (ClusterIP since hostPort handles external traffic) ────
+# ── Service (Use NodePort to avoid conflict with Cosmos) ────
 service:
   enabled: true
-  type: ClusterIP
+  type: NodePort
   annotations: {}
 
 # ── IngressClass ───────────────────────────────────────────────────
@@ -142,7 +142,7 @@ nodeSelector:
 
 # ── Update strategy ────────────────────────────────────────────────
 updateStrategy:
-  type: Recreate             # hostPort = single pod, must release before new
+  type: RollingUpdate        # Safe to roll now since we removed hostPort
 
 # ── Metrics for future Prometheus integration ──────────────────────
 metrics:
