@@ -20,7 +20,7 @@ spec:
           replicas: 1
         resources:
           cpu:
-            cores: 0.5
+            cores: 1
           memory:
             container:
               min: 512Mi
