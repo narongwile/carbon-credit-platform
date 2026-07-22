@@ -77,7 +77,7 @@ patches:
     patch: |-
       - op: replace
         path: /spec/rules/0/host
-        value: nodered.27.254.143.144.nip.io
+        value: nodered-uat.27.254.143.144.nip.io
       - op: replace
         path: /spec/tls/0/hosts/0
-        value: nodered.27.254.143.144.nip.io
+        value: nodered-uat.27.254.143.144.nip.io
