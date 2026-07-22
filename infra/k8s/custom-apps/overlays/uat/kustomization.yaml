@@ -81,3 +81,14 @@ patches:
       - op: replace
         path: /spec/tls/0/hosts/0
         value: nodered-uat.27.254.143.144.nip.io
+  # ── Node-RED EMQX Connection for UAT ──
+  - target:
+      kind: Deployment
+      name: node-red
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: "mqtt://emqx.iiot-uat.svc.cluster.local:1883"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/3/value
+        value: "emqx.iiot-uat.svc.cluster.local"
