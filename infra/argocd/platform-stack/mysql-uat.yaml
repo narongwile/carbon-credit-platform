@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mysql-uat
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: carbon-credit-platform
+    tier: platform-stack
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: iiot
+  sources:
+    - repoURL: https://charts.bitnami.com/bitnami
+      chart: mysql
+      targetRevision: 9.15.1
+      helm:
+        releaseName: mysql
+        valueFiles:
+          - $values/infra/helm-values/mysql-values-uat.yaml
+    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+      targetRevision: feature/deploy-ingest-worker
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: iiot-uat
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
