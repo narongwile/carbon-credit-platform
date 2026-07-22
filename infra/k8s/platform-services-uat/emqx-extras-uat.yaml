@@ -127,12 +127,12 @@ spec:
     - name: mqtt
       port: 1883
       targetPort: 1883
-      nodePort: 32883
+      nodePort: 30883
       protocol: TCP
     - name: mqttssl
       port: 8883
       targetPort: 8883
-      nodePort: 32884
+      nodePort: 30884
       protocol: TCP
     - name: dashboard
       port: 18083
