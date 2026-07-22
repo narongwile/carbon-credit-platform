@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ingest-worker mai
 # Use a minimal alpine image for the final container
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates tzdata
-WORKDIR /root/
+WORKDIR /app/
 
 # Copy the pre-built binary file from the previous stage
 COPY --from=builder /app/ingest-worker .
