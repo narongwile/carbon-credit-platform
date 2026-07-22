@@ -10,17 +10,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: iiot
-  sources:
-    - repoURL: https://charts.bitnami.com/bitnami
-      chart: phpmyadmin
-      targetRevision: 11.2.5
-      helm:
-        releaseName: phpmyadmin
-        valueFiles:
-          - $values/infra/helm-values/phpmyadmin-values-uat.yaml
-    - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
-      targetRevision: feature/deploy-ingest-worker
-      ref: values
+  source:
+    repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
+    targetRevision: feature/deploy-ingest-worker
+    path: infra/k8s/platform-services-uat
+    directory:
+      include: 'phpmyadmin.yaml'
   destination:
     server: https://kubernetes.default.svc
     namespace: iiot-uat

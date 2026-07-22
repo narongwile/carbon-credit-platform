@@ -167,15 +167,9 @@ emqxConfig:
 # via `emqx ctl admins passwd` after first deploy.
 extraEnv:
   - name: EMQX_DASHBOARD__DEFAULT_USERNAME
-    valueFrom:
-      secretKeyRef:
-        name: emqx-dashboard
-        key: EMQX_DASHBOARD__DEFAULT_USERNAME
+    value: "admin"
   - name: EMQX_DASHBOARD__DEFAULT_PASSWORD
-    valueFrom:
-      secretKeyRef:
-        name: emqx-dashboard
-        key: EMQX_DASHBOARD__DEFAULT_PASSWORD
+    value: "iothub"
 
 # ── Mount the ACL ConfigMap + API key bootstrap file ───────────────
 # Mount as directories (NOT subPath onto file paths) — containerd has
@@ -274,7 +268,6 @@ extraDeploy:
     kind: Secret
     metadata:
       name: emqx-api-key
-      namespace: data
       labels:
         app.kubernetes.io/part-of: carbon-credit-platform
       annotations:
@@ -292,7 +285,6 @@ extraDeploy:
     kind: Secret
     metadata:
       name: emqx-mqtt-users
-      namespace: data
       labels:
         app.kubernetes.io/part-of: carbon-credit-platform
       annotations:
@@ -314,7 +306,6 @@ extraDeploy:
     kind: Job
     metadata:
       name: emqx-seed-mqtt-users
-      namespace: data
       labels:
         app.kubernetes.io/part-of: carbon-credit-platform
       annotations:
@@ -348,7 +339,7 @@ extraDeploy:
               args:
                 - |
                   set -eu
-                  EMQX="http://emqx.data.svc.cluster.local:18083"
+                  EMQX="http://emqx.iiot-uat.svc.cluster.local:18083"
                   echo "Waiting for EMQX API ready..."
                   for i in $(seq 1 60); do
                     code=$(curl -s -o /dev/null -w '%{http_code}' \
@@ -395,16 +386,11 @@ extraDeploy:
     kind: Service
     metadata:
       name: emqx-external
-      namespace: data
       labels:
         app.kubernetes.io/part-of: carbon-credit-platform
         app.kubernetes.io/component: external-listener
     spec:
       type: ClusterIP
-      externalIPs:
-        - 27.254.143.144      # ← node public IP — edit when changing host
-        # NOTE: 127.0.0.1 is NOT allowed in externalIPs (K8s blocks loopback).
-        # Use: mosquitto_pub -h 27.254.143.144 instead of -h localhost
       selector:
         app.kubernetes.io/name: emqx
         app.kubernetes.io/instance: emqx
@@ -435,7 +421,6 @@ extraDeploy:
     kind: ConfigMap
     metadata:
       name: emqx-acl
-      namespace: data
       labels:
         app.kubernetes.io/part-of: carbon-credit-platform
     data:
@@ -475,7 +460,6 @@ extraDeploy:
     kind: Ingress
     metadata:
       name: emqx-dashboard
-      namespace: data
       annotations:
         # Traefik bind hostPort 80/443 directly — handles TLS via cert-manager
         # nginx ถูก stopped + masked (อยู่ที่ /etc/systemd/system/nginx.service)
@@ -485,7 +469,7 @@ extraDeploy:
     spec:
       ingressClassName: traefik
       rules:
-        - host: emqx.27.254.143.144.nip.io
+        - host: emqx-uat.27.254.143.144.nip.io
           http:
             paths:
               - path: /
@@ -496,5 +480,5 @@ extraDeploy:
                     port:
                       number: 18083
       tls:
-        - hosts: [emqx.27.254.143.144.nip.io]
-          secretName: emqx-dashboard-tls
+        - hosts: [emqx-uat.27.254.143.144.nip.io]
+          secretName: emqx-dashboard-uat-tls
