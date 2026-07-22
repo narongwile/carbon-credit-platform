@@ -119,7 +119,7 @@ metadata:
     app.kubernetes.io/part-of: carbon-credit-platform
     app.kubernetes.io/component: external-listener
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app.kubernetes.io/name: emqx
     app.kubernetes.io/instance: emqx
@@ -127,10 +127,12 @@ spec:
     - name: mqtt
       port: 1883
       targetPort: 1883
+      nodePort: 32883
       protocol: TCP
     - name: mqttssl
       port: 8883
       targetPort: 8883
+      nodePort: 32884
       protocol: TCP
     - name: dashboard
       port: 18083
