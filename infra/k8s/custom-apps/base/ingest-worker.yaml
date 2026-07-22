@@ -37,7 +37,7 @@ spec:
               value: Asia/Bangkok
             # Prod broker = EMQX (supports shared subscriptions).
             - name: MQTT_BROKER
-              value: "tcp://emqx.data.svc.cluster.local:1883"
+              value: "tcp://emqx:1883"
             - name: MQTT_USER
               value: ingest
             - name: MQTT_SUB_TOPIC

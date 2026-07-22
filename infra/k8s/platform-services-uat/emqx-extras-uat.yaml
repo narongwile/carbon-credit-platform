@@ -30,7 +30,8 @@ stringData:
       {"user_id":"admin",   "password":"iothub.2026", "is_superuser":true},
       {"user_id":"backend", "password":"iothub.2026", "is_superuser":false},
       {"user_id":"nodered", "password":"iothub.2026", "is_superuser":false},
-      {"user_id":"device",  "password":"iothub.2026", "is_superuser":false}
+      {"user_id":"device",  "password":"iothub.2026", "is_superuser":false},
+      {"user_id":"ingest",  "password":"iothub.2026", "is_superuser":true}
     ]
 
 # ── Seeder Job: POSTs users to EMQX REST API after pod is ready ──
@@ -38,7 +39,7 @@ stringData:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: emqx-seed-mqtt-users
+  name: emqx-seed-mqtt-users-v2
   namespace: iiot-uat
   labels:
     app.kubernetes.io/part-of: carbon-credit-platform
@@ -82,7 +83,7 @@ spec:
 
               AUTH_PATH="/api/v5/authentication/password_based%3Abuilt_in_database/users"
 
-              cat /work/users.json | sed -e 's/^\[//' -e 's/\]$//' \
+              cat /work/users.json | sed -e 's/^[ \t]*\[//' -e 's/\][ \t]*$//' \
                 | tr '\n' ' ' | sed 's/},/}\n/g' | while read -r body; do
                 [ -z "$body" ] && continue
                 body=$(echo "$body" | sed 's/,$//')
@@ -159,6 +160,7 @@ data:
     %% EMQX ACL — file-based, evaluated top-to-bottom
     %% ─────────────────────────────────────────────────────────
     {allow, {user, "admin"}, all, ["#"]}.
+    {allow, {user, "ingest"}, all, ["#"]}.
     {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
     {allow, {user, "nodered"}, all, ["app/#", "iot/#"]}.
     {allow, {user, "device"}, publish, [
