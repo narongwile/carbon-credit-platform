@@ -23,8 +23,8 @@ spec:
             cores: 1
           memory:
             container:
-              min: 512Mi
-              max: 1Gi
+              min: 1Gi
+              max: 2Gi
         storage:
           persistentVolume:
             enabled: true
