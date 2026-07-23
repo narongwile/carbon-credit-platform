@@ -125,20 +125,36 @@ func main() {
 	}
 	defer kafkaClient.Close()
 
-	// 3. Connect EMQX (MQTT)
+	// 3. Connect MQTT broker.
+	// Client id must be UNIQUE per instance — a duplicate id makes the broker kick
+	// the other connection, so replicas would flap. Default appends the hostname.
+	hostname, _ := os.Hostname()
+	clientID := getEnv("MQTT_CLIENT_ID", "oneops-ingest-worker-"+hostname)
+	// Subscription topic is configurable so the same binary works on any broker:
+	//   • prod (EMQX, N replicas): "$share/ingest-worker/telemetry/#" — shared
+	//     subscription load-balances each message to exactly one worker.
+	//   • single worker / brokers without shared-sub support (e.g. a plain
+	//     Mosquitto): set MQTT_SUB_TOPIC="telemetry/#" — a normal subscription.
+	subTopic := getEnv("MQTT_SUB_TOPIC", "$share/ingest-worker/telemetry/#")
 	opts := mqtt.NewClientOptions().
 		AddBroker(getEnv("MQTT_BROKER", "tcp://emqx:1883")).
-		SetClientID("golang-ingest-worker").
+		SetClientID(clientID).
 		SetUsername(getEnv("MQTT_USER", "admin")).
-		SetPassword(getEnv("MQTT_PASS", "public"))
+		SetPassword(getEnv("MQTT_PASS", "public")).
+		SetKeepAlive(30 * time.Second).
+		SetAutoReconnect(true).          // survive broker restarts
+		SetConnectRetry(true).           // keep trying if the broker isn't up yet at boot
+		SetConnectRetryInterval(5 * time.Second).
+		SetMaxReconnectInterval(30 * time.Second)
 
 	opts.OnConnect = func(c mqtt.Client) {
-		log.Println("Connected to EMQX")
-		// Use EMQX Shared Subscription feature
-		if token := c.Subscribe("$share/ingest-worker/telemetry/#", 1, handleTelemetry); token.Wait() && token.Error() != nil {
-			log.Fatalf("Subscribe Error: %v", token.Error())
+		log.Printf("Connected to MQTT broker as %s; subscribing to %q", clientID, subTopic)
+		// Re-subscribes automatically on every (re)connect.
+		if token := c.Subscribe(subTopic, 1, handleTelemetry); token.Wait() && token.Error() != nil {
+			log.Printf("Subscribe error on %q: %v", subTopic, token.Error())
 		}
 	}
+	opts.OnConnectionLost = func(c mqtt.Client, err error) { log.Printf("MQTT connection lost: %v (auto-reconnecting)", err) }
 
 	mqttClient = mqtt.NewClient(opts)
 	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {

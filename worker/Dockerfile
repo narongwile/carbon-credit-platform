@@ -1,21 +1,14 @@
-FROM golang:alpine AS builder
-
+# Multi-stage: build a static binary, ship it on distroless nonroot so the image
+# matches the Deployment securityContext (runAsNonRoot + readOnlyRootFilesystem).
+FROM golang:1.21-alpine AS builder
 WORKDIR /app
-COPY . .
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+# CGO off → fully static binary that runs on distroless/static.
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker .
 
-# Initialize Go module and download dependencies if go.mod is missing
-RUN if [ ! -f go.mod ]; then go mod init ingest-worker && go mod tidy; fi
-
-# Build the Go application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o ingest-worker main.go
-
-# Use a minimal alpine image for the final container
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates tzdata
-WORKDIR /app/
-
-# Copy the pre-built binary file from the previous stage
-COPY --from=builder /app/ingest-worker .
-
-# Command to run the executable
-CMD ["./ingest-worker"]
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=builder /worker /worker
+USER 65532:65532
+ENTRYPOINT ["/worker"]
