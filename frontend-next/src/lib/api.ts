@@ -8,13 +8,14 @@
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { useAppStore } from './store'
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || ''
+const RAW_URL = process.env.NEXT_PUBLIC_API_URL || ''
+const BASE = RAW_URL === 'relative' ? '' : RAW_URL
 // apiEnabled = a backend was configured at BUILD time. Live/demo is a RUNTIME
 // switch on top of that: isLive() gates every request, so flipping the sidebar
 // Demo/Live toggle makes calls hit the backend (live) or return null (demo → the
 // pages fall back to their local mock/seed state). A build with no backend is
 // always demo. Prefer useIsLive() inside components so they re-render on toggle.
-export const apiEnabled = !!BASE
+export const apiEnabled = !!RAW_URL
 export function isLive(): boolean {
   return apiEnabled && useAppStore.getState().isLiveMode
 }
