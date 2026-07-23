@@ -92,3 +92,7 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/3/value
         value: "emqx.iiot-uat.svc.cluster.local"
+
+images:
+  - name: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next
+    newTag: claude-unified-platform-ui-design-04HMA
