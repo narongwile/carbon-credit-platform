@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { hosts, sites } from '@/lib/fleetData'
 import { organizations } from '@/lib/mockData'
 import { useAppStore } from '@/lib/store'
-import { api, apiEnabled } from '@/lib/api'
+import { api, isLive } from '@/lib/api'
 import { statusFromLive } from '@/lib/useFleetLive'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { Activity, Search, Zap, Thermometer, Droplet, ExternalLink } from 'lucide-react'
@@ -41,7 +41,7 @@ export default function SuperAdminMonitoringPage() {
   // Live cross-tenant status overlay (superadmin sees every org's fleet).
   const [live, setLive] = useState<Map<string, string>>(new Map())
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     let cancelled = false
     Promise.all(organizations.map((o) => api.fleet(o.id))).then((results) => {
       if (cancelled) return
@@ -77,7 +77,7 @@ export default function SuperAdminMonitoringPage() {
         {[
           { label: 'Sensor Hosts', value: filtered.length, color: '#6366f1' },
           { label: 'Total Sensors', value: totalSensors, color: '#06b6d4' },
-          { label: 'Organizations', value: org === 'all' ? organizations.length : 1, color: '#a78bfa' },
+          { label: 'Organizations', value: new Set(filtered.map(h => h.orgId)).size, color: '#a78bfa' },
           { label: 'Critical', value: filtered.filter((h) => eff(h) === 'CRITICAL').length, color: '#ef4444' },
         ].map((s) => (
           <div key={s.label} className="rounded-xl p-4" style={surface}>

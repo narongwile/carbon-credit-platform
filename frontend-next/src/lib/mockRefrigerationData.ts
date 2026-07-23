@@ -106,6 +106,11 @@ export function useRefrigerationData() {
     nodes,
     threshold: 6, // Global default threshold matching the image
     isConnected,
-    getHistory: (nodeId: string) => MOCK_HISTORY[nodeId] || []
+    getHistory: (nodeId: string) => {
+      if (MOCK_HISTORY[nodeId]) return MOCK_HISTORY[nodeId];
+      // Fallback for live UUIDs: use a deterministic mock history based on ID length/chars
+      const mockKey = String((nodeId.charCodeAt(0) % 12) + 1);
+      return MOCK_HISTORY[mockKey] || MOCK_HISTORY['1'] || [];
+    }
   };
 }

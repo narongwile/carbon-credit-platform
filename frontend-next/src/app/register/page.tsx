@@ -2,16 +2,17 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Boxes, Eye, EyeOff, UserPlus, ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { Eye, EyeOff, UserPlus, ArrowLeft, CheckCircle2, Boxes } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/lib/api'
+import { authApiEnabled } from '@/lib/auth'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
 export default function RegisterPage() {
   const router = useRouter()
-  const [form, setForm] = useState({ username: '', email: '', password: '', confirm: '' })
+  const [form, setForm] = useState({ username: '', email: '', phone: '', password: '', confirm: '' })
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
@@ -22,10 +23,17 @@ export default function RegisterPage() {
     if (form.password !== form.confirm) { toast.error('Passwords do not match'); return }
     setLoading(true)
     try {
-      const r = await api.register({ name: form.username, email: form.email, password: form.password })
+      if (!authApiEnabled) {
+        await new Promise(r => setTimeout(r, 600))
+        setDone(true)
+        toast.success('Account created (Demo Mode)')
+        return
+      }
+      const r = await api.register({ name: form.username, email: form.email, phone: form.phone, password: form.password })
       if (!r || (r as any).error) throw new Error((r as any)?.error || 'Registration failed')
+      const matched = (r as any).matched
       setDone(true)
-      toast.success('Account created')
+      toast.success(matched ? 'Account created — assigned to your organization!' : 'Account created')
     } catch (err: any) {
       toast.error(err.message || 'Registration failed')
     } finally {
@@ -60,8 +68,9 @@ export default function RegisterPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <Field label="Username" value={form.username} onChange={(v) => set('username', v)} placeholder="create a username" />
+              <Field label="Username" value={form.username} onChange={(v) => set('username', v)} placeholder="your full name" />
               <Field label="Email" value={form.email} onChange={(v) => set('email', v)} placeholder="you@company.com" />
+              <Field label="Phone Number" value={form.phone} onChange={(v) => set('phone', v)} placeholder="08x-xxx-xxxx" />
               <div>
                 <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
                 <div className="relative">

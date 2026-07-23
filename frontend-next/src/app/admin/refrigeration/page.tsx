@@ -93,7 +93,7 @@ function RefrigerationOverview() {
     Promise.all(Array.from(liveFleet.byId.values()).map(async (n) => {
       const lat = await api.latest(n.id)
       const temp = lat?.values.tempHigh ?? lat?.values.tempLow ?? 4
-      return { id: n.id, name: n.name, mac: n.fw ?? '', temperature: Number(temp), doorOpen: (lat?.values.door ?? 0) > 0, online: n.online !== 0 } as RefrigerationNode
+      return { id: n.id, name: n.name, mac: n.id, temperature: Number(temp), doorOpen: (lat?.values.door ?? 0) > 0, online: n.online !== 0 } as RefrigerationNode
     })).then((arr) => { if (!cancelled) setLiveNodes(arr) })
     return () => { cancelled = true }
   }, [liveFleet.loaded, liveFleet.byId])

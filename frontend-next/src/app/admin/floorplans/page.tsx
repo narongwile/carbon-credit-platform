@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { managedDevicesFromFleet, getSitesByOrg } from '@/lib/fleetData'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
-import { api } from '@/lib/api'
+import { api, isLive, apiImageUrl } from '@/lib/api'
 import { Upload, MapPin, Save, Image as ImageIcon, Crosshair, Check, Satellite, Radio, Wifi, Bluetooth, Gauge } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -62,10 +62,21 @@ export default function FloorPlansPage() {
   const img = images[activeFloor]
   const floorPos = positions[activeFloor] ?? {}
 
-  const onUpload = (file?: File) => {
+  const onUpload = async (file?: File) => {
     if (!file) return
-    const url = URL.createObjectURL(file)
-    setImages((m) => ({ ...m, [activeFloor]: url }))
+    if (!isLive()) {
+      // demo/mock mode: local preview only (no backend to persist to)
+      setImages((m) => ({ ...m, [activeFloor]: URL.createObjectURL(file) }))
+      return
+    }
+    // Live: upload the bytes to the floorplans table; store the returned served
+    // path so the image persists across reloads/devices (no more blob: URLs).
+    const dataUrl: string = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(file)
+    })
+    const up = await api.uploadFloorplanImage(orgId, activeFloor, dataUrl, file.type || 'image/png')
+    if (up?.url) { setImages((m) => ({ ...m, [activeFloor]: up.url })); toast.success('Floor plan image uploaded') }
+    else toast.error('Upload failed')
   }
 
   const placeAt = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -136,7 +147,7 @@ export default function FloorPlansPage() {
             style={{ ...surface, height: '62vh' }}>
             {img ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={img} alt="floor plan" className="w-full h-full object-contain pointer-events-none" />
+              <img src={img.startsWith('/api') ? apiImageUrl(img) : img} alt="floor plan" className="w-full h-full object-contain pointer-events-none" />
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
                 <ImageIcon size={48} className="mb-3 opacity-40" />

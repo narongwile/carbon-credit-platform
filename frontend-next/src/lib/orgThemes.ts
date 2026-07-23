@@ -15,3 +15,7 @@ export const orgThemeGrants: Record<string, string[]> = {
 
 export const getOrgThemeGrants = (orgId: string): string[] =>
   orgThemeGrants[orgId] ?? ['th-overview']
+
+export const setOrgThemeGrants = (orgId: string, themes: string[]) => {
+  orgThemeGrants[orgId] = themes
+}

@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { JourneyEventType, JourneySignal } from './bloodboxData'
+import { getToken } from './api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || ''
 export const bloodboxApiEnabled = !!BASE
@@ -12,7 +13,10 @@ export const bloodboxApiEnabled = !!BASE
 async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   if (!BASE) return null
   try {
-    const r = await fetch(`${BASE}${path}`, { headers: { 'content-type': 'application/json' }, ...init })
+    const token = getToken()
+    const headers: any = { 'content-type': 'application/json' }
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const r = await fetch(`${BASE}${path}`, { headers: { ...headers, ...init?.headers }, ...init })
     if (!r.ok) return null
     return (await r.json()) as T
   } catch {

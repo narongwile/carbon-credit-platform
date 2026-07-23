@@ -8,7 +8,9 @@ import { useLiveGeoNodes } from '@/lib/useFleetLive'
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 export default function MapPage() {
-  const { selectedOrgId } = useAppStore()
+  // Select only selectedOrgId — subscribing to the whole store re-rendered this
+  // page on every telemetry tick, which cascaded into the map rebuilding.
+  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
   const orgId = selectedOrgId || 'org-1'
   const nodes = useLiveGeoNodes(orgId) ?? getGeoNodes(orgId)
 

@@ -32,7 +32,7 @@ export default function EventsPage() {
       const probList = probs || []
       const probMap = probList.reduce((acc: any, p: any) => ({ ...acc, [p.id]: p.label }), {})
       setProblems(probMap)
-      const allEvents = res.flat().sort((a: any, b: any) => new Date(b.raised_at).getTime() - new Date(a.raised_at).getTime())
+      const allEvents = res.flat().filter(Boolean).sort((a: any, b: any) => new Date(b.raised_at).getTime() - new Date(a.raised_at).getTime())
       setEvents(allEvents)
       setLoading(false)
     })

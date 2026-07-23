@@ -22,7 +22,7 @@ interface AlarmDB {
 
   setRule: (nodeId: string, rule: NodeAlarmRule, orgId?: string) => void
   clearRule: (nodeId: string) => void
-  ackEvent: (eventId: string, by: string) => void
+  ackEvent: (eventId: string, by: string, problemId?: string) => void
 }
 
 export const useAlarmDB = create<AlarmDB>()(
@@ -36,9 +36,9 @@ export const useAlarmDB = create<AlarmDB>()(
         void api.putRule(nodeId, { orgId: orgId ?? 'unknown', rule }) // best-effort sync; no-op without backend
       },
       clearRule: (nodeId) => set((s) => { const r = { ...s.rules }; delete r[nodeId]; return { rules: r } }),
-      ackEvent: (eventId, by) => {
-        set((s) => ({ acks: { ...s.acks, [eventId]: { by, at: new Date().toISOString() } } }))
-        void api.ackEvent(eventId, { by })
+      ackEvent: (eventId, by, problemId) => {
+        set((s) => ({ acks: { ...s.acks, [eventId]: { by, problemId, at: new Date().toISOString() } } }))
+        void api.ackEvent(eventId, { by, eventProblemId: problemId })
       },
     }),
     {

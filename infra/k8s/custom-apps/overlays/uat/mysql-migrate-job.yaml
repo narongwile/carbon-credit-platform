@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mysql-auto-migrate
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: fetch-sql
+          image: alpine/git
+          command:
+            - sh
+            - -c
+            - |
+              git clone --branch claude/unified-platform-ui-design-04HMA --depth 1 https://github.com/narongwile/carbon-credit-platform.git /workspace
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      containers:
+        - name: run-migrations
+          image: mysql:8.0
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-root-password
+          command:
+            - sh
+            - -c
+            - |
+              cd /workspace/backend/sql
+              echo "Running install.sql..."
+              mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < install.sql
+              echo "Running migrations v11 to v17..."
+              for i in 11 12 13 14 15 16 17; do
+                if [ -f "migrate-v${i}.sql" ]; then
+                  echo "Executing migrate-v${i}.sql..."
+                  mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < migrate-v${i}.sql
+                fi
+              done
+              echo "Migrations complete!"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          emptyDir: {}

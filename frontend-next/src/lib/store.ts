@@ -10,6 +10,7 @@ interface AppState {
   selectedOrgId: string
   selectedTransformerId: string | null
   realtimeEnabled: boolean
+  isLiveMode: boolean
   /** The acting viewer (customer portal) — drives department-based access. */
   viewerUserId: string
   /** Per-organization uploaded logo (data URL), keyed by orgId. */
@@ -20,8 +21,6 @@ interface AppState {
   setUser: (user: User | null) => void
   setViewerUserId: (id: string) => void
   setOrgLogo: (orgId: string, dataUrl: string) => void
-  /** Bulk-hydrate logos from the backend (orgId -> logo data URL / URL). */
-  setOrgLogos: (map: Record<string, string>) => void
   addDocument: (doc: NodeDocument) => void
   removeDocument: (id: string) => void
   setSelectedOrgId: (orgId: string) => void
@@ -29,6 +28,7 @@ interface AppState {
   updateTransformerSensor: (transformerId: string, sensorKey: string, value: number) => void
   acknowledgeAlarm: (alarmId: string, actor: string) => void
   toggleRealtime: () => void
+  toggleLiveMode: () => void
   getTransformersByOrg: (orgId: string) => Transformer[]
   getAlarmsByOrg: (orgId: string) => Alarm[]
   getAlarmsByTransformer: (transformerId: string) => Alarm[]
@@ -41,6 +41,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedOrgId: 'org-1',
   selectedTransformerId: null,
   realtimeEnabled: true,
+  // Default: live when the build has a backend configured, else demo. The sidebar
+  // toggle flips it at runtime (api.req is gated on this via isLive()/useIsLive()).
+  isLiveMode: !!process.env.NEXT_PUBLIC_API_URL,
   viewerUserId: 'u-cc',
   orgLogos: {},
   documents: [],
@@ -48,12 +51,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setUser: (user) => set({ user }),
   setViewerUserId: (id) => set({ viewerUserId: id }),
   setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
-  setOrgLogos: (map) => set((s) => ({ orgLogos: { ...s.orgLogos, ...map } })),
   addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
   removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
   setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),
   setSelectedTransformerId: (id) => set({ selectedTransformerId: id }),
   toggleRealtime: () => set((s) => ({ realtimeEnabled: !s.realtimeEnabled })),
+  toggleLiveMode: () => set((s) => ({ isLiveMode: !s.isLiveMode })),
 
   updateTransformerSensor: (transformerId, sensorKey, value) =>
     set((state) => ({

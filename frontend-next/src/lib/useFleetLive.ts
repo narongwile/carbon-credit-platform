@@ -5,7 +5,7 @@
 // hook is a no-op (empty map) so callers transparently fall back to mock data.
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react'
-import { api, apiEnabled, type FleetNode } from './api'
+import { api, useIsLive, type FleetNode } from './api'
 import { DOMAIN_META } from '@/types/fleet'
 import type { GeoNode } from './geoNodes'
 
@@ -21,9 +21,11 @@ export function statusFromLive(n: FleetNode): EffectiveStatus {
 export function useFleetLive(orgId: string, domain?: string) {
   const [byId, setById] = useState<Map<string, FleetNode>>(new Map())
   const [loaded, setLoaded] = useState(false)
+  // Reactive: re-fetches (and falls back to mock) when the Demo/Live toggle flips.
+  const apiEnabled = useIsLive()
 
   useEffect(() => {
-    if (!apiEnabled || !orgId) { setLoaded(true); return }
+    if (!apiEnabled || !orgId) { setById(new Map()); setLoaded(true); return }
     let cancelled = false
     api.fleet(orgId, domain).then((rows) => {
       if (cancelled) return
@@ -31,7 +33,7 @@ export function useFleetLive(orgId: string, domain?: string) {
       setLoaded(true)
     })
     return () => { cancelled = true }
-  }, [orgId, domain])
+  }, [orgId, domain, apiEnabled])
 
   return { byId, enabled: apiEnabled, loaded }
 }

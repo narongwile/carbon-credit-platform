@@ -1,11 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
 import { organizations } from '@/lib/mockData'
-import { Save, Upload, Trash2, Building2 } from 'lucide-react'
+import { Save, Upload, Trash2, Building2, MapPin } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, apiEnabled } from '@/lib/api'
+import { api, isLive } from '@/lib/api'
+import { getSession } from '@/lib/auth'
+import { defaultNodeRule } from '@/lib/alarmParams'
+
+const LocationPicker = dynamic(() => import('@/components/map/LocationPicker'), { ssr: false })
 
 export default function SettingsPage() {
   const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo } = useAppStore()
@@ -21,14 +26,14 @@ export default function SettingsPage() {
     reader.onload = async () => {
       const dataUrl = String(reader.result)
       setOrgLogo(selectedOrgId, dataUrl)                                  // instant local UX
-      if (apiEnabled) await api.updateOrgBranding(selectedOrgId, dataUrl) // persist per-company
+      if (isLive()) await api.updateOrgBranding(selectedOrgId, dataUrl) // persist per-company
       toast.success('Organization logo updated')
     }
     reader.readAsDataURL(file)
   }
   const removeLogo = async () => {
     setOrgLogo(selectedOrgId, '')
-    if (apiEnabled) await api.updateOrgBranding(selectedOrgId, '')
+    if (isLive()) await api.updateOrgBranding(selectedOrgId, '')
     toast.success('Logo removed')
   }
   const [thresholds, setThresholds] = useState({
@@ -47,10 +52,54 @@ export default function SettingsPage() {
   const [autoAck, setAutoAck] = useState(false)
   const [saved, setSaved] = useState(false)
 
+  const [orgLat, setOrgLat] = useState<number | null>(null)
+  const [orgLng, setOrgLng] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!isLive()) return
+    api.orgs().then(orgs => {
+      const org = orgs?.find(o => o.id === selectedOrgId)
+      if (org && org.lat != null && org.lng != null) {
+        setOrgLat(org.lat)
+        setOrgLng(org.lng)
+      }
+    })
+  }, [selectedOrgId])
+
+  // Convert the flat threshold form into a real NodeAlarmRule the alarm engine
+  // consumes (params[]), starting from the transformer schema defaults so the
+  // rule stays complete (windingTemp/direction/unit/rate) and only the edited
+  // warn/critical are overridden. Without this the org save would overwrite every
+  // node's rule_json with a params-less shape and silence the engine.
+  const buildTransformerRule = () => {
+    const rule = defaultNodeRule('transformer')
+    const overrides: Record<string, { warn: number; critical: number }> = {
+      oilTemp: { warn: thresholds.oilTempWarn, critical: thresholds.oilTempCrit },
+      hydrogen: { warn: thresholds.hydrogenWarn, critical: thresholds.hydrogenCrit },
+      moisture: { warn: thresholds.moistureWarn, critical: thresholds.moistureCrit },
+      oilLevel: { warn: thresholds.oilLevelWarn, critical: thresholds.oilLevelCrit },
+      load: { warn: thresholds.loadWarn, critical: thresholds.loadCrit },
+    }
+    return {
+      ...rule,
+      params: rule.params.map((p) => (overrides[p.key] ? { ...p, ...overrides[p.key] } : p)),
+      autoAck,
+    }
+  }
+
   const save = async () => {
     try {
-      await api.updateOrgRule(selectedOrgId, { thresholds, autoAck })
-      await api.updateMeConfig({ emailAlerts })
+      const user = getSession()
+      if (!user) throw new Error('Not logged in')
+      const ruleRes = await api.updateOrgRule(selectedOrgId, buildTransformerRule())
+      if (!ruleRes) throw new Error('Failed to update org rule')
+      const res = await api.putMyConfig(user.id, { emailAlerts })
+      if (!res) throw new Error('API request failed')
+      
+      if (isLive() && orgLat != null && orgLng != null) {
+        await api.updateOrgLocation(selectedOrgId, orgLat, orgLng)
+      }
+
       setSaved(true)
       toast.success('Settings saved')
       setTimeout(() => setSaved(false), 2000)
@@ -92,6 +141,22 @@ export default function SettingsPage() {
             )}
             <span className="text-[10px] text-slate-600">PNG / SVG / JPG · square works best</span>
           </div>
+        </div>
+
+        <div className="rounded-xl p-5 md:col-span-2 lg:col-span-1" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <MapPin size={18} className="text-indigo-400" />
+            <div>
+              <h3 className="text-sm font-semibold text-white">Factory Location</h3>
+              <p className="text-xs text-slate-500">Fallback location for Eternity sensors without GPS</p>
+            </div>
+          </div>
+          <LocationPicker 
+            lat={orgLat} 
+            lng={orgLng} 
+            onChange={(lat, lng) => { setOrgLat(lat); setOrgLng(lng) }} 
+            height="160px"
+          />
         </div>
       </div>
 

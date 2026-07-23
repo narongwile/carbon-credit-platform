@@ -3,57 +3,90 @@
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
-import { DOMAIN_META } from '@/types/fleet'
 
 // Real geographic Live Sensor Map (Leaflet + OpenStreetMap tiles).
-// Leaflet is imported lazily inside useEffect so it never runs during the
-// static-export prerender (no `window` on the server).
+// The map is created ONCE and markers are updated in place — previously the whole
+// map (tiles + view) was torn down and rebuilt on every telemetry tick because the
+// effect depended on `nodes` (a fresh array each render), which looked like the map
+// "refreshing every second". Now data updates only re-sync markers; the user's
+// pan/zoom and any open popup are preserved.
 export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNode[]; height?: string }) {
   const elRef = useRef<HTMLDivElement>(null)
-  const mapRef = useRef<unknown>(null)
+  const mapRef = useRef<any>(null)
+  const LRef = useRef<any>(null)
+  const markersRef = useRef<Map<string, any>>(new Map())
+  const fittedRef = useRef(false)
+  // Always read the latest nodes (avoids a stale closure in the mount effect).
+  const nodesRef = useRef(nodes)
+  nodesRef.current = nodes
 
+  const popupHtml = (n: GeoNode) =>
+    `<div style="min-width:180px">
+       <div style="font-weight:700;font-size:14px;margin-bottom:6px">${n.name}</div>
+       <div style="display:flex;gap:16px;font-size:12px">
+         <div><div style="color:#64748b">${n.metricLabel}</div><div style="font-weight:700">${n.metricValue}</div></div>
+         <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${n.accent}">${n.platform}</div></div>
+       </div>
+       <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
+     </div>`
+
+  // Add/update/remove markers to match the current nodes — reusing the map.
+  const syncMarkers = () => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map) return
+    const markers = markersRef.current
+    const seen = new Set<string>()
+    nodesRef.current.forEach((n) => {
+      seen.add(n.id)
+      const color = healthColor[n.health]
+      const existing = markers.get(n.id)
+      if (existing) {
+        existing.setLatLng([n.lat, n.lng])
+        existing.setStyle({ fillColor: color })
+        existing.setPopupContent(popupHtml(n))
+      } else {
+        const m = L.circleMarker([n.lat, n.lng], { radius: 9, color: '#ffffff', weight: 2, fillColor: color, fillOpacity: 1 })
+          .addTo(map)
+          .bindPopup(popupHtml(n))
+        markers.set(n.id, m)
+      }
+    })
+    markers.forEach((m, id) => {
+      if (!seen.has(id)) { map.removeLayer(m); markers.delete(id) }
+    })
+    // Fit the view to the markers only once, so live updates don't yank the map.
+    if (!fittedRef.current && markers.size) {
+      try { map.fitBounds(L.featureGroup(Array.from(markers.values())).getBounds().pad(0.3)); fittedRef.current = true } catch { /* single point */ }
+    }
+  }
+
+  // Create the map once (mount only).
   useEffect(() => {
     let cancelled = false
-    let map: any
     ;(async () => {
       const L = (await import('leaflet')).default
       if (cancelled || !elRef.current || mapRef.current) return
-      map = L.map(elRef.current, { scrollWheelZoom: true }).setView([13.7, 100.9], 6)
+      LRef.current = L
+      const map = L.map(elRef.current, { scrollWheelZoom: true }).setView([13.7, 100.9], 6)
       mapRef.current = map
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19,
       }).addTo(map)
-
-      const group: any[] = []
-      nodes.forEach((n) => {
-        const color = healthColor[n.health]
-        const marker = L.circleMarker([n.lat, n.lng], {
-          radius: 9, color: '#ffffff', weight: 2, fillColor: color, fillOpacity: 1,
-        }).addTo(map)
-        marker.bindPopup(
-          `<div style="min-width:180px">
-             <div style="font-weight:700;font-size:14px;margin-bottom:6px">${n.name}</div>
-             <div style="display:flex;gap:16px;font-size:12px">
-               <div><div style="color:#64748b">${n.metricLabel}</div><div style="font-weight:700">${n.metricValue}</div></div>
-               <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${n.accent}">${n.platform}</div></div>
-             </div>
-             <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
-           </div>`,
-        )
-        group.push(marker)
-      })
-      if (group.length) {
-        const fg = L.featureGroup(group)
-        try { map.fitBounds(fg.getBounds().pad(0.3)) } catch { /* single point */ }
-      }
+      syncMarkers()
     })()
-
     return () => {
       cancelled = true
       if (mapRef.current) { (mapRef.current as any).remove(); mapRef.current = null }
+      markersRef.current.clear()
+      fittedRef.current = false
     }
-  }, [nodes])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Re-sync markers when the data changes (no map recreation).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { syncMarkers() }, [nodes])
 
   return (
     <div className="relative">

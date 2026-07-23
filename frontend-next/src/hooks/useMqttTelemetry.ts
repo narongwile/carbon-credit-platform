@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { subscribeTelemetry, subscribeConnection } from '@/lib/telemetryBus'
 
 export interface TelemetryData {
   id: string
@@ -8,47 +9,24 @@ export interface TelemetryData {
   temperature: number
   doorOpen: boolean
   timestamp: string
+  values?: Record<string, number>
 }
 
-// Connects to the Node-RED WebSocket telemetry bridge for real-time node data.
-// URL defaults to NEXT_PUBLIC_WS_URL (e.g. wss://api.oneops.example/ws/telemetry);
-// auto-reconnects and degrades gracefully to mock data when no bridge is present.
-export function useMqttTelemetry(url: string = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8080') {
+// Live node telemetry from the Node-RED WebSocket bridge, over a single shared
+// connection (see telemetryBus). Returns the latest frame + connection state;
+// degrades gracefully to mock data when no bridge is present.
+export function useMqttTelemetry() {
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null)
   const [isConnected, setIsConnected] = useState(false)
 
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    let ws: WebSocket | null = null
-    let reconnectTimer: ReturnType<typeof setTimeout>
-
-    const connect = () => {
-      try {
-        ws = new WebSocket(url)
-      } catch {
-        return
-      }
-      ws.onopen = () => setIsConnected(true)
-      ws.onmessage = (event) => {
-        try {
-          setTelemetry(JSON.parse(event.data) as TelemetryData)
-        } catch (e) {
-          console.error('Failed to parse telemetry JSON', e)
-        }
-      }
-      ws.onclose = () => {
-        setIsConnected(false)
-        reconnectTimer = setTimeout(connect, 3000)
-      }
-      ws.onerror = () => ws?.close()
-    }
-
-    connect()
-    return () => {
-      clearTimeout(reconnectTimer)
-      if (ws) { ws.onclose = null; ws.close() }
-    }
-  }, [url])
+    const offFrame = subscribeTelemetry((f) => {
+      if (f.type === 'alarm') return                 // telemetry consumers ignore alarm frames
+      setTelemetry(f as TelemetryData)
+    })
+    const offConn = subscribeConnection(setIsConnected)
+    return () => { offFrame(); offConn() }
+  }, [])
 
   return { telemetry, isConnected }
 }

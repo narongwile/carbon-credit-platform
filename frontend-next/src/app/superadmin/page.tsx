@@ -1,7 +1,13 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { platformStats, auditLogs, organizations } from '@/lib/mockData'
+import { api, useIsLive } from '@/lib/api'
+import type { MapOrg } from '@/components/map/OrgDistributionMap'
 import { Building2, Zap, Database, Activity, CheckCircle, XCircle, Clock } from 'lucide-react'
+
+const OrgDistributionMap = dynamic(() => import('@/components/map/OrgDistributionMap'), { ssr: false })
 
 function StatCard({ icon, label, value, sub, color }: { icon: React.ReactNode; label: string; value: string; sub?: string; color: string }) {
   return (
@@ -18,77 +24,43 @@ function StatCard({ icon, label, value, sub, color }: { icon: React.ReactNode; l
   )
 }
 
-const WORLD_DOTS = [
-  { x: 48, y: 28, label: 'EU HQ' },
-  { x: 52, y: 35, label: 'ME Cluster' },
-  { x: 72, y: 40, label: 'APAC Hub', active: true },
-  { x: 20, y: 32, label: 'NA Region' },
-  { x: 28, y: 55, label: 'SA Region' },
-  { x: 58, y: 60, label: 'AF South' },
-  { x: 80, y: 50, label: 'AU/NZ' },
-  { x: 75, y: 38, label: 'SEA', active: true },
-  { x: 68, y: 36, label: 'South Asia' },
-]
-
 function WorldMapViz() {
+  const live = useIsLive()
+  const [orgs, setOrgs] = useState<MapOrg[]>([])
+
+  useEffect(() => {
+    // Live → real orgs (with lat/lng) from the backend; else the mock seed.
+    if (live) {
+      api.orgs().then((rows) => {
+        if (!rows) return
+        setOrgs(rows.filter((o) => o.lat != null && o.lng != null)
+          .map((o) => ({ id: o.id, name: o.name, lat: Number(o.lat), lng: Number(o.lng), active: o.status !== 'suspended' })))
+      })
+    } else {
+      setOrgs(organizations
+        .filter((o) => o.lat != null && o.lng != null)
+        .map((o) => ({ id: o.id, name: o.name, lat: o.lat as number, lng: o.lng as number, where: o.country, active: true })))
+    }
+  }, [live])
+
+  const activeCount = orgs.filter((o) => o.active).length
+
   return (
     <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h3 className="text-sm font-semibold text-white">Global Distribution</h3>
-          <p className="text-xs text-slate-500">Active organization nodes worldwide</p>
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            Global Distribution
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={live ? { background: 'rgba(74,222,128,0.15)', color: '#4ade80' } : { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' }}>{live ? 'LIVE' : 'DEMO'}</span>
+          </h3>
+          <p className="text-xs text-slate-500">Active organization nodes by location · zoom &amp; pan</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <div className="w-2 h-2 rounded-full bg-indigo-400" />
-          <span>124 orgs</span>
-        </div>
-      </div>
-      <div
-        className="relative w-full rounded-lg overflow-hidden"
-        style={{
-          paddingBottom: '45%',
-          background: 'linear-gradient(180deg, #0a0e1a 0%, #0d1117 100%)',
-          border: '1px solid #1e2433',
-        }}
-      >
-        <div className="absolute inset-0">
-          {/* Simple SVG World outline approximation */}
-          <svg viewBox="0 0 100 50" className="w-full h-full opacity-20" preserveAspectRatio="xMidYMid meet">
-            <path d="M8,20 Q15,15 22,20 Q28,25 30,22 Q32,18 36,20 Q40,22 42,18 Q45,14 50,16 Q55,18 58,15 Q62,12 68,16 Q72,20 76,18 Q80,16 84,18 Q88,20 90,22 Q88,28 84,30 Q80,32 76,30 Q72,28 68,30 Q62,32 58,28 Q55,25 50,28 Q45,30 42,28 Q40,26 36,28 Q32,30 28,28 Q24,26 22,28 Q18,30 14,28 Q10,26 8,24 Z" fill="#1e2433" />
-            <path d="M18,32 Q22,28 26,32 Q30,36 32,34 Q34,32 36,34 Q38,36 36,38 Q34,40 30,38 Q26,36 22,38 Q18,40 16,36 Z" fill="#1e2433" />
-          </svg>
-          {/* Dot grid */}
-          {Array.from({ length: 20 }).map((_, row) =>
-            Array.from({ length: 40 }).map((_, col) => (
-              <div
-                key={`${row}-${col}`}
-                className="absolute w-0.5 h-0.5 rounded-full opacity-10"
-                style={{
-                  background: '#6366f1',
-                  left: `${(col / 39) * 100}%`,
-                  top: `${(row / 19) * 100}%`,
-                }}
-              />
-            ))
-          )}
-          {/* Active nodes */}
-          {WORLD_DOTS.map((dot, i) => (
-            <div
-              key={i}
-              className="absolute group"
-              style={{ left: `${dot.x}%`, top: `${dot.y}%`, transform: 'translate(-50%,-50%)' }}
-            >
-              <div
-                className="w-2.5 h-2.5 rounded-full cursor-pointer"
-                style={{ background: dot.active ? '#6366f1' : '#4ade80', boxShadow: `0 0 8px ${dot.active ? '#6366f1' : '#4ade80'}` }}
-              />
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded text-[10px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity" style={{ background: '#1e2433' }}>
-                {dot.label}
-              </div>
-            </div>
-          ))}
+        <div className="flex items-center gap-2 text-xs text-slate-400">
+          <span className="w-2 h-2 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 6px #4ade80' }} />
+          <span><span className="text-white font-semibold">{activeCount}</span> / {orgs.length} orgs</span>
         </div>
       </div>
+      <OrgDistributionMap orgs={orgs} />
     </div>
   )
 }

@@ -48,7 +48,6 @@ export default function LoginPage() {
     saveSession(user)
     // Sync the active org + user so the app shows this tenant's data.
     if (user.orgId) useAppStore.getState().setSelectedOrgId(user.orgId)
-    useAppStore.getState().setViewerUserId(user.id)
     router.push(getDashboardRoute(user))
   }
 

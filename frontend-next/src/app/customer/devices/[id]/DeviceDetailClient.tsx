@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { defaultNotificationChannels, eventProblems } from '@/lib/orgData'
@@ -13,7 +13,7 @@ import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
 import { useAlarmDB } from '@/server/alarmStore'
-import { api, apiEnabled } from '@/lib/api'
+import { api, isLive } from '@/lib/api'
 import { defaultNodeRule } from '@/lib/alarmParams'
 import {
   ArrowLeft, Upload, Download, FileText, Mail, FileSpreadsheet, Trash2, Users, Bell,
@@ -43,15 +43,15 @@ export default function DeviceDetailClient() {
   // Viewer -> department -> product access
   const { viewerUserId, documents, addDocument, removeDocument } = useAppStore()
   const domain = device.domain
-  const canAccess = !domain || viewerCanAccess(viewerUserId, domain)
   const canManage = !domain || viewerCanManage(viewerUserId, domain)
+  const canView = !domain || viewerCanAccess(viewerUserId, domain)
   const deptEvents = viewerEventProblems(viewerUserId)
   // Root-cause catalog: live from the backend (admin-managed) when configured,
   // else the viewer's department mock list.
   const { selectedOrgId } = useAppStore()
   const [liveProblems, setLiveProblems] = useState<{ id: string; label: string }[] | null>(null)
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     const dept = viewerDepartments(viewerUserId)[0]?.id
     let cancelled = false
     api.eventProblems(selectedOrgId, dept, domain).then((rows) => {
@@ -67,7 +67,21 @@ export default function DeviceDetailClient() {
   const myDeptIds = myDepts.map((d) => d.id)
   const primaryDept = myDepts[0]
   // documents for THIS node, visible only to the viewer's department(s)
-  const nodeDocs = documents.filter((d) => d.nodeId === id && myDeptIds.includes(d.departmentId))
+  const storeDocs = documents.filter((d) => d.nodeId === id && myDeptIds.includes(d.departmentId))
+
+  // When a live backend is configured, maintenance docs persist in the documents
+  // table (shared across users); otherwise they live in the local mock store.
+  const [backendDocs, setBackendDocs] = useState<{ id: string; name: string; size: string | null; uploaded_by: string | null; created_at: string }[]>([])
+  const loadDocs = useCallback(() => {
+    if (!isLive() || !primaryDept) return
+    api.getNodeDocuments(id, primaryDept.id).then((rows) => { if (rows) setBackendDocs(rows) })
+  }, [id, primaryDept?.id])
+  useEffect(() => { loadDocs() }, [loadDocs])
+
+  // Unified rows for the table (backend when live, else store).
+  const docRows = isLive()
+    ? backendDocs.map((d) => ({ id: d.id, name: d.name, size: d.size ?? '', uploadedBy: d.uploaded_by ?? '', backend: true as const, dataUrl: undefined as string | undefined }))
+    : storeDocs.map((d) => ({ id: d.id, name: d.name, size: d.size, uploadedBy: d.uploadedBy, backend: false as const, dataUrl: d.dataUrl }))
 
   const [view, setView] = useState<'fix' | 'freestyle'>(device.theme)
   const baseTemp = useMemo(() => parseFloat(device.lastValue ?? '5') || 5, [device])
@@ -81,25 +95,32 @@ export default function DeviceDetailClient() {
   const [exported, setExported] = useState('')
   const docRef = useRef<HTMLInputElement>(null)
 
-  // --- Department document upload / download -----
+  // --- Department maintenance-report upload / download -----
   const uploadDoc = (file?: File) => {
     if (!file) return
     if (!primaryDept) { toast.error('You are not in a department'); return }
     const reader = new FileReader()
-    reader.onload = () => {
-      addDocument({
-        id: `doc-${Date.now()}`, nodeId: id, departmentId: primaryDept.id,
-        name: file.name, size: `${(file.size / 1024).toFixed(0)} KB`,
-        date: new Date().toLocaleString(), uploadedBy: me?.name ?? 'user',
-        dataUrl: String(reader.result),
-      })
-      toast.success(`Uploaded to ${primaryDept.name}`)
+    reader.onload = async () => {
+      const dataUrl = String(reader.result)
+      const size = `${(file.size / 1024).toFixed(0)} KB`
+      if (isLive()) {
+        const base64 = dataUrl.split(',')[1] || ''
+        const res = await api.uploadNodeDocument(id, { departmentId: primaryDept.id, name: file.name, size, uploadedBy: me?.name, contentType: file.type || undefined, dataBase64: base64 })
+        if (res?.ok) { toast.success(`Uploaded to ${primaryDept.name}`); loadDocs() }
+        else toast.error('Upload failed')
+      } else {
+        addDocument({
+          id: `doc-${Date.now()}`, nodeId: id, departmentId: primaryDept.id,
+          name: file.name, size, date: new Date().toLocaleString(), uploadedBy: me?.name ?? 'user', dataUrl,
+        })
+        toast.success(`Uploaded to ${primaryDept.name}`)
+      }
     }
     reader.readAsDataURL(file)
   }
-  const downloadDoc = (d: { name: string; dataUrl: string }) => {
-    const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name
-    document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  const downloadDoc = (d: { id: string; name: string; backend: boolean; dataUrl?: string }) => {
+    if (d.backend) { api.downloadNodeDocument(id, d.id, d.name); return }
+    if (d.dataUrl) { const a = document.createElement('a'); a.href = d.dataUrl; a.download = d.name; document.body.appendChild(a); a.click(); document.body.removeChild(a) }
   }
 
   // --- Export node detail (date range) -> CSV / PDF / email -----
@@ -169,7 +190,7 @@ export default function DeviceDetailClient() {
   const saveSetting = async () => { await new Promise((r) => setTimeout(r, 300)); setSavedSetting(true); setTimeout(() => setSavedSetting(false), 2000) }
   const status = device.status === 'online' ? 'NORMAL' : 'OFFLINE'
 
-  if (!canAccess) {
+  if (!canView) {
     return (
       <div className="p-6">
         <Link href="/customer/devices" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white mb-4"><ArrowLeft size={15} /> Back</Link>
@@ -251,8 +272,8 @@ export default function DeviceDetailClient() {
                       </td>
                       <td className="py-2.5 px-3 text-right">
                         {acked ? <span className="text-[11px] text-slate-600">—</span>
-                          : canManage
-                            ? <button onClick={() => ackEvent(ev.id, me?.name ?? 'viewer')} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>
+                          : canView
+                            ? <button onClick={() => ackEvent(ev.id, me?.name ?? 'viewer', evClass[ev.id] ?? evProblems[0]?.id)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>
                             : <span className="text-[11px] text-slate-600 flex items-center gap-1 justify-end"><Eye size={11} /> view-only</span>}
                       </td>
                     </tr>
@@ -277,14 +298,14 @@ export default function DeviceDetailClient() {
             <table className="w-full text-xs">
               <thead><tr style={{ background: '#0a0e1a' }}>{['File', 'By', 'Size', ''].map((h) => <th key={h} className="text-left py-2 px-3 text-slate-500 font-medium">{h}</th>)}</tr></thead>
               <tbody>
-                {nodeDocs.length ? nodeDocs.map((f) => (
+                {docRows.length ? docRows.map((f) => (
                   <tr key={f.id} style={{ borderTop: '1px solid #1e2433' }}>
                     <td className="py-2 px-3 text-slate-300 flex items-center gap-1.5"><FileText size={12} className="text-indigo-400" /><span className="truncate max-w-[120px]">{f.name}</span></td>
                     <td className="py-2 px-3 text-slate-500">{f.uploadedBy}</td>
                     <td className="py-2 px-3 text-slate-500">{f.size}</td>
                     <td className="py-2 px-3 text-right whitespace-nowrap">
                       <button onClick={() => downloadDoc(f)} className="text-indigo-400 hover:text-indigo-300 mr-2"><Download size={13} /></button>
-                      <button onClick={() => removeDocument(f.id)} className="text-slate-600 hover:text-red-400"><Trash2 size={12} /></button>
+                      {!f.backend && <button onClick={() => removeDocument(f.id)} className="text-slate-600 hover:text-red-400"><Trash2 size={12} /></button>}
                     </td>
                   </tr>
                 )) : <tr><td colSpan={4} className="py-4 text-center text-slate-600">No documents shared in your department yet.</td></tr>}

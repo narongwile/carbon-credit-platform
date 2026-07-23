@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import { defaultNotificationChannels, eventProblems, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
 import { managedDevicesFromFleet, getHostsByOrg } from '@/lib/fleetData'
@@ -11,6 +11,7 @@ import { api } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig, EventProblem } from '@/types/org'
+import { getSession } from '@/lib/auth'
 import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check, ListChecks, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -46,6 +47,21 @@ export default function AlarmNotificationPage() {
   const [events, setEvents] = useState<string[]>(['ev-temp-high', 'ev-door-open', 'ev-offline'])
   const [saved, setSaved] = useState(false)
 
+  useEffect(() => {
+    let cancelled = false
+    api.orgChannels(orgId).then((rows) => {
+      if (!cancelled && rows && rows.length > 0) {
+        const mapped = defaultNotificationChannels.map(dc => {
+          const row = rows.find(r => r.channel === dc.id)
+          if (row) return { ...dc, enabled: !!row.enabled, target: row.target || '' }
+          return dc
+        })
+        setChannels(mapped)
+      }
+    })
+    return () => { cancelled = true }
+  }, [orgId])
+
   // Create Event in each department (per-department eventProblem catalog)
   const orgDepts = getDepartmentsByOrg(orgId)
   const [deptId, setDeptId] = useState(orgDepts[0]?.id ?? '')
@@ -67,10 +83,11 @@ export default function AlarmNotificationPage() {
 
   const save = async () => {
     try {
-      await api.updateMeConfig({
-        notificationChannels: channels,
-        notificationEvents: events
-      })
+      const user = getSession()
+      if (!user) throw new Error('Not logged in')
+      await api.putMyConfig(user.id, { notificationEvents: events })
+      const res = await api.putOrgChannels(orgId, channels)
+      if (!res) throw new Error('API request failed')
       setSaved(true)
       toast.success('Notification preferences saved')
       setTimeout(() => setSaved(false), 2000)

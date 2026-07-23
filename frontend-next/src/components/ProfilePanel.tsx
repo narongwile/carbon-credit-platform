@@ -32,7 +32,8 @@ export default function ProfilePanel({ portal }: { portal: string }) {
     const s = getSession()
     if (s) {
       try {
-        await api.updateMeConfig({ phone: profile.phone, name: profile.name })
+        const res = await api.putMyConfig(s.id, { phone: profile.phone, name: profile.name })
+        if (!res) throw new Error('Failed to update profile')
         setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
       } catch (e: any) { toast.error('Failed to update profile') }
     }

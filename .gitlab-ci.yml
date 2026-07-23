@@ -50,6 +50,7 @@ build_frontend_next:
         - frontend-next/**/*
     # Allow building from the integration branch too (so the first image exists).
     - if: $CI_COMMIT_BRANCH == "claude/frontend-next-deploy"
+    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
 
 build_ingest_worker:
   stage: build

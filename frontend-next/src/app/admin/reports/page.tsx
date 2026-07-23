@@ -41,8 +41,19 @@ export default function ReportsPage() {
     return { names, stamp: new Date().getTime() }
   }
 
-  const downloadCSV = () => {
-    api.downloadReport()
+  // Live: real readings-summary CSV from the backend (org-scoped, last 30 days).
+  // Falls back to a fleet-snapshot CSV in mock mode or when there are no readings.
+  const clientCSV = () => {
+    const header = 'Device,Domain,Site,Status,Last Value'
+    const rows = devices.map((d) => [d.name, String(d.domain ?? d.deviceType), d.location, d.status, d.lastValue ?? '—'].join(','))
+    const blob = new Blob([[header, ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `report_${orgId}.csv`
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+  }
+  const downloadCSV = async () => {
+    const ok = await api.downloadReport({ days: 30 })
+    if (!ok) clientCSV()
   }
 
   const downloadPDF = async () => {
@@ -69,7 +80,7 @@ export default function ReportsPage() {
     if (!selected.length) { toast.error('Select at least one report type'); return }
     setGenerating(true); setGenerated(false)
     try {
-      if (format === 'CSV') downloadCSV()
+      if (format === 'CSV') await downloadCSV()
       else await downloadPDF()
       setGenerated(true)
       toast.success(`${format} report generated — download started`)
@@ -80,10 +91,13 @@ export default function ReportsPage() {
     }
   }
 
-  // Scheduling
-  const [schedules, setSchedules] = useState<ReportSchedule[]>(seedSchedules)
-  const [draft, setDraft] = useState<{ name: string; scope: 'device' | 'department'; scopeId: string; sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV' }>({
-    name: '', scope: 'department', scopeId: departments[0]?.id ?? '', sequence: 'daily', format: 'PDF',
+  // Scheduling. Local row carries channel/recipients + the 'org' (all-devices) scope
+  // that the shared ReportSchedule type doesn't model.
+  type SchedRow = { id: string; name: string; scope: 'org' | 'department' | 'device'; scopeId: string; sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'; recipients: string; enabled: boolean }
+  const seedRows: SchedRow[] = seedSchedules.map((r) => ({ id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, sequence: r.sequence, format: r.format, channel: 'email', recipients: '', enabled: r.enabled }))
+  const [schedules, setSchedules] = useState<SchedRow[]>(seedRows)
+  const [draft, setDraft] = useState<{ name: string; scope: 'org' | 'department' | 'device'; scopeId: string; sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'; recipients: string }>({
+    name: '', scope: 'department', scopeId: departments[0]?.id ?? '', sequence: 'daily', format: 'PDF', channel: 'email', recipients: '',
   })
 
   // Load schedules from the backend when reachable (else keep the seed mock).
@@ -91,28 +105,31 @@ export default function ReportsPage() {
     let cancelled = false
     api.listSchedules(orgId).then((rows) => {
       if (cancelled || !rows) return
-      setSchedules(rows.map((r) => ({ id: r.id, name: r.name, scope: (r.scope === 'org' ? 'department' : r.scope) as 'device' | 'department', scopeId: r.scope_id ?? '', sequence: r.sequence as ReportSequence, format: r.format, enabled: !!r.enabled })))
+      setSchedules(rows.map((r) => ({ id: r.id, name: r.name, scope: r.scope, scopeId: r.scope_id ?? '', sequence: r.sequence as ReportSequence, format: r.format, channel: r.channel ?? 'email', recipients: r.recipients ?? '', enabled: !!r.enabled })))
     })
     return () => { cancelled = true }
   }, [orgId])
 
-  const scopeOptions = draft.scope === 'department' ? departments.map((d) => ({ id: d.id, name: d.name })) : devices.map((d) => ({ id: d.id, name: d.name }))
+  // 'org' = every device in the org; no per-item selector needed.
+  const scopeOptions = draft.scope === 'department' ? departments.map((d) => ({ id: d.id, name: d.name })) : draft.scope === 'device' ? devices.map((d) => ({ id: d.id, name: d.name })) : []
+  const persist = (r: SchedRow) => api.saveSchedule({ id: r.id, orgId, name: r.name, scope: r.scope, scope_id: r.scopeId || undefined, sequence: r.sequence, format: r.format, channel: r.channel, recipients: r.recipients || undefined, enabled: r.enabled ? 1 : 0 })
   const addSchedule = () => {
     if (!draft.name.trim()) return
     const id = `rs-${Date.now()}`
-    const scopeId = draft.scopeId || scopeOptions[0]?.id || ''
-    setSchedules((s) => [...s, { id, ...draft, scopeId, enabled: true }])
-    setDraft((d) => ({ ...d, name: '' }))
-    api.saveSchedule({ id, orgId, name: draft.name, scope: draft.scope, scope_id: scopeId, sequence: draft.sequence, format: draft.format, enabled: 1 })
+    const scopeId = draft.scope === 'org' ? '' : (draft.scopeId || scopeOptions[0]?.id || '')
+    const row: SchedRow = { id, name: draft.name, scope: draft.scope, scopeId, sequence: draft.sequence, format: draft.format, channel: draft.channel, recipients: draft.recipients, enabled: true }
+    setSchedules((s) => [...s, row])
+    setDraft((d) => ({ ...d, name: '', recipients: '' }))
+    persist(row)
   }
   const toggleSchedule = (id: string) => setSchedules((s) => s.map((x) => {
     if (x.id !== id) return x
-    const enabled = !x.enabled
-    api.saveSchedule({ id, orgId, name: x.name, scope: x.scope, scope_id: x.scopeId, sequence: x.sequence, format: x.format, enabled: enabled ? 1 : 0 })
-    return { ...x, enabled }
+    const next = { ...x, enabled: !x.enabled }
+    persist(next)
+    return next
   }))
   const removeSchedule = (id: string) => { setSchedules((s) => s.filter((x) => x.id !== id)); api.deleteSchedule(id) }
-  const scopeName = (s: ReportSchedule) => (s.scope === 'department' ? departments.find((d) => d.id === s.scopeId)?.name : devices.find((d) => d.id === s.scopeId)?.name) ?? s.scopeId
+  const scopeName = (s: SchedRow) => s.scope === 'org' ? 'All devices' : (s.scope === 'department' ? departments.find((d) => d.id === s.scopeId)?.name : devices.find((d) => d.id === s.scopeId)?.name) ?? s.scopeId
 
   return (
     <div className="p-6 space-y-6">
@@ -160,18 +177,29 @@ export default function ReportsPage() {
           <input value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="Schedule name"
             className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
           <div className="flex gap-2">
-            {(['department', 'device'] as const).map((sc) => (
-              <button key={sc} onClick={() => setDraft((d) => ({ ...d, scope: sc, scopeId: '' }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize', draft.scope === sc ? 'text-white' : 'text-slate-500')} style={draft.scope === sc ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{sc}</button>
+            {([['org', 'All devices'], ['department', 'Department'], ['device', 'Per device']] as const).map(([sc, label]) => (
+              <button key={sc} onClick={() => setDraft((d) => ({ ...d, scope: sc, scopeId: '' }))} className={clsx('flex-1 py-1.5 rounded-lg text-[11px] font-semibold', draft.scope === sc ? 'text-white' : 'text-slate-500')} style={draft.scope === sc ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{label}</button>
             ))}
           </div>
-          <select value={draft.scopeId} onChange={(e) => setDraft((d) => ({ ...d, scopeId: e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
-            {scopeOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          </select>
+          {draft.scope !== 'org' && (
+            <select value={draft.scopeId} onChange={(e) => setDraft((d) => ({ ...d, scopeId: e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+              {scopeOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          )}
           <div className="flex gap-2">
             {SEQUENCES.map((s) => (
               <button key={s} onClick={() => setDraft((d) => ({ ...d, sequence: s }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize', draft.sequence === s ? 'text-white' : 'text-slate-500')} style={draft.sequence === s ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{s}</button>
             ))}
           </div>
+          {/* Delivery channel + destination */}
+          <div className="flex gap-2">
+            {([['email', 'Email'], ['telegram', 'Telegram']] as const).map(([ch, label]) => (
+              <button key={ch} onClick={() => setDraft((d) => ({ ...d, channel: ch }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold', draft.channel === ch ? 'text-white' : 'text-slate-500')} style={draft.channel === ch ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{label}</button>
+            ))}
+          </div>
+          <input value={draft.recipients} onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+            placeholder={draft.channel === 'telegram' ? 'Telegram chat id' : 'Email(s), comma-separated'}
+            className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
           <button onClick={addSchedule} className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}><Plus size={15} /> Add Schedule</button>
         </div>
       </div>
@@ -182,7 +210,7 @@ export default function ReportsPage() {
           <h3 className="text-sm font-semibold text-white">Scheduled Reports</h3>
         </div>
         <table className="w-full text-sm" style={{ background: '#0d1117' }}>
-          <thead><tr style={{ borderBottom: '1px solid #1e2433' }}>{['Name', 'Scope', 'Sequence', 'Format', 'Enabled', ''].map((h) => <th key={h} className="py-2.5 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>)}</tr></thead>
+          <thead><tr style={{ borderBottom: '1px solid #1e2433' }}>{['Name', 'Scope', 'Sequence', 'Format', 'Delivery', 'Enabled', ''].map((h) => <th key={h} className="py-2.5 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>)}</tr></thead>
           <tbody>
             {schedules.map((s) => (
               <tr key={s.id} style={{ borderBottom: '1px solid #1e2433' }}>
@@ -190,6 +218,7 @@ export default function ReportsPage() {
                 <td className="py-3 px-4 text-slate-400"><span className="capitalize text-slate-500">{s.scope}:</span> {scopeName(s)}</td>
                 <td className="py-3 px-4"><span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}>{s.sequence}</span></td>
                 <td className="py-3 px-4 text-slate-400">{s.format}</td>
+                <td className="py-3 px-4 text-slate-400"><span className="capitalize">{s.channel}</span>{s.recipients ? <span className="text-slate-600"> · {s.recipients}</span> : <span className="text-amber-500/70"> · not set</span>}</td>
                 <td className="py-3 px-4"><button onClick={() => toggleSchedule(s.id)}>{s.enabled ? <ToggleRight size={22} className="text-indigo-400" /> : <ToggleLeft size={22} className="text-slate-600" />}</button></td>
                 <td className="py-3 px-4 text-right"><button onClick={() => removeSchedule(s.id)} className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/5"><Trash2 size={13} /></button></td>
               </tr>

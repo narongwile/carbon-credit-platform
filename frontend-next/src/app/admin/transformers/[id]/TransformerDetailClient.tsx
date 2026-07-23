@@ -38,9 +38,9 @@ function HealthGauge({ value }: { value: number }) {
   const startAngle = 180
   const endAngle = 180 - angle
   const x1 = cx + r * Math.cos(toRad(startAngle))
-  const y1 = cy + r * Math.sin(toRad(startAngle))
+  const y1 = cy - r * Math.sin(toRad(startAngle))
   const x2 = cx + r * Math.cos(toRad(endAngle))
-  const y2 = cy + r * Math.sin(toRad(endAngle))
+  const y2 = cy - r * Math.sin(toRad(endAngle))
   const largeArc = angle > 180 ? 1 : 0
 
   return (
@@ -57,7 +57,7 @@ function HealthGauge({ value }: { value: number }) {
         {/* Value arc */}
         {value > 0 && (
           <path
-            d={`M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 0 ${x2} ${y2}`}
+            d={`M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`}
             fill="none"
             stroke={color}
             strokeWidth="10"

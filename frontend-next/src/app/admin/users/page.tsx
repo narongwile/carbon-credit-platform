@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { api, apiEnabled } from '@/lib/api'
+import { api, isLive } from '@/lib/api'
 import {
   departments as seedDepartments,
   managedUsers as seedUsers,
@@ -16,7 +16,7 @@ import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
   Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check, Boxes,
-  ToggleLeft, ToggleRight, Pencil, Eye, Settings2, Ban, ListChecks,
+  ToggleLeft, ToggleRight, Pencil, Eye, Settings2, Ban, ListChecks, Upload, FileSpreadsheet,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -56,7 +56,7 @@ export default function UserManagementPage() {
 
   // Live load from the backend (departments + users) when an API is configured.
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     let cancelled = false
     api.departments(orgId).then((rows) => {
       if (cancelled || !rows) return
@@ -81,18 +81,18 @@ export default function UserManagementPage() {
     const id = `dept-${Date.now()}`, name = newDept.trim()
     setDepartments((d) => [...d, { id, orgId, name, themeIds: ['th-overview'] }])
     setNewDept('')
-    if (apiEnabled) api.saveDepartment(orgId, { id, name })
+    if (isLive()) api.saveDepartment(orgId, { id, name })
   }
   const renameDept = (id: string, name: string) => {
     if (!name.trim()) return
     setDepartments((d) => d.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)))
     setEditingDeptId(null); setEditingDeptName('')
-    if (apiEnabled) api.saveDepartment(orgId, { id, name: name.trim() })
+    if (isLive()) api.saveDepartment(orgId, { id, name: name.trim() })
   }
   const removeDept = (id: string) => {
     setDepartments((d) => d.filter((x) => x.id !== id))
     setUsers((u) => u.map((x) => ({ ...x, departmentIds: x.departmentIds.filter((dd) => dd !== id) })))
-    if (apiEnabled) api.deleteDepartment(id)
+    if (isLive()) api.deleteDepartment(id)
   }
 
   // ----- Users -----
@@ -101,9 +101,64 @@ export default function UserManagementPage() {
 
   const upsertUser = (u: ManagedUser) => {
     setUsers((prev) => (prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]))
-    if (apiEnabled) api.saveUser(orgId, { id: u.id, email: u.email, name: u.name, role: u.role, departmentId: u.departmentIds[0] })
+    if (isLive()) api.saveUser(orgId, { id: u.id, email: u.email, name: u.name, role: u.role, departmentId: u.departmentIds[0] })
   }
-  const removeUser = (id: string) => { setUsers((u) => u.filter((x) => x.id !== id)); if (apiEnabled) api.deleteUser(id) }
+  const removeUser = (id: string) => { setUsers((u) => u.filter((x) => x.id !== id)); if (isLive()) api.deleteUser(id) }
+
+  // ----- Employee Directory (CSV allowlist) -----
+  const [directory, setDirectory] = useState<any[]>([])
+  const [dirLoading, setDirLoading] = useState(false)
+  const csvRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (!isLive()) return
+    api.getDirectory(orgId).then((rows) => { if (rows) setDirectory(rows) })
+  }, [orgId])
+
+  const handleCSV = (file?: File) => {
+    if (!file) return
+    setDirLoading(true)
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const text = reader.result as string
+      const lines = text.split(/\r?\n/).filter(Boolean)
+      if (lines.length < 2) { toast.error('CSV must have a header row + data'); setDirLoading(false); return }
+      const headers = lines[0].split(',').map(h => h.trim().toLowerCase())
+      const nameIdx = headers.findIndex(h => h === 'name' || h === 'ชื่อ' || h === 'ชื่อ-นามสกุล')
+      const emailIdx = headers.findIndex(h => h === 'email' || h === 'อีเมล')
+      const phoneIdx = headers.findIndex(h => h === 'phone' || h === 'เบอร์โทร' || h === 'tel')
+      const deptIdx = headers.findIndex(h => h === 'department' || h === 'แผนก' || h === 'dept')
+
+      const rows = lines.slice(1).map(line => {
+        const cols = line.split(',')
+        const deptName = deptIdx >= 0 ? cols[deptIdx]?.trim() : undefined
+        const deptMatch = deptName ? departments.find(d => d.name.toLowerCase() === deptName.toLowerCase()) : undefined
+        return {
+          name: nameIdx >= 0 ? cols[nameIdx]?.trim() : undefined,
+          email: emailIdx >= 0 ? cols[emailIdx]?.trim() : undefined,
+          phone: phoneIdx >= 0 ? cols[phoneIdx]?.trim() : undefined,
+          departmentId: deptMatch?.id ?? undefined,
+        }
+      }).filter(r => r.name || r.email || r.phone)
+
+      const res = await api.uploadDirectory(orgId, rows, true)
+      if (res) {
+        toast.success(`Imported ${res.imported} employee records`)
+        const fresh = await api.getDirectory(orgId)
+        if (fresh) setDirectory(fresh)
+      } else {
+        toast.error('Failed to upload directory')
+      }
+      setDirLoading(false)
+    }
+    reader.readAsText(file)
+  }
+
+  const clearDir = async () => {
+    await api.clearDirectory(orgId)
+    setDirectory([])
+    toast.success('Directory cleared')
+  }
 
   return (
     <div className="p-6 space-y-5">
@@ -191,12 +246,61 @@ export default function UserManagementPage() {
 
       {/* USERS */}
       {tab === 'users' && (
-        <div className="space-y-3">
-          <div className="flex justify-end">
+        <div className="space-y-5">
+          <div className="flex justify-between items-center gap-3">
+            <div className="flex items-center gap-2">
+              <input ref={csvRef} type="file" accept=".csv" className="hidden" onChange={(e) => handleCSV(e.target.files?.[0])} />
+              <button onClick={() => csvRef.current?.click()} disabled={dirLoading}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+                style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid #6366f1' }}>
+                <Upload size={15} /> {dirLoading ? 'Importing…' : 'Upload CSV Directory'}
+              </button>
+              {directory.length > 0 && (
+                <button onClick={clearDir} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs text-slate-400 hover:text-red-400" style={inset}>
+                  <Trash2 size={13} /> Clear Directory
+                </button>
+              )}
+            </div>
             <button onClick={() => setShowNewUser(true)} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}>
               <Plus size={15} /> New User
             </button>
           </div>
+
+          {/* Employee Directory (allowlist) */}
+          {directory.length > 0 && (
+            <div className="rounded-xl p-4" style={surface}>
+              <div className="flex items-center gap-2 mb-3">
+                <FileSpreadsheet size={15} className="text-indigo-400" />
+                <h3 className="text-sm font-semibold text-white">Employee Directory</h3>
+                <span className="text-[10px] px-2 py-0.5 rounded-full text-indigo-300" style={{ background: 'rgba(99,102,241,0.12)' }}>{directory.length} records</span>
+              </div>
+              <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+                      {['Name', 'Email', 'Phone', 'Department'].map(h => (
+                        <th key={h} className="py-2 px-3 text-left text-xs text-slate-500 font-medium">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody style={{ background: '#0d1117' }}>
+                    {directory.slice(0, 20).map((d: any) => (
+                      <tr key={d.id} style={{ borderBottom: '1px solid #1e2433' }}>
+                        <td className="py-2 px-3 text-slate-200 text-xs">{d.name || '—'}</td>
+                        <td className="py-2 px-3 text-slate-400 text-xs">{d.email || '—'}</td>
+                        <td className="py-2 px-3 text-slate-400 text-xs">{d.phone || '—'}</td>
+                        <td className="py-2 px-3 text-slate-500 text-xs">{d.department_id ? deptName(d.department_id) : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {directory.length > 20 && <div className="text-xs text-slate-600 text-center py-2">… and {directory.length - 20} more</div>}
+              </div>
+              <p className="text-[10px] text-slate-600 mt-2">CSV format: Name, Email, Phone, Department — self-registering users matching these records will auto-join as viewers.</p>
+            </div>
+          )}
+
+          {/* User table */}
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
             <table className="w-full text-sm">
               <thead>
@@ -394,6 +498,7 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
       else pa[domain] = level
       return { ...d, productAccess: pa }
     }))
+    void api.setProductAccess({ scope: 'department', scopeId: deptId, domain, level })
   }
 
   // department-derived level for a user (from local state)
@@ -419,6 +524,7 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
       else pa[domain] = value
       return { ...u, productAccess: pa }
     }))
+    void api.setProductAccess({ scope: 'user', scopeId: userId, domain, level: value === 'inherit' ? 'none' : value })
   }
 
   const LEVELS = [
@@ -559,7 +665,7 @@ function EventCatalog({ orgId, departments }: { orgId: string; departments: Depa
 
   // Live catalog for the selected department (admin-managed root causes).
   useEffect(() => {
-    if (!apiEnabled || !selectedDept) return
+    if (!isLive() || !selectedDept) return
     let cancelled = false
     api.eventProblems(orgId, selectedDept).then((rows) => {
       if (cancelled || !rows) return
@@ -576,15 +682,15 @@ function EventCatalog({ orgId, departments }: { orgId: string; departments: Depa
     const id = `ev-${selectedDept}-${Date.now()}`, label = draft.trim()
     update([...list, { id, label, departmentId: selectedDept }])
     setDraft(''); toast.success('Event added')
-    if (apiEnabled) api.saveEventProblem({ id, orgId, departmentId: selectedDept, label })
+    if (isLive()) api.saveEventProblem({ id, orgId, departmentId: selectedDept, label })
   }
-  const remove = (id: string) => { update(list.filter((e) => e.id !== id)); toast.success('Event removed'); if (apiEnabled) api.deleteEventProblem(id) }
+  const remove = (id: string) => { update(list.filter((e) => e.id !== id)); toast.success('Event removed'); if (isLive()) api.deleteEventProblem(id) }
   const startEdit = (e: EventProblem) => { setEditingId(e.id); setEditingLabel(e.label) }
   const saveEdit = () => {
     if (!editingLabel.trim()) return
     const label = editingLabel.trim()
     update(list.map((e) => (e.id === editingId ? { ...e, label } : e)))
-    if (apiEnabled && editingId) api.saveEventProblem({ id: editingId, orgId, departmentId: selectedDept, label })
+    if (isLive() && editingId) api.saveEventProblem({ id: editingId, orgId, departmentId: selectedDept, label })
     setEditingId(null); setEditingLabel(''); toast.success('Event updated')
   }
 

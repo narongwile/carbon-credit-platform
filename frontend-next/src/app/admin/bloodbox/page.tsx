@@ -13,6 +13,7 @@ import {
   type BloodBoxTransit, type BleBeacon, type BeaconStatus, type JourneyEvent,
   type JourneyEventType, type JourneySignal,
 } from '@/lib/bloodboxData'
+import { useRouter } from 'next/navigation'
 import { bloodboxApi } from '@/lib/bloodboxApi'
 import { useAppStore } from '@/lib/store'
 import EntitlementGuard from '@/components/EntitlementGuard'
@@ -71,6 +72,7 @@ function BloodBoxModule() {
 
 // --- Transit Map view -------------------------------------------------------
 function TransitView({ sorted, selected, onSelect }: { sorted: BloodBoxTransit[]; selected: BloodBoxTransit; onSelect: (id: string) => void }) {
+  const router = useRouter()
   return (
     <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
       {/* List */}
@@ -152,7 +154,7 @@ function TransitView({ sorted, selected, onSelect }: { sorted: BloodBoxTransit[]
           </div>
           <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: '1px solid #1e2433' }}>
             <span className="flex items-center gap-1.5 text-[11px] text-slate-500"><Signal size={11} className="text-emerald-400" /> WiFi → 4G สำรอง (GNSS SIM) · {selected.signal4g} · ล่าสุด {selected.lastConnection}</span>
-            <button className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300">ดูประวัติอุณหภูมิแบบเต็ม →</button>
+            <button onClick={() => router.push('/admin/bloodbox/' + selected.id)} className="text-[11px] font-bold text-indigo-400 hover:text-indigo-300">ดูประวัติอุณหภูมิแบบเต็ม →</button>
           </div>
         </div>
       </div>

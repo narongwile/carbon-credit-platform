@@ -9,7 +9,7 @@ const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
-interface Release { id: string; version: string; target_hw: string; artefact_uri: string; released_at: string; release_notes: string }
+interface Release { id: string; version: string; domain: string; artefact_uri: string; released_at: string; release_notes: string }
 interface Deployment { node_id: string; release_id: string; status: string; updated_at: string }
 
 export default function OTAManagementPage() {
@@ -17,7 +17,7 @@ export default function OTAManagementPage() {
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ version: '', target_hw: '', artefact_uri: '', release_notes: '' })
+  const [form, setForm] = useState({ version: '', domain: 'transformer', artefact_uri: '', release_notes: '' })
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deployConfirm, setDeployConfirm] = useState<{ id: string, hw: string } | null>(null)
 
@@ -32,12 +32,12 @@ export default function OTAManagementPage() {
   useEffect(() => { load() }, [])
 
   const handleCreate = async () => {
-    if (!form.version || !form.target_hw || !form.artefact_uri) return toast.error('Fill all required fields')
+    if (!form.version || !form.domain || !form.artefact_uri) return toast.error('Fill all required fields')
     const res = await api.saveOtaRelease(form)
     if (res?.id) {
       toast.success('Release created')
       setShowForm(false)
-      setForm({ version: '', target_hw: '', artefact_uri: '', release_notes: '' })
+      setForm({ version: '', domain: 'transformer', artefact_uri: '', release_notes: '' })
       load()
     } else toast.error('Failed to create')
   }
@@ -49,8 +49,8 @@ export default function OTAManagementPage() {
     load()
   }
 
-  const handleDeploy = async (release_id: string, target_hw: string) => {
-    const res = await api.deployFleetOta({ release_id, target_hw })
+  const handleDeploy = async (release_id: string, domain: string) => {
+    const res = await api.deployFleetOta({ release_id, domain })
     setDeployConfirm(null)
     if (res?.applied !== undefined) {
       toast.success(`Deployment initiated for ${res.applied} devices`)
@@ -79,8 +79,12 @@ export default function OTAManagementPage() {
               <input value={form.version} onChange={e => setForm({...form, version: e.target.value})} className="w-full bg-transparent border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500" placeholder="v1.0.0" />
             </div>
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Target Hardware</label>
-              <input value={form.target_hw} onChange={e => setForm({...form, target_hw: e.target.value})} className="w-full bg-transparent border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500" placeholder="esp32-c3" />
+              <label className="block text-xs text-slate-400 mb-1">Product Line (Domain)</label>
+              <select value={form.domain} onChange={e => setForm({...form, domain: e.target.value})} className="w-full bg-transparent border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500">
+                <option value="transformer" className="bg-[#0d1117]">Transformer</option>
+                <option value="carbonNode" className="bg-[#0d1117]">Refrigeration (carbonNode)</option>
+                <option value="bloodBox" className="bg-[#0d1117]">BloodBOX</option>
+              </select>
             </div>
             <div className="col-span-2">
               <label className="block text-xs text-slate-400 mb-1">Artefact URI</label>
@@ -104,10 +108,10 @@ export default function OTAManagementPage() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-bold text-white bg-indigo-500/20 px-2 py-1 rounded text-indigo-300">{r.version}</span>
-                    <span className="text-xs text-slate-400">{r.target_hw}</span>
+                    <span className="text-xs text-slate-400">{r.domain}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setDeployConfirm({ id: r.id, hw: r.target_hw })} className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 px-3 py-1.5 rounded-md transition-colors"><ArrowRightCircle size={14}/> Deploy to Fleet</button>
+                    <button onClick={() => setDeployConfirm({ id: r.id, hw: r.domain })} className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 px-3 py-1.5 rounded-md transition-colors"><ArrowRightCircle size={14}/> Deploy to Fleet</button>
                     <button onClick={() => setDeleteConfirm(r.id)} className="text-red-400 hover:text-red-300 p-1.5 rounded-md hover:bg-red-400/10 transition-colors"><Trash2 size={14} /></button>
                   </div>
                 </div>

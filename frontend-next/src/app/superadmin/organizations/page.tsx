@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { organizations } from '@/lib/mockData'
-import { api, apiEnabled } from '@/lib/api'
+import { api, isLive } from '@/lib/api'
 import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
-import { getOrgThemeGrants } from '@/lib/orgThemes'
+import { getOrgThemeGrants, setOrgThemeGrants } from '@/lib/orgThemes'
 import type { Organization } from '@/types'
 import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette } from 'lucide-react'
+import toast from 'react-hot-toast'
 import clsx from 'clsx'
 
 function StatusBadge({ status }: { status: string }) {
@@ -130,7 +131,7 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
     () => Object.fromEntries(org.platforms.map((p) => [p.platformId, p.licensed])),
   )
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     let cancelled = false
     api.entitlements(org.id).then((ents) => {
       if (cancelled || !ents) return
@@ -141,7 +142,7 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
   const toggleLicense = (platformId: string) => {
     setLicensed((prev) => {
       const next = { ...prev, [platformId]: !prev[platformId] }
-      if (apiEnabled) {
+      if (isLive()) {
         const platforms = Object.keys(next).filter((k) => next[k]).map(toBackendPlatform)
         api.setEntitlements(org.id, platforms)
       }
@@ -153,6 +154,21 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
   const [grantedThemes, setGrantedThemes] = useState<string[]>(getOrgThemeGrants(org.id))
   const toggleTheme = (id: string) =>
     setGrantedThemes((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
+
+  const handleSave = () => {
+    // Save theme grants
+    setOrgThemeGrants(org.id, grantedThemes)
+
+    // Save features to mock data (for UI persistence demo)
+    org.platforms.forEach((p) => {
+      p.features.forEach((f) => {
+        if (features[f.id] !== undefined) f.enabled = features[f.id]
+      })
+    })
+
+    toast.success('Organization settings saved')
+    onClose()
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.7)' }}>
@@ -269,7 +285,7 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
 
           {/* Actions */}
           <div className="flex gap-3 pt-2">
-            <button className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+            <button onClick={handleSave} className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
               Save Changes
             </button>
             <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white transition-all" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
@@ -289,7 +305,7 @@ export default function OrganizationsPage() {
 
   // Live org list (name + status) from the backend; structure stays from mock.
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     let cancelled = false
     api.orgs().then((rows) => {
       if (cancelled || !rows) return

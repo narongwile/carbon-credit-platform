@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
@@ -8,12 +8,12 @@ import { useAppStore } from '@/lib/store'
 import { useRealtimeData } from '@/lib/realtime'
 import { isEntitled, type Entitlement } from '@/lib/entitlements'
 import { organizations } from '@/lib/mockData'
-import api, { apiEnabled } from '@/lib/api'
+import api, { isLive } from '@/lib/api'
 import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck, Droplet
+  Search, Database, ShieldCheck, Droplet, PlugZap
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -22,7 +22,7 @@ interface NavItem {
   label: string
   icon: React.ElementType
   exact?: boolean
-  badge?: boolean
+  badge?: 'critical' | 'pending'
   requires?: Entitlement
 }
 
@@ -37,12 +37,12 @@ const NAV: NavItem[] = [
   { href: '/admin/users', label: 'User Management', icon: Users },
   { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
   { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu },
-  { href: '/admin/ota', label: 'OTA Firmware', icon: HardDrive },
+  { href: '/admin/pending', label: 'Pending Devices', icon: PlugZap, badge: 'pending' },
   { href: '/admin/ai-search', label: 'AI Search', icon: Search, requires: { feature: 'AI Predictive Diagnostics' } },
   { href: '/admin/sql', label: 'SQL AI', icon: Database, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/notifications', label: 'Alarm & Notify', icon: BellRing },
-  { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: true },
+  { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: 'critical' },
   { href: '/admin/events', label: 'Events', icon: Calendar },
   { href: '/admin/reports', label: 'Reports', icon: FileBarChart },
   { href: '/admin/profile', label: 'Profile', icon: UserCircle },
@@ -57,9 +57,10 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { alarms, selectedOrgId, setSelectedOrgId, orgLogos, setOrgLogos } = useAppStore()
+  const { alarms, selectedOrgId, setSelectedOrgId, orgLogos, setOrgLogo, isLiveMode, toggleLiveMode } = useAppStore()
   const orgLogo = orgLogos[selectedOrgId]
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
+  const [pendingCount, setPendingCount] = useState(0)
 
   useEffect(() => {
     const session = getSession()
@@ -70,14 +71,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   // Hydrate per-company logos from the backend (set in admin Settings).
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     api.orgs().then((rows) => {
       if (!rows) return
-      const map: Record<string, string> = {}
-      for (const o of rows) if (o.logo_url) map[o.id] = o.logo_url
-      if (Object.keys(map).length) setOrgLogos(map)
+      for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
     })
-  }, [setOrgLogos])
+  }, [setOrgLogo])
+
+  // Live count of devices awaiting approval → nav badge. Superadmin counts every
+  // org (incl. orphans); a tenant admin is scoped by the backend.
+  useEffect(() => {
+    if (!isLive()) return
+    const sup = getSession()?.role === 'superadmin'
+    const load = () =>
+      api.pendingNodes(sup ? undefined : selectedOrgId)
+        .then((rows) => { if (rows) setPendingCount(rows.length) })
+        .catch(() => {})
+    load()
+    const t = setInterval(load, 15000)
+    return () => clearInterval(t)
+  }, [selectedOrgId])
 
   const unackedAlarms = alarms.filter((a) => !a.acknowledged && a.orgId === selectedOrgId)
   const criticalCount = unackedAlarms.filter((a) => a.severity === 'CRITICAL').length
@@ -94,11 +107,30 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: '#0d1117', borderRight: '1px solid #1e2433' }}>
           {/* Logo */}
           <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: orgLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                {orgLogo ? <img src={orgLogo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: orgLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                  {orgLogo ? <img src={orgLogo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
+                </div>
+                <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
               </div>
-              <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
+              
+              {/* Demo/Live Toggle */}
+              <button
+                onClick={toggleLiveMode}
+                className={clsx(
+                  "relative inline-flex h-4 w-8 items-center rounded-full transition-colors focus:outline-none",
+                  isLiveMode ? "bg-indigo-500" : "bg-slate-600"
+                )}
+                title={isLiveMode ? "Switch to Demo Mode" : "Switch to Live Mode"}
+              >
+                <span
+                  className={clsx(
+                    "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
+                    isLiveMode ? "translate-x-4" : "translate-x-1"
+                  )}
+                />
+              </button>
             </div>
             {/* Tenant switcher — drives entitlement gating */}
             <select
@@ -117,7 +149,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <nav className="flex-1 px-2.5 py-3 space-y-0.5 overflow-y-auto">
             {visibleNav.map((item) => {
               const active = isActive(item.href, item.exact)
-              const badgeCount = item.badge ? criticalCount : 0
+              const badgeCount = item.badge === 'critical' ? criticalCount : item.badge === 'pending' ? pendingCount : 0
+              const badgeColor = item.badge === 'pending' ? '#f59e0b' : '#ef4444'
               return (
                 <Link
                   key={item.href}
@@ -131,7 +164,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <item.icon size={15} className={active ? 'text-indigo-400' : 'text-slate-600 group-hover:text-slate-400'} />
                   <span className="flex-1">{item.label}</span>
                   {badgeCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold text-white" style={{ background: '#ef4444' }}>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold text-white" style={{ background: badgeColor }}>
                       {badgeCount}
                     </span>
                   )}

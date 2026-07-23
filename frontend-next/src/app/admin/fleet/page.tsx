@@ -42,11 +42,13 @@ export default function FleetPage() {
 
   const [deployments, setDeployments] = useState<{release_id:string, status:string, updated_at:string}[]>([])
   useEffect(() => {
+    let cancel = false
     if (activeId) {
       api.otaDeployments().then(deps => {
-        if (deps) setDeployments(deps.filter(d => d.node_id === activeId))
+        if (!cancel && deps) setDeployments(deps.filter(d => d.node_id === activeId))
       })
     }
+    return () => { cancel = true }
   }, [activeId])
 
   return (

@@ -7,14 +7,15 @@ import { getSession, clearSession } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
-import api, { apiEnabled } from '@/lib/api'
+import api, { isLive } from '@/lib/api'
 import { viewerDepartments } from '@/lib/viewer'
-import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
+import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle, LayoutGrid } from 'lucide-react'
 import clsx from 'clsx'
 
 const NAV = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/customer/map', label: 'Live Sensor Map', icon: Map },
+  { href: '/customer/floorplans', label: 'Floor Plans', icon: LayoutGrid },
   { href: '/customer/devices', label: 'Devices', icon: HardDrive },
   { href: '/customer/alarms', label: 'Alarms', icon: Bell },
   { href: '/customer/reports', label: 'Reports', icon: FileBarChart },
@@ -29,10 +30,10 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { viewerUserId, setViewerUserId, orgLogos, setOrgLogos } = useAppStore()
+  const { viewerUserId, setViewerUserId, orgLogos, setOrgLogo } = useAppStore()
   const orgId = getSession()?.orgId || 'org-1'
   const orgLogo = orgLogos[orgId]
-  const orgUsers = getUsersByOrg('org-1').filter((u) => u.role !== 'admin')
+  const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)
 
   useEffect(() => {
@@ -44,14 +45,12 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
 
   // Hydrate this company's logo from the backend (set by its admin in Settings).
   useEffect(() => {
-    if (!apiEnabled) return
+    if (!isLive()) return
     api.orgs().then((rows) => {
       if (!rows) return
-      const map: Record<string, string> = {}
-      for (const o of rows) if (o.logo_url) map[o.id] = o.logo_url
-      if (Object.keys(map).length) setOrgLogos(map)
+      for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
     })
-  }, [setOrgLogos])
+  }, [setOrgLogo])
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href

@@ -99,11 +99,11 @@ export const bloodBoxTransits: BloodBoxTransit[] = [
 ]
 
 export const journeyEvents: JourneyEvent[] = [
-  { id: 'je-1', transitId: 'tx-1', type: 'gps_checkin', label: 'ถึงประตูโรงพยาบาล (GPS Check-in)', floor: 0, signal: 'GPS', time: '10:05', done: true },
-  { id: 'je-2', transitId: 'tx-1', type: 'building_entered', label: 'เข้าสู่อาคารอุบัติเหตุ', floor: 1, signal: 'BLE', time: '10:08', done: true },
-  { id: 'je-3', transitId: 'tx-1', type: 'security_pass', label: 'ผ่านจุดคัดกรอง ชั้น 1', floor: 1, signal: 'BLE', time: '10:10', done: true },
-  { id: 'je-4', transitId: 'tx-1', type: 'lift_exited', label: 'ออกจากลิฟต์ ชั้น 5', floor: 5, signal: 'BAROMETER', time: '10:12', done: true },
-  { id: 'je-5', transitId: 'tx-1', type: 'storage_arrived', label: 'ถึงหน้าคลังเลือด (รอสแกนรับเข้า)', floor: 5, signal: 'BLE', time: '10:15', done: false },
+  { id: 'je-1', transitId: 't1', type: 'gps_checkin', label: 'ถึงประตูโรงพยาบาล (GPS Check-in)', floor: 0, signal: 'GPS', time: '10:05', done: true },
+  { id: 'je-2', transitId: 't1', type: 'building_entered', label: 'เข้าสู่อาคารอุบัติเหตุ', floor: 1, signal: 'BLE', time: '10:08', done: true },
+  { id: 'je-3', transitId: 't1', type: 'security_pass', label: 'ผ่านจุดคัดกรอง ชั้น 1', floor: 1, signal: 'BLE', time: '10:10', done: true },
+  { id: 'je-4', transitId: 't1', type: 'lift_exited', label: 'ออกจากลิฟต์ ชั้น 5', floor: 5, signal: 'BAROMETER', time: '10:12', done: true },
+  { id: 'je-5', transitId: 't1', type: 'storage_arrived', label: 'ถึงหน้าคลังเลือด (รอสแกนรับเข้า)', floor: 5, signal: 'BLE', time: '10:15', done: false },
 ]
 
 // BLE beacons placed on each floor — anchors for indoor positioning of boxes.

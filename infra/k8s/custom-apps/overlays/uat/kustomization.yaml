@@ -7,6 +7,7 @@ kind: Kustomization
 
 resources:
   - ../../base
+  - mysql-migrate-job.yaml
 
 commonAnnotations:
   environment: uat
@@ -81,7 +82,6 @@ patches:
       - op: replace
         path: /spec/tls/0/hosts/0
         value: nodered-uat.27.254.143.144.nip.io
-  # ── Node-RED EMQX Connection for UAT ──
   - target:
       kind: Deployment
       name: node-red
@@ -92,7 +92,15 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/3/value
         value: "emqx.iiot-uat.svc.cluster.local"
-
-images:
-  - name: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next
-    newTag: claude-unified-platform-ui-design-04HMA
+      - op: add
+        path: /spec/template/spec/initContainers
+        value:
+          - name: sync-flows
+            image: curlimages/curl:latest
+            command:
+              - "sh"
+              - "-c"
+              - "curl -sL https://raw.githubusercontent.com/narongwile/carbon-credit-platform/claude/unified-platform-ui-design-04HMA/backend/node-red/flows.nodered-backend.json | sed 's/mysql.data.svc.cluster.local/mysql.iiot-uat.svc.cluster.local/g' > /data/flows.json"
+            volumeMounts:
+              - name: node-red-data
+                mountPath: /data
