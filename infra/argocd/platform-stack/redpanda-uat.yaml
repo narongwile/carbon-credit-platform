@@ -33,6 +33,8 @@ spec:
         auth:
           sasl:
             enabled: false
+        tls:
+          enabled: false
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-services
