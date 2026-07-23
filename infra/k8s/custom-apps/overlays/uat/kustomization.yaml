@@ -128,7 +128,7 @@ patches:
             command:
               - "sh"
               - "-c"
-              - "curl -sL https://raw.githubusercontent.com/narongwile/carbon-credit-platform/claude/unified-platform-ui-design-04HMA/backend/node-red/flows.nodered-backend.json | sed 's/mysql.data.svc.cluster.local/mysql.iiot-uat.svc.cluster.local/g' > /data/flows.json"
+              - "curl -sL https://raw.githubusercontent.com/narongwile/carbon-credit-platform/claude/unified-platform-ui-design-04HMA/backend/node-red/flows.nodered-backend.json | sed 's/mysql.data.svc.cluster.local/mysql.iiot-uat.svc.cluster.local/g' | sed 's/mqtt.data.svc.cluster.local/emqx.iiot-uat.svc.cluster.local/g' > /data/flows.json"
             volumeMounts:
               - name: node-red-data
                 mountPath: /data
