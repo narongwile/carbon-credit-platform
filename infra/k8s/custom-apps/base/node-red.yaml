@@ -232,8 +232,7 @@ data:
       functionGlobalContext: {
         mqttBroker:   process.env.MQTT_BROKER_URL,
         mqttUser:     process.env.MQTT_USERNAME,
-        mqttPassword: process.env.MQTT_PASSWORD,
-        crypto:       require('crypto')
+        mqttPassword: process.env.MQTT_PASSWORD
       },
 
       functionExternalModules: true,
