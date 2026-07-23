@@ -62,6 +62,11 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: data
+  # iiot-uat namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: iiot-uat
   # DNS (kube-system)
   - to:
     - namespaceSelector:
@@ -103,6 +108,10 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: data
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: iiot-uat
     ports:
     - protocol: TCP
       port: 1883
@@ -134,6 +143,11 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: data
+  # iiot-uat namespace
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: iiot-uat
   # carbon-credit namespace — Node-RED backend on :1880, so the frontend pod's
   # nginx can same-origin reverse-proxy /api and /ws to it.
   - to:
