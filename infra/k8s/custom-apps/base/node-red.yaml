@@ -237,11 +237,14 @@ data:
 
       functionExternalModules: true,
 
+      // Global context holds non-serializable runtime objects (mysql pools,
+      // nodemailer transport, and the guard/resolvePool/encryptSecret/mailConfig
+      // helper functions). The localfilesystem store JSON.stringifies context on
+      // flush, which throws on those (circular refs / functions) → error spam and
+      // failed persistence. These objects are all recreated by the init node on
+      // startup, so memory-only is correct and silent.
       contextStorage: {
         default: {
-          module: "localfilesystem"
-        },
-        memory: {
           module: "memory"
         }
       }
