@@ -37,7 +37,7 @@ spec:
           enabled: false
   destination:
     server: https://kubernetes.default.svc
-    namespace: platform-services
+    namespace: iiot-uat
   syncPolicy:
     automated:
       prune: true
