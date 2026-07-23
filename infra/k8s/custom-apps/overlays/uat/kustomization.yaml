@@ -13,6 +13,34 @@ commonAnnotations:
   environment: uat
 
 patches:
+  # ── Move Node-RED to iiot-uat namespace ──
+  - target:
+      labelSelector: "app=node-red"
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: iiot-uat
+  - target:
+      kind: Ingress
+      name: node-red
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: iiot-uat
+  # ── Move frontend-next to iiot-uat namespace ──
+  - target:
+      labelSelector: "app=frontend-next"
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: iiot-uat
+  - target:
+      kind: Ingress
+      name: frontend-next
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: iiot-uat
   # ── Backend: 1 replica for UAT ──
   - target:
       kind: Deployment
