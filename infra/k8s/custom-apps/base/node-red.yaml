@@ -238,7 +238,12 @@ data:
       functionExternalModules: true,
 
       contextStorage: {
-        default: { module: 'localfilesystem' }
+        default: {
+          module: "localfilesystem"
+        },
+        memory: {
+          module: "memory"
+        }
       }
     };
 ---
