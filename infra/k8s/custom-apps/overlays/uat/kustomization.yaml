@@ -41,6 +41,13 @@ patches:
       - op: replace
         path: /metadata/namespace
         value: iiot-uat
+  - target:
+      kind: Service
+      name: frontend-next
+    patch: |-
+      - op: replace
+        path: /metadata/namespace
+        value: iiot-uat
   # ── Backend: 1 replica for UAT ──
   - target:
       kind: Deployment
