@@ -23,7 +23,7 @@ spec:
             cores: 1
           memory:
             container:
-              min: 1Gi
+              min: 2Gi
               max: 2Gi
         storage:
           persistentVolume:
