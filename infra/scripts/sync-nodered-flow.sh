@@ -40,6 +40,6 @@ HDR
 
 # 2) Refresh the checksum annotation on the pod template
 SHA="$(sha256sum "$SRC" | cut -c1-16)"
-sed -i -E "s|(checksum/flow: \").*(\")|\1${SHA}\2|" "$DEP"
+sed -i '' -E "s|(checksum/flow: \").*(\")|\\1${SHA}\\2|" "$DEP"
 
 echo "flow synced → $CM ($(wc -l < "$SRC") lines), checksum/flow=$SHA in $DEP"
