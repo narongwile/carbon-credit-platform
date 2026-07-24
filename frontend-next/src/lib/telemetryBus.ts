@@ -18,7 +18,10 @@ export interface TelemetryFrame {
   severity?: string
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry` : 'ws://localhost:1880/ws/telemetry')
+const RAW_WS = process.env.NEXT_PUBLIC_WS_URL || ''
+const WS_URL = (!RAW_WS || RAW_WS === 'relative') 
+  ? (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry` : 'ws://localhost:1880/ws/telemetry')
+  : RAW_WS
 
 let ws: WebSocket | null = null
 let connected = false
