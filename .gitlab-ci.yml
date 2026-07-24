@@ -108,7 +108,12 @@ deploy_frontend_next:
     - git add infra/k8s/custom-apps/base/frontend-next.yaml
     - if git diff --cached --quiet; then echo "frontend-next tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
     - git commit -m "ci(deploy):frontend-next -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
-    - git push origin "HEAD:${CI_COMMIT_BRANCH}"
+    - |
+      for i in 1 2 3 4 5; do
+        git pull --rebase origin "${CI_COMMIT_BRANCH}" || true
+        if git push origin "HEAD:${CI_COMMIT_BRANCH}"; then break; fi
+        sleep 2
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
@@ -123,7 +128,12 @@ deploy_ingest_worker:
     - git add infra/k8s/custom-apps/base/ingest-worker.yaml
     - if git diff --cached --quiet; then echo "ingest-worker tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
     - git commit -m "ci(deploy):ingest-worker -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
-    - git push origin "HEAD:${CI_COMMIT_BRANCH}"
+    - |
+      for i in 1 2 3 4 5; do
+        git pull --rebase origin "${CI_COMMIT_BRANCH}" || true
+        if git push origin "HEAD:${CI_COMMIT_BRANCH}"; then break; fi
+        sleep 2
+      done
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
