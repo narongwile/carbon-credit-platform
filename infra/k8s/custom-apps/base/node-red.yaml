@@ -102,7 +102,10 @@ spec:
               value: "mysql.data.svc.cluster.local"
             - name: DB_USER
               value: "root"
-            - name: DB_PASS
+            # Flow reads env.DB_PASSWORD (generator L58), NOT DB_PASS — the name
+            # must match or the secret is ignored and the flow silently falls back
+            # to the hardcoded 'iothub.2026' default.
+            - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: mysql-credentials
