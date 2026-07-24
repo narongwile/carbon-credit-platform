@@ -16,6 +16,12 @@ metadata:
   namespace: carbon-credit
   labels:
     app: node-red
+  annotations:
+    # Never let ArgoCD prune/replace this data volume. A prune left it stuck
+    # Terminating (pvc-protection finalizer) so the new node-red pod could not
+    # schedule ("persistentvolumeclaim node-red-data is being deleted"). PVC specs
+    # are largely immutable — protecting it stops the delete→recreate churn.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: [ReadWriteOnce]
   resources:
