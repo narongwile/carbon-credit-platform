@@ -1,6 +1,24 @@
 # ONEOPS ingest worker — device MQTT → MySQL (readings/pending/alarms) → Redpanda
 # → internal/telemetry/live/# for the Node-RED WS dashboard. Without it nothing
 # persists and the UI stays empty.
+---
+# Worker credentials. This Secret was previously referenced but never defined in
+# the repo, so envFrom (non-optional) left the pod stuck in CreateContainerConfigError
+# — the worker never ran, so no MQTT was ingested and every device showed 0 values.
+# MQTT_PASS = the seeded EMQX 'ingest' user password (emqx-extras-uat, superuser);
+# DB_DSN    = control DB (root / iothub, same host+creds Node-RED uses in UAT).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ingest-worker-secrets
+  namespace: iiot-uat
+  labels:
+    app: ingest-worker
+type: Opaque
+stringData:
+  MQTT_PASS: "iothub.2026"
+  DB_DSN: "root:iothub.2026@tcp(mysql.iiot-uat.svc.cluster.local:3306)/iothub?parseTime=true"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,7 +68,9 @@ spec:
             - name: MQTT_CLIENT_ID
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
           envFrom:
-            - secretRef: { name: ingest-worker-secrets }
+            # optional so a missing secret can never wedge the pod in
+            # CreateContainerConfigError again (worker falls back to env defaults).
+            - secretRef: { name: ingest-worker-secrets, optional: true }
           resources:
             requests: { cpu: "50m", memory: "64Mi" }
             limits: { cpu: "500m", memory: "256Mi" }
