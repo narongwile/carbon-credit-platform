@@ -41,6 +41,11 @@ spec:
     metadata:
       labels:
         app: ingest-worker
+      annotations:
+        # Bump to force a pod roll when the ingest-worker-secrets values change
+        # (envFrom does NOT restart pods on Secret updates). Set when DB_DSN moved
+        # off the empty 'carbon_credit' DB onto the migrated 'iothub' DB.
+        checksum/secrets: "db-iothub-1"
     spec:
       securityContext:
         runAsNonRoot: true
