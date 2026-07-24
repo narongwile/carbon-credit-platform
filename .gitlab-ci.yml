@@ -1,8 +1,56 @@
 image: node:20
 
 stages:
+  - sync
   - build
   - deploy
+
+# ── GitHub → GitLab source sync ────────────────────────────────────────────────
+# The app source lives in GitHub (src/); the deployable copy is GitLab
+# frontend-next/src/. A GitHub push does NOT reach GitLab, so this job pulls the
+# latest GitHub frontend and commits it into frontend-next/, whose push then
+# triggers build_frontend_next → write-back → ArgoCD roll.
+#
+# TRIGGER: a GitLab *Pipeline Schedule* (CI/CD > Schedules) on
+# feature/deploy-ingest-worker — a CI job cannot fire itself and GitHub pushes are
+# invisible to GitLab, so polling on a schedule is what makes this survive. Also
+# runnable manually via "Run pipeline". Requires CI/CD variables:
+#   GITHUB_TOKEN     — read-only PAT (repo/contents:read) for the private GitHub repo
+#   WRITEBACK_TOKEN  — GitLab PAT (write_repository), already used by the deploy jobs
+# The sync commit carries NO [skip ci] on purpose: its push IS the build trigger.
+sync_frontend_from_github:
+  stage: sync
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
+  variables:
+    GIT_STRATEGY: none          # we clone both repos ourselves with tokens
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  before_script:
+    - test -n "$GITHUB_TOKEN"    || { echo "GITHUB_TOKEN not set — cannot read GitHub";  exit 1; }
+    - test -n "$WRITEBACK_TOKEN" || { echo "WRITEBACK_TOKEN not set — cannot push GitLab"; exit 1; }
+  script:
+    - git clone --depth 1 --branch claude/unified-platform-ui-design-04HMA "https://x-access-token:${GITHUB_TOKEN}@github.com/narongwile/carbon-credit-platform.git" gh
+    - git clone --depth 1 --branch feature/deploy-ingest-worker "https://writeback:${WRITEBACK_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" gl
+    # Sync ONLY the app source subtree. frontend-next's deployment files
+    # (Dockerfile, nginx.conf, next.config.js, package.json) are deployment-specific
+    # and intentionally left untouched — bump those by hand when deps/config change.
+    - rm -rf gl/frontend-next/src
+    - cp -r gh/src gl/frontend-next/src
+    - cd gl
+    - git config user.email "ci-bot@thermexpertise.com"
+    - git config user.name  "GitLab CI (gh-sync)"
+    - git add frontend-next/src
+    - if git diff --cached --quiet; then echo "frontend-next/src already in sync with GitHub — nothing to do"; exit 0; fi
+    - 'git commit -m "sync(frontend): pull src/ from GitHub claude/unified-platform-ui-design-04HMA"'
+    - |
+      for i in 1 2 3 4 5; do
+        git pull --rebase origin feature/deploy-ingest-worker || true
+        if git push origin HEAD:feature/deploy-ingest-worker; then break; fi
+        sleep 2
+      done
 
 # ── Vite app (parked) → GitLab Pages, unchanged ──
 pages:
@@ -45,6 +93,9 @@ build_frontend_next:
     - docker push "$IMAGE:latest"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
   rules:
+    # Scheduled pipelines run sync only — the sync commit (source=push) rebuilds.
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - frontend-next/**/*
@@ -68,6 +119,8 @@ build_ingest_worker:
     - docker push "$IMAGE:latest"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - worker/**/*
@@ -115,6 +168,8 @@ deploy_frontend_next:
         sleep 2
       done
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - frontend-next/**/*
@@ -135,6 +190,8 @@ deploy_ingest_worker:
         sleep 2
       done
   rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - worker/**/*
