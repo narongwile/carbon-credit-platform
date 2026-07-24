@@ -15,7 +15,7 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
@@ -104,7 +104,7 @@ type RuleCacheEntry struct {
 func main() {
 	// 1. Connect to Control MySQL DB
 	var err error
-	dsn := dbDSNBase() + getEnv("DB_NAME", "iothub") + "?parseTime=true"
+	dsn := dbDSN(getEnv("DB_NAME", "iothub"))
 	tenantMode = strings.EqualFold(getEnv("TENANT_DB_MODE", ""), "on")
 	controlDB, err = sql.Open("mysql", dsn)
 	if err != nil {
@@ -195,7 +195,7 @@ func resolvePool(orgID string) *sql.DB {
 	// Create new connection pool for this tenant
 	dbName := orgDbName(orgID)
 
-	dsn := fmt.Sprintf("%s%s?parseTime=true", dbDSNBase(), dbName)
+	dsn := dbDSN(dbName)
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -611,21 +611,20 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-// dbDSNBase returns the MySQL DSN prefix up to and including the trailing '/'
-// (i.e. "user:pass@tcp(host:port)/"), so callers append a database name. It
-// prefers an explicit DB_DSN (stripping its db name), else builds from
-// DB_HOST/DB_PORT/DB_USER/DB_PASSWORD — this lets the password come from a k8s
-// Secret via DB_PASSWORD (like Node-RED) instead of being hardcoded in a DSN.
-func dbDSNBase() string {
-	if v := os.Getenv("DB_DSN"); v != "" {
-		if i := strings.LastIndex(v, "/"); i >= 0 {
-			return v[:i+1]
-		}
-		return v
-	}
-	return fmt.Sprintf("%s:%s@tcp(%s:%s)/",
-		getEnv("DB_USER", "root"),
-		getEnv("DB_PASSWORD", "password"),
-		getEnv("DB_HOST", "mysql"),
-		getEnv("DB_PORT", "3306"))
+// dbDSN builds the MySQL DSN for a database from component env vars using the
+// driver's own config formatter. FormatDSN properly encodes the password, so a
+// root password containing DSN-special characters (@ : / ?) — common for
+// randomly generated secrets — does not corrupt the connection string. Building
+// the DSN by hand (root:PASS@tcp(...)) mis-parses such passwords and yields
+// "Access denied", even though the CLI (mysql -p) and mysql2 (separate field)
+// accept the same value. DB_PASSWORD comes from the mysql-credentials Secret.
+func dbDSN(dbName string) string {
+	cfg := mysql.NewConfig()
+	cfg.User = getEnv("DB_USER", "root")
+	cfg.Passwd = getEnv("DB_PASSWORD", "password")
+	cfg.Net = "tcp"
+	cfg.Addr = getEnv("DB_HOST", "mysql") + ":" + getEnv("DB_PORT", "3306")
+	cfg.DBName = dbName
+	cfg.ParseTime = true
+	return cfg.FormatDSN()
 }
