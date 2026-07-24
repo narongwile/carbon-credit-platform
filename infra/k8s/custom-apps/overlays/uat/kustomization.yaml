@@ -127,21 +127,19 @@ patches:
       kind: Deployment
       name: node-red
     patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/env/2/value
-        value: "mqtt://emqx.iiot-uat.svc.cluster.local:1883"
-      - op: replace
-        path: /spec/template/spec/containers/0/env/3/value
-        value: "emqx.iiot-uat.svc.cluster.local"
-      - op: add
-        path: /spec/template/spec/initContainers
-        value:
-          - name: sync-flows
-            image: curlimages/curl:latest
-            command:
-              - "sh"
-              - "-c"
-              - "curl -sL https://raw.githubusercontent.com/narongwile/carbon-credit-platform/claude/unified-platform-ui-design-04HMA/backend/node-red/flows.nodered-backend.json | sed 's/mysql.data.svc.cluster.local/mysql.iiot-uat.svc.cluster.local/g' | sed 's/mqtt.data.svc.cluster.local/emqx.iiot-uat.svc.cluster.local/g' > /data/flows.json"
-            volumeMounts:
-              - name: node-red-data
-                mountPath: /data
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: node-red
+      spec:
+        template:
+          spec:
+            containers:
+              - name: node-red
+                env:
+                  - name: MQTT_BROKER_URL
+                    value: "mqtt://emqx.iiot-uat.svc.cluster.local:1883"
+                  - name: MQTT_BROKER_HOST
+                    value: "emqx.iiot-uat.svc.cluster.local"
+                  - name: DB_HOST
+                    value: "mysql.iiot-uat.svc.cluster.local"

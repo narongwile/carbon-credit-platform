@@ -17,7 +17,7 @@ spec:
             - sh
             - -c
             - |
-              git clone --branch claude/unified-platform-ui-design-04HMA --depth 1 https://github.com/narongwile/carbon-credit-platform.git /workspace
+              git clone --branch feature/deploy-ingest-worker --depth 1 https://gitlab.com/narongwile/carbon-credit-platform.git /workspace
           volumeMounts:
             - name: workspace
               mountPath: /workspace

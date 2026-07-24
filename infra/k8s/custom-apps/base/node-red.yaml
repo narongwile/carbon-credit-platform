@@ -97,6 +97,19 @@ spec:
               value: nodered
             - name: MQTT_PASSWORD
               value: "iothub.2026"
+            # ── Database ──
+            - name: DB_HOST
+              value: "mysql.data.svc.cluster.local"
+            - name: DB_USER
+              value: "root"
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-root-password
+                  optional: true
+            - name: DB_NAME
+              value: "iothub"
             # Lock API CORS to the production frontend origin (flows read env.CORS_ORIGIN)
             - name: CORS_ORIGIN
               value: "https://iiotplatform.thermexpertise.com"

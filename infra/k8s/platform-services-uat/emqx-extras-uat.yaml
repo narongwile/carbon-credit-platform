@@ -120,6 +120,8 @@ metadata:
     app.kubernetes.io/component: external-listener
 spec:
   type: NodePort
+  externalIPs:
+    - 27.254.143.144
   selector:
     app.kubernetes.io/name: emqx
     app.kubernetes.io/instance: emqx
