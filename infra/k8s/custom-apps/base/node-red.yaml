@@ -47,6 +47,19 @@ spec:
       securityContext:
         fsGroup: 1000
       initContainers:
+        # GitOps flow: copy the committed flow (node-red-flow ConfigMap) into the
+        # PVC before Node-RED starts, so a deploy always runs the tracked flow.
+        # Overwrites on every (re)deploy — the generator is the source of truth.
+        - name: load-flow
+          image: busybox:latest
+          command: ["sh", "-c", "cp /flow-src/flows.json /data/flows.json && echo 'loaded flows.json from ConfigMap'"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: node-red-data
+              mountPath: /data
+            - name: flow-src
+              mountPath: /flow-src
         - name: fix-permissions
           image: busybox:latest
           command: ["sh", "-c", "chown -R 1000:1000 /data"]
@@ -152,6 +165,9 @@ spec:
         - name: node-red-data
           persistentVolumeClaim:
             claimName: node-red-data
+        - name: flow-src
+          configMap:
+            name: node-red-flow
         - name: node-red-settings
           configMap:
             name: node-red-settings
