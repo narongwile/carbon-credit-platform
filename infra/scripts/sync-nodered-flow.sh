@@ -40,6 +40,9 @@ HDR
 
 # 2) Refresh the checksum annotation on the pod template
 SHA="$(sha256sum "$SRC" | cut -c1-16)"
-sed -i '' -E "s|(checksum/flow: \").*(\")|\\1${SHA}\\2|" "$DEP"
+# GNU sed (Linux/CI runners) — do NOT use BSD `sed -i ''`, which errors on GNU
+# sed (treats '' as the script) and silently leaves checksum/flow stale, so the
+# pod template never changes and ArgoCD never rolls the new flow.
+sed -i -E "s|(checksum/flow: \").*(\")|\1${SHA}\2|" "$DEP"
 
 echo "flow synced → $CM ($(wc -l < "$SRC") lines), checksum/flow=$SHA in $DEP"
