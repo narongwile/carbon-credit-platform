@@ -88,7 +88,9 @@ build_ingest_worker:
 # push-back would loop forever.
 .writeback:
   stage: deploy
-  image: alpine/git:latest
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
   variables:
     GIT_STRATEGY: none          # we clone the branch ourselves with the write token
   before_script:
