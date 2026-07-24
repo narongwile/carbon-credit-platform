@@ -562,8 +562,10 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		if status == "pending" {
 			sample, _ := json.Marshal(t.Values)
 			touchPending(t.NodeID, sample)
+			// Process telemetry even if pending
+		} else {
+			return
 		}
-		return
 	}
 
 	tenantDB := resolvePool(orgID)
