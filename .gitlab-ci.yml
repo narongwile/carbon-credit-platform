@@ -72,3 +72,58 @@ build_ingest_worker:
       changes:
         - worker/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+
+# ── GitOps write-back: pin the freshly-built image tag into the manifests ──────
+# ArgoCD reconciles the git MANIFEST against the cluster. A floating `:latest` tag
+# never changes the manifest, so a new build is invisible to ArgoCD and never rolls
+# out. These jobs rewrite the Deployment image to the immutable `:$CI_COMMIT_SHORT_SHA`
+# tag that build_* just pushed, and commit it back to this branch — a real git diff
+# that ArgoCD (custom-apps-uat, automated sync) rolls out on its own.
+#
+# Requires CI/CD variable  WRITEBACK_TOKEN  (Settings > CI/CD > Variables, masked):
+#   a Project Access Token with scope `write_repository`, role Developer
+#   (Maintainer if the target branch is protected).
+# The write-back commit carries [skip ci] so it never re-triggers a pipeline — on
+# this branch the build jobs have no `changes:` filter, so without [skip ci] the
+# push-back would loop forever.
+.writeback:
+  stage: deploy
+  image: alpine/git:latest
+  variables:
+    GIT_STRATEGY: none          # we clone the branch ourselves with the write token
+  before_script:
+    - test -n "$WRITEBACK_TOKEN" || { echo "WRITEBACK_TOKEN CI/CD variable not set — cannot push tag back"; exit 1; }
+    - git clone --depth 1 --branch "$CI_COMMIT_BRANCH" "https://writeback:${WRITEBACK_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo
+    - cd repo
+    - git config user.email "ci-bot@thermexpertise.com"
+    - git config user.name  "GitLab CI (deploy)"
+
+deploy_frontend_next:
+  extends: .writeback
+  needs: ["build_frontend_next"]
+  script:
+    - 'sed -i "s|\(image: registry.gitlab.com/.*/frontend-next:\).*|\1${CI_COMMIT_SHORT_SHA}|" infra/k8s/custom-apps/base/frontend-next.yaml'
+    - git add infra/k8s/custom-apps/base/frontend-next.yaml
+    - if git diff --cached --quiet; then echo "frontend-next tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
+    - git commit -m "ci(deploy):frontend-next -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    - git push origin "HEAD:${CI_COMMIT_BRANCH}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - frontend-next/**/*
+    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+
+deploy_ingest_worker:
+  extends: .writeback
+  needs: ["build_ingest_worker"]
+  script:
+    - 'sed -i "s|\(image: registry.gitlab.com/.*/ingest-worker:\).*|\1${CI_COMMIT_SHORT_SHA}|" infra/k8s/custom-apps/base/ingest-worker.yaml'
+    - git add infra/k8s/custom-apps/base/ingest-worker.yaml
+    - if git diff --cached --quiet; then echo "ingest-worker tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
+    - git commit -m "ci(deploy):ingest-worker -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    - git push origin "HEAD:${CI_COMMIT_BRANCH}"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - worker/**/*
+    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
