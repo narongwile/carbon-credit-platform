@@ -28,6 +28,7 @@ interface DeviceRow {
   values: Record<string, number>
   ts: string | null
   src: 'ws' | 'http' | null
+  pending?: boolean
 }
 
 export default function LiveRawTelemetryPage() {
@@ -42,13 +43,18 @@ export default function LiveRawTelemetryPage() {
   // HTTP baseline: device list + every stored value per device.
   const poll = useCallback(async () => {
     if (!live || !orgId) return
-    const fleet = await api.fleet(orgId)
-    if (!fleet) return
+    // ACTIVE fleet (readings) + PENDING devices (last_sample). A freshly-connected
+    // ESP is auto-registered as 'pending' and is NOT in /api/fleet (active only),
+    // so without the pending poll a brand-new device would never appear here.
+    const [fleet, pending] = await Promise.all([api.fleet(orgId), api.pendingNodes(orgId)])
+    if (!fleet && !pending) return
     const next = new Map(rowsRef.current)
-    // Prune devices no longer in the fleet.
-    for (const id of Array.from(next.keys())) if (!fleet.find((f) => f.id === id)) next.delete(id)
+    const keep = new Set<string>()
+    ;(fleet ?? []).forEach((f) => keep.add(f.id))
+    ;(pending ?? []).forEach((p) => keep.add(p.id))
+    for (const id of Array.from(next.keys())) if (!keep.has(id)) next.delete(id)
     await Promise.all(
-      fleet.map(async (f) => {
+      (fleet ?? []).map(async (f) => {
         const latest = await api.latest(f.id)
         const prev = next.get(f.id)
         // Don't clobber a fresher WS frame with a slower HTTP poll.
@@ -61,9 +67,24 @@ export default function LiveRawTelemetryPage() {
           values: keepWs ? prev!.values : (latest?.values ?? prev?.values ?? {}),
           ts: keepWs ? prev!.ts : (httpTs ?? prev?.ts ?? null),
           src: keepWs ? 'ws' : 'http',
+          pending: false,
         })
       })
     )
+    // Pending (unapproved) devices — last_sample IS the raw values the ESP sent.
+    ;(pending ?? []).forEach((p) => {
+      const prev = next.get(p.id)
+      if (prev && prev.src === 'ws' && !prev.pending) return // an active WS row wins
+      next.set(p.id, {
+        id: p.id,
+        name: p.name || p.id,
+        online: p.online,
+        values: p.last_sample ?? prev?.values ?? {},
+        ts: p.last_seen ?? prev?.ts ?? null,
+        src: 'http',
+        pending: true,
+      })
+    })
     setRows(next)
     setLastPoll(new Date().toLocaleTimeString())
   }, [live, orgId])
@@ -153,10 +174,15 @@ export default function LiveRawTelemetryPage() {
                       <span className="text-sm font-semibold text-white truncate">{r.name || r.id}</span>
                       <span className="text-[10px] text-slate-500 font-mono truncate">{r.id}</span>
                     </div>
-                    <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold shrink-0"
-                      style={r.src === 'ws' ? { background: 'rgba(74,222,128,0.15)', color: '#4ade80' } : { background: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>
-                      {r.src === 'ws' ? 'LIVE' : 'HTTP'}
-                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {r.pending && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold" style={{ background: 'rgba(251,191,36,0.15)', color: '#fbbf24' }}>PENDING</span>
+                      )}
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold"
+                        style={r.src === 'ws' ? { background: 'rgba(74,222,128,0.15)', color: '#4ade80' } : { background: 'rgba(96,165,250,0.15)', color: '#60a5fa' }}>
+                        {r.src === 'ws' ? 'LIVE' : 'HTTP'}
+                      </span>
+                    </div>
                   </div>
                   {keys.length === 0 ? (
                     <p className="text-xs text-slate-600 py-2">No values received yet.</p>
