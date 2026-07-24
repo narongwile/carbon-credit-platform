@@ -5,8 +5,10 @@
 # Worker credentials. This Secret was previously referenced but never defined in
 # the repo, so envFrom (non-optional) left the pod stuck in CreateContainerConfigError
 # — the worker never ran, so no MQTT was ingested and every device showed 0 values.
-# MQTT_PASS = the seeded EMQX 'ingest' user password (emqx-extras-uat, superuser);
-# DB_DSN    = control DB (root / iothub, same host+creds Node-RED uses in UAT).
+# MQTT_PASS = the seeded EMQX 'ingest' user password (emqx-extras-uat, superuser).
+# DB creds are NOT here — the worker now reads DB_PASSWORD from the shared
+# mysql-credentials Secret (same as Node-RED), so the real root password is never
+# hardcoded/duplicated (a wrong hardcoded pass caused Access denied for 'root').
 apiVersion: v1
 kind: Secret
 metadata:
@@ -17,7 +19,6 @@ metadata:
 type: Opaque
 stringData:
   MQTT_PASS: "iothub.2026"
-  DB_DSN: "root:iothub.2026@tcp(mysql.iiot-uat.svc.cluster.local:3306)/iothub?parseTime=true"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -42,10 +43,11 @@ spec:
       labels:
         app: ingest-worker
       annotations:
-        # Bump to force a pod roll when the ingest-worker-secrets values change
-        # (envFrom does NOT restart pods on Secret updates). Set when DB_DSN moved
-        # off the empty 'carbon_credit' DB onto the migrated 'iothub' DB.
-        checksum/secrets: "db-iothub-1"
+        # Bump to force a pod roll when secret-derived env changes (envFrom /
+        # secretKeyRef do NOT restart pods on Secret updates). db-iothub-2: switched
+        # DB creds to component env (DB_PASSWORD from mysql-credentials) after the
+        # hardcoded root password gave "Access denied for user 'root'".
+        checksum/secrets: "db-iothub-2"
     spec:
       securityContext:
         runAsNonRoot: true
@@ -67,6 +69,22 @@ spec:
               value: "$share/ingest-worker/telemetry/#"
             - name: TENANT_DB_MODE
               value: "off"
+            # ── Control DB (iothub) — same host/creds Node-RED uses in UAT. The
+            #    worker builds its DSN from these; DB_PASSWORD comes from the shared
+            #    mysql-credentials Secret so the root password is never hardcoded.
+            - name: DB_HOST
+              value: "mysql.iiot-uat.svc.cluster.local"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: "root"
+            - name: DB_NAME
+              value: "iothub"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-root-password
             - name: KAFKA_BROKERS
               value: "redpanda.iiot-uat.svc.cluster.local:9092"
             # Unique client id per pod so replicas never kick each other.

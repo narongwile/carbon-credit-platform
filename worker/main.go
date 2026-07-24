@@ -104,7 +104,7 @@ type RuleCacheEntry struct {
 func main() {
 	// 1. Connect to Control MySQL DB
 	var err error
-	dsn := getEnv("DB_DSN", "root:password@tcp(mysql:3306)/iothub?parseTime=true")
+	dsn := dbDSNBase() + getEnv("DB_NAME", "iothub") + "?parseTime=true"
 	tenantMode = strings.EqualFold(getEnv("TENANT_DB_MODE", ""), "on")
 	controlDB, err = sql.Open("mysql", dsn)
 	if err != nil {
@@ -195,18 +195,7 @@ func resolvePool(orgID string) *sql.DB {
 	// Create new connection pool for this tenant
 	dbName := orgDbName(orgID)
 
-	dsnBase := getEnv("DB_DSN_BASE", "")
-	if dsnBase == "" {
-		fullDSN := getEnv("DB_DSN", "root:password@tcp(mysql:3306)/iothub?parseTime=true")
-		parts := strings.Split(fullDSN, "/iothub")
-		if len(parts) > 0 {
-			dsnBase = parts[0] + "/"
-		} else {
-			dsnBase = "root:password@tcp(mysql:3306)/"
-		}
-	}
-
-	dsn := fmt.Sprintf("%s%s?parseTime=true", dsnBase, dbName)
+	dsn := fmt.Sprintf("%s%s?parseTime=true", dbDSNBase(), dbName)
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -562,7 +551,8 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		if status == "pending" {
 			sample, _ := json.Marshal(t.Values)
 			touchPending(t.NodeID, sample)
-			// Process telemetry even if pending
+			// Process telemetry even while pending so admins see live values
+			// during approval (last_sample + live view), instead of dropping it.
 		} else {
 			return
 		}
@@ -619,4 +609,23 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// dbDSNBase returns the MySQL DSN prefix up to and including the trailing '/'
+// (i.e. "user:pass@tcp(host:port)/"), so callers append a database name. It
+// prefers an explicit DB_DSN (stripping its db name), else builds from
+// DB_HOST/DB_PORT/DB_USER/DB_PASSWORD — this lets the password come from a k8s
+// Secret via DB_PASSWORD (like Node-RED) instead of being hardcoded in a DSN.
+func dbDSNBase() string {
+	if v := os.Getenv("DB_DSN"); v != "" {
+		if i := strings.LastIndex(v, "/"); i >= 0 {
+			return v[:i+1]
+		}
+		return v
+	}
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/",
+		getEnv("DB_USER", "root"),
+		getEnv("DB_PASSWORD", "password"),
+		getEnv("DB_HOST", "mysql"),
+		getEnv("DB_PORT", "3306"))
 }
