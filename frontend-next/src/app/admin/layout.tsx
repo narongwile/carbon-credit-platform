@@ -13,7 +13,7 @@ import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck, Droplet, PlugZap
+  Search, Database, ShieldCheck, Droplet, PlugZap, Radio
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -30,6 +30,7 @@ const NAV: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { href: '/admin/sites', label: 'Sites (Unified)', icon: Building2 },
   { href: '/admin/map', label: 'Live Sensor Map', icon: Map },
+  { href: '/admin/live-raw', label: 'Live Raw Telemetry', icon: Radio },
   { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid },
   { href: '/admin/trends', label: 'Trends', icon: TrendingUp, requires: { platform: 'eternityTransformers' } },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer, requires: { platform: 'refrigerationDataLogger' } },
