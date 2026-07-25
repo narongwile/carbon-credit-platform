@@ -645,8 +645,17 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	// Store readings under the CANONICAL param key (ALARM_SCHEMA), not the raw
 	// wire key, so alarm rules and the device pages (which look up oilTemp,
 	// hydrogen, …) find them. Unmapped keys are stored as-is.
-	normalized := make(map[string]float64, len(t.Values))
+	normalized := make(map[string]float64, len(t.Values)+1)
 	for key, val := range t.Values {
+		// A single measured temperature feeds BOTH carbonNode/bloodBox bounds
+		// (tempHigh = too warm, tempLow = too cold), mirroring the Node-RED
+		// normalize step — without this the fridge pages find no tempHigh/tempLow
+		// and fall back to mock values.
+		if key == "temp_c" {
+			normalized["tempHigh"] = val
+			normalized["tempLow"] = val
+			continue
+		}
 		normalized[canonicalParam(key)] = val
 	}
 	t.Values = normalized
