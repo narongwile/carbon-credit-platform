@@ -30,6 +30,33 @@ type TelemetryPayload struct {
 	NodeID    string             `json:"nodeId"`
 	Timestamp int64              `json:"ts"`
 	Values    map[string]float64 `json:"values"`
+	// Firmware identifies itself as device_id on its status/heartbeat/alarm
+	// payloads (only the readings payload carries nodeId), so accept it as an
+	// alias — otherwise those frames were dropped as "Missing nodeId" and the
+	// device's presence (online/offline, rssi, fw, battery) never updated.
+	DeviceID string `json:"device_id"`
+	// Presence fields (status birth/LWT + heartbeat).
+	State     string `json:"state"`
+	RSSI      *int   `json:"rssi"`
+	Uptime    *int64 `json:"uptime"`
+	FW        string `json:"fw"`
+	Batt      *int   `json:"batt"`
+	Transport string `json:"transport"`
+	Heap      *int64 `json:"heap"`
+}
+
+// id returns the device identity, accepting either spelling.
+func (t TelemetryPayload) id() string {
+	if t.NodeID != "" {
+		return t.NodeID
+	}
+	return t.DeviceID
+}
+
+// isPresence reports whether this frame is a status/heartbeat rather than a
+// readings frame (no values → nothing to persist as readings).
+func (t TelemetryPayload) isPresence() bool {
+	return len(t.Values) == 0 && (t.State != "" || t.RSSI != nil || t.Uptime != nil || t.Heap != nil)
 }
 
 type RuleParam struct {
@@ -142,8 +169,8 @@ func main() {
 		SetUsername(getEnv("MQTT_USER", "admin")).
 		SetPassword(getEnv("MQTT_PASS", "public")).
 		SetKeepAlive(30 * time.Second).
-		SetAutoReconnect(true).          // survive broker restarts
-		SetConnectRetry(true).           // keep trying if the broker isn't up yet at boot
+		SetAutoReconnect(true). // survive broker restarts
+		SetConnectRetry(true).  // keep trying if the broker isn't up yet at boot
 		SetConnectRetryInterval(5 * time.Second).
 		SetMaxReconnectInterval(30 * time.Second)
 
@@ -320,6 +347,36 @@ func autoRegisterPending(nodeID, topic string, sample []byte) {
 	}
 	log.Printf("Auto-registered PENDING node %s (org=%s domain=%s) — awaiting approval", nodeID, orgID, domainFromProduct(product))
 	touchPending(nodeID, sample)
+}
+
+// updatePresence records a status (birth/LWT) or heartbeat frame in
+// device_presence: online state plus the diagnostics the fleet screens show
+// (rssi/battery/firmware). These frames carry no readings, so they never reach
+// the readings path. Presence lives in the control DB for every org.
+func updatePresence(t TelemetryPayload) {
+	online := 1
+	switch strings.ToLower(t.State) {
+	case "offline", "asleep":
+		online = 0
+	}
+	var rssi, batt interface{}
+	if t.RSSI != nil {
+		rssi = *t.RSSI
+	}
+	if t.Batt != nil {
+		batt = *t.Batt
+	}
+	var fw interface{}
+	if t.FW != "" {
+		fw = t.FW
+	}
+	if _, err := controlDB.Exec(
+		"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?, ?, NOW(3), ?, ?, ?) "+
+			"ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), "+
+			"rssi=COALESCE(VALUES(rssi),rssi), batt=COALESCE(VALUES(batt),batt), fw=COALESCE(VALUES(fw),fw)",
+		t.NodeID, online, rssi, batt, fw); err != nil {
+		log.Printf("Presence update failed for %s: %v", t.NodeID, err)
+	}
 }
 
 // touchPending refreshes a pending device's presence (control DB) so the approval
@@ -515,8 +572,17 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	// Accept device_id as an alias for nodeId (firmware status/heartbeat frames).
+	t.NodeID = t.id()
 	if t.NodeID == "" {
-		log.Printf("Missing nodeId in telemetry payload")
+		log.Printf("Missing nodeId/device_id in telemetry payload")
+		return
+	}
+
+	// Status (birth/LWT) and heartbeat frames carry no readings — record presence
+	// and stop, instead of falling through the readings path.
+	if t.isPresence() {
+		updatePresence(t)
 		return
 	}
 
