@@ -576,6 +576,15 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		}
 	}
 
+	// Store readings under the CANONICAL param key (ALARM_SCHEMA), not the raw
+	// wire key, so alarm rules and the device pages (which look up oilTemp,
+	// hydrogen, …) find them. Unmapped keys are stored as-is.
+	normalized := make(map[string]float64, len(t.Values))
+	for key, val := range t.Values {
+		normalized[canonicalParam(key)] = val
+	}
+	t.Values = normalized
+
 	for key, val := range t.Values {
 		_, err := tenantDB.Exec("INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES (?, ?, ?, ?)",
 			t.NodeID, key, val, ts)
@@ -584,9 +593,12 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		}
 	}
 
-	// Enrichment for WebSocket UI
+	// Enrichment for WebSocket UI. Publish the CANONICAL values (same keys just
+	// written to readings) so the live frame and the stored history agree —
+	// otherwise the UI shows each metric twice, once per spelling.
 	var enrichedPayload map[string]interface{}
 	json.Unmarshal(payload, &enrichedPayload)
+	enrichedPayload["values"] = t.Values
 	enrichedPayload["orgId"] = orgID
 	enrichedPayload["departmentId"] = depID
 	enrichedPayload["ts"] = t.Timestamp // ensure ts is numeric
@@ -609,6 +621,35 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// paramMap maps raw device wire keys to the platform's canonical param keys
+// (ALARM_SCHEMA / the Node-RED normalize MAP). Devices publish e.g. oil_temp_c;
+// alarm rules and the UI address oilTemp. Both DGA spellings are accepted
+// because firmware in the field sends dga_h2_ppm.
+var paramMap = map[string]string{
+	"oil_temp_c":     "oilTemp",
+	"ambient_temp_c": "ambientTemp",
+	"winding_temp_c": "windingTemp",
+	"dga_h2_ppm":     "hydrogen",
+	"hydrogen_ppm":   "hydrogen",
+	"moisture_ppm":   "moisture",
+	"oil_level_pct":  "oilLevel",
+	"load_pct":       "load",
+	"door_state":     "door",
+	"rh_pct":         "rh",
+	"batt_pct":       "battery",
+	"impact_g":       "impact",
+	"baro_alt_m":     "baroAlt",
+}
+
+// canonicalParam returns the canonical key for a raw wire key (unchanged when
+// the key is already canonical or unknown, so new sensors still flow through).
+func canonicalParam(key string) string {
+	if c, ok := paramMap[key]; ok {
+		return c
+	}
+	return key
 }
 
 // dbDSN builds the MySQL DSN for a database from component env vars using the
