@@ -55,7 +55,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: worker
-          image: registry.gitlab.com/narongwile/carbon-credit-platform/ingest-worker:edd03de1
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/ingest-worker:31e5ccf6
           imagePullPolicy: Always
           env:
             - name: TZ
