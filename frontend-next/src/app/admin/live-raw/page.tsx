@@ -64,7 +64,10 @@ export default function LiveRawTelemetryPage() {
           id: f.id,
           name: f.name,
           online: f.online,
-          values: keepWs ? prev!.values : (latest?.values ?? prev?.values ?? {}),
+          // REPLACE, never merge: the poll is a full snapshot of what the device
+          // currently reports. Merging accumulated keys the device had stopped
+          // sending (e.g. after re-flashing to another product) forever.
+          values: keepWs ? prev!.values : (latest?.values ?? {}),
           ts: keepWs ? prev!.ts : (httpTs ?? prev?.ts ?? null),
           src: keepWs ? 'ws' : 'http',
           pending: false,
@@ -109,7 +112,9 @@ export default function LiveRawTelemetryPage() {
           id: f.id,
           name: prev?.name ?? f.id,
           online: 1,
-          values: { ...(prev?.values ?? {}), ...f.values },
+          // A frame carries every value the device just published — replace, so
+          // keys it no longer sends disappear instead of sticking around.
+          values: f.values ?? {},
           ts: f.timestamp,
           src: 'ws',
         })
