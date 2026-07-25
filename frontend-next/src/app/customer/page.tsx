@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
 import { getHostsByOrg } from '@/lib/fleetData'
 import { useFleetLive, statusFromLive } from '@/lib/useFleetLive'
-import { viewerDomains } from '@/lib/viewer'
+import { viewerDomains, getViewerUser } from '@/lib/viewer'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight } from 'lucide-react'
 
@@ -19,9 +19,9 @@ function metric(h: SensorHost): string {
 }
 
 export default function CustomerPage() {
-  const { viewerUserId, alarms, viewerUser } = useAppStore()
+  const { viewerUserId, alarms } = useAppStore()
   const allowed = viewerDomains(viewerUserId)
-  const orgId = viewerUser?.orgId || 'org-1'
+  const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
   
   const baseDevices = getHostsByOrg(orgId).filter((h) => allowed.includes(h.domain))
   const { byId, loaded } = useFleetLive(orgId)

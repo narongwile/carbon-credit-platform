@@ -7,7 +7,7 @@ import { getGeoNodes } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
 import { useAppStore } from '@/lib/store'
-import { viewerDomains } from '@/lib/viewer'
+import { viewerDomains, getViewerUser } from '@/lib/viewer'
 import { DOMAIN_META } from '@/types/fleet'
 import { Map as MapIcon, LayoutGrid, MapPin } from 'lucide-react'
 import clsx from 'clsx'
@@ -18,9 +18,9 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 export default function CustomerMapPage() {
-  const { viewerUserId, viewerUser } = useAppStore()
+  const { viewerUserId } = useAppStore()
   const allowed = viewerDomains(viewerUserId)
-  const orgId = viewerUser?.orgId || 'org-1'
+  const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
   const nodes = (useLiveGeoNodes(orgId) ?? getGeoNodes(orgId)).filter((n) => allowed.includes(n.domain))
   const devices = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
   const [tab, setTab] = useState<'map' | 'layout'>('map')
