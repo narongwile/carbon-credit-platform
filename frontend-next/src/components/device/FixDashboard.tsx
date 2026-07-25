@@ -22,11 +22,23 @@ function TwinLoading() {
   return <div className="w-full h-full flex items-center justify-center text-xs text-slate-600">Loading 3D digital twin…</div>
 }
 
-// Picks the right 3D digital twin for the device's product domain.
-function DeviceTwin({ device }: { device: ManagedDevice }) {
-  const temp = parseFloat(device.lastValue ?? '') || 4.2
-  if (device.domain === 'carbonNode') return <Fridge3D device={{ name: device.name, temperature: temp, doorOpen: false, threshold: 8 }} />
-  if (device.domain === 'bloodBox') return <BloodBox3D device={{ name: device.name, temperature: temp, battery: 85, lidOpen: false, threshold: 6 }} />
+// Picks the right 3D digital twin for the device's product domain. When live
+// readings are available the twin reflects them (temperature, door/lid, battery)
+// instead of the placeholder pose — a shut door on the model while the sensor
+// reports OPEN is worse than no twin at all.
+function DeviceTwin({ device, values }: { device: ManagedDevice; values?: Record<string, number> | null }) {
+  const v = values ?? {}
+  const live = v.tempHigh ?? v.tempLow ?? v.oilTemp
+  const temp = live ?? (parseFloat(device.lastValue ?? '') || 4.2)
+  const open = (v.door ?? 0) > 0
+  if (device.domain === 'carbonNode') {
+    const warn = ALARM_SCHEMA.carbonNode.params.find((p) => p.key === 'tempHigh')?.warn ?? 8
+    return <Fridge3D device={{ name: device.name, temperature: temp, doorOpen: open, threshold: warn }} />
+  }
+  if (device.domain === 'bloodBox') {
+    const warn = ALARM_SCHEMA.bloodBox.params.find((p) => p.key === 'tempHigh')?.warn ?? 6
+    return <BloodBox3D device={{ name: device.name, temperature: temp, battery: v.battery ?? 85, lidOpen: open, threshold: warn }} />
+  }
   if (device.domain === 'transformer') return <Transformer3D transformer={{ id: device.id } as Transformer} />
   return <div className="w-full h-full flex items-center justify-center text-slate-600"><Activity size={36} className="opacity-30" /></div>
 }
@@ -234,7 +246,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
       {/* Center: 3D digital twin + trend */}
       <div className="lg:col-span-5 space-y-4">
         <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
-          <DeviceTwin device={device} />
+          <DeviceTwin device={device} values={live ? values : null} />
         </div>
         <div className="rounded-xl p-5" style={surface}>
           <div className="text-sm font-semibold text-white mb-3">Performance · last 24h</div>
