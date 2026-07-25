@@ -1,7 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
+import { api, useIsLive } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
+import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer } from '@/types'
 import {
@@ -56,6 +59,69 @@ function spark(seed: number, base: number, amp: number) {
   return out
 }
 
+// ── Live tiles ───────────────────────────────────────────────────────────────
+// In Live mode the tiles are built from what the device ACTUALLY reports:
+// /api/fleet/:id/latest for the stored values plus WS frames for real-time
+// updates. Each canonical param is labelled/thresholded by ALARM_SCHEMA, and any
+// extra key the device sends still gets a tile (raw key as the label). Demo mode
+// — or a device with no readings — falls back to the mock tiles below.
+const ICONS: Record<string, React.ReactNode> = {
+  oilTemp: <Thermometer size={13} />, ambientTemp: <Thermometer size={13} />, windingTemp: <Thermometer size={13} />,
+  tempHigh: <Thermometer size={13} />, tempLow: <Thermometer size={13} />,
+  hydrogen: <Activity size={13} />, moisture: <Droplets size={13} />, rh: <Droplets size={13} />,
+  oilLevel: <Gauge size={13} />, load: <Zap size={13} />, current: <Zap size={13} />,
+  door: <DoorClosed size={13} />, battery: <Zap size={13} />,
+}
+
+function statusFor(value: number, p?: { direction: string; warn: number; critical: number }): Status {
+  if (!p) return 'NORMAL'
+  const breach = (limit: number) => (p.direction === 'high' ? value >= limit : value <= limit)
+  if (breach(p.critical)) return 'CRITICAL'
+  if (breach(p.warn)) return 'WARNING'
+  return 'NORMAL'
+}
+
+function buildLiveTiles(device: ManagedDevice, values: Record<string, number>): Tile[] {
+  const seed = hash(device.id)
+  const schema = device.domain ? ALARM_SCHEMA[device.domain] : undefined
+  const params = schema?.params ?? []
+  const seen = new Set<string>()
+  const tiles: Tile[] = []
+
+  // Schema params first (known label/unit/thresholds), only those actually reported.
+  for (const p of params) {
+    const v = values[p.key]
+    if (v === undefined) continue
+    seen.add(p.key)
+    const isDoor = p.key === 'door'
+    tiles.push({
+      key: p.key,
+      label: p.label,
+      icon: ICONS[p.key] ?? <Activity size={13} />,
+      value: isDoor ? (v > 0 ? 'Open' : 'Closed') : String(Number(v.toFixed(3))),
+      unit: isDoor ? '' : p.unit,
+      status: statusFor(v, p),
+      delta: 'live',
+      spark: spark(seed, v, Math.max(Math.abs(v) * 0.05, 0.2)),
+    })
+  }
+  // Anything else the device publishes (unmapped sensors) still gets shown.
+  for (const [k, v] of Object.entries(values)) {
+    if (seen.has(k)) continue
+    tiles.push({
+      key: k,
+      label: k,
+      icon: ICONS[k] ?? <Activity size={13} />,
+      value: String(Number(v.toFixed(3))),
+      unit: '',
+      status: 'NORMAL',
+      delta: 'live',
+      spark: spark(seed, v, Math.max(Math.abs(v) * 0.05, 0.2)),
+    })
+  }
+  return tiles
+}
+
 function buildTiles(device: ManagedDevice): Tile[] {
   const seed = hash(device.id)
   const isTransformer = /transformer/i.test(device.deviceType)
@@ -108,7 +174,28 @@ function HealthGauge({ value }: { value: number }) {
 }
 
 export default function FixDashboard({ device }: { device: ManagedDevice }) {
-  const tiles = useMemo(() => buildTiles(device), [device])
+  const live = useIsLive()
+  const [values, setValues] = useState<Record<string, number> | null>(null)
+
+  // Poll the stored readings, then let WS frames update them in real time.
+  useEffect(() => {
+    if (!live || !device.id) { setValues(null); return }
+    let cancelled = false
+    const load = () => { api.latest(device.id).then((r) => { if (!cancelled && r?.values) setValues(r.values) }) }
+    load()
+    const t = setInterval(load, 10000)
+    const off = subscribeTelemetry((f) => {
+      if (f.id !== device.id || f.type === 'alarm' || !f.values) return
+      setValues(f.values)
+    })
+    return () => { cancelled = true; clearInterval(t); off() }
+  }, [live, device.id])
+
+  const liveTiles = useMemo(
+    () => (live && values && Object.keys(values).length ? buildLiveTiles(device, values) : null),
+    [live, values, device]
+  )
+  const tiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
   const health = useMemo(() => 70 + (hash(device.id) % 28), [device])
   const trend = useMemo(() => {
     const seed = hash(device.id); const out: { t: string; a: number; b: number }[] = []

@@ -703,19 +703,21 @@ func getEnv(key, fallback string) string {
 // alarm rules and the UI address oilTemp. Both DGA spellings are accepted
 // because firmware in the field sends dga_h2_ppm.
 var paramMap = map[string]string{
-	"oil_temp_c":     "oilTemp",
-	"ambient_temp_c": "ambientTemp",
-	"winding_temp_c": "windingTemp",
-	"dga_h2_ppm":     "hydrogen",
-	"hydrogen_ppm":   "hydrogen",
-	"moisture_ppm":   "moisture",
-	"oil_level_pct":  "oilLevel",
-	"load_pct":       "load",
-	"door_state":     "door",
-	"rh_pct":         "rh",
-	"batt_pct":       "battery",
-	"impact_g":       "impact",
-	"baro_alt_m":     "baroAlt",
+	"oil_temp_c":           "oilTemp",
+	"ambient_temp_c":       "ambientTemp",
+	"winding_temp_c":       "windingTemp",
+	"dga_h2_ppm":           "hydrogen",
+	"hydrogen_ppm":         "hydrogen",
+	"moisture_ppm":         "moisture",
+	"oil_level_pct":        "oilLevel",
+	"load_pct":             "load",
+	"door_state":           "door",
+	"electrical_current_a": "current",
+	"current_a":            "current",
+	"rh_pct":               "rh",
+	"batt_pct":             "battery",
+	"impact_g":             "impact",
+	"baro_alt_m":           "baroAlt",
 }
 
 // canonicalParam returns the canonical key for a raw wire key (unchanged when

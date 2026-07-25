@@ -51,6 +51,10 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
       { key: 'tempHigh', label: 'Temperature (high)', unit: '°C', direction: 'high', warn: 8, critical: 10 },
       { key: 'tempLow', label: 'Temperature (low)', unit: '°C', direction: 'low', warn: 2, critical: 0 },
       { key: 'door', label: 'Door-open duration', unit: 'min', direction: 'high', warn: 5, critical: 15 },
+      // Compressor draw: a rising current means the compressor is labouring
+      // (dirty condenser, low refrigerant, failing motor). Defaults suit a small
+      // unit — tune per org/device in Alarm & Notify.
+      { key: 'current', label: 'Compressor Current', unit: 'A', direction: 'high', warn: 5, critical: 10 },
     ],
     dwellMin: 3,
     hysteresis: 1,
