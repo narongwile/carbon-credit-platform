@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
+import { useFleetLive } from '@/lib/useFleetLive'
 import { useAppStore } from '@/lib/store'
 import { viewerDomains } from '@/lib/viewer'
 import { Activity, Wifi, WifiOff, ChevronRight } from 'lucide-react'
@@ -10,10 +11,18 @@ import clsx from 'clsx'
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 
 export default function CustomerDevicesPage() {
-  const { viewerUserId } = useAppStore()
+  const { viewerUserId, viewerUser } = useAppStore()
   // Viewer only sees devices for products their department(s) can access.
   const allowed = viewerDomains(viewerUserId)
-  const devices = managedDevicesFromFleet('org-1').filter((d) => !d.domain || allowed.includes(d.domain))
+  const orgId = viewerUser?.orgId || 'org-1'
+  
+  const baseDevices = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
+  const { byId } = useFleetLive(orgId)
+  
+  const devices = baseDevices.map(d => {
+    const live = byId.get(d.id)
+    return live ? { ...d, status: live.online ? 'online' : 'offline' } as typeof d : d
+  })
 
   return (
     <div className="p-6 space-y-5">

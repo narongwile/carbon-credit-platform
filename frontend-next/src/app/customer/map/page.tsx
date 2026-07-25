@@ -18,10 +18,11 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 export default function CustomerMapPage() {
-  const viewerUserId = useAppStore((s) => s.viewerUserId)
+  const { viewerUserId, viewerUser } = useAppStore()
   const allowed = viewerDomains(viewerUserId)
-  const nodes = (useLiveGeoNodes('org-1') ?? getGeoNodes('org-1')).filter((n) => allowed.includes(n.domain))
-  const devices = managedDevicesFromFleet('org-1').filter((d) => !d.domain || allowed.includes(d.domain))
+  const orgId = viewerUser?.orgId || 'org-1'
+  const nodes = (useLiveGeoNodes(orgId) ?? getGeoNodes(orgId)).filter((n) => allowed.includes(n.domain))
+  const devices = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
   const [tab, setTab] = useState<'map' | 'layout'>('map')
 
   // deterministic layout positions

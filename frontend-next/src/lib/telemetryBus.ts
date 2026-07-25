@@ -18,8 +18,11 @@ export interface TelemetryFrame {
   severity?: string
 }
 
+// NEXT_PUBLIC_WS_URL="relative" (same-origin build) must NOT be used as a literal
+// URL — derive wss://host/ws/telemetry from the page instead (nginx proxies /ws to
+// Node-RED). Mirrors api.ts's 'relative' handling. An explicit URL is used as-is.
 const RAW_WS = process.env.NEXT_PUBLIC_WS_URL || ''
-const WS_URL = (!RAW_WS || RAW_WS === 'relative') 
+const WS_URL = (!RAW_WS || RAW_WS === 'relative')
   ? (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/telemetry` : 'ws://localhost:1880/ws/telemetry')
   : RAW_WS
 

@@ -34,72 +34,84 @@ interface AppState {
   getAlarmsByTransformer: (transformerId: string) => Alarm[]
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
-  user: null,
-  transformers: initialTransformers,
-  alarms: initialAlarms,
-  selectedOrgId: 'org-1',
-  selectedTransformerId: null,
-  realtimeEnabled: true,
-  // Default: live when the build has a backend configured, else demo. The sidebar
-  // toggle flips it at runtime (api.req is gated on this via isLive()/useIsLive()).
-  isLiveMode: !!process.env.NEXT_PUBLIC_API_URL,
-  viewerUserId: 'u-cc',
-  orgLogos: {},
-  documents: [],
+import { persist } from 'zustand/middleware'
 
-  setUser: (user) => set({ user }),
-  setViewerUserId: (id) => set({ viewerUserId: id }),
-  setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
-  addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
-  removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
-  setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),
-  setSelectedTransformerId: (id) => set({ selectedTransformerId: id }),
-  toggleRealtime: () => set((s) => ({ realtimeEnabled: !s.realtimeEnabled })),
-  toggleLiveMode: () => set((s) => ({ isLiveMode: !s.isLiveMode })),
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      user: null,
+      transformers: initialTransformers,
+      alarms: initialAlarms,
+      selectedOrgId: 'org-1',
+      selectedTransformerId: null,
+      realtimeEnabled: true,
+      isLiveMode: !!process.env.NEXT_PUBLIC_API_URL,
+      viewerUserId: 'u-cc',
+      orgLogos: {},
+      documents: [],
 
-  updateTransformerSensor: (transformerId, sensorKey, value) =>
-    set((state) => ({
-      transformers: state.transformers.map((t) => {
-        if (t.id !== transformerId) return t
-        const sensor = t.sensors[sensorKey as keyof typeof t.sensors]
-        const delta = parseFloat((value - sensor.value).toFixed(2))
-        const trend = Math.abs(delta) < 0.05 ? 'stable' : delta > 0 ? 'up' : 'down'
-        // oilLevel: low is bad (invert direction); all others: high is bad
-        const invertedSensors = ['oilLevel']
-        const status: 'NORMAL' | 'WARNING' | 'CRITICAL' = invertedSensors.includes(sensorKey)
-          ? (value <= sensor.threshold.critical ? 'CRITICAL' : value <= sensor.threshold.warning ? 'WARNING' : 'NORMAL')
-          : (value >= sensor.threshold.critical ? 'CRITICAL' : value >= sensor.threshold.warning ? 'WARNING' : 'NORMAL')
-        const newHistory = [
-          ...sensor.history.slice(-95),
-          { time: new Date().toISOString(), value },
-        ]
-        return {
-          ...t,
-          lastUpdated: new Date().toISOString(),
-          sensors: {
-            ...t.sensors,
-            [sensorKey]: { ...sensor, value, delta, trend, status, history: newHistory },
-          },
-        }
+      setUser: (user) => set({ user }),
+      setViewerUserId: (id) => set({ viewerUserId: id }),
+      setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
+      addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
+      removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
+      setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),
+      setSelectedTransformerId: (id) => set({ selectedTransformerId: id }),
+      toggleRealtime: () => set((s) => ({ realtimeEnabled: !s.realtimeEnabled })),
+      toggleLiveMode: () => set((s) => ({ isLiveMode: !s.isLiveMode })),
+
+      updateTransformerSensor: (transformerId, sensorKey, value) =>
+        set((state) => ({
+          transformers: state.transformers.map((t) => {
+            if (t.id !== transformerId) return t
+            const sensor = t.sensors[sensorKey as keyof typeof t.sensors]
+            const delta = parseFloat((value - sensor.value).toFixed(2))
+            const trend = Math.abs(delta) < 0.05 ? 'stable' : delta > 0 ? 'up' : 'down'
+            const invertedSensors = ['oilLevel']
+            const status: 'NORMAL' | 'WARNING' | 'CRITICAL' = invertedSensors.includes(sensorKey)
+              ? (value <= sensor.threshold.critical ? 'CRITICAL' : value <= sensor.threshold.warning ? 'WARNING' : 'NORMAL')
+              : (value >= sensor.threshold.critical ? 'CRITICAL' : value >= sensor.threshold.warning ? 'WARNING' : 'NORMAL')
+            const newHistory = [
+              ...sensor.history.slice(-95),
+              { time: new Date().toISOString(), value },
+            ]
+            return {
+              ...t,
+              lastUpdated: new Date().toISOString(),
+              sensors: {
+                ...t.sensors,
+                [sensorKey]: { ...sensor, value, delta, trend, status, history: newHistory },
+              },
+            }
+          }),
+        })),
+
+      acknowledgeAlarm: (alarmId, actor) =>
+        set((state) => ({
+          alarms: state.alarms.map((a) => {
+            if (a.id !== alarmId) return a
+            return {
+              ...a,
+              acknowledged: true,
+              acknowledgedBy: actor,
+              acknowledgedAt: new Date().toISOString(),
+            }
+          }),
+        })),
+
+      getTransformersByOrg: (orgId) => get().transformers.filter((t) => t.orgId === orgId),
+      getAlarmsByOrg: (orgId) => get().alarms.filter((a) => a.orgId === orgId),
+      getAlarmsByTransformer: (transformerId) =>
+        get().alarms.filter((a) => a.transformerId === transformerId),
+    }),
+    {
+      name: 'carbon-credit-platform-store',
+      partialize: (state) => ({
+        selectedOrgId: state.selectedOrgId,
+        isLiveMode: state.isLiveMode,
+        realtimeEnabled: state.realtimeEnabled,
+        viewerUserId: state.viewerUserId,
       }),
-    })),
-
-  acknowledgeAlarm: (alarmId, actor) =>
-    set((state) => ({
-      alarms: state.alarms.map((a) => {
-        if (a.id !== alarmId) return a
-        return {
-          ...a,
-          acknowledged: true,
-          acknowledgedBy: actor,
-          acknowledgedAt: new Date().toISOString(),
-        }
-      }),
-    })),
-
-  getTransformersByOrg: (orgId) => get().transformers.filter((t) => t.orgId === orgId),
-  getAlarmsByOrg: (orgId) => get().alarms.filter((a) => a.orgId === orgId),
-  getAlarmsByTransformer: (transformerId) =>
-    get().alarms.filter((a) => a.transformerId === transformerId),
-}))
+    }
+  )
+)

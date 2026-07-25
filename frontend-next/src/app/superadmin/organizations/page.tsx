@@ -288,6 +288,24 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
             <button onClick={handleSave} className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
               Save Changes
             </button>
+            <button onClick={async () => {
+              if (confirm('Are you sure you want to delete this organization and ALL its data?')) {
+                if (isLive()) {
+                  try {
+                    await api.deleteOrg(org.id)
+                    toast.success('Organization deleted')
+                    window.location.reload()
+                  } catch (e: any) {
+                    toast.error(e.message || 'Failed to delete organization')
+                  }
+                } else {
+                  toast.success('Organization deleted (mock)')
+                  window.location.reload()
+                }
+              }
+            }} className="px-6 py-2.5 rounded-lg text-sm font-medium text-red-400 hover:text-white hover:bg-red-500/20 transition-all" style={{ background: '#0a0e1a', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+              Delete
+            </button>
             <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white transition-all" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
               Cancel
             </button>

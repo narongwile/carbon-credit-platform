@@ -8,6 +8,10 @@
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { useAppStore } from './store'
 
+// NEXT_PUBLIC_API_URL="relative" = same-origin build (nginx reverse-proxies /api
+// and /ws to Node-RED), so BASE is empty for relative fetches — but the backend
+// still exists, so apiEnabled keys off RAW_URL, not BASE (else relative mode would
+// wrongly look like "no backend" → demo).
 const RAW_URL = process.env.NEXT_PUBLIC_API_URL || ''
 const BASE = RAW_URL === 'relative' ? '' : RAW_URL
 // apiEnabled = a backend was configured at BUILD time. Live/demo is a RUNTIME
