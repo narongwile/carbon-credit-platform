@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -87,6 +88,17 @@ type AlarmNodeState struct {
 	Params map[string]*AlarmParamState
 	Mu     sync.Mutex
 }
+
+// Throughput counters for the periodic heartbeat below. Without it the worker is
+// completely silent while everything is healthy, which is indistinguishable from
+// a worker that has died or lost its subscription.
+var (
+	statReadings atomic.Int64
+	statPresence atomic.Int64
+	statDropped  atomic.Int64
+	statErrors   atomic.Int64
+	statDevices  sync.Map // nodeId -> struct{}, distinct devices seen this window
+)
 
 var (
 	controlDB   *sql.DB
@@ -199,10 +211,24 @@ func main() {
 		log.Fatalf("MQTT Connect Error: %v", token.Error())
 	}
 
+	go heartbeatLoop()
+
 	log.Println("Worker started. Press Ctrl+C to exit.")
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
+}
+
+// heartbeatLoop prints one line per window so an operator can tell a healthy but
+// quiet worker from a stalled one, and can see ingest volume at a glance.
+func heartbeatLoop() {
+	const window = 5 * time.Minute
+	for range time.Tick(window) {
+		devices := 0
+		statDevices.Range(func(k, _ any) bool { devices++; statDevices.Delete(k); return true })
+		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d device(s)",
+			window, statReadings.Swap(0), statPresence.Swap(0), statDropped.Swap(0), statErrors.Swap(0), devices)
+	}
 }
 
 func orgDbName(orgID string) string {
@@ -667,6 +693,8 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 
 	// Always record presence (every frame means the device is online)
 	updatePresence(t)
+	statPresence.Add(1)
+	statDevices.Store(t.NodeID, struct{}{})
 
 	// Status (birth/LWT) and heartbeat frames carry no readings — stop here
 	// instead of falling through the readings path.
@@ -699,6 +727,7 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	if orgID == "" {
 		sample, _ := json.Marshal(t.Values)
 		autoRegisterPending(t.NodeID, msg.Topic(), sample)
+		statDropped.Add(1)
 		return
 	}
 	if status == "pending" || status == "rejected" {
@@ -764,7 +793,10 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 			t.NodeID, key, val, ts)
 		if err != nil {
 			log.Printf("DB Insert Error for org %s: %v", orgID, err)
+			statErrors.Add(1)
+			continue
 		}
+		statReadings.Add(1)
 	}
 
 	// Enrichment for WebSocket UI. Publish the CANONICAL values (same keys just
