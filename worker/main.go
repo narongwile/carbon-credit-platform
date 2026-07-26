@@ -445,13 +445,18 @@ func updatePresence(t TelemetryPayload) {
 			log.Printf("Link lost event failed for %s: %v", t.NodeID, err)
 		}
 
-		var orgID, depID string
+		// department_id is nullable (auto-registered devices have none until an
+		// admin assigns one), so scanning it into a plain string fails with
+		// "converting NULL to string" and the whole block was skipped — meaning no
+		// offline alarm for exactly the devices that onboard themselves.
+		var orgID string
+		var depID sql.NullString
 		if err := controlDB.QueryRow("SELECT org_id, department_id FROM nodes WHERE id = ?", t.NodeID).Scan(&orgID, &depID); err == nil {
 			tenantDB := resolvePool(orgID)
 			if tenantDB != nil {
 				alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
 				_, err := tenantDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
-					alarmID, t.NodeID, orgID, depID, "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
+					alarmID, t.NodeID, orgID, nullableStr(depID), "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
 				if err != nil {
 					log.Printf("Insert offline alarm failed for %s: %v", t.NodeID, err)
 				}
@@ -783,6 +788,15 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	if ok {
 		evaluateAlarms(tenantDB, client, orgID, depID, t, ts, rule)
 	}
+}
+
+// nullableStr passes a NULL through to the driver instead of an empty string, so
+// a device without a department keeps a NULL department_id rather than "".
+func nullableStr(v sql.NullString) interface{} {
+	if !v.Valid {
+		return nil
+	}
+	return v.String
 }
 
 func getEnv(key, fallback string) string {
