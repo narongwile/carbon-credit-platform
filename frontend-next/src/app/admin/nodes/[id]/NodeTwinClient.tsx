@@ -6,6 +6,7 @@ import { allManagedDevices } from '@/lib/fleetData'
 import { DOMAIN_META } from '@/types/fleet'
 import FixDashboard from '@/components/device/FixDashboard'
 import NodeEventLog from '@/components/device/NodeEventLog'
+import NodeDocuments from '@/components/device/NodeDocuments'
 import { ArrowLeft, Wifi, WifiOff } from 'lucide-react'
 import clsx from 'clsx'
 import type { ManagedDevice } from '@/types/org'
@@ -37,6 +38,8 @@ export default function NodeTwinClient() {
       </div>
 
       <FixDashboard device={device} />
+
+      <NodeDocuments nodeId={device.id} />
 
       <NodeEventLog nodeId={device.id} domain={device.domain} baseValue={parseFloat(device.lastValue ?? '') || 4} />
     </div>

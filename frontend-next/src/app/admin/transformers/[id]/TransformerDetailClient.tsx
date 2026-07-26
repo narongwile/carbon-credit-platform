@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import NodeEventLog from '@/components/device/NodeEventLog'
+import NodeDocuments from '@/components/device/NodeDocuments'
 import dynamic from 'next/dynamic'
 import { useState, useEffect } from 'react'
 import {
@@ -415,7 +416,8 @@ export default function TransformerDetailPage() {
 
       {/* Alarm event log + transport/connectivity timeline (same component the
           generic node page uses, so both routes stay in step). */}
-      <div className="p-4">
+      <div className="p-4 space-y-4">
+        <NodeDocuments nodeId={transformer.id} />
         <NodeEventLog
           nodeId={transformer.id}
           domain="transformer"
