@@ -78,7 +78,9 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     return evaluate(nodeId, rule, readings).slice(0, 12)
   }, [rule, nodeId, baseValue])
 
-  const shownEvents = liveEvents ?? events
+  // 'offline' events are connectivity, not threshold breaches — they render in
+  // the Transport & Connectivity table below instead of the alarm Event Log.
+  const shownEvents = (liveEvents ?? events).filter((e) => e.kind !== 'offline')
   const shownTransport = transport ?? (live ? [] : mockTransportEvents)
 
   return (

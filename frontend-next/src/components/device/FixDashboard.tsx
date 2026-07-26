@@ -181,14 +181,18 @@ function HealthGauge({ value }: { value: number }) {
   const cx = 80, cy = 80, r = 64
   const color = value >= 80 ? '#4ade80' : value >= 60 ? '#fbbf24' : '#ef4444'
   const polar = (frac: number) => { const a = Math.PI - frac * Math.PI; return [cx + r * Math.cos(a), cy - r * Math.sin(a)] }
-  const [sx, sy] = polar(0), [ex, ey] = polar(value / 100)
-  const large = value / 100 > 0.5 ? 1 : 0
+  const pct = Math.max(0, Math.min(100, value)) / 100
+  const [sx, sy] = polar(0), [ex, ey] = polar(pct)
+  // The gauge spans exactly 180°, so the arc is NEVER the "large" one. Passing
+  // large-arc-flag=1 (as before) made the browser draw the complementary >180°
+  // sweep — the track rendered as the bottom half and the value arc broke into
+  // two disconnected strokes for any reading above 50.
   return (
     <div className="flex flex-col items-center">
       <svg width="160" height="92" viewBox="0 0 160 90">
-        <path d={`M ${sx} ${sy} A ${r} ${r} 0 1 1 ${cx + r} ${cy}`} fill="none" stroke="#1e2433" strokeWidth="12" strokeLinecap="round" />
-        <path d={`M ${sx} ${sy} A ${r} ${r} 0 ${large} 1 ${ex} ${ey}`} fill="none" stroke={color} strokeWidth="12" strokeLinecap="round" />
-        <text x={cx} y={cy - 6} textAnchor="middle" fill={color} fontSize="30" fontWeight="700">{value}</text>
+        <path d={`M ${sx} ${sy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#1e2433" strokeWidth="12" strokeLinecap="round" />
+        {pct > 0 && <path d={`M ${sx} ${sy} A ${r} ${r} 0 0 1 ${ex} ${ey}`} fill="none" stroke={color} strokeWidth="12" strokeLinecap="round" />}
+        <text x={cx} y={cy - 6} textAnchor="middle" fill={color} fontSize="30" fontWeight="700">{Math.round(value)}</text>
         <text x={cx} y={cy + 14} textAnchor="middle" fill="#475569" fontSize="10">Health Index</text>
       </svg>
     </div>
@@ -218,7 +222,25 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     [live, values, device]
   )
   const tiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
-  const health = useMemo(() => 70 + (hash(device.id) % 28), [device])
+  // Health from the live readings: every param sitting in warning costs 10 points
+  // and every critical one 25, so the gauge reflects the same thresholds the
+  // status pills use. Without readings (demo, or a silent device) fall back to
+  // the stable per-device placeholder.
+  const health = useMemo(() => {
+    const schema = device.domain ? ALARM_SCHEMA[device.domain] : undefined
+    if (!live || !values || !schema) return 70 + (hash(device.id) % 28)
+    let penalty = 0, seen = 0
+    for (const p of schema.params) {
+      const v = values[p.key]
+      if (v === undefined) continue
+      seen++
+      const st = statusFor(v, p)
+      if (st === 'CRITICAL') penalty += 25
+      else if (st === 'WARNING') penalty += 10
+    }
+    if (!seen) return 70 + (hash(device.id) % 28)
+    return Math.max(0, Math.min(100, 100 - penalty))
+  }, [live, values, device])
   const trend = useMemo(() => {
     const seed = hash(device.id); const out: { t: string; a: number; b: number }[] = []
     for (let i = 23; i >= 0; i--) out.push({ t: `${i}h`, a: 60 + ((seed + i * 5) % 25), b: 40 + ((seed + i * 9) % 30) })

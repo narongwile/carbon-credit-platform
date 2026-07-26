@@ -40,7 +40,10 @@ export interface AlarmEvent {
   paramKey: string
   paramLabel: string
   severity: Severity
-  kind: 'threshold' | 'rate'
+  // 'offline' is raised by the backend presence sweep (kind='offline' rows in
+  // alarm_events), not by this engine — the UI routes those to the connectivity
+  // timeline rather than the threshold alarm log.
+  kind: 'threshold' | 'rate' | 'offline'
   value: number
   threshold: number
   unit: string
