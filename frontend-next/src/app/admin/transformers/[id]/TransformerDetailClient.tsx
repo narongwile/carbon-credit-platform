@@ -2,6 +2,7 @@
 
 import { useParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
+import NodeEventLog from '@/components/device/NodeEventLog'
 import dynamic from 'next/dynamic'
 import { useState, useEffect } from 'react'
 import {
@@ -277,7 +278,7 @@ export default function TransformerDetailPage() {
   const sc = statusColors[transformer.status]
 
   return (
-    <div className="h-full flex flex-col" style={{ background: '#0a0e1a' }}>
+    <div className="h-full flex flex-col overflow-y-auto" style={{ background: '#0a0e1a' }}>
       {/* Top bar */}
       <div className="flex items-center gap-4 px-4 py-2.5 flex-shrink-0" style={{ background: '#0d1117', borderBottom: '1px solid #1e2433' }}>
         <Link href="/admin" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-white transition-colors">
@@ -311,7 +312,7 @@ export default function TransformerDetailPage() {
       </div>
 
       {/* Main content - 3 column layout */}
-      <div className="flex-1 flex gap-0 overflow-hidden min-h-0">
+      <div className="flex gap-0 overflow-hidden min-h-0" style={{ height: 'calc(100vh - 120px)' }}>
         {/* Left panel - sensor cards */}
         <div className="w-56 flex-shrink-0 p-3 space-y-2 overflow-y-auto" style={{ borderRight: '1px solid #1e2433' }}>
           <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Sensor Readings</div>
@@ -410,6 +411,16 @@ export default function TransformerDetailPage() {
             <ActiveAlarms transformerId={transformer.id} />
           </div>
         </div>
+      </div>
+
+      {/* Alarm event log + transport/connectivity timeline (same component the
+          generic node page uses, so both routes stay in step). */}
+      <div className="p-4">
+        <NodeEventLog
+          nodeId={transformer.id}
+          domain="transformer"
+          baseValue={transformer.sensors.oilTemperature.value}
+        />
       </div>
     </div>
   )

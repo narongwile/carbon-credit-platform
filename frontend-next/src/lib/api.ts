@@ -86,6 +86,11 @@ export const api = {
   orgChannels: (orgId: string) => req<any[]>(`/api/orgs/${orgId}/channels`),
   putOrgChannels: (orgId: string, channels: any[]) => req(`/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels }) }),
   events: (nodeId: string) => req<unknown[]>(`/api/nodes/${nodeId}/events`),
+  // Link switches + offline-backlog flushes for a device (transport_events
+  // merged with offline_sync_log), newest first.
+  transportEvents: (nodeId: string) =>
+    req<{ id: string; ts: string; type: string; desc: string; isOfflineSync: boolean }[]>(
+      `/api/nodes/${nodeId}/transport`),
   ackEvent: (eventId: string, body: { by: string; eventProblemId?: string }) =>
     req(`/api/events/${eventId}/ack`, { method: 'POST', body: JSON.stringify(body) }),
   ingest: (nodeId: string, values: Record<string, number>, ts?: number) =>

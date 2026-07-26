@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useEffect, useState, useCallback } from 'react'
 import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
 import { useAlarmDB } from '@/server/alarmStore'
+import { api, useIsLive } from '@/lib/api'
 import { defaultNodeRule } from '@/lib/alarmParams'
 import type { SensorDomain } from '@/types/fleet'
 import { Check, Bell } from 'lucide-react'
@@ -22,6 +23,43 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   const dbAcks = useAlarmDB((s) => s.acks)
   const hasHydrated = useAlarmDB((s) => s.hasHydrated)
   const ackEvent = useAlarmDB((s) => s.ackEvent)
+  const live = useIsLive()
+  // Live mode reads real rows: alarm_events for the log, transport_events +
+  // offline_sync_log for connectivity. Demo mode keeps the synthetic series
+  // below so the page still demonstrates the UI without a backend.
+  const [liveEvents, setLiveEvents] = useState<AlarmEvent[] | null>(null)
+  const [transport, setTransport] = useState<{ id: string; ts: string; type: string; desc: string; isOfflineSync: boolean }[] | null>(null)
+
+  const loadLive = useCallback(() => {
+    if (!live || !nodeId) { setLiveEvents(null); setTransport(null); return }
+    api.events(nodeId).then((rows) => {
+      if (!rows) return
+      setLiveEvents((rows as Record<string, unknown>[]).map((r) => ({
+        id: String(r.id),
+        nodeId: String(r.node_id ?? nodeId),
+        paramKey: String(r.param_key ?? ''),
+        paramLabel: String(r.param_label ?? r.param_key ?? ''),
+        severity: (r.severity as AlarmEvent['severity']) ?? 'WARNING',
+        kind: (r.kind as AlarmEvent['kind']) ?? 'threshold',
+        value: Number(r.value ?? 0),
+        threshold: Number(r.threshold ?? 0),
+        unit: String(r.unit ?? ''),
+        time: String(r.raised_at ?? '').replace('T', ' ').slice(5, 16),
+        ts: new Date(String(r.raised_at ?? Date.now())).getTime(),
+        source: (r.source as AlarmEvent['source']) ?? undefined,
+        acknowledgedBy: r.acknowledged_at ? String(r.acknowledged_by ?? 'user') : undefined,
+      } as AlarmEvent & { acknowledgedBy?: string })))
+    })
+    api.transportEvents(nodeId).then((rows) => { if (rows) setTransport(rows) })
+  }, [live, nodeId])
+
+  useEffect(() => { loadLive() }, [loadLive])
+
+  // Acknowledge against the backend when live, else the local demo store.
+  const onAck = useCallback(async (eventId: string) => {
+    if (live) { await api.ackEvent(eventId, { by }); loadLive() }
+    else ackEvent(eventId, by)
+  }, [live, by, ackEvent, loadLive])
 
   const rule = useMemo(() => (domain ? ((hasHydrated && dbRules[nodeId]) ? dbRules[nodeId] : defaultNodeRule(domain)) : null), [domain, nodeId, hasHydrated, dbRules])
 
@@ -40,6 +78,9 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     return evaluate(nodeId, rule, readings).slice(0, 12)
   }, [rule, nodeId, baseValue])
 
+  const shownEvents = liveEvents ?? events
+  const shownTransport = transport ?? (live ? [] : mockTransportEvents)
+
   return (
     <div className="rounded-xl p-5" style={surface}>
       <div className="flex items-center justify-between mb-3">
@@ -56,8 +97,8 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
             </tr>
           </thead>
           <tbody>
-            {events.length ? events.map((ev) => {
-              const acked = !!dbAcks[ev.id]
+            {shownEvents.length ? shownEvents.map((ev) => {
+              const acked = !!dbAcks[ev.id] || !!(ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy
               const sc = ev.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24'
               return (
                 <tr key={ev.id} style={{ borderTop: '1px solid #1e2433' }}>
@@ -68,10 +109,10 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                   <td className="py-2.5 px-3 text-slate-300 text-xs">{ev.paramLabel}{ev.kind === 'rate' && <span className="text-indigo-400"> · rate</span>}</td>
                   <td className="py-2.5 px-3"><span style={{ color: sc }}>{ev.value} {ev.unit}</span><span className="text-slate-600 text-[10px]"> /{ev.threshold}</span></td>
                   <td className="py-2.5 px-3"><span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: sc, background: `${sc}1f` }}>{ev.severity}</span></td>
-                  <td className="py-2.5 px-3">{acked ? <span className="flex items-center gap-1 text-[11px] text-green-400"><Check size={12} /> {dbAcks[ev.id].by}</span> : <span className="text-[11px] text-amber-400">Open</span>}</td>
+                  <td className="py-2.5 px-3">{acked ? <span className="flex items-center gap-1 text-[11px] text-green-400"><Check size={12} /> {dbAcks[ev.id]?.by ?? (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy}</span> : <span className="text-[11px] text-amber-400">Open</span>}</td>
                   <td className="py-2.5 px-3 text-right">
                     {acked ? <span className="text-[11px] text-slate-600">—</span>
-                      : <button onClick={() => ackEvent(ev.id, by)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>}
+                      : <button onClick={() => onAck(ev.id)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>}
                   </td>
                 </tr>
               )
@@ -95,9 +136,9 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
               </tr>
             </thead>
             <tbody>
-              {mockTransportEvents.map((te) => (
+              {shownTransport.map((te) => (
                 <tr key={te.id} style={{ borderTop: '1px solid #1e2433' }}>
-                  <td className="py-2.5 px-3 text-slate-400 text-xs">{te.time}</td>
+                  <td className="py-2.5 px-3 text-slate-400 text-xs">{'time' in te ? (te as { time: string }).time : String((te as { ts: string }).ts ?? '').replace('T', ' ').slice(5, 16)}</td>
                   <td className="py-2.5 px-3 text-xs font-bold text-slate-300">
                     {te.type}
                     {te.isOfflineSync && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-400 font-medium animate-pulse">OFFLINE SYNCING</span>}

@@ -1530,6 +1530,51 @@ data:
         "wires": []
       },
       {
+        "id": "transport_in",
+        "type": "http in",
+        "z": "be",
+        "name": "",
+        "url": "/api/nodes/:id/transport",
+        "method": "get",
+        "x": 150,
+        "y": 1360,
+        "wires": [
+          [
+            "transport_fn"
+          ]
+        ]
+      },
+      {
+        "id": "transport_fn",
+        "type": "function",
+        "z": "be",
+        "name": "GET /api/nodes/:id/transport",
+        "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('resolvePool')(msg.auth&&msg.auth.orgId); const id=msg.req.params.id;\n(async()=>{\n  const out=[];\n  try{ const [t]=await pool.query(\"SELECT id,from_transport,to_transport,reason,rssi,ts FROM transport_events WHERE node_id=? ORDER BY ts DESC LIMIT 25\",[id]);\n    for(const r of t) out.push({ id:'tr-'+r.id, ts:r.ts, type: r.to_transport==='none' ? 'LINK_LOST' : (r.from_transport==='none' ? 'LINK_RESTORE' : 'FALLBACK_'+String(r.to_transport||'').toUpperCase()),\n      desc: 'Link '+r.from_transport+' → '+r.to_transport+(r.reason?' ('+r.reason+')':'')+(r.rssi!=null?' · RSSI '+r.rssi:''), isOfflineSync:false });\n  }catch(e){ node.warn('transport_events: '+e.message); }\n  try{ const [s]=await pool.query(\"SELECT id,records_count,oldest_ts,newest_ts,sync_at FROM offline_sync_log WHERE node_id=? ORDER BY sync_at DESC LIMIT 25\",[id]);\n    for(const r of s) out.push({ id:'os-'+r.id, ts:r.sync_at, type:'OFFLINE_SYNC',\n      desc:'Flushed '+r.records_count+' offline record'+(r.records_count===1?'':'s')+' to cloud', isOfflineSync:true });\n  }catch(e){ node.warn('offline_sync_log: '+e.message); }\n  out.sort((a,b)=> new Date(b.ts) - new Date(a.ts));\n  msg.headers=__CORS; msg.payload=out.slice(0,25); node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+        "outputs": 1,
+        "libs": [
+          {
+            "var": "mysql",
+            "module": "mysql2/promise"
+          }
+        ],
+        "x": 420,
+        "y": 1360,
+        "wires": [
+          [
+            "transport_resp"
+          ]
+        ]
+      },
+      {
+        "id": "transport_resp",
+        "type": "http response",
+        "z": "be",
+        "statusCode": "",
+        "x": 700,
+        "y": 1360,
+        "wires": []
+      },
+      {
         "id": "ack_in",
         "type": "http in",
         "z": "be",
@@ -1537,7 +1582,7 @@ data:
         "url": "/api/events/:id/ack",
         "method": "post",
         "x": 150,
-        "y": 1360,
+        "y": 1410,
         "wires": [
           [
             "ack_fn"
@@ -1558,7 +1603,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1360,
+        "y": 1410,
         "wires": [
           [
             "ack_resp"
@@ -1571,7 +1616,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1360,
+        "y": 1410,
         "wires": []
       },
       {
@@ -1582,7 +1627,7 @@ data:
         "url": "/api/nodes/:id/readings",
         "method": "get",
         "x": 150,
-        "y": 1410,
+        "y": 1460,
         "wires": [
           [
             "readget_fn"
@@ -1603,7 +1648,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1410,
+        "y": 1460,
         "wires": [
           [
             "readget_resp"
@@ -1616,7 +1661,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1410,
+        "y": 1460,
         "wires": []
       },
       {
@@ -1627,7 +1672,7 @@ data:
         "url": "/api/nodes/:id/documents",
         "method": "get",
         "x": 150,
-        "y": 1460,
+        "y": 1510,
         "wires": [
           [
             "docsget_fn"
@@ -1648,7 +1693,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1460,
+        "y": 1510,
         "wires": [
           [
             "docsget_resp"
@@ -1661,7 +1706,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1460,
+        "y": 1510,
         "wires": []
       },
       {
@@ -1672,7 +1717,7 @@ data:
         "url": "/api/nodes/:id/documents",
         "method": "post",
         "x": 150,
-        "y": 1510,
+        "y": 1560,
         "wires": [
           [
             "docspost_fn"
@@ -1693,7 +1738,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1510,
+        "y": 1560,
         "wires": [
           [
             "docspost_resp"
@@ -1706,7 +1751,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1510,
+        "y": 1560,
         "wires": []
       },
       {
@@ -1717,7 +1762,7 @@ data:
         "url": "/api/nodes/:id/documents/:docId",
         "method": "get",
         "x": 150,
-        "y": 1560,
+        "y": 1610,
         "wires": [
           [
             "docsdl_fn"
@@ -1738,7 +1783,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1560,
+        "y": 1610,
         "wires": [
           [
             "docsdl_resp"
@@ -1751,7 +1796,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1560,
+        "y": 1610,
         "wires": []
       },
       {
@@ -1762,7 +1807,7 @@ data:
         "url": "/api/bloodbox/transits/:id/journey",
         "method": "get",
         "x": 150,
-        "y": 1610,
+        "y": 1660,
         "wires": [
           [
             "bbjourneyget_fn"
@@ -1783,7 +1828,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1610,
+        "y": 1660,
         "wires": [
           [
             "bbjourneyget_resp"
@@ -1796,7 +1841,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1610,
+        "y": 1660,
         "wires": []
       },
       {
@@ -1807,7 +1852,7 @@ data:
         "url": "/api/bloodbox/transits/:id/journey",
         "method": "post",
         "x": 150,
-        "y": 1660,
+        "y": 1710,
         "wires": [
           [
             "bbjourneypost_fn"
@@ -1828,7 +1873,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1660,
+        "y": 1710,
         "wires": [
           [
             "bbjourneypost_resp"
@@ -1844,7 +1889,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1660,
+        "y": 1710,
         "wires": []
       },
       {
@@ -1855,7 +1900,7 @@ data:
         "url": "/api/bloodbox/transits/:id/temp",
         "method": "post",
         "x": 150,
-        "y": 1710,
+        "y": 1760,
         "wires": [
           [
             "bbtemp_fn"
@@ -1876,7 +1921,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1710,
+        "y": 1760,
         "wires": [
           [
             "bbtemp_resp"
@@ -1892,7 +1937,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1710,
+        "y": 1760,
         "wires": []
       },
       {
@@ -1903,7 +1948,7 @@ data:
         "url": "/api/bloodbox/transits/:id",
         "method": "get",
         "x": 150,
-        "y": 1760,
+        "y": 1810,
         "wires": [
           [
             "bbtransit_fn"
@@ -1924,7 +1969,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1760,
+        "y": 1810,
         "wires": [
           [
             "bbtransit_resp"
@@ -1937,7 +1982,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1760,
+        "y": 1810,
         "wires": []
       },
       {
@@ -1948,7 +1993,7 @@ data:
         "url": "/api/bloodbox/transits",
         "method": "get",
         "x": 150,
-        "y": 1810,
+        "y": 1860,
         "wires": [
           [
             "bbtransits_fn"
@@ -1969,7 +2014,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1810,
+        "y": 1860,
         "wires": [
           [
             "bbtransits_resp"
@@ -1982,7 +2027,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1810,
+        "y": 1860,
         "wires": []
       },
       {
@@ -1993,7 +2038,7 @@ data:
         "url": "/api/bloodbox/floors",
         "method": "get",
         "x": 150,
-        "y": 1860,
+        "y": 1910,
         "wires": [
           [
             "bbfloors_fn"
@@ -2014,7 +2059,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1860,
+        "y": 1910,
         "wires": [
           [
             "bbfloors_resp"
@@ -2027,7 +2072,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1860,
+        "y": 1910,
         "wires": []
       },
       {
@@ -2038,7 +2083,7 @@ data:
         "url": "/api/bloodbox/beacons/:id",
         "method": "delete",
         "x": 150,
-        "y": 1910,
+        "y": 1960,
         "wires": [
           [
             "bbbeacondel_fn"
@@ -2059,7 +2104,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1910,
+        "y": 1960,
         "wires": [
           [
             "bbbeacondel_resp"
@@ -2072,7 +2117,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1910,
+        "y": 1960,
         "wires": []
       },
       {
@@ -2083,7 +2128,7 @@ data:
         "url": "/api/bloodbox/beacons",
         "method": "get",
         "x": 150,
-        "y": 1960,
+        "y": 2010,
         "wires": [
           [
             "bbbeaconsget_fn"
@@ -2104,7 +2149,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 1960,
+        "y": 2010,
         "wires": [
           [
             "bbbeaconsget_resp"
@@ -2117,7 +2162,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 1960,
+        "y": 2010,
         "wires": []
       },
       {
@@ -2128,7 +2173,7 @@ data:
         "url": "/api/bloodbox/beacons",
         "method": "post",
         "x": 150,
-        "y": 2010,
+        "y": 2060,
         "wires": [
           [
             "bbbeaconspost_fn"
@@ -2149,7 +2194,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2010,
+        "y": 2060,
         "wires": [
           [
             "bbbeaconspost_resp"
@@ -2162,7 +2207,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2010,
+        "y": 2060,
         "wires": []
       },
       {
@@ -2173,7 +2218,7 @@ data:
         "url": "/api/bloodbox/boxes/:id/location",
         "method": "get",
         "x": 150,
-        "y": 2060,
+        "y": 2110,
         "wires": [
           [
             "bblocget_fn"
@@ -2194,7 +2239,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2060,
+        "y": 2110,
         "wires": [
           [
             "bblocget_resp"
@@ -2207,7 +2252,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2060,
+        "y": 2110,
         "wires": []
       },
       {
@@ -2218,7 +2263,7 @@ data:
         "url": "/api/bloodbox/boxes/:id/location",
         "method": "post",
         "x": 150,
-        "y": 2110,
+        "y": 2160,
         "wires": [
           [
             "bblocpost_fn"
@@ -2239,7 +2284,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2110,
+        "y": 2160,
         "wires": [
           [
             "bblocpost_resp"
@@ -2252,7 +2297,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2110,
+        "y": 2160,
         "wires": []
       },
       {
@@ -2263,7 +2308,7 @@ data:
         "url": "/api/fleet/:id/latest",
         "method": "get",
         "x": 150,
-        "y": 2160,
+        "y": 2210,
         "wires": [
           [
             "fleetlatest_fn"
@@ -2284,7 +2329,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2160,
+        "y": 2210,
         "wires": [
           [
             "fleetlatest_resp"
@@ -2297,7 +2342,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2160,
+        "y": 2210,
         "wires": []
       },
       {
@@ -2308,7 +2353,7 @@ data:
         "url": "/api/fleet",
         "method": "get",
         "x": 150,
-        "y": 2210,
+        "y": 2260,
         "wires": [
           [
             "fleetlist_fn"
@@ -2329,7 +2374,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2210,
+        "y": 2260,
         "wires": [
           [
             "fleetlist_resp"
@@ -2342,7 +2387,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2210,
+        "y": 2260,
         "wires": []
       },
       {
@@ -2353,7 +2398,7 @@ data:
         "url": "/api/reports/schedules",
         "method": "get",
         "x": 150,
-        "y": 2260,
+        "y": 2310,
         "wires": [
           [
             "rptlist_fn"
@@ -2374,7 +2419,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2260,
+        "y": 2310,
         "wires": [
           [
             "rptlist_resp"
@@ -2387,7 +2432,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2260,
+        "y": 2310,
         "wires": []
       },
       {
@@ -2398,7 +2443,7 @@ data:
         "url": "/api/reports/schedules",
         "method": "post",
         "x": 150,
-        "y": 2310,
+        "y": 2360,
         "wires": [
           [
             "rptpost_fn"
@@ -2419,7 +2464,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2310,
+        "y": 2360,
         "wires": [
           [
             "rptpost_resp"
@@ -2432,7 +2477,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2310,
+        "y": 2360,
         "wires": []
       },
       {
@@ -2443,7 +2488,7 @@ data:
         "url": "/api/reports/schedules/:id",
         "method": "delete",
         "x": 150,
-        "y": 2360,
+        "y": 2410,
         "wires": [
           [
             "rptdel_fn"
@@ -2464,7 +2509,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2360,
+        "y": 2410,
         "wires": [
           [
             "rptdel_resp"
@@ -2477,7 +2522,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2360,
+        "y": 2410,
         "wires": []
       },
       {
@@ -2488,7 +2533,7 @@ data:
         "url": "/api/event-problems",
         "method": "get",
         "x": 150,
-        "y": 2410,
+        "y": 2460,
         "wires": [
           [
             "eplist_fn"
@@ -2509,7 +2554,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2410,
+        "y": 2460,
         "wires": [
           [
             "eplist_resp"
@@ -2522,7 +2567,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2410,
+        "y": 2460,
         "wires": []
       },
       {
@@ -2533,7 +2578,7 @@ data:
         "url": "/api/event-problems",
         "method": "post",
         "x": 150,
-        "y": 2460,
+        "y": 2510,
         "wires": [
           [
             "eppost_fn"
@@ -2554,7 +2599,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2460,
+        "y": 2510,
         "wires": [
           [
             "eppost_resp"
@@ -2567,7 +2612,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2460,
+        "y": 2510,
         "wires": []
       },
       {
@@ -2578,7 +2623,7 @@ data:
         "url": "/api/event-problems/:id",
         "method": "delete",
         "x": 150,
-        "y": 2510,
+        "y": 2560,
         "wires": [
           [
             "epdel_fn"
@@ -2599,7 +2644,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2510,
+        "y": 2560,
         "wires": [
           [
             "epdel_resp"
@@ -2612,7 +2657,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2510,
+        "y": 2560,
         "wires": []
       },
       {
@@ -2623,7 +2668,7 @@ data:
         "url": "/api/me/config",
         "method": "get",
         "x": 150,
-        "y": 2560,
+        "y": 2610,
         "wires": [
           [
             "meget_fn"
@@ -2644,7 +2689,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2560,
+        "y": 2610,
         "wires": [
           [
             "meget_resp"
@@ -2657,7 +2702,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2560,
+        "y": 2610,
         "wires": []
       },
       {
@@ -2668,7 +2713,7 @@ data:
         "url": "/api/me/config",
         "method": "put",
         "x": 150,
-        "y": 2610,
+        "y": 2660,
         "wires": [
           [
             "meput_fn"
@@ -2689,7 +2734,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2610,
+        "y": 2660,
         "wires": [
           [
             "meput_resp"
@@ -2702,7 +2747,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2610,
+        "y": 2660,
         "wires": []
       },
       {
@@ -2713,7 +2758,7 @@ data:
         "url": "/api/orgs",
         "method": "get",
         "x": 150,
-        "y": 2660,
+        "y": 2710,
         "wires": [
           [
             "orgsget_fn"
@@ -2734,7 +2779,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2660,
+        "y": 2710,
         "wires": [
           [
             "orgsget_resp"
@@ -2747,7 +2792,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2660,
+        "y": 2710,
         "wires": []
       },
       {
@@ -2758,7 +2803,7 @@ data:
         "url": "/api/orgs",
         "method": "post",
         "x": 150,
-        "y": 2710,
+        "y": 2760,
         "wires": [
           [
             "orgspost_fn"
@@ -2791,7 +2836,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2710,
+        "y": 2760,
         "wires": [
           [
             "orgspost_resp"
@@ -2804,7 +2849,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2710,
+        "y": 2760,
         "wires": []
       },
       {
@@ -2815,7 +2860,7 @@ data:
         "url": "/api/platform/settings",
         "method": "get",
         "x": 150,
-        "y": 2760,
+        "y": 2810,
         "wires": [
           [
             "settingsget_fn"
@@ -2836,7 +2881,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2760,
+        "y": 2810,
         "wires": [
           [
             "settingsget_resp"
@@ -2849,7 +2894,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2760,
+        "y": 2810,
         "wires": []
       },
       {
@@ -2860,7 +2905,7 @@ data:
         "url": "/api/platform/settings",
         "method": "put",
         "x": 150,
-        "y": 2810,
+        "y": 2860,
         "wires": [
           [
             "settingsput_fn"
@@ -2881,7 +2926,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2810,
+        "y": 2860,
         "wires": [
           [
             "settingsput_resp"
@@ -2894,7 +2939,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2810,
+        "y": 2860,
         "wires": []
       },
       {
@@ -2905,7 +2950,7 @@ data:
         "url": "/api/platform/settings/test",
         "method": "post",
         "x": 150,
-        "y": 2860,
+        "y": 2910,
         "wires": [
           [
             "settingstest_fn"
@@ -2921,7 +2966,7 @@ data:
         "outputs": 1,
         "libs": [],
         "x": 420,
-        "y": 2860,
+        "y": 2910,
         "wires": [
           [
             "settingstest_resp"
@@ -2934,7 +2979,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2860,
+        "y": 2910,
         "wires": []
       },
       {
@@ -2945,7 +2990,7 @@ data:
         "url": "/api/orgs/:orgId/entitlements",
         "method": "get",
         "x": 150,
-        "y": 2910,
+        "y": 2960,
         "wires": [
           [
             "entget_fn"
@@ -2966,7 +3011,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2910,
+        "y": 2960,
         "wires": [
           [
             "entget_resp"
@@ -2979,7 +3024,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2910,
+        "y": 2960,
         "wires": []
       },
       {
@@ -2990,7 +3035,7 @@ data:
         "url": "/api/orgs/:orgId/entitlements",
         "method": "put",
         "x": 150,
-        "y": 2960,
+        "y": 3010,
         "wires": [
           [
             "entput_fn"
@@ -3011,7 +3056,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 2960,
+        "y": 3010,
         "wires": [
           [
             "entput_resp"
@@ -3024,7 +3069,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 2960,
+        "y": 3010,
         "wires": []
       },
       {
@@ -3035,7 +3080,7 @@ data:
         "url": "/api/orgs/:orgId/departments",
         "method": "get",
         "x": 150,
-        "y": 3010,
+        "y": 3060,
         "wires": [
           [
             "deptget_fn"
@@ -3056,7 +3101,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3010,
+        "y": 3060,
         "wires": [
           [
             "deptget_resp"
@@ -3069,7 +3114,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3010,
+        "y": 3060,
         "wires": []
       },
       {
@@ -3080,7 +3125,7 @@ data:
         "url": "/api/orgs/:orgId/departments",
         "method": "post",
         "x": 150,
-        "y": 3060,
+        "y": 3110,
         "wires": [
           [
             "deptpost_fn"
@@ -3101,7 +3146,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3060,
+        "y": 3110,
         "wires": [
           [
             "deptpost_resp"
@@ -3114,7 +3159,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3060,
+        "y": 3110,
         "wires": []
       },
       {
@@ -3125,7 +3170,7 @@ data:
         "url": "/api/orgs/:orgId/users",
         "method": "get",
         "x": 150,
-        "y": 3110,
+        "y": 3160,
         "wires": [
           [
             "usrget_fn"
@@ -3146,7 +3191,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3110,
+        "y": 3160,
         "wires": [
           [
             "usrget_resp"
@@ -3159,7 +3204,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3110,
+        "y": 3160,
         "wires": []
       },
       {
@@ -3170,7 +3215,7 @@ data:
         "url": "/api/orgs/:orgId/users",
         "method": "post",
         "x": 150,
-        "y": 3160,
+        "y": 3210,
         "wires": [
           [
             "usrpost_fn"
@@ -3191,7 +3236,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3160,
+        "y": 3210,
         "wires": [
           [
             "usrpost_resp"
@@ -3204,7 +3249,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3160,
+        "y": 3210,
         "wires": []
       },
       {
@@ -3215,7 +3260,7 @@ data:
         "url": "/api/orgs/:id",
         "method": "delete",
         "x": 150,
-        "y": 3210,
+        "y": 3260,
         "wires": [
           [
             "orgsdel_fn"
@@ -3236,7 +3281,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3210,
+        "y": 3260,
         "wires": [
           [
             "orgsdel_resp"
@@ -3249,7 +3294,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3210,
+        "y": 3260,
         "wires": []
       },
       {
@@ -3260,7 +3305,7 @@ data:
         "url": "/api/departments/:id",
         "method": "delete",
         "x": 150,
-        "y": 3260,
+        "y": 3310,
         "wires": [
           [
             "deptdel_fn"
@@ -3281,7 +3326,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3260,
+        "y": 3310,
         "wires": [
           [
             "deptdel_resp"
@@ -3294,7 +3339,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3260,
+        "y": 3310,
         "wires": []
       },
       {
@@ -3305,7 +3350,7 @@ data:
         "url": "/api/users/:id",
         "method": "delete",
         "x": 150,
-        "y": 3310,
+        "y": 3360,
         "wires": [
           [
             "usrdel_fn"
@@ -3326,7 +3371,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3310,
+        "y": 3360,
         "wires": [
           [
             "usrdel_resp"
@@ -3339,7 +3384,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3310,
+        "y": 3360,
         "wires": []
       },
       {
@@ -3350,7 +3395,7 @@ data:
         "url": "/api/product-access",
         "method": "get",
         "x": 150,
-        "y": 3360,
+        "y": 3410,
         "wires": [
           [
             "paget_fn"
@@ -3371,7 +3416,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3360,
+        "y": 3410,
         "wires": [
           [
             "paget_resp"
@@ -3384,7 +3429,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3360,
+        "y": 3410,
         "wires": []
       },
       {
@@ -3395,7 +3440,7 @@ data:
         "url": "/api/product-access",
         "method": "put",
         "x": 150,
-        "y": 3410,
+        "y": 3460,
         "wires": [
           [
             "paput_fn"
@@ -3416,7 +3461,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3410,
+        "y": 3460,
         "wires": [
           [
             "paput_resp"
@@ -3429,7 +3474,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3410,
+        "y": 3460,
         "wires": []
       },
       {
@@ -3440,7 +3485,7 @@ data:
         "url": "/api/nodes",
         "method": "post",
         "x": 150,
-        "y": 3460,
+        "y": 3510,
         "wires": [
           [
             "nodeprov_fn"
@@ -3461,7 +3506,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3460,
+        "y": 3510,
         "wires": [
           [
             "nodeprov_resp"
@@ -3474,7 +3519,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3460,
+        "y": 3510,
         "wires": []
       },
       {
@@ -3485,7 +3530,7 @@ data:
         "url": "/api/nodes/pending",
         "method": "get",
         "x": 150,
-        "y": 3510,
+        "y": 3560,
         "wires": [
           [
             "nodepending_fn"
@@ -3506,7 +3551,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3510,
+        "y": 3560,
         "wires": [
           [
             "nodepending_resp"
@@ -3519,7 +3564,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3510,
+        "y": 3560,
         "wires": []
       },
       {
@@ -3530,7 +3575,7 @@ data:
         "url": "/api/nodes/:id/approve",
         "method": "post",
         "x": 150,
-        "y": 3560,
+        "y": 3610,
         "wires": [
           [
             "nodeapprove_fn"
@@ -3551,7 +3596,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3560,
+        "y": 3610,
         "wires": [
           [
             "nodeapprove_resp"
@@ -3564,7 +3609,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3560,
+        "y": 3610,
         "wires": []
       },
       {
@@ -3575,7 +3620,7 @@ data:
         "url": "/api/nodes/:id/reject",
         "method": "post",
         "x": 150,
-        "y": 3610,
+        "y": 3660,
         "wires": [
           [
             "nodereject_fn"
@@ -3596,7 +3641,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3610,
+        "y": 3660,
         "wires": [
           [
             "nodereject_resp"
@@ -3609,7 +3654,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3610,
+        "y": 3660,
         "wires": []
       },
       {
@@ -3620,7 +3665,7 @@ data:
         "url": "/api/nodes/:id/config",
         "method": "put",
         "x": 150,
-        "y": 3660,
+        "y": 3710,
         "wires": [
           [
             "cfgput_fn"
@@ -3641,7 +3686,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3660,
+        "y": 3710,
         "wires": [
           [
             "cfgput_resp"
@@ -3658,7 +3703,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3660,
+        "y": 3710,
         "wires": []
       },
       {
@@ -3669,7 +3714,7 @@ data:
         "url": "/api/nodes/:id/cmd",
         "method": "post",
         "x": 150,
-        "y": 3710,
+        "y": 3760,
         "wires": [
           [
             "cmdpost_fn"
@@ -3690,7 +3735,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3710,
+        "y": 3760,
         "wires": [
           [
             "cmdpost_resp"
@@ -3707,7 +3752,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3710,
+        "y": 3760,
         "wires": []
       },
       {
@@ -3718,7 +3763,7 @@ data:
         "url": "/api/nodes/:id/ota",
         "method": "post",
         "x": 150,
-        "y": 3760,
+        "y": 3810,
         "wires": [
           [
             "otapost_fn"
@@ -3739,7 +3784,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3760,
+        "y": 3810,
         "wires": [
           [
             "otapost_resp"
@@ -3756,7 +3801,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3760,
+        "y": 3810,
         "wires": []
       },
       {
@@ -3767,7 +3812,7 @@ data:
         "url": "/api/ota/releases",
         "method": "get",
         "x": 150,
-        "y": 3810,
+        "y": 3860,
         "wires": [
           [
             "otarellist_fn"
@@ -3788,7 +3833,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3810,
+        "y": 3860,
         "wires": [
           [
             "otarellist_resp"
@@ -3801,7 +3846,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3810,
+        "y": 3860,
         "wires": []
       },
       {
@@ -3812,7 +3857,7 @@ data:
         "url": "/api/ota/releases",
         "method": "post",
         "x": 150,
-        "y": 3860,
+        "y": 3910,
         "wires": [
           [
             "otarelpost_fn"
@@ -3833,7 +3878,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3860,
+        "y": 3910,
         "wires": [
           [
             "otarelpost_resp"
@@ -3846,7 +3891,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3860,
+        "y": 3910,
         "wires": []
       },
       {
@@ -3857,7 +3902,7 @@ data:
         "url": "/api/ota/releases/:id",
         "method": "delete",
         "x": 150,
-        "y": 3910,
+        "y": 3960,
         "wires": [
           [
             "otareldel_fn"
@@ -3878,7 +3923,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3910,
+        "y": 3960,
         "wires": [
           [
             "otareldel_resp"
@@ -3891,7 +3936,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3910,
+        "y": 3960,
         "wires": []
       },
       {
@@ -3902,7 +3947,7 @@ data:
         "url": "/api/ota/deployments",
         "method": "get",
         "x": 150,
-        "y": 3960,
+        "y": 4010,
         "wires": [
           [
             "otadeplist_fn"
@@ -3923,7 +3968,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 3960,
+        "y": 4010,
         "wires": [
           [
             "otadeplist_resp"
@@ -3936,7 +3981,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 3960,
+        "y": 4010,
         "wires": []
       },
       {
@@ -3947,7 +3992,7 @@ data:
         "url": "/api/ota/deploy-fleet",
         "method": "post",
         "x": 150,
-        "y": 4010,
+        "y": 4060,
         "wires": [
           [
             "otafleet_fn"
@@ -3968,7 +4013,7 @@ data:
           }
         ],
         "x": 420,
-        "y": 4010,
+        "y": 4060,
         "wires": [
           [
             "otafleet_resp"
@@ -3985,7 +4030,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 4010,
+        "y": 4060,
         "wires": []
       },
       {
@@ -3996,7 +4041,7 @@ data:
         "url": "/api/*",
         "method": "options",
         "x": 150,
-        "y": 4060,
+        "y": 4110,
         "wires": [
           [
             "cors_fn"
@@ -4012,7 +4057,7 @@ data:
         "outputs": 1,
         "libs": [],
         "x": 420,
-        "y": 4060,
+        "y": 4110,
         "wires": [
           [
             "cors_resp"
@@ -4025,7 +4070,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 4060,
+        "y": 4110,
         "wires": []
       },
       {
@@ -4036,7 +4081,7 @@ data:
         "url": "/api/nodes/:id/readings",
         "method": "post",
         "x": 150,
-        "y": 4110,
+        "y": 4160,
         "wires": [
           [
             "readpost_fn"
@@ -4052,7 +4097,7 @@ data:
         "outputs": 1,
         "libs": [],
         "x": 420,
-        "y": 4110,
+        "y": 4160,
         "wires": [
           [
             "ingest"
@@ -4065,7 +4110,7 @@ data:
         "z": "be",
         "statusCode": "",
         "x": 700,
-        "y": 4110,
+        "y": 4160,
         "wires": []
       }
     ]
