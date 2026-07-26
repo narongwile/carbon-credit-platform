@@ -1,11 +1,29 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
-import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter } from 'lucide-react'
+import { api, useIsLive } from '@/lib/api'
+import { getSession } from '@/lib/auth'
+import { getViewerUser } from '@/lib/viewer'
+import { downloadCSV, printTablePDF } from '@/lib/exportFile'
+import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
 
-function AlarmRow({ alarm, onAck }: { alarm: Alarm; onAck: (id: string) => void }) {
+interface EventProblem { id: string; label: string; department_id: string | null; domain: string | null }
+
+// Quick ranges mirror the operator-facing picker: a label plus how many hours
+// back it covers. 'all' disables the time filter entirely.
+const QUICK_RANGES: { label: string; hours: number | null }[] = [
+  { label: 'Last 1 hour', hours: 1 },
+  { label: 'Last 6 hours', hours: 6 },
+  { label: 'Last 24 hours', hours: 24 },
+  { label: 'Last 7 days', hours: 24 * 7 },
+  { label: 'Last 30 days', hours: 24 * 30 },
+  { label: 'All time', hours: null },
+]
+
+function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string, problemId?: string) => void; problems: EventProblem[] }) {
+  const [problemId, setProblemId] = useState('')
   const cfg = {
     CRITICAL: { color: '#ef4444', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.2)', icon: <XCircle size={14} className="text-red-400" /> },
     WARNING: { color: '#fbbf24', bg: 'rgba(251,191,36,0.06)', border: 'rgba(251,191,36,0.15)', icon: <AlertTriangle size={14} className="text-amber-400" /> },
@@ -55,13 +73,26 @@ function AlarmRow({ alarm, onAck }: { alarm: Alarm; onAck: (id: string) => void 
             <div className="text-[10px] text-slate-600 mt-0.5">by {alarm.acknowledgedBy}</div>
           </div>
         ) : (
-          <button
-            onClick={() => onAck(alarm.id)}
-            className="text-xs px-3 py-1.5 rounded-lg text-white font-medium transition-all hover:opacity-90"
-            style={{ background: '#6366f1' }}
-          >
-            Acknowledge
-          </button>
+          <div className="flex flex-col gap-1.5 min-w-[150px]">
+            {problems.length > 0 && (
+              <select
+                value={problemId}
+                onChange={(e) => setProblemId(e.target.value)}
+                className="text-xs rounded-lg px-2 py-1.5 text-slate-200"
+                style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+              >
+                <option value="">Select Problem</option>
+                {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+              </select>
+            )}
+            <button
+              onClick={() => onAck(alarm.id, problemId || undefined)}
+              className="text-xs px-3 py-1.5 rounded-lg text-white font-medium transition-all hover:opacity-90"
+              style={{ background: '#6366f1' }}
+            >
+              Acknowledge
+            </button>
+          </div>
         )}
       </td>
     </tr>
@@ -72,13 +103,62 @@ export default function AlarmsPage() {
   const { alarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
   const [filter, setFilter] = useState<'all' | 'CRITICAL' | 'WARNING' | 'INFO'>('all')
   const [showAcked, setShowAcked] = useState(false)
+  const live = useIsLive()
+  const viewerUserId = useAppStore((st) => st.viewerUserId)
+
+  // Time range: a quick preset, or explicit from/to when the operator sets them.
+  const [quick, setQuick] = useState<string>('Last 24 hours')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(false)
+
+  const range = useMemo(() => {
+    if (from || to) {
+      return { start: from ? new Date(from).getTime() : 0, end: to ? new Date(to).getTime() : Infinity, label: `${from || '…'} → ${to || 'now'}` }
+    }
+    const hrs = QUICK_RANGES.find((q) => q.label === quick)?.hours ?? null
+    return hrs === null
+      ? { start: 0, end: Infinity, label: 'All time' }
+      : { start: Date.now() - hrs * 3600_000, end: Infinity, label: quick }
+  }, [quick, from, to])
+
+  // Root causes offered on acknowledge — admins see every department's, viewers
+  // only their own (plus org-wide entries with no department).
+  const [problems, setProblems] = useState<EventProblem[]>([])
+  useEffect(() => {
+    if (!live) { setProblems([]); return }
+    const session = getSession()
+    const orgId = session?.orgId ?? selectedOrgId
+    if (!orgId) return
+    const isAdmin = session?.role === 'admin' || session?.role === 'superadmin'
+    const myDepts = isAdmin ? null : (getViewerUser(viewerUserId)?.departmentIds ?? [])
+    api.eventProblems(orgId).then((rows) => {
+      if (!rows) return
+      setProblems(isAdmin || !myDepts ? rows : rows.filter((r) => r.department_id === null || myDepts.includes(r.department_id)))
+    })
+  }, [live, selectedOrgId, viewerUserId])
 
   const orgAlarms = alarms.filter((a) => a.orgId === selectedOrgId)
   const filtered = orgAlarms.filter((a) => {
     if (!showAcked && a.acknowledged) return false
     if (filter !== 'all' && a.severity !== filter) return false
+    const ts = new Date(a.timestamp).getTime()
+    if (Number.isFinite(ts) && (ts < range.start || ts > range.end)) return false
     return true
   })
+
+  // Acknowledge writes through to the backend in Live mode (with the chosen root
+  // cause), and falls back to the local store in Demo.
+  const onAck = async (id: string, problemId?: string) => {
+    if (live) { await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId }) }
+    acknowledgeAlarm(id, 'admin')
+  }
+
+  const EXPORT_HEADERS = ['Severity', 'Transformer', 'Message', 'Sensor', 'Value', 'Unit', 'Timestamp', 'Status', 'Acknowledged By']
+  const exportRows = () => filtered.map((a) => [
+    a.severity, a.transformerName, a.message, a.sensor, a.value, a.unit,
+    new Date(a.timestamp).toLocaleString(), a.acknowledged ? 'Acknowledged' : 'Open', a.acknowledgedBy ?? '',
+  ])
 
   const critCount = orgAlarms.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length
   const warnCount = orgAlarms.filter((a) => a.severity === 'WARNING' && !a.acknowledged).length
@@ -103,6 +183,74 @@ export default function AlarmsPage() {
               <span className="text-amber-400 text-sm font-semibold">{warnCount} Warning</span>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Time range + export */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative">
+          <button
+            onClick={() => setPickerOpen((o) => !o)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300"
+            style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+          >
+            <CalendarDays size={12} className="text-slate-500" />
+            {range.label}
+            <span className="text-slate-600">▾</span>
+          </button>
+          {pickerOpen && (
+            <div className="absolute left-0 mt-2 z-20 rounded-xl p-3 w-[420px]" style={{ background: '#0d1117', border: '1px solid #1e2433', boxShadow: '0 12px 32px rgba(0,0,0,0.5)' }}>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Absolute range</div>
+                  <label className="block text-[10px] text-slate-500 mb-1">From</label>
+                  <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)}
+                    className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200 mb-2" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
+                  <label className="block text-[10px] text-slate-500 mb-1">To</label>
+                  <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)}
+                    className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
+                  <button onClick={() => setPickerOpen(false)}
+                    className="mt-3 w-full text-xs font-medium text-white px-3 py-1.5 rounded-lg" style={{ background: '#6366f1' }}>
+                    Apply range
+                  </button>
+                  {(from || to) && (
+                    <button onClick={() => { setFrom(''); setTo('') }} className="mt-1.5 w-full text-[11px] text-slate-500 hover:text-slate-300">
+                      Clear absolute range
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Quick ranges</div>
+                  <div className="space-y-1">
+                    {QUICK_RANGES.map((q) => (
+                      <button key={q.label}
+                        onClick={() => { setQuick(q.label); setFrom(''); setTo(''); setPickerOpen(false) }}
+                        className="w-full text-left text-xs px-2 py-1.5 rounded-lg transition-colors"
+                        style={!from && !to && quick === q.label
+                          ? { background: 'rgba(99,102,241,0.2)', color: '#a5b4fc' }
+                          : { color: '#94a3b8' }}
+                      >
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 ml-auto">
+          <button onClick={() => downloadCSV(`alarms-${new Date().toISOString().slice(0, 10)}.csv`, EXPORT_HEADERS, exportRows())}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white"
+            style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+            <Download size={12} /> Export CSV
+          </button>
+          <button onClick={() => printTablePDF('Alarm Management', EXPORT_HEADERS, exportRows(), [range.label, filter === 'all' ? 'All severities' : filter, showAcked ? 'Including acknowledged' : 'Open only'])}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white"
+            style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+            <FileText size={12} /> Export PDF
+          </button>
         </div>
       </div>
 
@@ -159,7 +307,8 @@ export default function AlarmsPage() {
                 <AlarmRow
                   key={alarm.id}
                   alarm={alarm}
-                  onAck={(id) => acknowledgeAlarm(id, 'admin')}
+                  problems={problems}
+                  onAck={onAck}
                 />
               ))
             )}

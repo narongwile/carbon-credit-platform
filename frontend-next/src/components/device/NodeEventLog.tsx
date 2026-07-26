@@ -5,8 +5,14 @@ import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, useIsLive } from '@/lib/api'
 import { defaultNodeRule } from '@/lib/alarmParams'
+import { downloadCSV, printTablePDF } from '@/lib/exportFile'
+import { getSession } from '@/lib/auth'
+import { useAppStore } from '@/lib/store'
+import { getViewerUser } from '@/lib/viewer'
 import type { SensorDomain } from '@/types/fleet'
-import { Check, Bell } from 'lucide-react'
+import { Check, Bell, Download, FileText } from 'lucide-react'
+
+interface EventProblem { id: string; label: string; department_id: string | null; domain: string | null }
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
@@ -28,6 +34,12 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   // offline_sync_log for connectivity. Demo mode keeps the synthetic series
   // below so the page still demonstrates the UI without a backend.
   const [liveEvents, setLiveEvents] = useState<AlarmEvent[] | null>(null)
+  // Root-cause catalogue offered next to Acknowledge. An admin picks from every
+  // department's problems; a viewer only sees their own department's (plus the
+  // org-wide ones that carry no department).
+  const [problems, setProblems] = useState<EventProblem[]>([])
+  const [picked, setPicked] = useState<Record<string, string>>({})
+  const viewerUserId = useAppStore((st) => st.viewerUserId)
   const [transport, setTransport] = useState<{ id: string; ts: string; type: string; desc: string; isOfflineSync: boolean }[] | null>(null)
 
   const loadLive = useCallback(() => {
@@ -53,13 +65,30 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     api.transportEvents(nodeId).then((rows) => { if (rows) setTransport(rows) })
   }, [live, nodeId])
 
+  // Problem catalogue, scoped by role.
+  useEffect(() => {
+    if (!live) { setProblems([]); return }
+    const session = getSession()
+    const orgId = session?.orgId
+    if (!orgId) return
+    const isAdmin = session?.role === 'admin' || session?.role === 'superadmin'
+    const myDepts = isAdmin ? null : (getViewerUser(viewerUserId)?.departmentIds ?? [])
+    api.eventProblems(orgId, undefined, domain).then((rows) => {
+      if (!rows) return
+      setProblems(isAdmin || !myDepts
+        ? rows
+        // Viewer: their departments' problems + the org-wide ones (no department).
+        : rows.filter((r) => r.department_id === null || myDepts.includes(r.department_id)))
+    })
+  }, [live, domain, viewerUserId])
+
   useEffect(() => { loadLive() }, [loadLive])
 
   // Acknowledge against the backend when live, else the local demo store.
   const onAck = useCallback(async (eventId: string) => {
-    if (live) { await api.ackEvent(eventId, { by }); loadLive() }
+    if (live) { await api.ackEvent(eventId, { by, eventProblemId: picked[eventId] || undefined }); loadLive() }
     else ackEvent(eventId, by)
-  }, [live, by, ackEvent, loadLive])
+  }, [live, by, ackEvent, loadLive, picked])
 
   const rule = useMemo(() => (domain ? ((hasHydrated && dbRules[nodeId]) ? dbRules[nodeId] : defaultNodeRule(domain)) : null), [domain, nodeId, hasHydrated, dbRules])
 
@@ -78,16 +107,37 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     return evaluate(nodeId, rule, readings).slice(0, 12)
   }, [rule, nodeId, baseValue])
 
-  // 'offline' events are connectivity, not threshold breaches — they render in
-  // the Transport & Connectivity table below instead of the alarm Event Log.
-  const shownEvents = (liveEvents ?? events).filter((e) => e.kind !== 'offline')
+  // Offline events stay in the log (so they can be acknowledged with a root
+  // cause) AND appear on the connectivity timeline below.
+  const shownEvents = liveEvents ?? events
   const shownTransport = transport ?? (live ? [] : mockTransportEvents)
+
+  const EVENT_HEADERS = ['Time', 'Parameter', 'Value', 'Unit', 'Threshold', 'Severity', 'Status']
+  const eventRows = () => shownEvents.map((ev) => [
+    ev.time, ev.paramLabel + (ev.kind === 'rate' ? ' (rate)' : ''), ev.value, ev.unit, ev.threshold, ev.severity,
+    (dbAcks[ev.id] || (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy) ? 'Acknowledged' : 'Open',
+  ])
+  const TRANSPORT_HEADERS = ['Time', 'Event Type', 'Description']
+  const transportRows = () => shownTransport.map((te) => [
+    'time' in te ? (te as { time: string }).time : String((te as { ts: string }).ts ?? '').replace('T', ' ').slice(5, 16),
+    te.type, te.desc,
+  ])
 
   return (
     <div className="rounded-xl p-5" style={surface}>
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bell size={14} className="text-indigo-400" /> Event Log</h3>
-        <span className="text-[11px] text-slate-500">Generated by the alarm engine from the saved rule</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-slate-500 mr-1">{live ? 'Alarm events recorded for this device' : 'Generated by the alarm engine from the saved rule'}</span>
+          <button onClick={() => downloadCSV(`events-${nodeId}.csv`, EVENT_HEADERS, eventRows())}
+            className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-slate-300 hover:text-white" style={{ border: '1px solid #1e2433' }}>
+            <Download size={11} /> CSV
+          </button>
+          <button onClick={() => printTablePDF(`Event Log — ${nodeId}`, EVENT_HEADERS, eventRows(), [`Device ${nodeId}`])}
+            className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-slate-300 hover:text-white" style={{ border: '1px solid #1e2433' }}>
+            <FileText size={11} /> PDF
+          </button>
+        </div>
       </div>
       <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
         <table className="w-full text-sm">
@@ -114,7 +164,22 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                   <td className="py-2.5 px-3">{acked ? <span className="flex items-center gap-1 text-[11px] text-green-400"><Check size={12} /> {dbAcks[ev.id]?.by ?? (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy}</span> : <span className="text-[11px] text-amber-400">Open</span>}</td>
                   <td className="py-2.5 px-3 text-right">
                     {acked ? <span className="text-[11px] text-slate-600">—</span>
-                      : <button onClick={() => onAck(ev.id)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md" style={gradient}>Acknowledge</button>}
+                      : (
+                        <div className="flex flex-col items-end gap-1.5">
+                          {problems.length > 0 && (
+                            <select
+                              value={picked[ev.id] ?? ''}
+                              onChange={(e) => setPicked((prev) => ({ ...prev, [ev.id]: e.target.value }))}
+                              className="text-[11px] rounded px-2 py-1 text-slate-200 w-full"
+                              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+                            >
+                              <option value="">Select Problem</option>
+                              {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                            </select>
+                          )}
+                          <button onClick={() => onAck(ev.id)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md w-full" style={gradient}>Acknowledge</button>
+                        </div>
+                      )}
                   </td>
                 </tr>
               )
@@ -126,7 +191,17 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
       <div className="mt-6">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bell size={14} className="text-indigo-400" /> Transport & Connectivity</h3>
-          <span className="text-[11px] text-slate-500">System network link changes and offline backlogs</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-slate-500 mr-1">Link changes, offline/online transitions and backlogs</span>
+            <button onClick={() => downloadCSV(`connectivity-${nodeId}.csv`, TRANSPORT_HEADERS, transportRows())}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-slate-300 hover:text-white" style={{ border: '1px solid #1e2433' }}>
+              <Download size={11} /> CSV
+            </button>
+            <button onClick={() => printTablePDF(`Transport & Connectivity — ${nodeId}`, TRANSPORT_HEADERS, transportRows(), [`Device ${nodeId}`])}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-slate-300 hover:text-white" style={{ border: '1px solid #1e2433' }}>
+              <FileText size={11} /> PDF
+            </button>
+          </div>
         </div>
         <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
           <table className="w-full text-sm">
@@ -138,6 +213,9 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
               </tr>
             </thead>
             <tbody>
+              {shownTransport.length === 0 && (
+                <tr><td colSpan={3} className="py-6 text-center text-slate-600 text-xs">No connectivity events recorded for this device.</td></tr>
+              )}
               {shownTransport.map((te) => (
                 <tr key={te.id} style={{ borderTop: '1px solid #1e2433' }}>
                   <td className="py-2.5 px-3 text-slate-400 text-xs">{'time' in te ? (te as { time: string }).time : String((te as { ts: string }).ts ?? '').replace('T', ' ').slice(5, 16)}</td>
