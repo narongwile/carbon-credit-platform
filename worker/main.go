@@ -160,9 +160,8 @@ type RuleCacheEntry struct {
 func main() {
 	// 1. Connect to Control MySQL DB
 	var err error
-	dsn := dbDSN(getEnv("DB_NAME", "iothub"))
 	tenantMode = strings.EqualFold(getEnv("TENANT_DB_MODE", ""), "on")
-	controlDB, err = sql.Open("mysql", dsn)
+	controlDB, err = openDB(getEnv("DB_NAME", "iothub"))
 	if err != nil {
 		log.Fatalf("MySQL Control DB Error: %v", err)
 	}
@@ -265,9 +264,7 @@ func resolvePool(orgID string) *sql.DB {
 	// Create new connection pool for this tenant
 	dbName := orgDbName(orgID)
 
-	dsn := dbDSN(dbName)
-
-	db, err := sql.Open("mysql", dsn)
+	db, err := openDB(dbName)
 	if err != nil {
 		log.Printf("Failed to open connection to %s: %v", dbName, err)
 		return nil
@@ -917,13 +914,12 @@ func canonicalParam(key string) string {
 	return key
 }
 
-// dbDSN builds the MySQL DSN for a database from component env vars using the
-// driver's own config formatter. FormatDSN properly encodes the password, so a
-// root password containing DSN-special characters (@ : / ?) — common for
-// randomly generated secrets — does not corrupt the connection string. Building
-// the DSN by hand (root:PASS@tcp(...)) mis-parses such passwords and yields
-// "Access denied", even though the CLI (mysql -p) and mysql2 (separate field)
-// accept the same value. DB_PASSWORD comes from the mysql-credentials Secret.
+// dbConfig builds the connection config from component env vars. Credentials go
+// in as struct fields rather than being pasted into a DSN string: a root
+// password containing DSN-special characters (@ : / ?) — common for randomly
+// generated secrets — corrupts a hand-built "root:PASS@tcp(...)" and yields
+// "Access denied", even though the CLI (mysql -p) accepts the same value.
+// DB_PASSWORD comes from the mysql-credentials Secret.
 // dbLoc returns the fixed zone matching the database's wall-clock convention.
 // The platform stores wall times in DB_TZ (default +07:00): MySQL runs with
 // --default-time-zone=+07:00 and Node-RED's mysql2 pools set timezone '+07:00',
@@ -946,7 +942,7 @@ func dbLoc() *time.Location {
 	return time.FixedZone("DBTZ", sign*(hh*3600+mm*60))
 }
 
-func dbDSN(dbName string) string {
+func dbConfig(dbName string) *mysql.Config {
 	cfg := mysql.NewConfig()
 	cfg.User = getEnv("DB_USER", "root")
 	cfg.Passwd = getEnv("DB_PASSWORD", "password")
@@ -958,5 +954,19 @@ func dbDSN(dbName string) string {
 	// outgoing time.Time values before formatting and stamps parsed DATETIMEs on
 	// the way in, so a round trip is the identity again.
 	cfg.Loc = dbLoc()
-	return cfg.FormatDSN()
+	return cfg
+}
+
+// openDB connects via a Connector rather than a DSN string. FormatDSN would
+// serialise cfg.Loc by NAME (loc=DBTZ) and ParseDSN then feeds that name to
+// time.LoadLocation — which fails with "unknown time zone DBTZ" for a
+// FixedZone, and would need the tzdata files in the image for a real zone name
+// like Asia/Bangkok. NewConnector keeps the *time.Location object itself, so a
+// fixed offset works with no tzdata dependency.
+func openDB(dbName string) (*sql.DB, error) {
+	connector, err := mysql.NewConnector(dbConfig(dbName))
+	if err != nil {
+		return nil, err
+	}
+	return sql.OpenDB(connector), nil
 }
