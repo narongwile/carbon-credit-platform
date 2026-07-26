@@ -93,6 +93,12 @@ export const api = {
       `/api/nodes/${nodeId}/transport`),
   ackEvent: (eventId: string, body: { by: string; eventProblemId?: string }) =>
     req(`/api/events/${eventId}/ack`, { method: 'POST', body: JSON.stringify(body) }),
+  // Stored reading history for one device (canonical param keys, oldest first).
+  // Feeds the trend charts and sparklines with real samples instead of the
+  // synthetic series the demo store generates.
+  readings: (nodeId: string, sinceMin = 720) =>
+    req<{ param_key: string; value: number; taken_at: string }[]>(
+      `/api/nodes/${nodeId}/readings?sinceMin=${sinceMin}`),
   ingest: (nodeId: string, values: Record<string, number>, ts?: number) =>
     req(`/api/nodes/${nodeId}/readings`, { method: 'POST', body: JSON.stringify({ values, ts }) }),
 

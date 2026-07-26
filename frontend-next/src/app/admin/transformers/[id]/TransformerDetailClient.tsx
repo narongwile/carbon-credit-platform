@@ -4,8 +4,11 @@ import { useParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
+import { api, useIsLive } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
+import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
 import dynamic from 'next/dynamic'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts'
@@ -15,9 +18,121 @@ import {
   ChevronLeft, Maximize2, RefreshCw
 } from 'lucide-react'
 import Link from 'next/link'
-import type { SensorReading, Transformer } from '@/types'
+import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
+
+// ---------------------------------------------------------------------------
+// Live data overlay
+// ---------------------------------------------------------------------------
+// Everything on this page used to come from the demo store, so in Live mode the
+// sensor cards, health gauge, 3D twin and trend charts showed fabricated values
+// while the Event Log right below them showed the real device. The hook below
+// replaces the readings with what the device actually published — canonical
+// param keys from the ingest worker — and leaves the demo series untouched when
+// Live is off or the device has reported nothing yet.
+
+/** SensorData field ← canonical param key (see paramMap in backend/worker/main.go). */
+const LIVE_PARAM: Record<keyof SensorData, string> = {
+  oilTemperature: 'oilTemp',
+  hydrogen: 'hydrogen',
+  moisture: 'moisture',
+  oilLevel: 'oilLevel',
+  load: 'load',
+  ambientTemperature: 'ambientTemp',
+}
+
+/** A device is considered online while it reported within the sweep window. */
+const ONLINE_WITHIN_MS = 90_000
+/** Points kept per param — the charts read the last 48, the sparklines the last 12. */
+const HISTORY_POINTS = 48
+
+function historyByParam(rows: { param_key: string; value: number; taken_at: string }[]) {
+  const out: Record<string, TrendPoint[]> = {}
+  for (const r of rows) {
+    (out[r.param_key] ||= []).push({ time: r.taken_at, value: Number(r.value) })
+  }
+  for (const k of Object.keys(out)) out[k] = out[k].slice(-HISTORY_POINTS)
+  return out
+}
+
+function useLiveTransformer(base: Transformer | undefined) {
+  const live = useIsLive()
+  const id = base?.id
+  const [values, setValues] = useState<Record<string, number> | null>(null)
+  const [lastReadingAt, setLastReadingAt] = useState<string | null>(null)
+  const [series, setSeries] = useState<Record<string, TrendPoint[]>>({})
+
+  // Poll the stored readings, then let WS frames update the current values in
+  // real time — the same pattern the generic device dashboard uses.
+  useEffect(() => {
+    if (!live || !id) { setValues(null); setLastReadingAt(null); setSeries({}); return }
+    let cancelled = false
+    const load = () => {
+      api.latest(id).then((r) => {
+        if (cancelled || !r) return
+        if (r.values) setValues(r.values)
+        setLastReadingAt(r.lastReadingAt ?? null)
+      })
+      api.readings(id, 720).then((rows) => { if (!cancelled && rows) setSeries(historyByParam(rows)) })
+    }
+    load()
+    const t = setInterval(load, 10000)
+    const off = subscribeTelemetry((f) => {
+      if (f.id !== id || f.type === 'alarm' || !f.values) return
+      setValues(f.values)
+      setLastReadingAt(new Date().toISOString())
+    })
+    return () => { cancelled = true; clearInterval(t); off() }
+  }, [live, id])
+
+  const online = live
+    ? !!lastReadingAt && Date.now() - new Date(lastReadingAt).getTime() < ONLINE_WITHIN_MS
+    : true
+
+  const transformer = useMemo(() => {
+    if (!base) return base
+    if (!live || !values || !Object.keys(values).length) return base
+
+    const byKey = Object.fromEntries(ALARM_SCHEMA.transformer.params.map((p) => [p.key, p]))
+    const sensors = { ...base.sensors }
+    let worst: SensorReading['status'] = 'NORMAL'
+
+    for (const field of Object.keys(LIVE_PARAM) as (keyof SensorData)[]) {
+      const key = LIVE_PARAM[field]
+      const v = values[key]
+      if (v === undefined) continue
+      const prev = sensors[field]
+      const p = byKey[key]
+      // A single point can't be drawn as a sparkline (the polyline divides by
+      // length-1), so only swap in live history once there are at least two.
+      const points = (series[key]?.length ?? 0) >= 2 ? series[key] : prev.history
+      const previous = points.length > 1 ? points[points.length - 2].value : v
+      const status = p ? paramStatus(v, p) : prev.status
+      if (status === 'CRITICAL' || (status === 'WARNING' && worst === 'NORMAL')) worst = status
+      sensors[field] = {
+        ...prev,
+        value: v,
+        unit: p?.unit ?? prev.unit,
+        status,
+        threshold: p ? { warning: p.warn, critical: p.critical } : prev.threshold,
+        delta: v - previous,
+        trend: Math.abs(v - previous) < 1e-6 ? 'stable' : v > previous ? 'up' : 'down',
+        history: points,
+      }
+    }
+
+    return {
+      ...base,
+      sensors,
+      healthIndex: healthFromValues(values, 'transformer') ?? base.healthIndex,
+      status: online ? worst : 'OFFLINE',
+      lastUpdated: lastReadingAt ?? base.lastUpdated,
+    } as Transformer
+  }, [base, live, values, series, online, lastReadingAt])
+
+  return { transformer, live, online, lastReadingAt }
+}
 
 function LiveTime() {
   const [time, setTime] = useState('')
@@ -207,6 +322,76 @@ function TrendChart({ transformer, type }: { transformer: Transformer; type: 'lo
   )
 }
 
+// Unacknowledged alarms for this device. In Live mode these are the real
+// alarm_events rows (the demo store's alarms belong to the mock fleet and would
+// contradict the Event Log below); acknowledging happens in that Event Log,
+// where the department problem catalogue is available.
+function LiveActiveAlarms({ nodeId }: { nodeId: string }) {
+  const [rows, setRows] = useState<{ id: string; message: string; severity: string; ts: number }[]>([])
+
+  useEffect(() => {
+    let cancelled = false
+    const load = () => {
+      api.events(nodeId).then((raw) => {
+        if (cancelled || !raw) return
+        setRows((raw as Record<string, unknown>[])
+          .filter((r) => !r.acknowledged_at)
+          .map((r) => ({
+            id: String(r.id),
+            severity: String(r.severity ?? 'WARNING'),
+            message: r.kind === 'offline'
+              ? 'Device offline — no telemetry received'
+              : `${String(r.param_label ?? r.param_key ?? 'Parameter')} ${Number(r.value ?? 0)}${String(r.unit ?? '')} (limit ${Number(r.threshold ?? 0)})`,
+            ts: new Date(String(r.raised_at ?? Date.now())).getTime(),
+          }))
+          .slice(0, 8))
+      })
+    }
+    load()
+    const t = setInterval(load, 20000)
+    const off = subscribeTelemetry((f) => { if (f.type === 'alarm' && f.id === nodeId) load() })
+    return () => { cancelled = true; clearInterval(t); off() }
+  }, [nodeId])
+
+  if (rows.length === 0) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-green-400 py-4">
+        <CheckCircle size={16} />
+        No active alarms — system operating normally
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-2">
+      {rows.map((a) => (
+        <div
+          key={a.id}
+          className="flex items-start gap-3 px-3 py-2.5 rounded-lg"
+          style={
+            a.severity === 'CRITICAL'
+              ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }
+              : { background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }
+          }
+        >
+          {a.severity === 'CRITICAL'
+            ? <XCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
+            : <AlertTriangle size={14} className="text-amber-400 flex-shrink-0 mt-0.5" />
+          }
+          <div className="flex-1 min-w-0">
+            <div className="text-xs text-slate-300">{a.message}</div>
+            <div className="flex items-center gap-1 text-[10px] text-slate-600 mt-0.5">
+              <Clock size={9} />
+              {new Date(a.ts).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      ))}
+      <div className="text-[10px] text-slate-600 pt-1">Acknowledge in the Event Log below.</div>
+    </div>
+  )
+}
+
 function ActiveAlarms({ transformerId }: { transformerId: string }) {
   const { alarms, acknowledgeAlarm } = useAppStore()
   const tAlarms = alarms.filter((a) => a.transformerId === transformerId && !a.acknowledged)
@@ -259,7 +444,8 @@ function ActiveAlarms({ transformerId }: { transformerId: string }) {
 export default function TransformerDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { transformers } = useAppStore()
-  const transformer = transformers.find((t) => t.id === id)
+  const base = transformers.find((t) => t.id === id)
+  const { transformer, live, online, lastReadingAt } = useLiveTransformer(base)
 
   if (!transformer) {
     return (
@@ -364,12 +550,18 @@ export default function TransformerDetailPage() {
           <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-slate-400">Connection</span>
+              {/* Was hardcoded ONLINE. Derived from the last stored reading so a
+                  silent device reads OFFLINE here as well as in the Event Log. */}
               <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-                <span className="text-xs text-green-400">ONLINE</span>
+                <div className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                <span className={`text-xs ${online ? 'text-green-400' : 'text-slate-500'}`}>
+                  {online ? 'ONLINE' : 'OFFLINE'}
+                </span>
               </div>
             </div>
-            <LiveTime />
+            {live && lastReadingAt
+              ? <div className="text-[10px] text-slate-600">Last reading: {new Date(lastReadingAt).toLocaleString()}</div>
+              : <LiveTime />}
           </div>
 
           {/* Transformer info */}
@@ -409,7 +601,7 @@ export default function TransformerDetailPage() {
           {/* Active Alarms */}
           <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Active Alarms</div>
-            <ActiveAlarms transformerId={transformer.id} />
+            {live ? <LiveActiveAlarms nodeId={transformer.id} /> : <ActiveAlarms transformerId={transformer.id} />}
           </div>
         </div>
       </div>

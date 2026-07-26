@@ -75,6 +75,44 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
 export const getAlarmSchema = (domain?: SensorDomain): DomainAlarmSchema | null =>
   domain ? ALARM_SCHEMA[domain] : null
 
+export type ParamStatus = 'NORMAL' | 'WARNING' | 'CRITICAL'
+
+/**
+ * Grade one live reading against its schema thresholds. 'high' params alarm on
+ * the way up (oil temp, hydrogen), 'low' ones on the way down (oil level), so
+ * the comparison direction has to come from the param, not the caller.
+ */
+export function paramStatus(value: number, p: AlarmParam): ParamStatus {
+  const breach = (limit: number) => (p.direction === 'high' ? value >= limit : value <= limit)
+  if (breach(p.critical)) return 'CRITICAL'
+  if (breach(p.warn)) return 'WARNING'
+  return 'NORMAL'
+}
+
+/**
+ * Composite health index from the live readings of one device: every param
+ * sitting in warning costs 10 points and every critical one 25, so the gauge
+ * moves for the same reasons the status pills do. Returns null when the device
+ * has reported none of its schema params (nothing to score) — the caller then
+ * keeps its own placeholder rather than showing a misleading 100.
+ */
+export function healthFromValues(values: Record<string, number>, domain?: SensorDomain): number | null {
+  const schema = getAlarmSchema(domain)
+  if (!schema) return null
+  let penalty = 0
+  let seen = 0
+  for (const p of schema.params) {
+    const v = values[p.key]
+    if (v === undefined) continue
+    seen++
+    const st = paramStatus(v, p)
+    if (st === 'CRITICAL') penalty += 25
+    else if (st === 'WARNING') penalty += 10
+  }
+  if (!seen) return null
+  return Math.max(0, Math.min(100, 100 - penalty))
+}
+
 /** Build the engine rule (NodeAlarmRule) from a domain's default schema. */
 export function defaultNodeRule(domain: SensorDomain): NodeAlarmRule {
   const s = ALARM_SCHEMA[domain]
