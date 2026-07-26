@@ -800,6 +800,7 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	}
 	t.Values = normalized
 
+	stored := 0
 	for key, val := range t.Values {
 		_, err := tenantDB.Exec("INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES (?, ?, ?, ?)",
 			t.NodeID, key, val, ts)
@@ -808,7 +809,25 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 			statErrors.Add(1)
 			continue
 		}
+		stored++
 		statReadings.Add(1)
+	}
+
+	// Stamp when this device last delivered actual measurements. This is NOT the
+	// same as last_seen: last_seen also moves on heartbeat/status frames (every
+	// 30s), so it cannot tell "the parameters stopped updating" from "the device
+	// is still talking". The presence sweep raises LINK_LOST off this column, so
+	// the link loss is on the timeline well before the device is declared
+	// offline instead of both landing in the same second.
+	if stored > 0 {
+		// GREATEST, not a plain assignment: a device flushing its offline backlog
+		// replays frames with OLD timestamps, and moving the column backwards
+		// would make the sweep declare the link lost the moment it recovered.
+		if _, err := controlDB.Exec(
+			"UPDATE device_presence SET last_reading_at = GREATEST(COALESCE(last_reading_at, ?), ?) WHERE node_id = ?",
+			ts, ts, t.NodeID); err != nil {
+			log.Printf("last_reading_at update failed for %s: %v", t.NodeID, err)
+		}
 	}
 
 	// Enrichment for WebSocket UI. Publish the CANONICAL values (same keys just
