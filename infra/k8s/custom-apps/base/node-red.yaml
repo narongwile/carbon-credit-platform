@@ -53,7 +53,7 @@ spec:
         # sha256 of flows.nodered-backend.json — changes on every flow update, so
         # the pod template changes → ArgoCD rolls the pod → load-flow re-copies the
         # new flow. Maintained by infra/scripts/sync-nodered-flow.sh (do not hand-edit).
-        checksum/flow: "4e85126031990336"
+        checksum/flow: "4ba833f67d3b2455"
     spec:
       securityContext:
         fsGroup: 1000
@@ -121,6 +121,12 @@ spec:
               value: "iothub"
             # Lock API CORS to the production frontend origin (flows read env.CORS_ORIGIN)
             - name: CORS_ORIGIN
+              value: "https://iiotplatform.thermexpertise.com"
+            # Origin used to build the "Open device" deep link in alarm cards
+            # (LINE Flex / Telegram button / Google Chat card). Set explicitly so
+            # the links do not silently break if the CORS policy is ever widened
+            # to '*' — notify falls back to CORS_ORIGIN when this is unset.
+            - name: APP_BASE_URL
               value: "https://iiotplatform.thermexpertise.com"
             # Dashboard admin auth (from seeded Secret)
             - name: NODE_RED_USERNAME
