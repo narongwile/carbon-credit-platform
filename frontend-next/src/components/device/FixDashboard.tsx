@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, LEGACY_WIRE_KEYS } from '@/lib/alarmParams'
+import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer } from '@/types'
 import {
@@ -202,6 +203,7 @@ function HealthGauge({ value }: { value: number }) {
 export default function FixDashboard({ device }: { device: ManagedDevice }) {
   const live = useIsLive()
   const [values, setValues] = useState<Record<string, number> | null>(null)
+  const [openParam, setOpenParam] = useState<string | null>(null)
 
   // Poll the stored readings, then let WS frames update them in real time.
   useEffect(() => {
@@ -222,6 +224,12 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     [live, values, device]
   )
   const tiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
+  // Every tile on screen is selectable inside the modal, so a user who opened
+  // the wrong metric can switch without closing and hunting for the right card.
+  const modalParams: ModalParam[] = useMemo(
+    () => tiles.map((t) => ({ key: t.key, label: t.label, unit: t.unit })),
+    [tiles],
+  )
   // Health from the live readings: every param sitting in warning costs 10 points
   // and every critical one 25, so the gauge reflects the same thresholds the
   // status pills use. Without readings (demo, or a silent device) fall back to
@@ -259,7 +267,16 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
         {tiles.map((tile) => {
           const sc = statusColor[tile.status]
           return (
-            <div key={tile.key} className="rounded-xl p-4" style={surface}>
+            // Clicking a card opens its full history + threshold editor. It is a
+            // button, not a div with onClick, so keyboard users reach it too.
+            <button
+              key={tile.key}
+              type="button"
+              onClick={() => setOpenParam(tile.key)}
+              className="w-full text-left rounded-xl p-4 transition-colors hover:border-indigo-500/40 cursor-pointer"
+              style={surface}
+              title={`Open ${tile.label} history`}
+            >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: sc.bg, color: sc.color }}>{tile.icon}</span>
@@ -270,7 +287,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
               <div className="text-2xl font-extrabold text-white tabular-nums">{tile.value}<span className="text-sm text-slate-500 ml-1">{tile.unit}</span></div>
               <div className="text-[11px] text-slate-500 mb-1">{tile.delta}</div>
               <Sparkline data={tile.spark} color={sc.color} />
-            </div>
+            </button>
           )
         })}
       </div>
@@ -294,6 +311,18 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {openParam && (
+        <ParamHistoryModal
+          nodeId={device.id}
+          deviceName={device.name}
+          orgId={device.orgId}
+          domain={device.domain}
+          params={modalParams}
+          initialKey={openParam}
+          onClose={() => setOpenParam(null)}
+        />
+      )}
 
       {/* Right: gauge + connection + asset */}
       <div className="lg:col-span-3 space-y-4">

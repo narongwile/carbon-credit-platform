@@ -136,6 +136,15 @@ export const api = {
   readings: (nodeId: string, sinceMin = 720, bucketSec = 0) =>
     req<{ param_key: string; value: number; taken_at: string }[]>(
       `/api/nodes/${nodeId}/readings?sinceMin=${sinceMin}${bucketSec > 0 ? `&bucketSec=${Math.round(bucketSec)}` : ''}`),
+  // Explicit window (UTC 'YYYY-MM-DD HH:MM:SS'), optionally one parameter only.
+  // "last N minutes" cannot express a period that ENDS in the past, which is
+  // exactly what inspecting a past excursion needs. Bucketed rows also carry
+  // v_min/v_max so a spike is not averaged away on a wide window.
+  readingsWindow: (nodeId: string, from: string, to: string, bucketSec = 0, paramKey?: string) =>
+    req<{ param_key: string; value: number; taken_at: string; v_min?: number; v_max?: number; n?: number }[]>(
+      `/api/nodes/${nodeId}/readings?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+      + (bucketSec > 0 ? `&bucketSec=${Math.round(bucketSec)}` : '')
+      + (paramKey ? `&paramKey=${encodeURIComponent(paramKey)}` : '')),
   // Per-device report over a date range: hourly min/avg/max per parameter
   // (raw readings for the retention window, readings_rollup beyond it), plus the
   // alarms and connectivity events raised in that window. from/to are UTC.

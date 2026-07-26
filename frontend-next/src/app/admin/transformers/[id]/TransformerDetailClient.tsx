@@ -7,6 +7,7 @@ import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import MyAlertSettings from '@/components/device/MyAlertSettings'
+import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
@@ -200,7 +201,7 @@ function HealthGauge({ value }: { value: number }) {
   )
 }
 
-function SensorCard({ label, icon, sensor }: { label: string; icon: React.ReactNode; sensor: SensorReading }) {
+function SensorCard({ label, icon, sensor, onOpen }: { label: string; icon: React.ReactNode; sensor: SensorReading; onOpen?: () => void }) {
   const statusConfig = {
     NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.1)', border: 'rgba(74,222,128,0.15)' },
     WARNING: { color: '#fbbf24', bg: 'rgba(251,191,36,0.1)', border: 'rgba(251,191,36,0.15)' },
@@ -220,8 +221,13 @@ function SensorCard({ label, icon, sensor }: { label: string; icon: React.ReactN
     .join(' ')
 
   return (
-    <div
-      className="rounded-xl p-4 transition-all hover:border-indigo-500/30"
+    // A button so the whole card is one keyboard-reachable target — the history
+    // and threshold editor live behind it.
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`Open ${label} history`}
+      className="w-full text-left rounded-xl p-4 transition-all hover:border-indigo-500/30 cursor-pointer"
       style={{ background: '#0d1117', border: '1px solid #1e2433' }}
     >
       <div className="flex items-start justify-between mb-3">
@@ -266,7 +272,7 @@ function SensorCard({ label, icon, sensor }: { label: string; icon: React.ReactN
           opacity="0.8"
         />
       </svg>
-    </div>
+    </button>
   )
 }
 
@@ -451,6 +457,10 @@ export default function TransformerDetailPage() {
   const { transformers } = useAppStore()
   const base = transformers.find((t) => t.id === id)
   const { transformer, live, online, lastReadingAt } = useLiveTransformer(base)
+  const [openParam, setOpenParam] = useState<string | null>(null)
+  // Both combined charts and all six cards open the same modal, so whichever the
+  // user clicked they can switch metric inside it.
+  const modalParams: ModalParam[] = ALARM_SCHEMA.transformer.params.map((p) => ({ key: p.key, label: p.label, unit: p.unit }))
 
   if (!transformer) {
     return (
@@ -507,12 +517,12 @@ export default function TransformerDetailPage() {
         {/* Left panel - sensor cards */}
         <div className="w-56 flex-shrink-0 p-3 space-y-2 overflow-y-auto" style={{ borderRight: '1px solid #1e2433' }}>
           <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Sensor Readings</div>
-          <SensorCard label="Oil Temperature" icon={<Thermometer size={13} />} sensor={s.oilTemperature} />
-          <SensorCard label="Hydrogen H2" icon={<Activity size={13} />} sensor={s.hydrogen} />
-          <SensorCard label="Moisture" icon={<Droplets size={13} />} sensor={s.moisture} />
-          <SensorCard label="Oil Level" icon={<Gauge size={13} />} sensor={s.oilLevel} />
-          <SensorCard label="Load" icon={<Zap size={13} />} sensor={s.load} />
-          <SensorCard label="Ambient Temp" icon={<Wind size={13} />} sensor={s.ambientTemperature} />
+          <SensorCard label="Oil Temperature" icon={<Thermometer size={13} />} sensor={s.oilTemperature} onOpen={() => setOpenParam('oilTemp')} />
+          <SensorCard label="Hydrogen H2" icon={<Activity size={13} />} sensor={s.hydrogen} onOpen={() => setOpenParam('hydrogen')} />
+          <SensorCard label="Moisture" icon={<Droplets size={13} />} sensor={s.moisture} onOpen={() => setOpenParam('moisture')} />
+          <SensorCard label="Oil Level" icon={<Gauge size={13} />} sensor={s.oilLevel} onOpen={() => setOpenParam('oilLevel')} />
+          <SensorCard label="Load" icon={<Zap size={13} />} sensor={s.load} onOpen={() => setOpenParam('load')} />
+          <SensorCard label="Ambient Temp" icon={<Wind size={13} />} sensor={s.ambientTemperature} onOpen={() => setOpenParam('ambientTemp')} />
         </div>
 
         {/* Center - 3D model + charts */}
@@ -527,17 +537,19 @@ export default function TransformerDetailPage() {
           {/* Charts */}
           <div className="flex-shrink-0 grid grid-cols-2 gap-0" style={{ borderTop: '1px solid #1e2433' }}>
             <div className="p-3" style={{ borderRight: '1px solid #1e2433' }}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">Load & Oil Temperature</div>
-                <div className="text-[10px] text-slate-600">Last 12h</div>
-              </div>
+              <button type="button" onClick={() => setOpenParam('load')}
+                className="w-full flex items-center justify-between mb-2 group" title="Open history">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider group-hover:text-indigo-400">Load &amp; Oil Temperature</div>
+                <div className="text-[10px] text-slate-600 group-hover:text-indigo-400">Last 12h · click for history</div>
+              </button>
               <TrendChart transformer={transformer} type="load-temp" />
             </div>
             <div className="p-3">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider">Hydrogen & Moisture</div>
-                <div className="text-[10px] text-slate-600">Last 12h</div>
-              </div>
+              <button type="button" onClick={() => setOpenParam('hydrogen')}
+                className="w-full flex items-center justify-between mb-2 group" title="Open history">
+                <div className="text-[10px] text-slate-500 uppercase tracking-wider group-hover:text-indigo-400">Hydrogen &amp; Moisture</div>
+                <div className="text-[10px] text-slate-600 group-hover:text-indigo-400">Last 12h · click for history</div>
+              </button>
               <TrendChart transformer={transformer} type="h2-moisture" />
             </div>
           </div>
@@ -609,6 +621,18 @@ export default function TransformerDetailPage() {
           </div>
         </div>
       </div>
+
+      {openParam && transformer && (
+        <ParamHistoryModal
+          nodeId={transformer.id}
+          deviceName={transformer.name}
+          orgId={transformer.orgId}
+          domain="transformer"
+          params={modalParams}
+          initialKey={openParam}
+          onClose={() => setOpenParam(null)}
+        />
+      )}
 
       {/* Alarm event log + transport/connectivity timeline (same component the
           generic node page uses, so both routes stay in step). */}
