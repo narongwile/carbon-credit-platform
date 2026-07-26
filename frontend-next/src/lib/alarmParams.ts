@@ -86,3 +86,19 @@ export function defaultNodeRule(domain: SensorDomain): NodeAlarmRule {
     healthIndexWarn: s.healthIndexWarn,
   }
 }
+
+/**
+ * Raw device wire keys that the ingest worker now normalises into canonical
+ * params (temp_c -> tempHigh+tempLow, oil_temp_c -> oilTemp, dga_h2_ppm ->
+ * hydrogen, ...). Readings stored before that normalisation still carry the raw
+ * spelling, so a device page would list the same metric twice — once as temp_c
+ * and once as tempHigh. Device dashboards hide these; the raw telemetry viewer
+ * deliberately does not, since its whole job is to show the wire verbatim.
+ * Keep in sync with paramMap in backend/worker/main.go.
+ */
+export const LEGACY_WIRE_KEYS = new Set([
+  'temp_c', 'oil_temp_c', 'ambient_temp_c', 'winding_temp_c',
+  'dga_h2_ppm', 'hydrogen_ppm', 'moisture_ppm', 'oil_level_pct', 'load_pct',
+  'door_state', 'rh_pct', 'batt_pct', 'impact_g', 'baro_alt_m',
+  'electrical_current_a', 'current_a',
+])

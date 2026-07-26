@@ -4,7 +4,7 @@ import { useMemo, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { ALARM_SCHEMA } from '@/lib/alarmParams'
+import { ALARM_SCHEMA, LEGACY_WIRE_KEYS } from '@/lib/alarmParams'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer } from '@/types'
 import {
@@ -129,7 +129,7 @@ function buildLiveTiles(device: ManagedDevice, values: Record<string, number>): 
   )
   // Anything else the device publishes (unmapped sensors) still gets shown.
   for (const [k, v] of Object.entries(values)) {
-    if (seen.has(k) || foreignKeys.has(k)) continue
+    if (seen.has(k) || foreignKeys.has(k) || LEGACY_WIRE_KEYS.has(k)) continue
     tiles.push({
       key: k,
       label: k,
