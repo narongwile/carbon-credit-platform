@@ -101,7 +101,7 @@ export default function ProfilePanel({ portal }: { portal: string }) {
             placeholder="123456:ABC-DEF… (bot token, or token@chat_id)" />
           <Field label="LINE Messaging API" value={channels.lineMsgApi}
             onChange={(v) => setChannels((c) => ({ ...c, lineMsgApi: v }))}
-            placeholder="Channel access token" />
+            placeholder="Channel access token@userId (Messaging API push)" />
           <Field label="Google Chat API" value={channels.googleChatApi}
             onChange={(v) => setChannels((c) => ({ ...c, googleChatApi: v }))}
             placeholder="https://chat.googleapis.com/v1/spaces/…/messages?key=…" />
