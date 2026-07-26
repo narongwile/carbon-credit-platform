@@ -45,26 +45,51 @@ spec:
               # while not one statement had run.
               set -e
               cd /sql
+
+              # MYSQL_PWD instead of -p: keeps the password out of the process
+              # list and drops the "using a password on the command line can be
+              # insecure" warning from every single invocation below.
+              export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+              m() { mysql -h mysql.iiot-uat.svc.cluster.local -u root "$@"; }
+
               echo "Running install.sql..."
-              mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < install.sql
+              # --force here too. schema.sql is a full snapshot that re-issues a
+              # plain "ALTER TABLE alarm_rules ADD COLUMN debounce_json" — MySQL
+              # has no ADD COLUMN IF NOT EXISTS (that clause is MariaDB-only, as
+              # schema.sql itself notes), so on an already-installed database it
+              # raises ER_DUP_FIELDNAME 1060 BY DESIGN. These files are written to
+              # be re-runnable under a runner that tolerates that error; without
+              # --force the first re-run aborts the whole install.
+              m --force < install.sql
+
+              # --force makes mysql exit 0 even if every statement failed, so the
+              # exit code proves nothing. Assert the objects instead.
+              missing=$(m -N -B -e "SELECT 4 - COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name IN ('nodes','readings','alarm_events','device_presence')")
+              [ "$missing" = "0" ] || { echo "FATAL: core tables missing after install.sql"; exit 1; }
+
               # Discover migrations instead of listing them: a hardcoded
               # "11 12 ... 18" silently skipped every new migrate-vN.sql, so a
               # schema change shipped in v19+ would never reach this database.
               # Start at 11 because install.sql already sources schema/bloodbox/v9/v10.
-              # --force keeps going past "duplicate column" on a re-run, which is
-              # what makes these files idempotent.
               echo "Running migrations (auto-discovered, v11+)..."
               found=0
               for n in $(ls migrate-v*.sql 2>/dev/null | sed -E 's/migrate-v([0-9]+)\.sql/\1/' | sort -n); do
                 [ "$n" -ge 11 ] || continue
                 found=$((found+1))
                 echo "Executing migrate-v${n}.sql..."
-                mysql --force -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < "migrate-v${n}.sql"
+                m --force < "migrate-v${n}.sql"
               done
               # Finding nothing means the mount is wrong, not that the schema is
               # up to date. Say so instead of reporting success.
               [ "$found" -gt 0 ] || { echo "FATAL: no migrate-v*.sql found in /sql"; exit 1; }
-              echo "Migrations complete! ($found applied)"
+
+              # Canary for the newest migration: v19 adds this column and the
+              # presence sweep's LINK_LOST stage reads it. If --force swallowed a
+              # real error, this is what catches it.
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='iothub' AND table_name='device_presence' AND column_name='last_reading_at'")
+              [ "$have" = "1" ] || { echo "FATAL: device_presence.last_reading_at missing — migrate-v19 did not apply"; exit 1; }
+
+              echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:
             - name: sql
               mountPath: /sql
