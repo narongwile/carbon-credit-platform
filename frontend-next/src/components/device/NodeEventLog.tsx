@@ -251,6 +251,7 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                     {te.isOfflineSync && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-400 font-medium animate-pulse">OFFLINE SYNCING</span>}
                     {te.type === 'LINK_RESTORE' && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-400 font-medium animate-pulse">DEVICE SYNCING</span>}
                     {te.type === 'DEVICE_OFFLINE' && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-red-500/20 text-red-400 font-medium">OFFLINE</span>}
+                    {te.type === 'LINK_LOST' && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-amber-500/20 text-amber-400 font-medium">LINK DOWN</span>}
                   </td>
                   <td className="py-2.5 px-3 text-slate-400 text-xs">{te.desc}</td>
                 </tr>
