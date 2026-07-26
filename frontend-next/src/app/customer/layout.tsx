@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
+import OrgBrand from '@/components/OrgBrand'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
 import api, { isLive } from '@/lib/api'
 import { viewerDepartments } from '@/lib/viewer'
@@ -30,9 +31,8 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { viewerUserId, setViewerUserId, orgLogos, setOrgLogo } = useAppStore()
+  const { viewerUserId, setViewerUserId, setOrgLogo } = useAppStore()
   const orgId = getSession()?.orgId || 'org-1'
-  const orgLogo = orgLogos[orgId]
   const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)
 
@@ -62,11 +62,8 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
       <div className="flex h-screen overflow-hidden" style={{ background: '#0a0e1a' }}>
         <aside className="w-52 flex flex-col flex-shrink-0" style={{ background: '#0d1117', borderRight: '1px solid #1e2433' }}>
           <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: orgLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                {orgLogo ? <img src={orgLogo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
-              </div>
-              <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
+            <div className="mb-1">
+              <OrgBrand orgId={orgId} />
             </div>
             <div className="text-[10px] text-slate-600 ml-9">Customer Portal</div>
             {/* Acting viewer — drives department-based access */}

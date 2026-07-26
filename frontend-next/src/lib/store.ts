@@ -15,12 +15,15 @@ interface AppState {
   viewerUserId: string
   /** Per-organization uploaded logo (data URL), keyed by orgId. */
   orgLogos: Record<string, string>
+  /** Per-organization display name shown beside the sidebar logo (replaces "ONEOPS"). */
+  orgNames: Record<string, string>
   /** Node documents, scoped/visible per department. */
   documents: NodeDocument[]
 
   setUser: (user: User | null) => void
   setViewerUserId: (id: string) => void
   setOrgLogo: (orgId: string, dataUrl: string) => void
+  setOrgName: (orgId: string, name: string) => void
   addDocument: (doc: NodeDocument) => void
   removeDocument: (id: string) => void
   setSelectedOrgId: (orgId: string) => void
@@ -48,11 +51,13 @@ export const useAppStore = create<AppState>()(
       isLiveMode: !!process.env.NEXT_PUBLIC_API_URL,
       viewerUserId: 'u-cc',
       orgLogos: {},
+      orgNames: {},
       documents: [],
 
       setUser: (user) => set({ user }),
       setViewerUserId: (id) => set({ viewerUserId: id }),
       setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
+      setOrgName: (orgId, name) => set((s) => ({ orgNames: { ...s.orgNames, [orgId]: name } })),
       addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
       removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
       setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),

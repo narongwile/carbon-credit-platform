@@ -13,11 +13,14 @@ import { defaultNodeRule } from '@/lib/alarmParams'
 const LocationPicker = dynamic(() => import('@/components/map/LocationPicker'), { ssr: false })
 
 export default function SettingsPage() {
-  const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo } = useAppStore()
+  const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo, setOrgName } = useAppStore()
   const transformers = getTransformersByOrg(selectedOrgId)
   const [selectedId, setSelectedId] = useState(transformers[0]?.id || '')
   const logoRef = useRef<HTMLInputElement>(null)
   const orgName = organizations.find((o) => o.id === selectedOrgId)?.name ?? 'Organization'
+  // Editable display name — what the sidebar shows beside the logo instead of
+  // "ONEOPS". Seeded from the organizations table (live) or the mock org name.
+  const [brandName, setBrandName] = useState('')
   const currentLogo = orgLogos[selectedOrgId]
   const onLogo = (file?: File) => {
     if (!file) return
@@ -26,15 +29,25 @@ export default function SettingsPage() {
     reader.onload = async () => {
       const dataUrl = String(reader.result)
       setOrgLogo(selectedOrgId, dataUrl)                                  // instant local UX
-      if (isLive()) await api.updateOrgBranding(selectedOrgId, dataUrl) // persist per-company
+      if (isLive()) await api.updateOrgBranding(selectedOrgId, { logoUrl: dataUrl }) // persist per-company
       toast.success('Organization logo updated')
     }
     reader.readAsDataURL(file)
   }
   const removeLogo = async () => {
     setOrgLogo(selectedOrgId, '')
-    if (isLive()) await api.updateOrgBranding(selectedOrgId, '')
+    if (isLive()) await api.updateOrgBranding(selectedOrgId, { logoUrl: '' })
     toast.success('Logo removed')
+  }
+  const saveBrandName = async () => {
+    const name = brandName.trim()
+    if (!name) { toast.error('Organization name cannot be empty'); return }
+    setOrgName(selectedOrgId, name)                                       // sidebar updates instantly
+    if (isLive()) {
+      const r = await api.updateOrgBranding(selectedOrgId, { name })
+      if (!r) { toast.error('Failed to save organization name'); return }
+    }
+    toast.success('Organization name updated')
   }
   const [thresholds, setThresholds] = useState({
     oilTempWarn: 80,
@@ -56,10 +69,14 @@ export default function SettingsPage() {
   const [orgLng, setOrgLng] = useState<number | null>(null)
 
   useEffect(() => {
+    // Mock fallback so the name field is never blank in demo mode.
+    setBrandName(organizations.find((o) => o.id === selectedOrgId)?.name ?? '')
     if (!isLive()) return
     api.orgs().then(orgs => {
       const org = orgs?.find(o => o.id === selectedOrgId)
-      if (org && org.lat != null && org.lng != null) {
+      if (!org) return
+      if (org.name) setBrandName(org.name)
+      if (org.lat != null && org.lng != null) {
         setOrgLat(org.lat)
         setOrgLng(org.lng)
       }
@@ -121,10 +138,28 @@ export default function SettingsPage() {
         <p className="text-sm text-slate-500 mt-0.5">Organization branding, thresholds and system preferences</p>
       </div>
 
-      {/* Organization logo */}
+      {/* Organization branding */}
       <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-        <h3 className="text-sm font-semibold text-white mb-1">Organization Logo</h3>
-        <p className="text-[11px] text-slate-500 mb-4">Upload your organization&apos;s logo. It appears in the sidebar for {orgName}.</p>
+        <h3 className="text-sm font-semibold text-white mb-1">Organization Branding</h3>
+        <p className="text-[11px] text-slate-500 mb-4">Logo and display name shown in the sidebar for {orgName} — replaces the ONEOPS default for this organization only.</p>
+
+        {/* Display name */}
+        <div className="mb-4 max-w-md">
+          <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Organization Name</label>
+          <div className="flex items-center gap-2">
+            <input
+              value={brandName}
+              onChange={(e) => setBrandName(e.target.value)}
+              maxLength={120}
+              placeholder="ONEOPS"
+              className="flex-1 px-3 py-2 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inputStyle}
+            />
+            <button onClick={saveBrandName} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+              <Save size={13} /> Save
+            </button>
+          </div>
+        </div>
         <div className="flex items-center gap-5">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0" style={{ background: currentLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: '1px solid #1e2433' }}>
             {currentLogo ? <img src={currentLogo} alt="logo" className="w-full h-full object-contain" /> : <Building2 size={30} className="text-white" />}
@@ -151,12 +186,39 @@ export default function SettingsPage() {
               <p className="text-xs text-slate-500">Fallback location for Eternity sensors without GPS</p>
             </div>
           </div>
-          <LocationPicker 
-            lat={orgLat} 
-            lng={orgLng} 
-            onChange={(lat, lng) => { setOrgLat(lat); setOrgLng(lng) }} 
+          <LocationPicker
+            lat={orgLat}
+            lng={orgLng}
+            onChange={(lat, lng) => { setOrgLat(lat); setOrgLng(lng) }}
             height="160px"
           />
+          {/* Typed coordinates — surveyors hand over lat/lng as numbers, and a
+              map pin alone cannot be entered to that precision. Kept in sync
+              with the picker both ways. */}
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1 uppercase tracking-wider">Latitude</label>
+              <input
+                type="number" step="0.0000001" min={-90} max={90}
+                value={orgLat ?? ''}
+                onChange={(e) => setOrgLat(e.target.value === '' ? null : Math.max(-90, Math.min(90, Number(e.target.value))))}
+                placeholder="13.7563000"
+                className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                style={inputStyle}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1 uppercase tracking-wider">Longitude</label>
+              <input
+                type="number" step="0.0000001" min={-180} max={180}
+                value={orgLng ?? ''}
+                onChange={(e) => setOrgLng(e.target.value === '' ? null : Math.max(-180, Math.min(180, Number(e.target.value))))}
+                placeholder="100.5018000"
+                className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                style={inputStyle}
+              />
+            </div>
+          </div>
         </div>
       </div>
 

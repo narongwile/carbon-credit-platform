@@ -264,9 +264,11 @@ export const api = {
   saveOrg: (body: { id?: string; name: string; status?: string; logoUrl?: string; adminEmail?: string; adminName?: string }) =>
     req<{ id: string }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOrg: (id: string) => req(`/api/orgs/${id}`, { method: 'DELETE' }),
-  // Per-company branding: org admins set their own org's logo (data URL or hosted URL).
-  updateOrgBranding: (orgId: string, logoUrl: string) =>
-    req<{ ok: boolean }>(`/api/orgs/${orgId}/branding`, { method: 'PUT', body: JSON.stringify({ logoUrl }) }),
+  // Per-company branding: org admins set their own org's logo (data URL or
+  // hosted URL), display name (shown beside the sidebar logo instead of
+  // "ONEOPS") and factory pin. Partial — only the fields passed are written.
+  updateOrgBranding: (orgId: string, patch: { logoUrl?: string; name?: string; lat?: number | null; lng?: number | null }) =>
+    req<{ ok: boolean }>(`/api/orgs/${orgId}/branding`, { method: 'PUT', body: JSON.stringify(patch) }),
   updateOrgLocation: (orgId: string, lat: number, lng: number) =>
     req<{ ok: boolean }>(`/api/orgs/${orgId}/location`, { method: 'PUT', body: JSON.stringify({ lat, lng }) }),
   entitlements: (orgId: string) => req<string[]>(`/api/orgs/${orgId}/entitlements`),

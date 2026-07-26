@@ -924,6 +924,28 @@ func canonicalParam(key string) string {
 // the DSN by hand (root:PASS@tcp(...)) mis-parses such passwords and yields
 // "Access denied", even though the CLI (mysql -p) and mysql2 (separate field)
 // accept the same value. DB_PASSWORD comes from the mysql-credentials Secret.
+// dbLoc returns the fixed zone matching the database's wall-clock convention.
+// The platform stores wall times in DB_TZ (default +07:00): MySQL runs with
+// --default-time-zone=+07:00 and Node-RED's mysql2 pools set timezone '+07:00',
+// so every NOW(3) row is ICT wall time. This driver, however, formats time.Time
+// in cfg.Loc — which defaults to UTC — so the worker was writing UTC wall times
+// (taken_at, last_reading_at, oldest_ts…) into a +07:00 database: every value it
+// wrote landed 7 hours in the past. That is why the header badge said
+// "7h ago" for a device that had been up seconds earlier.
+func dbLoc() *time.Location {
+	tz := getEnv("DB_TZ", "+07:00")
+	var sign, hh, mm int
+	if n, err := fmt.Sscanf(tz, "+%d:%d", &hh, &mm); n == 2 && err == nil {
+		sign = 1
+	} else if n, err := fmt.Sscanf(tz, "-%d:%d", &hh, &mm); n == 2 && err == nil {
+		sign = -1
+	} else {
+		log.Printf("DB_TZ %q not parseable, falling back to +07:00", tz)
+		sign, hh, mm = 1, 7, 0
+	}
+	return time.FixedZone("DBTZ", sign*(hh*3600+mm*60))
+}
+
 func dbDSN(dbName string) string {
 	cfg := mysql.NewConfig()
 	cfg.User = getEnv("DB_USER", "root")
@@ -932,5 +954,9 @@ func dbDSN(dbName string) string {
 	cfg.Addr = getEnv("DB_HOST", "mysql") + ":" + getEnv("DB_PORT", "3306")
 	cfg.DBName = dbName
 	cfg.ParseTime = true
+	// Write AND read wall times in the DB's own zone (see dbLoc). Loc converts
+	// outgoing time.Time values before formatting and stamps parsed DATETIMEs on
+	// the way in, so a round trip is the identity again.
+	cfg.Loc = dbLoc()
 	return cfg.FormatDSN()
 }
