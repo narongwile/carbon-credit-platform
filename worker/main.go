@@ -144,7 +144,13 @@ const UnassignedOrg = "__unassigned__"
 const (
 	backlogThreshold   = 30 * time.Second
 	backlogBatchWindow = 2 * time.Minute
+	// How long to wait before retrying the last_reading_at stamp after it fails
+	// (i.e. before migrate-v19 has run).
+	lastReadingRetry = 5 * time.Minute
 )
+
+// Unix-ms of the next allowed last_reading_at attempt; 0 = attempt now.
+var lastReadingRetryAt atomic.Int64
 
 type RuleCacheEntry struct {
 	Rule      AlarmRule
@@ -436,7 +442,13 @@ func updatePresence(t TelemetryPayload) {
 		log.Printf("Presence update failed for %s: %v", t.NodeID, err)
 		return
 	}
-	if wasOffline {
+	// online == 1 matters as much as wasOffline. A device that is already marked
+	// offline still delivers its retained/late LWT ("state":"offline"), and
+	// treating that as a recovery wrote a bogus LINK_RESTORE and cleared the open
+	// offline alarm — the timeline claimed "Link none → wifi (recovered)" at the
+	// exact second the device announced it was gone, and the log printed
+	// "Device reported offline" and "Device back online" one after the other.
+	if wasOffline && online == 1 {
 		// from_transport 'none' is what the transport endpoint maps to
 		// LINK_RESTORE, so "device is back" sits next to the outage entry.
 		transport := t.Transport
@@ -819,14 +831,19 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	// is still talking". The presence sweep raises LINK_LOST off this column, so
 	// the link loss is on the timeline well before the device is declared
 	// offline instead of both landing in the same second.
-	if stored > 0 {
+	if stored > 0 && time.Now().UnixMilli() >= lastReadingRetryAt.Load() {
 		// GREATEST, not a plain assignment: a device flushing its offline backlog
 		// replays frames with OLD timestamps, and moving the column backwards
 		// would make the sweep declare the link lost the moment it recovered.
 		if _, err := controlDB.Exec(
 			"UPDATE device_presence SET last_reading_at = GREATEST(COALESCE(last_reading_at, ?), ?) WHERE node_id = ?",
 			ts, ts, t.NodeID); err != nil {
-			log.Printf("last_reading_at update failed for %s: %v", t.NodeID, err)
+			// The column ships in migrate-v19. Until that runs, this fails on every
+			// frame — several times a second per device — so back off instead of
+			// flooding the log, and keep retrying so it starts working on its own
+			// once the migration lands (no pod restart needed).
+			lastReadingRetryAt.Store(time.Now().Add(lastReadingRetry).UnixMilli())
+			log.Printf("last_reading_at update failed for %s (retrying in %s): %v", t.NodeID, lastReadingRetry, err)
 		}
 	}
 
