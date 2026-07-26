@@ -4,6 +4,7 @@ import { useMemo, useEffect, useState, useCallback } from 'react'
 import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, useIsLive } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { defaultNodeRule } from '@/lib/alarmParams'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { getSession } from '@/lib/auth'
@@ -82,7 +83,21 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     })
   }, [live, domain, viewerUserId])
 
-  useEffect(() => { loadLive() }, [loadLive])
+  // Keep both tables live, the way the sensor tiles are. Two triggers:
+  //  • a WS alarm frame for THIS device (the worker publishes one the moment a
+  //    threshold trips) refetches immediately, so a new alarm appears without a
+  //    reload;
+  //  • a slower poll catches everything that has no WS channel — the presence
+  //    sweep's offline rows, recoveries and backlog flushes.
+  useEffect(() => {
+    loadLive()
+    if (!live) return
+    const t = setInterval(loadLive, 20000)
+    const off = subscribeTelemetry((f) => {
+      if (f.type === 'alarm' && f.id === nodeId) loadLive()
+    })
+    return () => { clearInterval(t); off() }
+  }, [loadLive, live, nodeId])
 
   // Acknowledge against the backend when live, else the local demo store.
   const onAck = useCallback(async (eventId: string) => {
