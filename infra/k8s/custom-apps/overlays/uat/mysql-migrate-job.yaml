@@ -5,8 +5,22 @@ metadata:
   namespace: iiot-uat
   annotations:
     argocd.argoproj.io/hook: Sync
+    # Delete the PREVIOUS run just before creating the next one — never on
+    # success. A finished Job left in place is how you read the migration log
+    # afterwards, and it is what ArgoCD polls to see the hook completed.
+    #
+    # Do NOT add ttlSecondsAfterFinished here, and do not delete this Job by
+    # hand while a sync is running: ArgoCD waits on the object it created, so a
+    # Job that vanishes mid-sync leaves the sync stuck on
+    # "waiting for completion of hook batch/Job/mysql-auto-migrate" forever.
+    # Recovery is to terminate the sync operation, then sync again.
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
 spec:
+  # Fail fast and visibly. With the defaults a broken migration retried 6 times
+  # with backoff, and ArgoCD showed nothing but "waiting" for several minutes —
+  # indistinguishable from a hang.
+  backoffLimit: 2
+  activeDeadlineSeconds: 900
   template:
     spec:
       restartPolicy: Never
@@ -17,7 +31,11 @@ spec:
             - sh
             - -c
             - |
+              set -e
               git clone --branch feature/deploy-ingest-worker --depth 1 https://gitlab.com/narongwile/carbon-credit-platform.git /workspace
+              test -d /workspace/backend/sql || {
+                echo "FATAL: backend/sql missing from the clone — nothing to migrate"; exit 1; }
+              echo "clone ok: $(ls /workspace/backend/sql/*.sql | wc -l) sql files"
           volumeMounts:
             - name: workspace
               mountPath: /workspace
@@ -34,6 +52,11 @@ spec:
             - sh
             - -c
             - |
+              # set -e or the job LIES. Without it a failed cd (or a missing
+              # install.sql) fell through to the loop, matched nothing, printed
+              # "Migrations complete!" and exited 0 — ArgoCD saw a green hook
+              # while not one statement had run.
+              set -e
               cd /workspace/backend/sql
               echo "Running install.sql..."
               mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < install.sql
@@ -44,12 +67,17 @@ spec:
               # --force keeps going past "duplicate column" on a re-run, which is
               # what makes these files idempotent.
               echo "Running migrations (auto-discovered, v11+)..."
+              found=0
               for n in $(ls migrate-v*.sql 2>/dev/null | sed -E 's/migrate-v([0-9]+)\.sql/\1/' | sort -n); do
                 [ "$n" -ge 11 ] || continue
+                found=$((found+1))
                 echo "Executing migrate-v${n}.sql..."
                 mysql --force -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < "migrate-v${n}.sql"
               done
-              echo "Migrations complete!"
+              # Finding nothing means the checkout is wrong, not that the schema
+              # is up to date. Say so instead of reporting success.
+              [ "$found" -gt 0 ] || { echo "FATAL: no migrate-v*.sql found"; exit 1; }
+              echo "Migrations complete! ($found applied)"
           volumeMounts:
             - name: workspace
               mountPath: /workspace
