@@ -621,10 +621,12 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Status (birth/LWT) and heartbeat frames carry no readings — record presence
-	// and stop, instead of falling through the readings path.
+	// Always record presence (every frame means the device is online)
+	updatePresence(t)
+
+	// Status (birth/LWT) and heartbeat frames carry no readings — stop here
+	// instead of falling through the readings path.
 	if t.isPresence() {
-		updatePresence(t)
 		return
 	}
 
