@@ -37,12 +37,17 @@ spec:
               cd /workspace/backend/sql
               echo "Running install.sql..."
               mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < install.sql
-              echo "Running migrations v11 to v17..."
-              for i in 11 12 13 14 15 16 17 18; do
-                if [ -f "migrate-v${i}.sql" ]; then
-                  echo "Executing migrate-v${i}.sql..."
-                  mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < migrate-v${i}.sql
-                fi
+              # Discover migrations instead of listing them: the old hardcoded
+              # "11 12 ... 18" silently skipped every new migrate-vN.sql, so a
+              # schema change shipped in v19+ would never reach this database.
+              # Start at 11 because install.sql already sources schema/bloodbox/v9/v10.
+              # --force keeps going past "duplicate column" on a re-run, which is
+              # what makes these files idempotent.
+              echo "Running migrations (auto-discovered, v11+)..."
+              for n in $(ls migrate-v*.sql 2>/dev/null | sed -E 's/migrate-v([0-9]+)\.sql/\1/' | sort -n); do
+                [ "$n" -ge 11 ] || continue
+                echo "Executing migrate-v${n}.sql..."
+                mysql --force -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < "migrate-v${n}.sql"
               done
               echo "Migrations complete!"
           volumeMounts:

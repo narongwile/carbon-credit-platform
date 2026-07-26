@@ -753,13 +753,25 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	// "Flushed 1 offline record" lines. Use a wider threshold and fold packets
 	// that arrive close together into a single, counted batch row.
 	if time.Since(ts) > backlogThreshold {
-		res, err := tenantDB.Exec(
-			"UPDATE offline_sync_log SET records_count = records_count + 1, oldest_ts = LEAST(oldest_ts, ?), newest_ts = GREATEST(newest_ts, ?), sync_at = NOW(3) "+
-				"WHERE node_id = ? AND sync_at > (NOW(3) - INTERVAL ? SECOND) ORDER BY sync_at DESC LIMIT 1",
-			ts, ts, t.NodeID, int(backlogBatchWindow.Seconds()))
+		// Find the open batch first, then update it by primary key. The previous
+		// "UPDATE ... ORDER BY ... LIMIT 1" form is fragile — it silently matched
+		// nothing on some server configurations, which made the backlog entry
+		// disappear entirely instead of merging. LEAST/GREATEST are guarded with
+		// COALESCE so a row whose bounds were never set does not turn NULL.
+		var batchID int64
+		err := tenantDB.QueryRow(
+			"SELECT id FROM offline_sync_log WHERE node_id = ? AND sync_at > (NOW(3) - INTERVAL ? SECOND) ORDER BY sync_at DESC LIMIT 1",
+			t.NodeID, int(backlogBatchWindow.Seconds())).Scan(&batchID)
 		affected := int64(0)
-		if err == nil {
-			affected, _ = res.RowsAffected()
+		if err == nil && batchID > 0 {
+			if res, uerr := tenantDB.Exec(
+				"UPDATE offline_sync_log SET records_count = records_count + 1, "+
+					"oldest_ts = LEAST(COALESCE(oldest_ts, ?), ?), newest_ts = GREATEST(COALESCE(newest_ts, ?), ?), sync_at = NOW(3) WHERE id = ?",
+				ts, ts, ts, ts, batchID); uerr == nil {
+				affected, _ = res.RowsAffected()
+			} else {
+				log.Printf("offline_sync_log merge failed for %s: %v", t.NodeID, uerr)
+			}
 		}
 		if affected == 0 {
 			if _, err := tenantDB.Exec(
