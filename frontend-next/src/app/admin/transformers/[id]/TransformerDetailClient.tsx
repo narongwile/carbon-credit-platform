@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
+import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
@@ -16,7 +17,7 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2, RefreshCw
+  ChevronLeft, Maximize2
 } from 'lucide-react'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
@@ -489,10 +490,8 @@ export default function TransformerDetailPage() {
           {transformer.location}
         </div>
         <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-slate-500">
-            <RefreshCw size={11} className="text-green-400 animate-spin" style={{ animationDuration: '3s' }} />
-            <span>{live ? 'Live' : 'Demo'}</span>
-          </div>
+          {/* Was a permanently spinning "Live" — it said nothing about the device. */}
+          <DeviceLiveStatus nodeId={transformer.id} />
           <NodeReportButton nodeId={transformer.id} deviceName={transformer.name} domain="transformer" />
           <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-colors">
             <Maximize2 size={14} />

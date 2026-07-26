@@ -8,6 +8,26 @@
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { useAppStore } from './store'
 
+/** device_presence as served alongside the latest readings. */
+export interface DevicePresence {
+  online: number
+  last_seen: string | null
+  last_reading_at?: string | null
+  rssi?: number | null
+  batt?: number | null
+  fw?: string | null
+  transport?: string | null
+}
+
+/** Payload of GET /api/fleet/:id/latest. */
+export interface NodeLatest {
+  nodeId: string
+  values: Record<string, number>
+  lastReadingAt: string | null
+  /** null when the device has never reported (no presence row yet). */
+  presence?: DevicePresence | null
+}
+
 /** Payload of GET /api/nodes/:id/report — see reportFunc in the Node-RED generator. */
 export interface NodeReport {
   nodeId: string
@@ -126,7 +146,7 @@ export const api = {
   fleet: (orgId: string, domain?: string) =>
     req<FleetNode[]>(`/api/fleet?orgId=${encodeURIComponent(orgId)}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`),
   latest: (nodeId: string) =>
-    req<{ nodeId: string; values: Record<string, number>; lastReadingAt: string | null }>(`/api/fleet/${nodeId}/latest`),
+    req<NodeLatest>(`/api/fleet/${nodeId}/latest`),
 
   // Downlink (backend → device). config publishes retained; body empty = sync
   // the saved alarm rule down to the device.

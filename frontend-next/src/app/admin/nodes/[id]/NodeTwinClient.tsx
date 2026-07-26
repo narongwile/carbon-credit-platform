@@ -8,8 +8,8 @@ import FixDashboard from '@/components/device/FixDashboard'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
-import { ArrowLeft, Wifi, WifiOff } from 'lucide-react'
-import clsx from 'clsx'
+import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
+import { ArrowLeft } from 'lucide-react'
 import type { ManagedDevice } from '@/types/org'
 
 const devices = allManagedDevices()
@@ -31,12 +31,12 @@ export default function NodeTwinClient() {
         </button>
         <span className="text-base font-bold text-white">{device.name}</span>
         {meta && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span>}
-        <span className={clsx('flex items-center gap-1 text-xs font-medium', device.status === 'online' ? 'text-green-400' : 'text-slate-500')}>
-          {device.status === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />} {device.status}
-        </span>
         <span className="text-xs text-slate-500">{device.location} · {device.serial}</span>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-[11px] text-slate-600 hidden lg:inline">3D Digital Twin · click any component to inspect</span>
+          <span className="text-[11px] text-slate-600 hidden xl:inline">3D Digital Twin · click any component to inspect</span>
+          {/* device.status comes from the seed fleet and never changes. The badge
+              follows device_presence instead, so it agrees with the Event Log. */}
+          <DeviceLiveStatus nodeId={device.id} />
           <NodeReportButton nodeId={device.id} deviceName={device.name} domain={device.domain} />
         </div>
       </div>
