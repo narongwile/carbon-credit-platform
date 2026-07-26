@@ -151,14 +151,15 @@ export function useManagedDevice(orgId: string, id: string): {
   loaded: boolean
   found: boolean
 } {
-  const { devices, loaded, fromBackend } = useManagedDevices(orgId)
+  const { devices, loaded } = useManagedDevices(orgId)
   return useMemo(() => {
     const hit = devices.find((d) => d.id === id)
     if (hit) return { device: hit, loaded, found: true }
-    // A device may belong to another org (superadmin opening any node) — fall
-    // back to the full seed list before declaring it missing.
+    // Not in this org's roster. It may still be a real device in ANOTHER org — a
+    // superadmin can open any node — so fall back to the full seed list before
+    // declaring it missing, and only once the roster has actually arrived
+    // (otherwise the page flashes "not found" on every load).
     const anyMock = allManagedDevices().find((d) => d.id === id)
-    if (anyMock && !fromBackend) return { device: anyMock, loaded, found: true }
     return { device: anyMock ?? null, loaded, found: !!anyMock }
-  }, [devices, id, loaded, fromBackend])
+  }, [devices, id, loaded])
 }

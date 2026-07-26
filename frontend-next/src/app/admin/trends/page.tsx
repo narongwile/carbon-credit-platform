@@ -82,6 +82,11 @@ export default function TrendsPage() {
   const [selectedId, setSelectedId] = useState('')
   const [rangeId, setRangeId] = useState<(typeof RANGES)[number]['id']>('24h')
   const [rows, setRows] = useState<Row[] | null>(null)
+  // The window is captured WITH the data, not read from the clock during
+  // render. Date.now() in the render body produced a new [from,to] on every
+  // pass, so the bucketing memo never hit its cache and the axis domain moved
+  // continuously — the charts re-scaled on any unrelated re-render.
+  const [win, setWin] = useState<{ from: number; to: number }>(() => ({ from: Date.now() - 1440 * 60_000, to: Date.now() }))
   const [loading, setLoading] = useState(false)
 
   // The roster arrives asynchronously, so the first device cannot seed useState.
@@ -98,14 +103,14 @@ export default function TrendsPage() {
     setLoading(true)
     // One bucket per plotted point: the browser receives ~MAX_POINTS rows per
     // parameter instead of every sample in the window.
+    const to = Date.now()
     api.readings(selectedId, minutes, Math.max(60, (minutes * 60) / MAX_POINTS))
-      .then((r) => { if (!cancelled) setRows(r ?? []) })
+      .then((r) => { if (!cancelled) { setRows(r ?? []); setWin({ from: to - minutes * 60_000, to }) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [live, selectedId, minutes])
 
-  const toMs = Date.now()
-  const fromMs = toMs - minutes * 60_000
+  const { from: fromMs, to: toMs } = win
 
   // One chart per parameter this device reports: schema params first (label,
   // unit and thresholds known), then anything else it publishes.
