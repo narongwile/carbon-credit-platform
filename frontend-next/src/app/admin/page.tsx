@@ -4,8 +4,8 @@ import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
 import { getGeoNodes } from '@/lib/geoNodes'
-import { getHostsByOrg } from '@/lib/fleetData'
-import { useFleetLive, statusFromLive } from '@/lib/useFleetLive'
+import { useLiveGeoNodes } from '@/lib/useFleetLive'
+import { useFleetHosts } from '@/lib/useManagedDevices'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
 import Link from 'next/link'
 import clsx from 'clsx'
@@ -144,15 +144,12 @@ function HostCard({ host, href, liveStatus }: { host: SensorHost; href: string; 
 function OverviewTab() {
   const { selectedOrgId, getAlarmsByOrg } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
-  const hosts = getHostsByOrg(orgId)
+  // Roster AND status from /api/fleet in Live mode (mock when the API is off),
+  // so a device registered by its first telemetry frame is counted here.
+  const { hosts, fromBackend } = useFleetHosts(orgId)
   const alarms = getAlarmsByOrg(orgId)
 
-  // Live overlay from MySQL (via /api/fleet); falls back to mock when API is off.
-  const live = useFleetLive(orgId)
-  const eff = (h: SensorHost): string => {
-    const l = live.byId.get(h.id)
-    return l ? statusFromLive(l) : h.status
-  }
+  const eff = (h: SensorHost): string => h.status
 
   const byDomain = (d: SensorDomain) => hosts.filter((h) => h.domain === d)
   const normal = hosts.filter((h) => eff(h) === 'NORMAL').length
@@ -201,7 +198,7 @@ function OverviewTab() {
             <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} liveStatus={live.byId.get(h.id) ? eff(h) : undefined} href={d === 'transformer' ? `/admin/transformers/${h.id}` : `/admin/nodes/${h.id}`} />
+                <HostCard key={h.id} host={h} liveStatus={fromBackend ? eff(h) : undefined} href={d === 'transformer' ? `/admin/transformers/${h.id}` : `/admin/nodes/${h.id}`} />
               ))}
             </div>
           </div>
@@ -293,7 +290,10 @@ const DASH_TABS = [
 export default function AdminDashboardPage() {
   const { selectedOrgId } = useAppStore()
   const [tab, setTab] = useState<'overview' | 'location' | 'alarm'>('overview')
-  const nodes = getGeoNodes(selectedOrgId || 'org-1')
+  // Live coordinates from /api/fleet when the backend has them; the seed map
+  // only when it does not, so a real device is never missing from the map.
+  const liveNodes = useLiveGeoNodes(selectedOrgId || 'org-1')
+  const nodes = liveNodes ?? getGeoNodes(selectedOrgId || 'org-1')
 
   return (
     <div className="p-5 space-y-5">

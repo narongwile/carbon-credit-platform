@@ -2,8 +2,7 @@
 
 import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
-import { getHostsByOrg } from '@/lib/fleetData'
-import { useFleetLive, statusFromLive } from '@/lib/useFleetLive'
+import { useFleetHosts } from '@/lib/useManagedDevices'
 import { viewerDomains, getViewerUser } from '@/lib/viewer'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight } from 'lucide-react'
@@ -23,13 +22,10 @@ export default function CustomerPage() {
   const allowed = viewerDomains(viewerUserId)
   const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
   
-  const baseDevices = getHostsByOrg(orgId).filter((h) => allowed.includes(h.domain))
-  const { byId, loaded } = useFleetLive(orgId)
-  
-  const devices = baseDevices.map(d => {
-    const live = byId.get(d.id)
-    return live ? { ...d, status: statusFromLive(live) } : d
-  })
+  // Roster and status both from /api/fleet in Live mode, narrowed to the
+  // products this viewer's department may access.
+  const { hosts } = useFleetHosts(orgId)
+  const devices = hosts.filter((h) => allowed.includes(h.domain))
 
   const normal = devices.filter((d) => d.status === 'NORMAL').length
   const warning = devices.filter((d) => d.status === 'WARNING').length

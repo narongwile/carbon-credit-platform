@@ -130,9 +130,12 @@ export const api = {
   // Stored reading history for one device (canonical param keys, oldest first).
   // Feeds the trend charts and sparklines with real samples instead of the
   // synthetic series the demo store generates.
-  readings: (nodeId: string, sinceMin = 720) =>
+  // bucketSec > 0 asks the backend to average into fixed-width buckets. Always
+  // pass it for charts: a raw multi-hour fetch is tens of MB for a line a few
+  // hundred pixels wide. Omit it only when the individual samples matter.
+  readings: (nodeId: string, sinceMin = 720, bucketSec = 0) =>
     req<{ param_key: string; value: number; taken_at: string }[]>(
-      `/api/nodes/${nodeId}/readings?sinceMin=${sinceMin}`),
+      `/api/nodes/${nodeId}/readings?sinceMin=${sinceMin}${bucketSec > 0 ? `&bucketSec=${Math.round(bucketSec)}` : ''}`),
   // Per-device report over a date range: hourly min/avg/max per parameter
   // (raw readings for the retention window, readings_rollup beyond it), plus the
   // alarms and connectivity events raised in that window. from/to are UTC.

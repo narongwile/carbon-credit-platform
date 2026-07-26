@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { getGeoNodes } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
 import { viewerDomains, getViewerUser } from '@/lib/viewer'
 import { DOMAIN_META } from '@/types/fleet'
@@ -22,7 +22,8 @@ export default function CustomerMapPage() {
   const allowed = viewerDomains(viewerUserId)
   const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
   const nodes = (useLiveGeoNodes(orgId) ?? getGeoNodes(orgId)).filter((n) => allowed.includes(n.domain))
-  const devices = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
+  const { devices: roster } = useManagedDevices(orgId)
+  const devices = roster.filter((d) => !d.domain || allowed.includes(d.domain))
   const [tab, setTab] = useState<'map' | 'layout'>('map')
 
   // deterministic layout positions

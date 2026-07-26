@@ -1,8 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
-import { useFleetLive } from '@/lib/useFleetLive'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
 import { viewerDomains, getViewerUser } from '@/lib/viewer'
 import { Activity, Wifi, WifiOff, ChevronRight } from 'lucide-react'
@@ -16,13 +15,11 @@ export default function CustomerDevicesPage() {
   const allowed = viewerDomains(viewerUserId)
   const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
   
-  const baseDevices = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
-  const { byId } = useFleetLive(orgId)
-  
-  const devices = baseDevices.map(d => {
-    const live = byId.get(d.id)
-    return live ? { ...d, status: live.online ? 'online' : 'offline' } as typeof d : d
-  })
+  // Roster from the backend when live (so an auto-registered device shows up
+  // and a seed-only device does not), filtered to the products this viewer's
+  // department may access.
+  const { devices: roster } = useManagedDevices(orgId)
+  const devices = roster.filter((d) => !d.domain || allowed.includes(d.domain))
 
   return (
     <div className="p-6 space-y-5">

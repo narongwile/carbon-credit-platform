@@ -2,7 +2,8 @@
 
 import { useParams } from 'next/navigation'
 import { useRouter } from 'next/navigation'
-import { allManagedDevices } from '@/lib/fleetData'
+import { useManagedDevice } from '@/lib/useManagedDevices'
+import { useAppStore } from '@/lib/store'
 import { DOMAIN_META } from '@/types/fleet'
 import FixDashboard from '@/components/device/FixDashboard'
 import NodeEventLog from '@/components/device/NodeEventLog'
@@ -10,9 +11,6 @@ import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import { ArrowLeft } from 'lucide-react'
-import type { ManagedDevice } from '@/types/org'
-
-const devices = allManagedDevices()
 
 // Admin / Super Admin digital-twin node detail. Reuses the FIX dashboard
 // (3D twin + sensor readings + gauge + asset info + trend) for any node.
@@ -20,8 +18,26 @@ export default function NodeTwinClient() {
   const params = useParams()
   const router = useRouter()
   const id = String(params?.id ?? '')
-  const device: ManagedDevice = devices.find((d) => d.id === id) ?? devices[0]
-  const meta = device.domain ? DOMAIN_META[device.domain] : null
+  const orgId = useAppStore((s) => s.selectedOrgId) || 'org-1'
+  // Was `devices.find(...) ?? devices[0]` — an id that is not in the roster
+  // rendered the FIRST device's name, serial and location while the panels below
+  // loaded the requested id, so the page described the wrong asset.
+  const { device, loaded, found } = useManagedDevice(orgId, id)
+  const meta = device?.domain ? DOMAIN_META[device.domain] : null
+
+  if (!device) {
+    return (
+      <div className="p-6">
+        <button onClick={() => router.back()} className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white mb-4">
+          <ArrowLeft size={15} /> Back
+        </button>
+        <div className="max-w-lg mx-auto mt-12 rounded-2xl p-8 text-center" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+          <h2 className="text-lg font-bold text-white">{loaded && !found ? 'Device not found' : 'Loading device…'}</h2>
+          {loaded && !found && <p className="text-sm text-slate-500 mt-2">No node with id “{id}” in this organization.</p>}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 space-y-5">

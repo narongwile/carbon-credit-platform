@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { getDepartmentsByOrg } from '@/lib/orgData'
-import { managedDevicesFromFleet, getSitesByOrg } from '@/lib/fleetData'
+import { getSitesByOrg } from '@/lib/fleetData'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
 import { HardDrive, Plus, Trash2, X, Wifi, WifiOff, MapPin } from 'lucide-react'
@@ -19,7 +20,13 @@ export default function DeviceManagementPage() {
   const departments = getDepartmentsByOrg(orgId)
   const orgSites = getSitesByOrg(orgId)
 
-  const [devices, setDevices] = useState<ManagedDevice[]>(managedDevicesFromFleet(orgId))
+  // Seeded from the real fleet (/api/fleet in Live mode) instead of the static
+  // seed list, so a device that registered itself is manageable here. Edits are
+  // still local — this screen has no write endpoint yet — hence the override.
+  const { devices: roster } = useManagedDevices(orgId)
+  const [override, setOverride] = useState<ManagedDevice[] | null>(null)
+  const devices = override ?? roster
+  const setDevices = (fn: (prev: ManagedDevice[]) => ManagedDevice[]) => setOverride(fn(devices))
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<ManagedDevice | null>(null)
 

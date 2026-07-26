@@ -20,10 +20,10 @@ import { useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { defaultNotificationChannels } from '@/lib/orgData'
-import { allManagedDevices } from '@/lib/fleetData'
+import { useManagedDevice } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
 import { viewerCanManage, viewerCanAccess, getViewerUser } from '@/lib/viewer'
-import type { ManagedDevice, NotificationChannelConfig } from '@/types/org'
+import type { NotificationChannelConfig } from '@/types/org'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
@@ -36,8 +36,6 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 
-const managedDevices = allManagedDevices()
-
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
@@ -45,23 +43,41 @@ const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 export default function DeviceDetailClient() {
   const params = useParams()
   const id = String(params?.id ?? '')
-  const device: ManagedDevice = managedDevices.find((d) => d.id === id) ?? managedDevices[0]
-
   // Viewer -> department -> product access
   const viewerUserId = useAppStore((s) => s.viewerUserId)
-  const domain = device.domain
+  const me = getViewerUser(viewerUserId)
+  const orgId = me?.orgId || 'org-1'
+  // Was `find(...) ?? managedDevices[0]`: opening a device id this viewer's org
+  // does not have showed the FIRST seed device's name and location instead of
+  // saying it does not exist.
+  const { device, loaded, found } = useManagedDevice(orgId, id)
+  const domain = device?.domain
   const canManage = !domain || viewerCanManage(viewerUserId, domain)
   const canView = !domain || viewerCanAccess(viewerUserId, domain)
-  const me = getViewerUser(viewerUserId)
-
-  const [view, setView] = useState<'fix' | 'freestyle'>(device.theme)
-  const baseTemp = useMemo(() => parseFloat(device.lastValue ?? '5') || 5, [device])
+  // The device arrives asynchronously, so the theme cannot seed useState.
+  // null = "follow the device's configured theme"; a value = user preview.
+  const [viewOverride, setViewOverride] = useState<'fix' | 'freestyle' | null>(null)
+  const baseTemp = useMemo(() => parseFloat(device?.lastValue ?? '5') || 5, [device])
 
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [savedSetting, setSavedSetting] = useState(false)
 
   const toggleChannel = (cid: string) => setChannels((c) => c.map((x) => (x.id === cid ? { ...x, enabled: !x.enabled } : x)))
   const saveSetting = async () => { await new Promise((r) => setTimeout(r, 300)); setSavedSetting(true); setTimeout(() => setSavedSetting(false), 2000) }
+
+  if (!device) {
+    return (
+      <div className="p-6">
+        <Link href="/customer/devices" className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white mb-4"><ArrowLeft size={15} /> Back</Link>
+        <div className="max-w-lg mx-auto mt-12 rounded-2xl p-8 text-center" style={surface}>
+          <h2 className="text-lg font-bold text-white">{loaded && !found ? 'Device not found' : 'Loading device…'}</h2>
+          {loaded && !found && <p className="text-sm text-slate-500 mt-2">No device with id “{id}” in your organization.</p>}
+        </div>
+      </div>
+    )
+  }
+
+  const view = viewOverride ?? device.theme
 
   if (!canView) {
     return (
@@ -91,10 +107,10 @@ export default function DeviceDetailClient() {
         <div className="ml-auto flex items-center gap-3">
           {/* Theme preview toggle */}
           <div className="flex items-center gap-1 p-1 rounded-lg" style={inset}>
-            <button onClick={() => setView('fix')} className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold', view === 'fix' ? 'text-white' : 'text-slate-500')} style={view === 'fix' ? { background: '#6366f1' } : {}}>
+            <button onClick={() => setViewOverride('fix')} className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold', view === 'fix' ? 'text-white' : 'text-slate-500')} style={view === 'fix' ? { background: '#6366f1' } : {}}>
               <LayoutGrid size={13} /> FIX
             </button>
-            <button onClick={() => setView('freestyle')} className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold', view === 'freestyle' ? 'text-white' : 'text-slate-500')} style={view === 'freestyle' ? { background: '#f55f3e' } : {}}>
+            <button onClick={() => setViewOverride('freestyle')} className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold', view === 'freestyle' ? 'text-white' : 'text-slate-500')} style={view === 'freestyle' ? { background: '#f55f3e' } : {}}>
               <Sparkles size={13} /> Free Style
             </button>
           </div>

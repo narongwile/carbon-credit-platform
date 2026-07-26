@@ -76,7 +76,9 @@ function useLiveTransformer(base: Transformer | undefined) {
         if (r.values) setValues(r.values)
         setLastReadingAt(r.lastReadingAt ?? null)
       })
-      api.readings(id, 720).then((rows) => { if (!cancelled && rows) setSeries(historyByParam(rows)) })
+      // 48 buckets over 12h = one point per 15 minutes, which is exactly what the
+      // sparklines and both trend charts draw.
+      api.readings(id, 720, (720 * 60) / HISTORY_POINTS).then((rows) => { if (!cancelled && rows) setSeries(historyByParam(rows)) })
     }
     load()
     const t = setInterval(load, 10000)
