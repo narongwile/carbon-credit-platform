@@ -124,10 +124,13 @@ type orgExistEntry struct {
 const UnassignedOrg = "__unassigned__"
 
 // A reading older than this is treated as replayed backlog rather than live
-// telemetry; packets arriving within backlogBatchWindow of each other are folded
-// into one counted batch row instead of one row per packet.
+// telemetry. Kept deliberately short (30s, as before) so that even a brief
+// outage still surfaces an OFFLINE_SYNC entry — that entry is how an operator
+// knows the gap they saw in the live view has since been filled in. What changed
+// is that packets arriving within backlogBatchWindow are folded into ONE counted
+// batch row, instead of one row per packet flooding the timeline.
 const (
-	backlogThreshold   = 5 * time.Minute
+	backlogThreshold   = 30 * time.Second
 	backlogBatchWindow = 2 * time.Minute
 )
 
