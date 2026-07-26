@@ -15,6 +15,16 @@ import { Check, Bell, Download, FileText } from 'lucide-react'
 
 interface EventProblem { id: string; label: string; department_id: string | null; domain: string | null }
 
+// Timestamps arrive as UTC ISO strings. Slicing the string showed UTC verbatim
+// (an event at 17:15 ICT read "10:15"), so parse and render in the viewer's own
+// timezone instead.
+const fmtTime = (v: unknown): string => {
+  if (v === null || v === undefined || v === '') return '—'
+  const d = new Date(typeof v === 'number' ? v : String(v))
+  if (Number.isNaN(d.getTime())) return String(v)
+  return d.toLocaleString(undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
@@ -27,9 +37,15 @@ function formatLocal(dateStr: string | number) {
 }
 
 const mockTransportEvents = [
+<<<<<<< Updated upstream
   { id: '1', time: formatLocal(Date.now() - 25 * 60000), type: 'FALLBACK_4G', desc: 'WiFi lost. Switched to Cellular (4G)', isOfflineSync: false },
   { id: '2', time: formatLocal(Date.now() - 40 * 60000), type: 'OFFLINE_SYNC', desc: 'Flushed 42 offline records to cloud', isOfflineSync: true },
   { id: '3', time: formatLocal(Date.now() - 180 * 60000), type: 'LINK_RESTORE', desc: 'WiFi restored. Active link: WiFi', isOfflineSync: false },
+=======
+  { id: '1', time: fmtTime(Date.now() - 25 * 60000), type: 'FALLBACK_4G', desc: 'WiFi lost. Switched to Cellular (4G)', isOfflineSync: false },
+  { id: '2', time: fmtTime(Date.now() - 40 * 60000), type: 'OFFLINE_SYNC', desc: 'Flushed 42 offline records to cloud', isOfflineSync: true },
+  { id: '3', time: fmtTime(Date.now() - 180 * 60000), type: 'LINK_RESTORE', desc: 'WiFi restored. Active link: WiFi', isOfflineSync: false },
+>>>>>>> Stashed changes
 ]
 
 // Engine-driven event log for a node — reusable on the admin/superadmin twin.
@@ -65,7 +81,11 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
         value: Number(r.value ?? 0),
         threshold: Number(r.threshold ?? 0),
         unit: String(r.unit ?? ''),
+<<<<<<< Updated upstream
         time: formatLocal(String(r.raised_at ?? Date.now())),
+=======
+        time: fmtTime(r.raised_at),
+>>>>>>> Stashed changes
         ts: new Date(String(r.raised_at ?? Date.now())).getTime(),
         source: (r.source as AlarmEvent['source']) ?? undefined,
         acknowledgedBy: r.acknowledged_at ? String(r.acknowledged_by ?? 'user') : undefined,
@@ -125,7 +145,11 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
         const noise = (((i * 7 + pi * 13) % 5) - 2) * span * 0.06
         values[p.key] = +(p.direction === 'high' ? p.warn - span * 0.25 + wave + noise : p.warn + span * 0.25 - wave - noise).toFixed(2)
       })
+<<<<<<< Updated upstream
       return { time: formatLocal(Date.now() - (96 - i) * 15 * 60000), ts: Date.now() - (96 - i) * 15 * 60000, values }
+=======
+      return { time: fmtTime(Date.now() - (96 - i) * 15 * 60000), ts: Date.now() - (96 - i) * 15 * 60000, values }
+>>>>>>> Stashed changes
     })
     return evaluate(nodeId, rule, readings).slice(0, 12)
   }, [rule, nodeId, baseValue])
@@ -142,7 +166,11 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   ])
   const TRANSPORT_HEADERS = ['Time', 'Event Type', 'Description']
   const transportRows = () => shownTransport.map((te) => [
+<<<<<<< Updated upstream
     'time' in te ? (te as { time: string }).time : formatLocal((te as { ts: string }).ts ?? Date.now()),
+=======
+    'time' in te ? (te as { time: string }).time : fmtTime((te as { ts: string }).ts),
+>>>>>>> Stashed changes
     te.type, te.desc,
   ])
 
@@ -243,7 +271,11 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
               )}
               {shownTransport.map((te) => (
                 <tr key={te.id} style={{ borderTop: '1px solid #1e2433' }}>
+<<<<<<< Updated upstream
                   <td className="py-2.5 px-3 text-slate-400 text-xs">{'time' in te ? (te as { time: string }).time : formatLocal((te as { ts: string }).ts ?? Date.now())}</td>
+=======
+                  <td className="py-2.5 px-3 text-slate-400 text-xs">{'time' in te ? (te as { time: string }).time : fmtTime((te as { ts: string }).ts)}</td>
+>>>>>>> Stashed changes
                   <td className="py-2.5 px-3 text-xs font-bold text-slate-300">
                     {te.type}
                     {te.isOfflineSync && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-emerald-500/20 text-emerald-400 font-medium animate-pulse">OFFLINE SYNCING</span>}
