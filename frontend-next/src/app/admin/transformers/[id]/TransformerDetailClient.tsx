@@ -312,7 +312,7 @@ export default function TransformerDetailPage() {
       </div>
 
       {/* Main content - 3 column layout */}
-      <div className="flex gap-0 overflow-hidden min-h-0" style={{ height: 'calc(100vh - 120px)' }}>
+      <div className="flex gap-0 overflow-hidden min-h-0 flex-shrink-0" style={{ height: 'clamp(520px, calc(100vh - 160px), 900px)' }}>
         {/* Left panel - sensor cards */}
         <div className="w-56 flex-shrink-0 p-3 space-y-2 overflow-y-auto" style={{ borderRight: '1px solid #1e2433' }}>
           <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Sensor Readings</div>

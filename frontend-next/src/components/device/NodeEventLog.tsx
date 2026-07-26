@@ -139,9 +139,11 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
           </button>
         </div>
       </div>
-      <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+      {/* Cap the height: histories grow without bound, and an uncapped table
+          pushes past the fixed panels on the transformer layout. */}
+      <div className="rounded-lg overflow-auto max-h-[360px]" style={{ border: '1px solid #1e2433' }}>
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10">
             <tr style={{ background: '#0a0e1a' }}>
               {['Time', 'Parameter', 'Value', 'Severity', 'Status', ''].map((h) => (
                 <th key={h} className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">{h}</th>
@@ -203,9 +205,9 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
             </button>
           </div>
         </div>
-        <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+        <div className="rounded-lg overflow-auto max-h-[320px]" style={{ border: '1px solid #1e2433' }}>
           <table className="w-full text-sm">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr style={{ background: '#0a0e1a' }}>
                 <th className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium w-1/4">Time</th>
                 <th className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">Event Type</th>

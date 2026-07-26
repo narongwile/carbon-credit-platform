@@ -123,6 +123,14 @@ type orgExistEntry struct {
 // to exactly one real org during approval.
 const UnassignedOrg = "__unassigned__"
 
+// A reading older than this is treated as replayed backlog rather than live
+// telemetry; packets arriving within backlogBatchWindow of each other are folded
+// into one counted batch row instead of one row per packet.
+const (
+	backlogThreshold   = 5 * time.Minute
+	backlogBatchWindow = 2 * time.Minute
+)
+
 type RuleCacheEntry struct {
 	Rule      AlarmRule
 	ExpiresAt time.Time
@@ -359,6 +367,16 @@ func updatePresence(t TelemetryPayload) {
 	case "offline", "asleep":
 		online = 0
 	}
+	// Was this device previously marked offline? Read before the upsert so the
+	// recovery can be logged — otherwise a device coming back produced no entry
+	// at all on the connectivity timeline, only the silent end of an outage.
+	wasOffline := false
+	if online == 1 {
+		var prev sql.NullInt64
+		if err := controlDB.QueryRow("SELECT online FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev); err == nil {
+			wasOffline = prev.Valid && prev.Int64 == 0
+		}
+	}
 	var rssi, batt interface{}
 	if t.RSSI != nil {
 		rssi = *t.RSSI
@@ -376,6 +394,27 @@ func updatePresence(t TelemetryPayload) {
 			"rssi=COALESCE(VALUES(rssi),rssi), batt=COALESCE(VALUES(batt),batt), fw=COALESCE(VALUES(fw),fw)",
 		t.NodeID, online, rssi, batt, fw); err != nil {
 		log.Printf("Presence update failed for %s: %v", t.NodeID, err)
+		return
+	}
+	if wasOffline {
+		// from_transport 'none' is what the transport endpoint maps to
+		// LINK_RESTORE, so "device is back" sits next to the outage entry.
+		transport := t.Transport
+		if transport == "" {
+			transport = "wifi"
+		}
+		if _, err := controlDB.Exec(
+			"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+			t.NodeID, "none", transport, "recovered", rssi); err != nil {
+			log.Printf("Recovery event failed for %s: %v", t.NodeID, err)
+		}
+		// Close the open offline alarm so the device stops looking down.
+		if _, err := controlDB.Exec(
+			"UPDATE alarm_events SET cleared_at = NOW(3) WHERE node_id = ? AND kind = 'offline' AND cleared_at IS NULL",
+			t.NodeID); err != nil {
+			log.Printf("Clear offline alarm failed for %s: %v", t.NodeID, err)
+		}
+		log.Printf("Device back online: %s", t.NodeID)
 	}
 }
 
@@ -630,15 +669,26 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	// Backlog Check
-	if time.Since(ts) > 30*time.Second {
-		// Columns must match migrate-v9 offline_sync_log (sync_at defaults to NOW;
-		// there is no unique key on node_id, so the old ON DUPLICATE never fired).
-		_, err := tenantDB.Exec(
-			"INSERT INTO offline_sync_log (node_id, records_count, oldest_ts, newest_ts) VALUES (?, 1, ?, ?)",
-			t.NodeID, ts, ts)
-		if err != nil {
-			log.Printf("Failed to insert offline_sync_log: %v", err)
+	// Backlog check. A device replaying stored readings sends many packets at
+	// once, and a 30s threshold also trips on ordinary clock skew — the old code
+	// wrote ONE row per packet, so the connectivity timeline filled with
+	// "Flushed 1 offline record" lines. Use a wider threshold and fold packets
+	// that arrive close together into a single, counted batch row.
+	if time.Since(ts) > backlogThreshold {
+		res, err := tenantDB.Exec(
+			"UPDATE offline_sync_log SET records_count = records_count + 1, oldest_ts = LEAST(oldest_ts, ?), newest_ts = GREATEST(newest_ts, ?), sync_at = NOW(3) "+
+				"WHERE node_id = ? AND sync_at > (NOW(3) - INTERVAL ? SECOND) ORDER BY sync_at DESC LIMIT 1",
+			ts, ts, t.NodeID, int(backlogBatchWindow.Seconds()))
+		affected := int64(0)
+		if err == nil {
+			affected, _ = res.RowsAffected()
+		}
+		if affected == 0 {
+			if _, err := tenantDB.Exec(
+				"INSERT INTO offline_sync_log (node_id, records_count, oldest_ts, newest_ts) VALUES (?, 1, ?, ?)",
+				t.NodeID, ts, ts); err != nil {
+				log.Printf("Failed to insert offline_sync_log: %v", err)
+			}
 		}
 	}
 
