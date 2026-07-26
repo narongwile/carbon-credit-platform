@@ -117,9 +117,19 @@ function buildLiveTiles(device: ManagedDevice, values: Record<string, number>): 
       spark: spark(seed, v, Math.max(Math.abs(v) * 0.05, 0.2)),
     })
   }
+  // Canonical params that belong to OTHER product domains. A node that was once
+  // fed a different product's payload (e.g. a transformer id briefly publishing
+  // carbonbox temp_c/door) keeps those readings, and showing them here would put
+  // fridge tiles on a transformer page. Unknown keys are still welcome — they are
+  // genuinely new sensors — but another domain's params are not.
+  const foreignKeys = new Set(
+    (Object.keys(ALARM_SCHEMA) as (keyof typeof ALARM_SCHEMA)[])
+      .filter((d) => d !== device.domain)
+      .flatMap((d) => ALARM_SCHEMA[d].params.map((p) => p.key))
+  )
   // Anything else the device publishes (unmapped sensors) still gets shown.
   for (const [k, v] of Object.entries(values)) {
-    if (seen.has(k)) continue
+    if (seen.has(k) || foreignKeys.has(k)) continue
     tiles.push({
       key: k,
       label: k,
