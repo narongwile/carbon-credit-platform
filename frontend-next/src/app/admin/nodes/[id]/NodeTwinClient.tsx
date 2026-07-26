@@ -10,6 +10,7 @@ import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
+import MyAlertSettings from '@/components/device/MyAlertSettings'
 import { ArrowLeft } from 'lucide-react'
 
 // Admin / Super Admin digital-twin node detail. Reuses the FIX dashboard
@@ -62,6 +63,10 @@ export default function NodeTwinClient() {
       <NodeDocuments nodeId={device.id} />
 
       <NodeEventLog nodeId={device.id} domain={device.domain} baseValue={parseFloat(device.lastValue ?? '') || 4} />
+
+      {/* An admin carries the pager for these devices too — same personal
+          alerting a viewer gets, stored against their own user. */}
+      <MyAlertSettings nodeId={device.id} domain={device.domain} orgId={device.orgId} />
     </div>
   )
 }

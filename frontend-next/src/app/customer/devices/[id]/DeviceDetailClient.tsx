@@ -19,20 +19,18 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { defaultNotificationChannels } from '@/lib/orgData'
 import { useManagedDevice } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
 import { viewerCanManage, viewerCanAccess, getViewerUser } from '@/lib/viewer'
-import type { NotificationChannelConfig } from '@/types/org'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
-import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import MyAlertSettings from '@/components/device/MyAlertSettings'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import {
-  ArrowLeft, Bell, ToggleLeft, ToggleRight, Save, LayoutGrid, Sparkles, Lock, Eye,
+  ArrowLeft, LayoutGrid, Sparkles, Lock, Eye,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -58,12 +56,6 @@ export default function DeviceDetailClient() {
   // null = "follow the device's configured theme"; a value = user preview.
   const [viewOverride, setViewOverride] = useState<'fix' | 'freestyle' | null>(null)
   const baseTemp = useMemo(() => parseFloat(device?.lastValue ?? '5') || 5, [device])
-
-  const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
-  const [savedSetting, setSavedSetting] = useState(false)
-
-  const toggleChannel = (cid: string) => setChannels((c) => c.map((x) => (x.id === cid ? { ...x, enabled: !x.enabled } : x)))
-  const saveSetting = async () => { await new Promise((r) => setTimeout(r, 300)); setSavedSetting(true); setTimeout(() => setSavedSetting(false), 2000) }
 
   if (!device) {
     return (
@@ -133,26 +125,8 @@ export default function DeviceDetailClient() {
       <NodeEventLog nodeId={id} domain={domain} baseValue={baseTemp} by={me?.name ?? 'viewer'} />
 
       {/* Personal alarm / notification — every viewer can set this; alerts ONLY this user */}
-      <div className="rounded-xl p-5 space-y-3" style={surface}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-white">My Alert Settings</h3>
-          <span className="text-[10px] text-slate-500 flex items-center gap-1"><Bell size={11} /> personal — alerts only you · {me?.email ?? '—'}</span>
-        </div>
-        <AlarmParamConfig domain={device.domain} nodeId={id} orgId={device.orgId} />
-        <div className="space-y-1.5">
-          {channels.map((ch) => (
-            <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>
-              <span className="text-sm text-slate-300">{ch.name}</span>
-              <button onClick={() => toggleChannel(ch.id)}>
-                {ch.enabled ? <ToggleRight size={20} className="text-indigo-400" /> : <ToggleLeft size={20} className="text-slate-600" />}
-              </button>
-            </div>
-          ))}
-        </div>
-        <button onClick={saveSetting} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={savedSetting ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
-          <Save size={14} /> {savedSetting ? 'Saved!' : 'Save My Alert'}
-        </button>
-      </div>
+      <MyAlertSettings nodeId={id} domain={domain} orgId={device.orgId} profileHref="/customer/profile" />
+
       {!canManage && (
         <div className="rounded-lg px-3 py-2 text-[11px] text-slate-500 flex items-center gap-2" style={inset}>
           <Eye size={13} /> You have view access — your alert settings here are personal. Org-wide alarm rules are configured by your admin.

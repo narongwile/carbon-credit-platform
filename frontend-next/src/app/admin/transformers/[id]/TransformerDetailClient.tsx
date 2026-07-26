@@ -6,6 +6,7 @@ import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
+import MyAlertSettings from '@/components/device/MyAlertSettings'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
@@ -618,6 +619,7 @@ export default function TransformerDetailPage() {
           domain="transformer"
           baseValue={transformer.sensors.oilTemperature.value}
         />
+        <MyAlertSettings nodeId={transformer.id} domain="transformer" orgId={transformer.orgId} />
       </div>
     </div>
   )
