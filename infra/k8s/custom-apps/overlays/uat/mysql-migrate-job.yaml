@@ -18,27 +18,14 @@ metadata:
 spec:
   # Fail fast and visibly. With the defaults a broken migration retried 6 times
   # with backoff, and ArgoCD showed nothing but "waiting" for several minutes —
-  # indistinguishable from a hang.
+  # indistinguishable from a hang. The deadline is the backstop: a Sync hook that
+  # never finishes stalls the WHOLE application, since no other resource applies
+  # until it reports.
   backoffLimit: 2
-  activeDeadlineSeconds: 900
+  activeDeadlineSeconds: 600
   template:
     spec:
       restartPolicy: Never
-      initContainers:
-        - name: fetch-sql
-          image: alpine/git
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              git clone --branch feature/deploy-ingest-worker --depth 1 https://gitlab.com/narongwile/carbon-credit-platform.git /workspace
-              test -d /workspace/backend/sql || {
-                echo "FATAL: backend/sql missing from the clone — nothing to migrate"; exit 1; }
-              echo "clone ok: $(ls /workspace/backend/sql/*.sql | wc -l) sql files"
-          volumeMounts:
-            - name: workspace
-              mountPath: /workspace
       containers:
         - name: run-migrations
           image: mysql:8.0
@@ -57,10 +44,10 @@ spec:
               # "Migrations complete!" and exited 0 — ArgoCD saw a green hook
               # while not one statement had run.
               set -e
-              cd /workspace/backend/sql
+              cd /sql
               echo "Running install.sql..."
               mysql -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < install.sql
-              # Discover migrations instead of listing them: the old hardcoded
+              # Discover migrations instead of listing them: a hardcoded
               # "11 12 ... 18" silently skipped every new migrate-vN.sql, so a
               # schema change shipped in v19+ would never reach this database.
               # Start at 11 because install.sql already sources schema/bloodbox/v9/v10.
@@ -74,13 +61,21 @@ spec:
                 echo "Executing migrate-v${n}.sql..."
                 mysql --force -h mysql.iiot-uat.svc.cluster.local -u root -p"$MYSQL_ROOT_PASSWORD" < "migrate-v${n}.sql"
               done
-              # Finding nothing means the checkout is wrong, not that the schema
-              # is up to date. Say so instead of reporting success.
-              [ "$found" -gt 0 ] || { echo "FATAL: no migrate-v*.sql found"; exit 1; }
+              # Finding nothing means the mount is wrong, not that the schema is
+              # up to date. Say so instead of reporting success.
+              [ "$found" -gt 0 ] || { echo "FATAL: no migrate-v*.sql found in /sql"; exit 1; }
               echo "Migrations complete! ($found applied)"
           volumeMounts:
-            - name: workspace
-              mountPath: /workspace
+            - name: sql
+              mountPath: /sql
+              readOnly: true
       volumes:
-        - name: workspace
-          emptyDir: {}
+        # The SQL ships WITH the manifests (mysql-migrations ConfigMap, generated
+        # by infra/scripts/sync-sql-configmap.sh). The previous version cloned
+        # this repo from gitlab.com in an initContainer, which put a public
+        # internet round trip on the critical path of every sync: blocked egress,
+        # a slow gitlab, or a moved branch left the clone hanging, the hook never
+        # completed, and the entire application stopped syncing behind it.
+        - name: sql
+          configMap:
+            name: mysql-migrations

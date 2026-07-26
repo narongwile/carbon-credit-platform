@@ -7,6 +7,8 @@ kind: Kustomization
 
 resources:
   - ../../base
+  # Must be listed BEFORE the Job that mounts it (and carries sync-wave -5).
+  - mysql-migrations-configmap.yaml
   - mysql-migrate-job.yaml
 
 commonAnnotations:
