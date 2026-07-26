@@ -32,10 +32,22 @@ metadata:
   namespace: carbon-credit
   labels:
     app: node-red
+  annotations:
+    # Server-side apply for THIS resource regardless of how the Application is
+    # configured. Client-side apply stores the entire manifest in the
+    # kubectl.kubernetes.io/last-applied-configuration annotation, which is
+    # capped at 262144 bytes — the flow crossed it and every sync failed with
+    #   ConfigMap "node-red-flow" is invalid: metadata.annotations: Too long
+    # SSA writes no such annotation, so the ceiling becomes the etcd object
+    # limit (~1MB) instead of a quarter of it.
+    argocd.argoproj.io/sync-options: ServerSideApply=true
 data:
   flows.json: |
 HDR
-  sed 's/^/    /' "$SRC"
+  # Minified, not pretty-printed. The committed JSON stays indented so its diffs
+  # are reviewable node by node, but the ConfigMap copy is machine-read only —
+  # and the whitespace was ~40% of the bytes that broke the annotation limit.
+  node -e 'const fs=require("fs");process.stdout.write("    "+JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],"utf8")))+"\n")' "$SRC"
 } > "$CM"
 
 # 2) Refresh the checksum annotation on the pod template
