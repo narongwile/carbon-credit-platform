@@ -374,15 +374,15 @@ func updatePresence(t TelemetryPayload) {
 	// recovery can be logged — otherwise a device coming back produced no entry
 	// at all on the connectivity timeline, only the silent end of an outage.
 	wasOffline := false
+	wasOnline := false
 	var downFor time.Duration
-	if online == 1 {
-		var prev sql.NullInt64
-		var lastSeen sql.NullTime
-		if err := controlDB.QueryRow("SELECT online, last_seen FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev, &lastSeen); err == nil {
-			wasOffline = prev.Valid && prev.Int64 == 0
-			if wasOffline && lastSeen.Valid {
-				downFor = time.Since(lastSeen.Time).Round(time.Second)
-			}
+	var prev sql.NullInt64
+	var lastSeen sql.NullTime
+	if err := controlDB.QueryRow("SELECT online, last_seen FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev, &lastSeen); err == nil {
+		wasOffline = prev.Valid && prev.Int64 == 0
+		wasOnline = prev.Valid && prev.Int64 == 1
+		if online == 1 && wasOffline && lastSeen.Valid {
+			downFor = time.Since(lastSeen.Time).Round(time.Second)
 		}
 	}
 	// A device announcing its own outage (LWT / deep sleep) is worth a line too:
@@ -432,6 +432,30 @@ func updatePresence(t TelemetryPayload) {
 			log.Printf("Device back online: %s (was down %s)", t.NodeID, downFor)
 		} else {
 			log.Printf("Device back online: %s", t.NodeID)
+		}
+	} else if online == 0 && wasOnline {
+		// Log LINK_LOST because of LWT or graceful disconnect
+		transport := t.Transport
+		if transport == "" {
+			transport = "wifi"
+		}
+		if _, err := controlDB.Exec(
+			"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+			t.NodeID, transport, "none", "lwt", rssi); err != nil {
+			log.Printf("Link lost event failed for %s: %v", t.NodeID, err)
+		}
+
+		var orgID, depID string
+		if err := controlDB.QueryRow("SELECT org_id, department_id FROM nodes WHERE id = ?", t.NodeID).Scan(&orgID, &depID); err == nil {
+			tenantDB := resolvePool(orgID)
+			if tenantDB != nil {
+				alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
+				_, err := tenantDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
+					alarmID, t.NodeID, orgID, depID, "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
+				if err != nil {
+					log.Printf("Insert offline alarm failed for %s: %v", t.NodeID, err)
+				}
+			}
 		}
 	}
 }
