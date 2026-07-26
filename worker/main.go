@@ -374,11 +374,22 @@ func updatePresence(t TelemetryPayload) {
 	// recovery can be logged — otherwise a device coming back produced no entry
 	// at all on the connectivity timeline, only the silent end of an outage.
 	wasOffline := false
+	var downFor time.Duration
 	if online == 1 {
 		var prev sql.NullInt64
-		if err := controlDB.QueryRow("SELECT online FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev); err == nil {
+		var lastSeen sql.NullTime
+		if err := controlDB.QueryRow("SELECT online, last_seen FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev, &lastSeen); err == nil {
 			wasOffline = prev.Valid && prev.Int64 == 0
+			if wasOffline && lastSeen.Valid {
+				downFor = time.Since(lastSeen.Time).Round(time.Second)
+			}
 		}
+	}
+	// A device announcing its own outage (LWT / deep sleep) is worth a line too:
+	// without it the log only ever showed recoveries, so a flapping link looked
+	// like repeated "back online" with no cause and no measurable downtime.
+	if online == 0 {
+		log.Printf("Device reported offline: %s (state=%q)", t.NodeID, t.State)
 	}
 	var rssi, batt interface{}
 	if t.RSSI != nil {
@@ -417,7 +428,11 @@ func updatePresence(t TelemetryPayload) {
 			t.NodeID); err != nil {
 			log.Printf("Clear offline alarm failed for %s: %v", t.NodeID, err)
 		}
-		log.Printf("Device back online: %s", t.NodeID)
+		if downFor > 0 {
+			log.Printf("Device back online: %s (was down %s)", t.NodeID, downFor)
+		} else {
+			log.Printf("Device back online: %s", t.NodeID)
+		}
 	}
 }
 
