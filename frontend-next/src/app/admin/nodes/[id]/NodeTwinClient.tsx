@@ -7,6 +7,7 @@ import { DOMAIN_META } from '@/types/fleet'
 import FixDashboard from '@/components/device/FixDashboard'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
+import NodeReportButton from '@/components/device/NodeReportButton'
 import { ArrowLeft, Wifi, WifiOff } from 'lucide-react'
 import clsx from 'clsx'
 import type { ManagedDevice } from '@/types/org'
@@ -34,7 +35,10 @@ export default function NodeTwinClient() {
           {device.status === 'online' ? <Wifi size={13} /> : <WifiOff size={13} />} {device.status}
         </span>
         <span className="text-xs text-slate-500">{device.location} · {device.serial}</span>
-        <span className="ml-auto text-[11px] text-slate-600">3D Digital Twin · click any component to inspect</span>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-[11px] text-slate-600 hidden lg:inline">3D Digital Twin · click any component to inspect</span>
+          <NodeReportButton nodeId={device.id} deviceName={device.name} domain={device.domain} />
+        </div>
       </div>
 
       <FixDashboard device={device} />

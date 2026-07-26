@@ -4,6 +4,7 @@ import { useParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
+import NodeReportButton from '@/components/device/NodeReportButton'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
@@ -490,8 +491,9 @@ export default function TransformerDetailPage() {
         <div className="ml-auto flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs text-slate-500">
             <RefreshCw size={11} className="text-green-400 animate-spin" style={{ animationDuration: '3s' }} />
-            <span>Live</span>
+            <span>{live ? 'Live' : 'Demo'}</span>
           </div>
+          <NodeReportButton nodeId={transformer.id} deviceName={transformer.name} domain="transformer" />
           <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-colors">
             <Maximize2 size={14} />
           </button>

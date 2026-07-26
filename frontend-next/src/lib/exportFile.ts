@@ -8,9 +8,10 @@
 // the same way).
 //
 // PDF goes through the browser's own print-to-PDF: a hidden iframe with a
-// self-contained document, printed on load. That keeps the bundle free of a PDF
-// library (none is installed) and always matches what the user sees in the
-// print preview, at the cost of one extra dialog.
+// self-contained document, printed on load. For a single on-screen table that
+// matches what the user sees in the print preview and costs nothing to render.
+// (Multi-section documents like the device report use jspdf instead, so they
+// download straight to a file without a print dialog.)
 // ---------------------------------------------------------------------------
 
 /** Quote a CSV cell: wrap in quotes and double any embedded quote. */
@@ -35,6 +36,33 @@ export function downloadCSV(filename: string, headers: string[], rows: unknown[]
   const body = [headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\n')
   // BOM so Excel opens UTF-8 (°C, Thai text) correctly.
   triggerDownload(new Blob(['﻿' + body], { type: 'text/csv;charset=utf-8;' }), filename)
+}
+
+/**
+ * Several tables in one CSV. Spreadsheets have no notion of sections, so each
+ * one is introduced by a `# Title` line and separated by a blank row — the
+ * layout every operator already recognises from exported machine logs.
+ */
+export function downloadCSVSections(
+  filename: string,
+  sections: { title: string; headers: string[]; rows: unknown[][] }[],
+  meta: string[] = [],
+) {
+  const lines: string[] = []
+  for (const m of meta) lines.push(`# ${csvCell(m)}`)
+  for (const s of sections) {
+    if (lines.length) lines.push('')
+    lines.push(`# ${csvCell(s.title)}`)
+    lines.push(s.headers.map(csvCell).join(','))
+    for (const r of s.rows) lines.push(r.map(csvCell).join(','))
+    if (!s.rows.length) lines.push('(no rows in this period)')
+  }
+  triggerDownload(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' }), filename)
+}
+
+/** Save any text payload (used for the JSON export). */
+export function downloadText(filename: string, text: string, type = 'application/json;charset=utf-8;') {
+  triggerDownload(new Blob([text], { type }), filename)
 }
 
 const escapeHtml = (v: unknown) =>

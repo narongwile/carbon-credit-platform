@@ -8,6 +8,20 @@
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { useAppStore } from './store'
 
+/** Payload of GET /api/nodes/:id/report — see reportFunc in the Node-RED generator. */
+export interface NodeReport {
+  nodeId: string
+  from: string
+  to: string
+  node: { id: string; name: string; domain: string; org_id: string; department_id: string | null; site_id: string | null; status: string; first_seen: string } | null
+  presence?: { online: number; last_seen: string; rssi: number | null; batt: number | null; fw: string | null }
+  /** One row per parameter per hour, oldest first. */
+  series: { param_key: string; bucket: string; n: number; bad_n: number; v_avg: number; v_min: number; v_max: number }[]
+  events: { id: string; param_key: string; param_label: string; severity: string; kind: string; value: number; threshold: number; unit: string; raised_at: string; acknowledged_at: string | null; acknowledged_by: string | null; event_problem_id: string | null }[]
+  transport: { from_transport: string; to_transport: string; reason: string | null; rssi: number | null; ts: string }[]
+  offlineSync?: { records_count: number; oldest_ts: string | null; newest_ts: string | null; sync_at: string }[]
+}
+
 // NEXT_PUBLIC_API_URL="relative" = same-origin build (nginx reverse-proxies /api
 // and /ws to Node-RED), so BASE is empty for relative fetches — but the backend
 // still exists, so apiEnabled keys off RAW_URL, not BASE (else relative mode would
@@ -99,6 +113,11 @@ export const api = {
   readings: (nodeId: string, sinceMin = 720) =>
     req<{ param_key: string; value: number; taken_at: string }[]>(
       `/api/nodes/${nodeId}/readings?sinceMin=${sinceMin}`),
+  // Per-device report over a date range: hourly min/avg/max per parameter
+  // (raw readings for the retention window, readings_rollup beyond it), plus the
+  // alarms and connectivity events raised in that window. from/to are UTC.
+  nodeReport: (nodeId: string, from: string, to: string) =>
+    req<NodeReport>(`/api/nodes/${nodeId}/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   ingest: (nodeId: string, values: Record<string, number>, ts?: number) =>
     req(`/api/nodes/${nodeId}/readings`, { method: 'POST', body: JSON.stringify({ values, ts }) }),
 
