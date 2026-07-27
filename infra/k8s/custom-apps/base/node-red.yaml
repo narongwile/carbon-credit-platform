@@ -128,6 +128,21 @@ spec:
             # to '*' — notify falls back to CORS_ORIGIN when this is unset.
             - name: APP_BASE_URL
               value: "https://iiotplatform.thermexpertise.com"
+            # DB-per-tenant (flows read env.TENANT_DB_MODE / env.MIGRATE_URL).
+            # "off" here MUST match the worker's TENANT_DB_MODE in
+            # ingest-worker.yaml — the two disagreeing means readings would
+            # write to one database while the API reads from another. Flipping
+            # this to "on" requires migrate-service.yaml to be deployed AND, if
+            # any org already exists in `organizations`, a one-time backfill —
+            # see the comment in migrate-service.yaml — BEFORE the flip, or
+            # every existing org's first live query 500s on "Unknown database".
+            - name: TENANT_DB_MODE
+              value: "off"
+            # Answers POST /api/orgs' auto-provision-a-tenant-DB call
+            # (orgsPostFunc). Harmless while TENANT_DB_MODE is off — that
+            # code path is only reached when the flag is on.
+            - name: MIGRATE_URL
+              value: "http://migrate-service.iiot-uat.svc.cluster.local:8090"
             # Dashboard admin auth (from seeded Secret)
             - name: NODE_RED_USERNAME
               valueFrom:

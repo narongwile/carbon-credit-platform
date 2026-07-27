@@ -1,0 +1,115 @@
+# ============================================================
+# DB-per-tenant migration service.
+#
+# Answers the HTTP contract Node-RED's provisioning endpoint (POST /api/orgs,
+# orgsPostFunc) already calls via MIGRATE_URL — that call has existed since
+# provisioning was built, but nothing ever answered it: this manifest was
+# missing, so TENANT_DB_MODE=on would have routed data-plane queries to
+# iothub_<org> databases that were never created — "Unknown database" on the
+# very first query for any org.
+#
+#   Node-RED  POST /api/orgs  ──MIGRATE_URL──▶  POST /migrate/org/<id>
+#                                                → CREATE DATABASE iothub_<id>
+#                                                → apply schema.sql, bloodbox.sql,
+#                                                  migrate-v2..vN in order
+#                                                → tracked in that DB's own
+#                                                  schema_migrations table, so
+#                                                  re-provisioning is a no-op
+#
+# Runs `node dist/migrate.js --serve` from the SAME image as any future full
+# backend deploy — dist/migrate.js and backend/sql/*.sql travel together, so
+# the schema a new org gets always matches the version actually running.
+#
+# Verified locally end to end before this manifest was written: built dist/,
+# ran --serve against a real MySQL-compatible server, and provisioned a new
+# org through this exact HTTP path — 36 tables, migrate-v19 included, and a
+# repeat call correctly no-ops. Also exercises /migrate/all-orgs, the backfill
+# for orgs that existed before TENANT_DB_MODE was ever turned on:
+#   kubectl -n iiot-uat exec deploy/migrate-service -- \
+#     wget -qO- --post-data='' http://localhost:8090/migrate/all-orgs
+# Run that once, before flipping TENANT_DB_MODE=on, so every org already in
+# `organizations` gets its dedicated DB before live traffic depends on it.
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: migrate-service
+  namespace: iiot-uat
+  labels:
+    app: migrate-service
+    app.kubernetes.io/name: migrate-service
+    app.kubernetes.io/component: db-provisioning
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: migrate-service
+  template:
+    metadata:
+      labels:
+        app: migrate-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate-service
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/migrate-service:latest
+          imagePullPolicy: Always
+          command: ["node", "dist/migrate.js", "--serve"]
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            - name: MIGRATE_PORT
+              value: "8090"
+            - name: DB_HOST
+              value: "mysql.iiot-uat.svc.cluster.local"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: "root"
+            # Same shared secret every other component in this namespace uses
+            # to reach MySQL — see ingest-worker.yaml / node-red.yaml.
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-root-password
+            # migrateOrg() defaults seed:false — a real customer org starts
+            # empty. Left unset rather than "0" so that stays the explicit,
+            # readable default instead of a magic string here.
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests: { cpu: "50m", memory: "96Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      terminationGracePeriodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: migrate-service
+  namespace: iiot-uat
+  labels:
+    app: migrate-service
+spec:
+  type: ClusterIP
+  selector:
+    app: migrate-service
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+      protocol: TCP

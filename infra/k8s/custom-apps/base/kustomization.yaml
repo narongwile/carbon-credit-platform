@@ -28,6 +28,7 @@ resources:
   - node-red.yaml
   - node-red-flow.yaml
   - ingest-worker.yaml
+  - migrate-service.yaml
   # ── Next.js platform UI (separate app; browser -> nodered ingress) ──
   - frontend-next.yaml
   # ── Observability ──

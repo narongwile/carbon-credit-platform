@@ -126,6 +126,34 @@ build_ingest_worker:
         - worker/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
 
+# DB-per-tenant migration service — node dist/migrate.js --serve. Built from the
+# legacy Express backend/ tree because dist/migrate.js and backend/sql/*.sql
+# live there; the k8s manifest overrides CMD so the rest of that tree (Express
+# routes, MQTT, ws) never runs. See migrate-service.yaml for the HTTP contract
+# this answers and why it exists.
+build_migrate_service:
+  stage: build
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+    IMAGE: $CI_REGISTRY_IMAGE/migrate-service
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - cd backend
+    - docker build -t "$IMAGE:latest" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$IMAGE:latest"
+    - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - backend/**/*
+    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+
 # ── GitOps write-back: pin the freshly-built image tag into the manifests ──────
 # ArgoCD reconciles the git MANIFEST against the cluster. A floating `:latest` tag
 # never changes the manifest, so a new build is invisible to ArgoCD and never rolls
@@ -195,4 +223,26 @@ deploy_ingest_worker:
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - worker/**/*
+    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+
+deploy_migrate_service:
+  extends: .writeback
+  needs: ["build_migrate_service"]
+  script:
+    - 'sed -i "s|\(image: registry.gitlab.com/.*/migrate-service:\).*|\1${CI_COMMIT_SHORT_SHA}|" infra/k8s/custom-apps/base/migrate-service.yaml'
+    - git add infra/k8s/custom-apps/base/migrate-service.yaml
+    - if git diff --cached --quiet; then echo "migrate-service tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
+    - git commit -m "ci(deploy):migrate-service -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    - |
+      for i in 1 2 3 4 5; do
+        git pull --rebase origin "${CI_COMMIT_BRANCH}" || true
+        if git push origin "HEAD:${CI_COMMIT_BRANCH}"; then break; fi
+        sleep 2
+      done
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - backend/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
