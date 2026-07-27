@@ -128,19 +128,20 @@ spec:
             # to '*' — notify falls back to CORS_ORIGIN when this is unset.
             - name: APP_BASE_URL
               value: "https://iiotplatform.thermexpertise.com"
-            # DB-per-tenant (flows read env.TENANT_DB_MODE / env.MIGRATE_URL).
-            # "off" here MUST match the worker's TENANT_DB_MODE in
-            # ingest-worker.yaml — the two disagreeing means readings would
-            # write to one database while the API reads from another. Flipping
-            # this to "on" requires migrate-service.yaml to be deployed AND, if
-            # any org already exists in `organizations`, a one-time backfill —
-            # see the comment in migrate-service.yaml — BEFORE the flip, or
-            # every existing org's first live query 500s on "Unknown database".
+            # DB-per-tenant: ON. Data-plane queries (readings, alarms, events,
+            # documents, ...) route to iothub_<org> instead of the shared control
+            # DB. MUST match the worker's TENANT_DB_MODE in ingest-worker.yaml —
+            # the two disagreeing means readings write to one database while the
+            # API reads from another. Enabled 2026-07-27 after migrate-service was
+            # confirmed healthy and every existing org (org-1 + the provisioning-
+            # wizard test orgs) was backfilled via POST /migrate/all-orgs.
+            #
+            # A NEW org from here on is provisioned automatically: orgsPostFunc
+            # calls MIGRATE_URL on creation, so its iothub_<org> database exists
+            # before the org can log in. Re-run the all-orgs backfill only if an
+            # org row is ever inserted by hand instead of through /api/orgs.
             - name: TENANT_DB_MODE
-              value: "off"
-            # Answers POST /api/orgs' auto-provision-a-tenant-DB call
-            # (orgsPostFunc). Harmless while TENANT_DB_MODE is off — that
-            # code path is only reached when the flag is on.
+              value: "on"
             - name: MIGRATE_URL
               value: "http://migrate-service.iiot-uat.svc.cluster.local:8090"
             # Dashboard admin auth (from seeded Secret)

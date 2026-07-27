@@ -67,8 +67,11 @@ spec:
               value: ingest
             - name: MQTT_SUB_TOPIC
               value: "$share/ingest-worker/telemetry/#"
+            # DB-per-tenant: ON — MUST match Node-RED's TENANT_DB_MODE in
+            # node-red.yaml. See that file's comment for the enable date and the
+            # backfill this required before flipping.
             - name: TENANT_DB_MODE
-              value: "off"
+              value: "on"
             # ── Control DB (iothub) — same host/creds Node-RED uses in UAT. The
             #    worker builds its DSN from these; DB_PASSWORD comes from the shared
             #    mysql-credentials Secret so the root password is never hardcoded.
