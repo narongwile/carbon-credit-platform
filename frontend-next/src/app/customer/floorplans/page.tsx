@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useAppStore } from '@/lib/store'
-import { getSession } from '@/lib/auth'
+import { useSessionOrgId } from '@/lib/auth'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
 import { viewerDomains } from '@/lib/viewer'
 import { DOMAIN_META } from '@/types/fleet'
@@ -36,7 +36,7 @@ type Pos = { x: number; y: number }
 // pinned, for THIS org only (the /api/orgs/:orgId/floorplans routes are org-scoped).
 export default function CustomerFloorPlansPage() {
   const { viewerUserId } = useAppStore()
-  const orgId = getSession()?.orgId || 'org-1'
+  const orgId = useSessionOrgId()
   const allowed = viewerDomains(viewerUserId)
   const nodes = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
 

@@ -3,7 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { getSession, clearSession } from '@/lib/auth'
+import { getSession, clearSession, useSessionOrgId } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
 import OrgBrand from '@/components/OrgBrand'
@@ -36,7 +36,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   const router = useRouter()
   const pathname = usePathname()
   const { viewerUserId, setViewerUserId, setOrgLogo } = useAppStore()
-  const orgId = getSession()?.orgId || 'org-1'
+  const orgId = useSessionOrgId()
   const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)
 

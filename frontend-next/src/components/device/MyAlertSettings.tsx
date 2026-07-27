@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { api, apiEnabled, useIsLive } from '@/lib/api'
-import { getSession } from '@/lib/auth'
+import { useSession } from '@/lib/auth'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import type { SensorDomain } from '@/types/fleet'
 import { Bell, Save, Loader2, ToggleLeft, ToggleRight, AlertTriangle } from 'lucide-react'
@@ -43,7 +43,11 @@ export default function MyAlertSettings({
   nodeId, domain, orgId, profileHref = '/admin/profile',
 }: { nodeId: string; domain?: SensorDomain; orgId?: string; profileHref?: string }) {
   const live = useIsLive()
-  const session = getSession()
+  // useSession (not getSession() directly): "· {session?.email}" is rendered
+  // below, and a direct call returns null in the static HTML but the real
+  // session synchronously on the client's first paint — a text-content
+  // hydration mismatch on every device page.
+  const session = useSession()
   const [prefs, setPrefs] = useState<Record<string, unknown> | null>(null)
   const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>(DEFAULT_ENABLED)
   const [saving, setSaving] = useState(false)

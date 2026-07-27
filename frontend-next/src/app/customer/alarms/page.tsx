@@ -6,13 +6,13 @@ import { viewerDomains } from '@/lib/viewer'
 import { managedDevicesFromFleet } from '@/lib/fleetData'
 import { api } from '@/lib/api'
 import { AlertTriangle, XCircle, Info, Clock, Check } from 'lucide-react'
-import { getSession } from '@/lib/auth'
+import { useSessionOrgId } from '@/lib/auth'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 export default function CustomerAlarmsPage() {
   const { viewerUserId } = useAppStore()
-  const orgId = getSession()?.orgId || 'org-1'
+  const orgId = useSessionOrgId()
   
   // Filter devices by viewer domain access
   const allowed = viewerDomains(viewerUserId)

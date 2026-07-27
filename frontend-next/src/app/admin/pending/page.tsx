@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '@/lib/store'
-import { getSession } from '@/lib/auth'
+import { useSessionRole } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
 import { PlugZap, Check, X, RefreshCw, Building2, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -57,7 +57,11 @@ const MOCK_ORGS: Org[] = [{ id: 'org-1', name: 'KMUTT' }, { id: 'org-2', name: '
 
 export default function PendingDevicesPage() {
   const { selectedOrgId } = useAppStore()
-  const isSuper = getSession()?.role === 'superadmin'
+  // useSessionRole (not getSession() directly): the direct read returns null
+  // in the statically-built HTML and the real role synchronously on the
+  // client's first paint, and isSuper branches JSX below (extra column, extra
+  // field) — a guaranteed hydration mismatch for every superadmin.
+  const isSuper = useSessionRole() === 'superadmin'
   const orgId = selectedOrgId || 'org-1'
   const [rows, setRows] = useState<PendingNode[]>([])
   const [depts, setDepts] = useState<Dept[]>([])
