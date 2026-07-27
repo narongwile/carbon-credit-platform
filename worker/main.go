@@ -256,6 +256,11 @@ func resolvePool(orgID string) *sql.DB {
 		return controlDB
 	}
 
+	// Legacy organizations keep using the control DB instead of a tenant DB
+	if orgID == "org-1" || orgID == "org-2" || orgID == "org-3" {
+		return controlDB
+	}
+
 	// Check cache
 	if db, ok := tenantDBs.Load(orgID); ok {
 		return db.(*sql.DB)
