@@ -88,6 +88,10 @@ export default function TrendsPage() {
   // continuously — the charts re-scaled on any unrelated re-render.
   const [win, setWin] = useState<{ from: number; to: number }>(() => ({ from: Date.now() - 1440 * 60_000, to: Date.now() }))
   const [loading, setLoading] = useState(false)
+  // "No readings in this window" and "this device has never reported" look
+  // identical on screen but mean completely different things, so fetch the last
+  // reading time and say which one it is.
+  const [lastAt, setLastAt] = useState<string | null | undefined>(undefined)
 
   // The roster arrives asynchronously, so the first device cannot seed useState.
   useEffect(() => {
@@ -107,6 +111,7 @@ export default function TrendsPage() {
     api.readings(selectedId, minutes, Math.max(60, (minutes * 60) / MAX_POINTS))
       .then((r) => { if (!cancelled) { setRows(r ?? []); setWin({ from: to - minutes * 60_000, to }) } })
       .finally(() => { if (!cancelled) setLoading(false) })
+    api.latest(selectedId).then((r) => { if (!cancelled) setLastAt(r?.lastReadingAt ?? null) })
     return () => { cancelled = true }
   }, [live, selectedId, minutes])
 
@@ -129,7 +134,9 @@ export default function TrendsPage() {
       if (LEGACY_WIRE_KEYS.has(k)) continue
       out.push({ key: k, label: k, unit: '', data: series(rows, k, fromMs, toMs) })
     }
-    return out.filter((c) => c.data.length > 1)
+    // Keep a single-bucket series: a device that reported briefly still has a
+    // reading to show, and dropping it made the page claim there was none.
+    return out.filter((c) => c.data.length > 0)
   }, [rows, device, fromMs, toMs])
 
   // Demo mode: the generated transformer series, as this page always showed.
@@ -148,6 +155,9 @@ export default function TrendsPage() {
   }, [live, demoTransformer])
 
   const spanMs = toMs - fromMs
+  // Cheapest possible explanation for an empty chart: the device did report,
+  // just not inside the window the user picked.
+  const outsideWindow = !!lastAt && new Date(lastAt).getTime() < fromMs
 
   return (
     <div className="p-6 space-y-5">
@@ -203,11 +213,17 @@ export default function TrendsPage() {
       ) : charts.length === 0 ? (
         <div className="rounded-xl p-10 text-center" style={surface}>
           <p className="text-sm text-slate-500">
-            {loading ? 'Loading readings…' : `No stored readings for ${device?.name ?? 'this device'} in the ${RANGES.find((r) => r.id === rangeId)?.label.toLowerCase()}.`}
+            {loading
+              ? 'Loading readings…'
+              : `No stored readings for ${device?.name ?? 'this device'} in the ${RANGES.find((r) => r.id === rangeId)?.label.toLowerCase()}.`}
           </p>
           {!loading && (
             <p className="text-xs text-slate-600 mt-2">
-              Raw readings are kept for 30 days; older periods are available at hourly resolution from the device report.
+              {lastAt === undefined
+                ? 'Checking when this device last reported…'
+                : lastAt === null
+                  ? 'This device has never stored a reading — check that the ingest worker is running and that it publishes to telemetry/#.'
+                  : <>Last reading was {new Date(lastAt).toLocaleString()}{outsideWindow && ' — outside the selected period. Widen the range above.'}</>}
             </p>
           )}
         </div>
