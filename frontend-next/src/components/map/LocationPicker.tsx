@@ -29,7 +29,22 @@ export default function LocationPicker({
     ;(async () => {
       const L = (await import('leaflet')).default
       if (cancelled || !elRef.current || mapRef.current) return
-      
+
+      // Leaflet's default marker icon resolves its 3 image URLs (pin, 2x pin,
+      // shadow) via its own bundled path detection, which breaks under
+      // Webpack/Next.js — the bundler doesn't ship those PNGs at the path
+      // Leaflet computes, so every L.marker() rendered a blank/broken icon
+      // (visible in the Factory Location picker: no pin, just an empty spot).
+      // Pointing at the CDN — pinned to the installed version, matching how
+      // the tile layer below already points at a public tile server — sidesteps
+      // the bundler entirely instead of fighting webpack asset-loader config.
+      delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
+      L.Icon.Default.mergeOptions({
+        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+      })
+
       const defaultLat = lat ?? 13.7
       const defaultLng = lng ?? 100.9
       
