@@ -1,28 +1,31 @@
 'use client'
 
 // ---------------------------------------------------------------------------
-// Sensor Trends — historical charts from the stored readings.
+// Trends — compare ONE parameter across SEVERAL devices.
 // ---------------------------------------------------------------------------
-// This page used to plot useAppStore().transformers[].sensors[].history, a
-// series generated in the browser. It was labelled "24-hour historical trend
-// analysis" while showing numbers no device ever produced, and it only ever
-// offered transformers even for an org running fridges or blood boxes.
+// This page used to be a device picker with one chart per parameter, which is
+// exactly what the per-parameter modal on every device page now does — but with
+// a custom date range, a min–max band, threshold editing and CSV on top. Keeping
+// both meant maintaining the weaker copy.
 //
-// Live mode now reads GET /api/nodes/:id/readings and renders one chart per
-// parameter the device actually reports, driven by ALARM_SCHEMA so units and
-// thresholds are right for any product. Demo mode keeps the generated series so
-// the page still demonstrates without a backend.
+// So it does the one thing a device page structurally cannot: put the same
+// metric from several devices on one axis. "Is TR-004 running hotter than the
+// rest of the site, or is the whole site hot today?" is a question about the
+// fleet, and no single-device view can answer it.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
-import { ALARM_SCHEMA, LEGACY_WIRE_KEYS } from '@/lib/alarmParams'
+import { ALARM_SCHEMA } from '@/lib/alarmParams'
+import { downloadCSV } from '@/lib/exportFile'
+import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Download, Check } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -35,237 +38,332 @@ const RANGES = [
   { id: '30d', label: 'Last 30 days', minutes: 43200 },
 ] as const
 
-/** Points to draw per chart. More than this is invisible and just slows recharts. */
+/** Distinguishable at a glance and colour-blind safe enough for 6 lines. */
+const LINE_COLORS = ['#6366f1', '#22d3ee', '#f97316', '#a78bfa', '#4ade80', '#f472b6']
+/** More lines than this is a spaghetti chart nobody can read. */
+const MAX_DEVICES = 6
 const MAX_POINTS = 240
 
-interface Row { param_key: string; value: number; taken_at: string }
+interface Row { param_key: string; value: number; taken_at: string; n?: number }
+interface Loaded { id: string; name: string; rows: Row[] }
 
-/**
- * Bucket a parameter's readings into at most MAX_POINTS averages. A device
- * publishing every 1.5s produces ~57k points a day; plotting them raw makes the
- * line solid and the page unresponsive, and the shape is identical after
- * averaging into buckets narrower than one pixel.
- */
-function series(rows: Row[], key: string, fromMs: number, toMs: number) {
-  const pts = rows.filter((r) => r.param_key === key)
-  if (!pts.length) return []
-  const width = Math.max(1, (toMs - fromMs) / MAX_POINTS)
-  const buckets = new Map<number, { sum: number; n: number }>()
-  for (const p of pts) {
-    const t = new Date(p.taken_at).getTime()
-    if (Number.isNaN(t)) continue
-    const b = Math.floor((t - fromMs) / width)
-    const cur = buckets.get(b) ?? { sum: 0, n: 0 }
-    cur.sum += Number(p.value)
-    cur.n++
-    buckets.set(b, cur)
-  }
-  return Array.from(buckets.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([b, v]) => ({ ts: fromMs + b * width, value: +(v.sum / v.n).toFixed(3) }))
-}
-
-const fmtTick = (ts: number, spanMs: number) => {
-  const d = new Date(ts)
-  // Over a day, the hour alone is ambiguous — show the date instead.
-  return spanMs > 36 * 3600_000
-    ? d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
-    : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-}
+const toUTC = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
 
 export default function TrendsPage() {
   const live = useIsLive()
-  const { selectedOrgId, getTransformersByOrg } = useAppStore()
+  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
   const orgId = selectedOrgId || 'org-1'
   const { devices } = useManagedDevices(orgId)
 
-  const [selectedId, setSelectedId] = useState('')
+  const [domain, setDomain] = useState<SensorDomain>('transformer')
+  const [paramKey, setParamKey] = useState('oilTemp')
   const [rangeId, setRangeId] = useState<(typeof RANGES)[number]['id']>('24h')
-  const [rows, setRows] = useState<Row[] | null>(null)
-  // The window is captured WITH the data, not read from the clock during
-  // render. Date.now() in the render body produced a new [from,to] on every
-  // pass, so the bucketing memo never hit its cache and the axis domain moved
-  // continuously — the charts re-scaled on any unrelated re-render.
-  const [win, setWin] = useState<{ from: number; to: number }>(() => ({ from: Date.now() - 1440 * 60_000, to: Date.now() }))
+  const [picked, setPicked] = useState<string[]>([])
+  const [loaded, setLoaded] = useState<Loaded[] | null>(null)
   const [loading, setLoading] = useState(false)
-  // "No readings in this window" and "this device has never reported" look
-  // identical on screen but mean completely different things, so fetch the last
-  // reading time and say which one it is.
-  const [lastAt, setLastAt] = useState<string | null | undefined>(undefined)
+  const [win, setWin] = useState({ from: Date.now() - 1440 * 60_000, to: Date.now() })
 
-  // The roster arrives asynchronously, so the first device cannot seed useState.
-  useEffect(() => {
-    if (!selectedId && devices.length) setSelectedId(devices[0].id)
-  }, [devices, selectedId])
-
-  const device = devices.find((d) => d.id === selectedId)
+  const schema = ALARM_SCHEMA[domain]
+  const param = schema.params.find((p) => p.key === paramKey) ?? schema.params[0]
   const minutes = RANGES.find((r) => r.id === rangeId)?.minutes ?? 1440
 
+  // Comparing across domains is meaningless — °C against ppm against % on one
+  // axis — so the device list is narrowed to the chosen product.
+  const candidates = useMemo(() => devices.filter((d) => d.domain === domain), [devices, domain])
+  const domainsPresent = useMemo(() => {
+    const set = new Set(devices.map((d) => d.domain).filter(Boolean) as SensorDomain[])
+    return set.size ? Array.from(set) : (['transformer'] as SensorDomain[])
+  }, [devices])
+
+  // Follow the org: an org with no transformers should not open on an empty
+  // transformer list.
   useEffect(() => {
-    if (!live || !selectedId) { setRows(null); return }
+    if (!domainsPresent.includes(domain)) {
+      const next = domainsPresent[0]
+      setDomain(next)
+      setParamKey(ALARM_SCHEMA[next].params[0]?.key ?? '')
+    }
+  }, [domainsPresent, domain])
+
+  // Preselect the first few so the page shows something on arrival.
+  useEffect(() => {
+    setPicked((cur) => {
+      const stillValid = cur.filter((id) => candidates.some((d) => d.id === id))
+      if (stillValid.length) return stillValid
+      return candidates.slice(0, 3).map((d) => d.id)
+    })
+  }, [candidates])
+
+  const toggle = (id: string) =>
+    setPicked((cur) => (cur.includes(id)
+      ? cur.filter((x) => x !== id)
+      : cur.length >= MAX_DEVICES ? cur : [...cur, id]))
+
+  const load = useCallback(() => {
+    if (!live || !picked.length || !paramKey) { setLoaded(null); return }
     let cancelled = false
     setLoading(true)
-    // One bucket per plotted point: the browser receives ~MAX_POINTS rows per
-    // parameter instead of every sample in the window.
     const to = Date.now()
-    api.readings(selectedId, minutes, Math.max(60, (minutes * 60) / MAX_POINTS))
-      .then((r) => { if (!cancelled) { setRows(r ?? []); setWin({ from: to - minutes * 60_000, to }) } })
+    const from = to - minutes * 60_000
+    // Same bucket width for every device, and the server floors on a fixed grid
+    // (FLOOR(unix/bucket)*bucket), so the bucket timestamps line up exactly
+    // across devices and can be merged by key instead of interpolated.
+    const bucketSec = Math.max(60, (minutes * 60) / MAX_POINTS)
+    Promise.all(picked.map((id) =>
+      api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, paramKey)
+        .then((rows) => ({ id, name: devices.find((d) => d.id === id)?.name ?? id, rows: (rows ?? []) as Row[] }))))
+      .then((res) => { if (!cancelled) { setLoaded(res); setWin({ from, to }) } })
       .finally(() => { if (!cancelled) setLoading(false) })
-    api.latest(selectedId).then((r) => { if (!cancelled) setLastAt(r?.lastReadingAt ?? null) })
     return () => { cancelled = true }
-  }, [live, selectedId, minutes])
+  }, [live, picked, paramKey, minutes, devices])
 
-  const { from: fromMs, to: toMs } = win
+  useEffect(() => { load() }, [load])
 
-  // One chart per parameter this device reports: schema params first (label,
-  // unit and thresholds known), then anything else it publishes.
-  const charts = useMemo(() => {
-    if (!rows) return []
-    const schema = device?.domain ? ALARM_SCHEMA[device.domain] : undefined
-    const present = new Set(rows.map((r) => r.param_key))
-    const out: { key: string; label: string; unit: string; warn?: number; critical?: number; data: { ts: number; value: number }[] }[] = []
-    for (const p of schema?.params ?? []) {
-      if (!present.has(p.key)) continue
-      present.delete(p.key)
-      out.push({ key: p.key, label: p.label, unit: p.unit, warn: p.warn, critical: p.critical, data: series(rows, p.key, fromMs, toMs) })
+  // Merge into one row per bucket: { ts, [deviceId]: value }.
+  const data = useMemo(() => {
+    if (!loaded) return []
+    const byTs = new Map<number, Record<string, number>>()
+    for (const d of loaded) {
+      for (const r of d.rows) {
+        const ts = new Date(r.taken_at).getTime()
+        if (Number.isNaN(ts)) continue
+        const slot = byTs.get(ts) ?? {}
+        slot[d.id] = Number(r.value)
+        byTs.set(ts, slot)
+      }
     }
-    for (const k of Array.from(present)) {
-      // Raw wire keys are the same metric under its pre-normalisation spelling.
-      if (LEGACY_WIRE_KEYS.has(k)) continue
-      out.push({ key: k, label: k, unit: '', data: series(rows, k, fromMs, toMs) })
+    return Array.from(byTs.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([ts, vals]) => ({ ts, ...vals }))
+  }, [loaded])
+
+  const stats = useMemo(() => (loaded ?? []).map((d) => {
+    if (!d.rows.length) return { id: d.id, name: d.name, n: 0, min: null as number | null, avg: null as number | null, max: null as number | null, last: null as number | null }
+    let min = Infinity, max = -Infinity, sum = 0, n = 0
+    for (const r of d.rows) {
+      const w = r.n ?? 1
+      const v = Number(r.value)
+      min = Math.min(min, v); max = Math.max(max, v); sum += v * w; n += w
     }
-    // Keep a single-bucket series: a device that reported briefly still has a
-    // reading to show, and dropping it made the page claim there was none.
-    return out.filter((c) => c.data.length > 0)
-  }, [rows, device, fromMs, toMs])
+    return { id: d.id, name: d.name, n, min, avg: sum / n, max, last: Number(d.rows[d.rows.length - 1].value) }
+  }), [loaded])
 
-  // Demo mode: the generated transformer series, as this page always showed.
-  const demoTransformers = getTransformersByOrg(orgId)
-  const demoTransformer = demoTransformers.find((t) => t.id === selectedId) ?? demoTransformers[0]
-  const demoData = useMemo(() => {
-    if (live || !demoTransformer) return []
-    const s = demoTransformer.sensors
-    return s.oilTemperature.history.slice(-96).map((p, i) => ({
-      time: new Date(p.time).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }),
-      oilTemp: s.oilTemperature.history[i]?.value ?? 0,
-      load: s.load.history[i]?.value ?? 0,
-      hydrogen: s.hydrogen.history[i]?.value ?? 0,
-      moisture: s.moisture.history[i]?.value ?? 0,
-    }))
-  }, [live, demoTransformer])
+  const spanMs = win.to - win.from
+  const fmtTick = (ts: number) => {
+    const d = new Date(ts)
+    return spanMs > 36 * 3600_000
+      ? d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
+      : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  }
 
-  const spanMs = toMs - fromMs
-  // Cheapest possible explanation for an empty chart: the device did report,
-  // just not inside the window the user picked.
-  const outsideWindow = !!lastAt && new Date(lastAt).getTime() < fromMs
+  const exportCsv = () => {
+    downloadCSV(
+      `compare_${paramKey}_${toUTC(win.from).slice(0, 10)}_${toUTC(win.to).slice(0, 10)}.csv`,
+      ['Time', ...picked.map((id) => devices.find((d) => d.id === id)?.name ?? id)],
+      data.map((row) => [new Date(row.ts).toLocaleString(), ...picked.map((id) => (row as Record<string, number>)[id] ?? '')]),
+    )
+  }
+
+  const anyData = data.length > 0
+  const emptyDevices = stats.filter((s) => s.n === 0)
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="p-4 sm:p-6 space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white">Sensor Trends</h1>
+          <h1 className="text-xl font-bold text-white">Compare Devices</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {live ? 'Stored readings — averaged per bucket over the selected period' : 'Demo data — switch to Live mode for stored readings'}
+            One parameter, several devices, one axis — the view a single device page cannot give you.
           </p>
         </div>
         <div className="flex items-center gap-2">
           {loading && <Loader2 size={14} className="animate-spin text-indigo-400" />}
+          <button onClick={exportCsv} disabled={!anyData}
+            className="flex items-center gap-1.5 text-[11px] px-2.5 py-2 rounded-lg text-slate-300 disabled:opacity-40" style={surface}>
+            <Download size={12} /> CSV
+          </button>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="rounded-xl p-4 space-y-3" style={surface}>
+        <div className="flex flex-wrap items-center gap-2">
+          {domainsPresent.length > 1 && (
+            <select
+              value={domain}
+              onChange={(e) => {
+                const d = e.target.value as SensorDomain
+                setDomain(d)
+                setParamKey(ALARM_SCHEMA[d].params[0]?.key ?? '')
+              }}
+              className="px-3 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inset}
+            >
+              {domainsPresent.map((d) => <option key={d} value={d}>{DOMAIN_META[d].label}</option>)}
+            </select>
+          )}
+          <select
+            value={paramKey}
+            onChange={(e) => setParamKey(e.target.value)}
+            className="px-3 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+            style={inset}
+          >
+            {schema.params.map((p) => <option key={p.key} value={p.key}>{p.label}{p.unit && ` (${p.unit})`}</option>)}
+          </select>
           <select
             value={rangeId}
             onChange={(e) => setRangeId(e.target.value as typeof rangeId)}
             className="px-3 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
-            style={surface}
+            style={inset}
           >
             {RANGES.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
           </select>
-          <select
-            value={selectedId}
-            onChange={(e) => setSelectedId(e.target.value)}
-            className="px-3 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
-            style={surface}
-          >
-            {devices.map((d) => <option key={d.id} value={d.id}>{d.name} — {d.location}</option>)}
-          </select>
+          <span className="text-[11px] text-slate-600">
+            {picked.length}/{MAX_DEVICES} devices
+          </span>
+        </div>
+
+        {/* Device chips */}
+        <div className="flex flex-wrap gap-1.5">
+          {candidates.length === 0 && (
+            <span className="text-xs text-slate-600">No {DOMAIN_META[domain].label.toLowerCase()} devices in this organization.</span>
+          )}
+          {candidates.map((d, i) => {
+            const on = picked.includes(d.id)
+            const color = LINE_COLORS[picked.indexOf(d.id) % LINE_COLORS.length]
+            const full = !on && picked.length >= MAX_DEVICES
+            return (
+              <button
+                key={d.id}
+                onClick={() => toggle(d.id)}
+                disabled={full}
+                title={full ? `Deselect one first — ${MAX_DEVICES} lines is the readable maximum` : d.location}
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md font-medium disabled:opacity-40"
+                style={on
+                  ? { background: `${color}22`, border: `1px solid ${color}`, color }
+                  : { ...inset, color: '#94a3b8' }}
+              >
+                {on && <Check size={11} />}
+                {d.name}
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      {!live ? (
-        [
-          { title: 'Load & Oil Temperature', keys: [{ key: 'load', color: '#6366f1', name: 'Load (%)' }, { key: 'oilTemp', color: '#f97316', name: 'Oil Temp (°C)' }] },
-          { title: 'Dissolved Gas Analysis', keys: [{ key: 'hydrogen', color: '#22d3ee', name: 'Hydrogen (ppm)' }, { key: 'moisture', color: '#a78bfa', name: 'Moisture (ppm)' }] },
-        ].map((chart) => (
-          <div key={chart.title} className="rounded-xl p-5" style={surface}>
-            <h3 className="text-sm font-semibold text-white mb-4">{chart.title}</h3>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={demoData} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-                <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} interval={11} />
-                <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }} />
-                <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                {chart.keys.map((k) => (
-                  <Line key={k.key} type="monotone" dataKey={k.key} stroke={k.color} strokeWidth={1.5} dot={false} name={k.name} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        ))
-      ) : charts.length === 0 ? (
-        <div className="rounded-xl p-10 text-center" style={surface}>
-          <p className="text-sm text-slate-500">
-            {loading
-              ? 'Loading readings…'
-              : `No stored readings for ${device?.name ?? 'this device'} in the ${RANGES.find((r) => r.id === rangeId)?.label.toLowerCase()}.`}
-          </p>
-          {!loading && (
-            <p className="text-xs text-slate-600 mt-2">
-              {lastAt === undefined
-                ? 'Checking when this device last reported…'
-                : lastAt === null
-                  ? 'This device has never stored a reading — check that the ingest worker is running and that it publishes to telemetry/#.'
-                  : <>Last reading was {new Date(lastAt).toLocaleString()}{outsideWindow && ' — outside the selected period. Widen the range above.'}</>}
-            </p>
-          )}
+      {/* Chart */}
+      <div className="rounded-xl p-4 sm:p-5" style={surface}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-white">
+            {param?.label}{param?.unit && <span className="text-slate-500 font-normal"> · {param.unit}</span>}
+          </h3>
+          <span className="text-[11px] text-slate-600">{data.length} points</span>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {charts.map((c) => (
-            <div key={c.key} className="rounded-xl p-5" style={surface}>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-white">{c.label}</h3>
-                <span className="text-[11px] text-slate-600">
-                  {c.unit && <span className="mr-2">{c.unit}</span>}
-                  {c.data.length} points
-                </span>
-              </div>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={c.data} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-                  <XAxis
-                    dataKey="ts" type="number" scale="time" domain={[fromMs, toMs]}
-                    tickFormatter={(v) => fmtTick(Number(v), spanMs)}
-                    tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={40}
-                  />
-                  <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                  <Tooltip
-                    contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
-                    labelFormatter={(v) => new Date(Number(v)).toLocaleString()}
-                    formatter={(v: number | string) => [`${v}${c.unit ? ` ${c.unit}` : ''}`, c.label]}
-                  />
-                  {/* Thresholds on the chart: a spike only means something next to its limit. */}
-                  {c.warn !== undefined && <ReferenceLine y={c.warn} stroke="#fbbf24" strokeDasharray="4 4" strokeWidth={1} />}
-                  {c.critical !== undefined && <ReferenceLine y={c.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} />}
-                  <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={1.5} dot={false} name={c.label} isAnimationActive={false} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          ))}
+
+        {!live ? (
+          <div className="h-[320px] flex items-center justify-center text-sm text-slate-600">
+            Switch to Live mode to compare stored readings.
+          </div>
+        ) : !anyData ? (
+          <div className="h-[320px] flex flex-col items-center justify-center gap-2 text-center">
+            <p className="text-sm text-slate-500">
+              {loading ? 'Loading readings…'
+                : !picked.length ? 'Select at least one device above.'
+                : `No stored ${param?.label.toLowerCase()} readings for the selected devices in this period.`}
+            </p>
+            {!loading && picked.length > 0 && (
+              <p className="text-xs text-slate-600">Try a wider range — raw readings are kept for 30 days.</p>
+            )}
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={data} margin={{ top: 5, right: 8, bottom: 0, left: -12 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
+              <XAxis dataKey="ts" type="number" scale="time" domain={[win.from, win.to]}
+                tickFormatter={(v) => fmtTick(Number(v))}
+                tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={40} />
+              <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+              <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
+                labelFormatter={(v) => new Date(Number(v)).toLocaleString()}
+                formatter={(v: number | string, name: string) => [`${v}${param?.unit ? ` ${param.unit}` : ''}`, name]} />
+              <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+              {/* Shared thresholds: the point of one axis is seeing which device
+                  crosses the line the others do not. */}
+              {param && <ReferenceLine y={param.warn} stroke="#fbbf24" strokeDasharray="4 4" strokeWidth={1} />}
+              {param && <ReferenceLine y={param.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} />}
+              {picked.map((id, i) => (
+                <Line
+                  key={id}
+                  type="monotone"
+                  dataKey={id}
+                  name={devices.find((d) => d.id === id)?.name ?? id}
+                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
+                  strokeWidth={1.6}
+                  dot={false}
+                  // A device that stopped reporting must leave a gap, not a
+                  // straight line pretending it kept the last value.
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
+      {/* Per-device summary */}
+      {live && stats.length > 0 && (
+        <div className="rounded-xl overflow-x-auto" style={surface}>
+          <table className="w-full text-sm min-w-[520px]">
+            <thead>
+              <tr style={{ background: '#0a0e1a' }}>
+                {['Device', 'Samples', 'Min', 'Average', 'Max', 'Latest', ''].map((h) => (
+                  <th key={h} className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stats.map((s, i) => {
+                const over = (v: number | null) => v !== null && param && (param.direction === 'high' ? v >= param.warn : v <= param.warn)
+                return (
+                  <tr key={s.id} style={{ borderTop: '1px solid #1e2433' }}>
+                    <td className="py-2.5 px-3">
+                      <span className="flex items-center gap-2 text-xs text-slate-200">
+                        <span className="w-2 h-2 rounded-full" style={{ background: LINE_COLORS[i % LINE_COLORS.length] }} />
+                        {s.name}
+                      </span>
+                    </td>
+                    <td className="py-2.5 px-3 text-xs text-slate-500">{s.n.toLocaleString()}</td>
+                    <td className="py-2.5 px-3 text-xs text-slate-400">{s.min === null ? '—' : s.min.toFixed(2)}</td>
+                    <td className="py-2.5 px-3 text-xs text-slate-400">{s.avg === null ? '—' : s.avg.toFixed(2)}</td>
+                    <td className={`py-2.5 px-3 text-xs ${over(s.max) ? 'text-amber-400 font-semibold' : 'text-slate-400'}`}>
+                      {s.max === null ? '—' : s.max.toFixed(2)}
+                    </td>
+                    <td className={`py-2.5 px-3 text-xs ${over(s.last) ? 'text-amber-400 font-semibold' : 'text-slate-300'}`}>
+                      {s.last === null ? '—' : s.last.toFixed(2)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right">
+                      <Link href={`/admin/nodes/${s.id}`} className="text-[11px] text-indigo-400 hover:text-indigo-300">
+                        Open device →
+                      </Link>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {live && charts.length > 0 && (
+      {live && emptyDevices.length > 0 && anyData && (
         <p className="text-[11px] text-slate-600">
-          Amber and red dashed lines are the warning and critical thresholds from the product’s alarm schema.
+          No readings in this period for {emptyDevices.map((d) => d.name).join(', ')} — those lines are absent rather than flat.
+        </p>
+      )}
+      {live && (
+        <p className="text-[11px] text-slate-600">
+          Amber and red dashed lines are the product’s warning and critical thresholds. For one device in depth — custom date range,
+          min–max band and threshold editing — open the device and click the parameter’s card.
         </p>
       )}
     </div>

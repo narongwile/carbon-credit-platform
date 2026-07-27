@@ -41,7 +41,9 @@ const NAV: NavItem[] = [
   { href: '/admin/pending', label: 'Pending Devices', icon: PlugZap, badge: 'pending' },
   { href: '/admin/live-raw', label: 'Live Raw Telemetry', icon: Radio },
 
-  { href: '/admin/trends', label: 'Trends', icon: TrendingUp, section: 'Monitoring', requires: { platform: 'eternityTransformers' } },
+  // No platform gate any more: the page compares whichever product the org
+  // actually has, so gating it on transformers hid it from fridge-only orgs.
+  { href: '/admin/trends', label: 'Compare Devices', icon: TrendingUp, section: 'Monitoring' },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer, requires: { platform: 'refrigerationDataLogger' } },
   { href: '/admin/bloodbox', label: 'BloodBOX', icon: Droplet, requires: { platform: 'bloodBox' } },
   { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: 'critical' },
