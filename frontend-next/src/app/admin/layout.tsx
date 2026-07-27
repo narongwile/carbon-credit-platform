@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { getSession, clearSession } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
 import OrgBrand from '@/components/OrgBrand'
+import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
 import { useRealtimeData } from '@/lib/realtime'
 import { isEntitled, type Entitlement } from '@/lib/entitlements'
 import { organizations } from '@/lib/mockData'
@@ -18,35 +19,41 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 
-interface NavItem {
-  href: string
-  label: string
-  icon: React.ElementType
-  exact?: boolean
+interface NavItem extends NavEntry {
   badge?: 'critical' | 'pending'
   requires?: Entitlement
 }
 
+// Grouped, because 21 flat entries make the user read the whole list to find
+// one. Floor Plans sits under Sites: it is site-scoped (it picks a site, then a
+// building, then a floor), so it belongs there rather than floating between the
+// map and the trends. Grouping says so without moving the route — a URL change
+// would only break existing links and bookmarks for no functional gain.
 const NAV: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
-  { href: '/admin/sites', label: 'Sites (Unified)', icon: Building2 },
+
+  { href: '/admin/sites', label: 'Sites (Unified)', icon: Building2, section: 'Sites & Location' },
+  { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid, child: true },
   { href: '/admin/map', label: 'Live Sensor Map', icon: Map },
+
+  { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu, section: 'Devices' },
+  { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
+  { href: '/admin/pending', label: 'Pending Devices', icon: PlugZap, badge: 'pending' },
   { href: '/admin/live-raw', label: 'Live Raw Telemetry', icon: Radio },
-  { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid },
-  { href: '/admin/trends', label: 'Trends', icon: TrendingUp, requires: { platform: 'eternityTransformers' } },
+
+  { href: '/admin/trends', label: 'Trends', icon: TrendingUp, section: 'Monitoring', requires: { platform: 'eternityTransformers' } },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer, requires: { platform: 'refrigerationDataLogger' } },
   { href: '/admin/bloodbox', label: 'BloodBOX', icon: Droplet, requires: { platform: 'bloodBox' } },
-  { href: '/admin/users', label: 'User Management', icon: Users },
-  { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
-  { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu },
-  { href: '/admin/pending', label: 'Pending Devices', icon: PlugZap, badge: 'pending' },
-  { href: '/admin/ai-search', label: 'AI Search', icon: Search, requires: { feature: 'AI Predictive Diagnostics' } },
-  { href: '/admin/sql', label: 'SQL AI', icon: Database, requires: { feature: 'Historical Analytics' } },
-  { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
-  { href: '/admin/notifications', label: 'Alarm & Notify', icon: BellRing },
   { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: 'critical' },
   { href: '/admin/events', label: 'Events', icon: Calendar },
+
+  { href: '/admin/ai-search', label: 'AI Search', icon: Search, section: 'Insights', requires: { feature: 'AI Predictive Diagnostics' } },
+  { href: '/admin/sql', label: 'SQL AI', icon: Database, requires: { feature: 'Historical Analytics' } },
+  { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/reports', label: 'Reports', icon: FileBarChart },
+
+  { href: '/admin/users', label: 'User Management', icon: Users, section: 'Administration' },
+  { href: '/admin/notifications', label: 'Alarm & Notify', icon: BellRing },
   { href: '/admin/profile', label: 'Profile', icon: UserCircle },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
 ]
@@ -103,14 +110,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <RealtimeProvider>
-      <div className="flex h-screen overflow-hidden" style={{ background: '#0a0e1a' }}>
-        {/* Sidebar */}
-        <aside className="w-56 flex flex-col flex-shrink-0" style={{ background: '#0d1117', borderRight: '1px solid #1e2433' }}>
+      <AppShell brand={<OrgBrand orgId={selectedOrgId} />} sidebar={({ collapsed, close }) => (
+        <>
           {/* Logo */}
-          <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
-            <div className="flex items-center justify-between mb-1">
+          <div className={clsx('pb-3', collapsed ? 'lg:p-2' : 'p-4')} style={{ borderBottom: '1px solid #1e2433' }}>
+            <div className={clsx('flex items-center justify-between mb-1', collapsed && 'lg:hidden')}>
               <OrgBrand orgId={selectedOrgId} />
-              
+
               {/* Demo/Live Toggle */}
               <button
                 onClick={toggleLiveMode}
@@ -128,11 +134,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 />
               </button>
             </div>
+            {/* Collapsed: the live/demo state still has to be visible and
+                switchable — it changes whether every page shows real data. */}
+            {collapsed && (
+              <button
+                onClick={toggleLiveMode}
+                className="hidden lg:flex w-full justify-center py-1"
+                title={isLiveMode ? 'Live mode — switch to Demo' : 'Demo mode — switch to Live'}
+              >
+                <span className={clsx('w-2 h-2 rounded-full', isLiveMode ? 'bg-indigo-400' : 'bg-slate-600')} />
+              </button>
+            )}
             {/* Tenant switcher — drives entitlement gating */}
             <select
               value={selectedOrgId}
               onChange={(e) => setSelectedOrgId(e.target.value)}
-              className="w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500"
+              className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
               style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
             >
               {organizations.map((o) => (
@@ -148,31 +165,42 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               const badgeCount = item.badge === 'critical' ? criticalCount : item.badge === 'pending' ? pendingCount : 0
               const badgeColor = item.badge === 'pending' ? '#f59e0b' : '#ef4444'
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={clsx(
-                    'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group',
-                    active ? 'text-white' : 'text-slate-500 hover:text-slate-200 hover:bg-white/5'
-                  )}
-                  style={active ? { background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' } : {}}
-                >
-                  <item.icon size={15} className={active ? 'text-indigo-400' : 'text-slate-600 group-hover:text-slate-400'} />
-                  <span className="flex-1">{item.label}</span>
-                  {badgeCount > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold text-white" style={{ background: badgeColor }}>
-                      {badgeCount}
-                    </span>
-                  )}
-                  {active && !badgeCount && <ChevronRight size={12} className="text-indigo-400" />}
-                </Link>
+                <div key={item.href}>
+                  {item.section && <NavSection title={item.section} collapsed={collapsed} />}
+                  <Link
+                    href={item.href}
+                    onClick={close}
+                    title={item.label}
+                    className={clsx(
+                      'flex items-center gap-2.5 py-2.5 rounded-lg text-sm font-medium transition-all group',
+                      collapsed ? 'lg:justify-center lg:px-0 px-3' : 'px-3',
+                      item.child && !collapsed && 'lg:ml-3',
+                      active ? 'text-white' : 'text-slate-500 hover:text-slate-200 hover:bg-white/5'
+                    )}
+                    style={active ? { background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' } : {}}
+                  >
+                    <item.icon size={15} className={clsx('flex-shrink-0', active ? 'text-indigo-400' : 'text-slate-600 group-hover:text-slate-400')} />
+                    <span className={clsx('flex-1', collapsed && 'lg:hidden')}>{item.label}</span>
+                    {badgeCount > 0 && (
+                      <span className={clsx('text-[10px] px-1.5 py-0.5 rounded-full font-bold text-white', collapsed && 'lg:hidden')} style={{ background: badgeColor }}>
+                        {badgeCount}
+                      </span>
+                    )}
+                    {/* Collapsed: a badge has no room for its number, but the
+                        fact that something needs attention must not vanish. */}
+                    {badgeCount > 0 && collapsed && (
+                      <span className="hidden lg:block absolute ml-6 -mt-4 w-1.5 h-1.5 rounded-full" style={{ background: badgeColor }} />
+                    )}
+                    {active && !badgeCount && <ChevronRight size={12} className={clsx('text-indigo-400', collapsed && 'lg:hidden')} />}
+                  </Link>
+                </div>
               )
             })}
           </nav>
 
           {/* Active alarms summary */}
           {criticalCount > 0 && (
-            <div className="mx-2.5 mb-2 p-3 rounded-lg" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+            <div className={clsx('mx-2.5 mb-2 p-3 rounded-lg', collapsed && 'lg:hidden')} style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
               <div className="flex items-center gap-2 text-xs">
                 <AlertTriangle size={12} className="text-red-400" />
                 <span className="text-red-400 font-semibold">{criticalCount} CRITICAL</span>
@@ -185,21 +213,20 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="px-2.5 py-3" style={{ borderTop: '1px solid #1e2433' }}>
             <button
               onClick={() => { clearSession(); router.push('/') }}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-slate-500 hover:text-red-400 hover:bg-red-500/5 transition-all"
+              title="Sign Out"
+              className={clsx(
+                'w-full flex items-center gap-2.5 py-2.5 rounded-lg text-sm text-slate-500 hover:text-red-400 hover:bg-red-500/5 transition-all',
+                collapsed ? 'lg:justify-center lg:px-0 px-3' : 'px-3',
+              )}
             >
-              <LogOut size={15} />
-              Sign Out
+              <LogOut size={15} className="flex-shrink-0" />
+              <span className={clsx(collapsed && 'lg:hidden')}>Sign Out</span>
             </button>
           </div>
-        </aside>
-
-        {/* Main */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <main className="flex-1 overflow-auto">
-            {children}
-          </main>
-        </div>
-      </div>
+        </>
+      )}>
+        {children}
+      </AppShell>
     </RealtimeProvider>
   )
 }
