@@ -53,7 +53,7 @@ function TransformerCard({ transformer }: { transformer: Transformer }) {
   const sc = statusColors[transformer.status]
 
   return (
-    <Link href={`/admin/transformers/${transformer.id}`}>
+    <Link href={`/admin/transformers/detail?id=${transformer.id}`}>
       <div
         className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5"
         style={{ background: '#0d1117', border: '1px solid #1e2433' }}
@@ -198,7 +198,7 @@ function OverviewTab() {
             <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} liveStatus={fromBackend ? eff(h) : undefined} href={d === 'transformer' ? `/admin/transformers/${h.id}` : `/admin/nodes/${h.id}`} />
+                <HostCard key={h.id} host={h} liveStatus={fromBackend ? eff(h) : undefined} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : `/admin/nodes/detail?id=${h.id}`} />
               ))}
             </div>
           </div>

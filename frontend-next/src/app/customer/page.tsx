@@ -68,7 +68,7 @@ export default function CustomerPage() {
                 const meta = DOMAIN_META[d.domain]
                 const Icon = domainIcon[d.domain]
                 return (
-                  <Link key={d.id} href={`/customer/devices/${d.id}`}>
+                  <Link key={d.id} href={`/customer/devices/detail?id=${d.id}`}>
                     <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={surface}>
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2.5">

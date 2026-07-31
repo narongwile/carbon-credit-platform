@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react'
-import { useParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useManagedDevice } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
@@ -39,8 +39,7 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
 export default function DeviceDetailClient() {
-  const params = useParams()
-  const id = String(params?.id ?? '')
+  const id = useSearchParams().get('id') ?? ''
   // Viewer -> department -> product access
   const viewerUserId = useAppStore((s) => s.viewerUserId)
   const me = getViewerUser(viewerUserId)

@@ -26,8 +26,8 @@ function metric(h: SensorHost): string {
 }
 function monitorRoute(h: SensorHost): string {
   // transformer keeps its dedicated rich twin; others use the shared node twin
-  if (h.domain === 'transformer') return `/admin/transformers/${h.id}`
-  return `/admin/nodes/${h.id}`
+  if (h.domain === 'transformer') return `/admin/transformers/detail?id=${h.id}`
+  return `/admin/nodes/detail?id=${h.id}`
 }
 
 export default function SuperAdminMonitoringPage() {

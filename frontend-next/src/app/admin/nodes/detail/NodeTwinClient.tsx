@@ -1,7 +1,6 @@
 'use client'
 
-import { useParams } from 'next/navigation'
-import { useRouter } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { useManagedDevice } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
 import { DOMAIN_META } from '@/types/fleet'
@@ -16,9 +15,9 @@ import { ArrowLeft } from 'lucide-react'
 // Admin / Super Admin digital-twin node detail. Reuses the FIX dashboard
 // (3D twin + sensor readings + gauge + asset info + trend) for any node.
 export default function NodeTwinClient() {
-  const params = useParams()
+  const searchParams = useSearchParams()
   const router = useRouter()
-  const id = String(params?.id ?? '')
+  const id = searchParams.get('id') ?? ''
   const orgId = useAppStore((s) => s.selectedOrgId) || 'org-1'
   // Was `devices.find(...) ?? devices[0]` — an id that is not in the roster
   // rendered the FIRST device's name, serial and location while the panels below

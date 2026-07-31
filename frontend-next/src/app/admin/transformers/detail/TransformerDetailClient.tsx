@@ -1,6 +1,6 @@
 'use client'
 
-import { useParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
@@ -453,7 +453,7 @@ function ActiveAlarms({ transformerId }: { transformerId: string }) {
 }
 
 export default function TransformerDetailPage() {
-  const { id } = useParams<{ id: string }>()
+  const id = useSearchParams().get('id') ?? ''
   const { transformers } = useAppStore()
   const base = transformers.find((t) => t.id === id)
   const { transformer, live, online, lastReadingAt } = useLiveTransformer(base)

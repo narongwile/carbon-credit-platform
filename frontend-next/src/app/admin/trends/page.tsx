@@ -343,7 +343,7 @@ export default function TrendsPage() {
                       {s.last === null ? '—' : s.last.toFixed(2)}
                     </td>
                     <td className="py-2.5 px-3 text-right">
-                      <Link href={`/admin/nodes/${s.id}`} className="text-[11px] text-indigo-400 hover:text-indigo-300">
+                      <Link href={`/admin/nodes/detail?id=${s.id}`} className="text-[11px] text-indigo-400 hover:text-indigo-300">
                         Open device →
                       </Link>
                     </td>
