@@ -465,7 +465,8 @@ extraDeploy:
         {allow, {user, "device"}, subscribe, [
             "cmd/#",
             "config/#",
-            "broadcast/#"
+            "broadcast/#",
+            "telemetry/#"
         ]}.
 
         %% Allow anyone to subscribe to $SYS health topics? NO — keep deny.
