@@ -451,7 +451,7 @@ extraDeploy:
         {allow, {user, "admin"}, all, ["#"]}.
 
         %% Internal services
-        {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
+        {allow, {user, "backend"}, all, ["app/#", "$SYS/#", "internal/#", "telemetry/#"]}.
         {allow, {user, "nodered"}, all, ["app/#", "iot/#", "transformers/#", "telemetry/#"]}.
         {allow, {user, "ingest"}, all, ["telemetry/#", "transformers/#", "sensors/#", "$share/ingest-worker/#"]}.
 
