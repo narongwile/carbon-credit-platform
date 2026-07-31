@@ -66,7 +66,7 @@ spec:
             - name: MQTT_USER
               value: ingest
             - name: MQTT_SUB_TOPIC
-              value: "$share/ingest-worker/telemetry/#"
+              value: "telemetry/#"
             # DB-per-tenant: ON — MUST match Node-RED's TENANT_DB_MODE in
             # node-red.yaml. See that file's comment for the enable date and the
             # backfill this required before flipping.

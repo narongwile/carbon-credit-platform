@@ -304,7 +304,8 @@ extraDeploy:
           {"user_id":"admin",   "password":"iothub.2026", "is_superuser":true},
           {"user_id":"backend", "password":"iothub.2026", "is_superuser":false},
           {"user_id":"nodered", "password":"iothub.2026", "is_superuser":false},
-          {"user_id":"device",  "password":"iothub.2026", "is_superuser":false}
+          {"user_id":"device",  "password":"iothub.2026", "is_superuser":false},
+          {"user_id":"ingest",  "password":"iothub.2026", "is_superuser":false}
         ]
 
   # ── Seeder Job: POSTs users to EMQX REST API after pod is ready ──
@@ -451,17 +452,19 @@ extraDeploy:
 
         %% Internal services
         {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
-        {allow, {user, "nodered"}, all, ["app/#", "iot/#"]}.
+        {allow, {user, "nodered"}, all, ["app/#", "iot/#", "transformers/#", "telemetry/#"]}.
+        {allow, {user, "ingest"}, all, ["telemetry/#", "transformers/#", "sensors/#", "$share/ingest-worker/#"]}.
 
-        %% Devices — scoped by clientid
+        %% Devices — scoped by clientid (and fallback for telemetry/transformers)
         {allow, {user, "device"}, publish, [
             "devices/${clientid}/#",
-            "sensors/${clientid}/#",
-            "telemetry/${clientid}/#"
+            "sensors/#",
+            "telemetry/#",
+            "transformers/#"
         ]}.
         {allow, {user, "device"}, subscribe, [
-            "cmd/${clientid}/#",
-            "config/${clientid}/#",
+            "cmd/#",
+            "config/#",
             "broadcast/#"
         ]}.
 
