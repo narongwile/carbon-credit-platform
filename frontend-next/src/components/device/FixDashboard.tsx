@@ -4,10 +4,10 @@ import { useMemo, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { ALARM_SCHEMA, LEGACY_WIRE_KEYS } from '@/lib/alarmParams'
+import { ALARM_SCHEMA, LEGACY_WIRE_KEYS, paramStatus } from '@/lib/alarmParams'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import type { ManagedDevice } from '@/types/org'
-import type { Transformer } from '@/types'
+import type { Transformer, SensorReading } from '@/types'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -40,7 +40,34 @@ function DeviceTwin({ device, values }: { device: ManagedDevice; values?: Record
     const warn = ALARM_SCHEMA.bloodBox.params.find((p) => p.key === 'tempHigh')?.warn ?? 6
     return <BloodBox3D device={{ name: device.name, temperature: temp, battery: v.battery ?? 85, lidOpen: open, threshold: warn }} />
   }
-  if (device.domain === 'transformer') return <Transformer3D transformer={{ id: device.id } as Transformer} />
+  if (device.domain === 'transformer') {
+    // Was `{ id: device.id } as Transformer` — the twin used to re-look-up the
+    // asset in the seeded store by that id, so a real device that is not a demo
+    // id resolved to nothing and the model never drew. It now takes the readings
+    // directly, the same way the fridge and BloodBOX twins above do, so the
+    // parts colour by live status instead of depending on seed data existing.
+    const reading = (key: string, unit: string): SensorReading => {
+      const p = ALARM_SCHEMA.transformer.params.find((x) => x.key === key)
+      const val = v[key]
+      return {
+        value: val ?? 0, unit, min: 0, max: (p?.critical ?? 100) * 1.2,
+        status: val !== undefined && p ? paramStatus(val, p) : 'NORMAL',
+        threshold: { warning: p?.warn ?? 0, critical: p?.critical ?? 0 },
+        trend: 'stable', delta: 0, history: [],
+      }
+    }
+    return <Transformer3D transformer={{
+      id: device.id,
+      sensors: {
+        oilTemperature: reading('oilTemp', '°C'),
+        hydrogen: reading('hydrogen', 'ppm'),
+        moisture: reading('moisture', 'ppm'),
+        oilLevel: reading('oilLevel', '%'),
+        load: reading('load', '%'),
+        ambientTemperature: reading('ambientTemp', '°C'),
+      },
+    } as Transformer} />
+  }
   return <div className="w-full h-full flex items-center justify-center text-slate-600"><Activity size={36} className="opacity-30" /></div>
 }
 

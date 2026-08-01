@@ -4,8 +4,7 @@ import { Suspense, useRef, useState, useEffect } from 'react'
 import { Canvas, useFrame, ThreeEvent } from '@react-three/fiber'
 import { OrbitControls, Html, Environment, ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
-import { useAppStore } from '@/lib/store'
-import type { Transformer } from '@/types'
+import type { Transformer, SensorData, SensorReading } from '@/types'
 
 type Status = 'NORMAL' | 'WARNING' | 'CRITICAL'
 
@@ -368,15 +367,29 @@ function RadiatorBank({ x, count, height, getStatus, selected, onSelect, id, inf
   )
 }
 
-function TransformerScene({ transformerId, selected, setSelected }: {
-  transformerId: string; selected: string | null; setSelected: (id: string | null) => void
+// A neutral reading for a parameter this caller has no value for. The twin is
+// geometry first: an unknown oil level should draw the tank in its normal state,
+// never blank the whole model.
+const UNKNOWN: SensorReading = { value: 0, unit: '', status: 'NORMAL', min: 0, max: 100, threshold: { warning: 0, critical: 0 }, trend: 'stable', delta: 0, history: [] }
+const SENSOR_KEYS: (keyof SensorData)[] = ['oilTemperature', 'hydrogen', 'moisture', 'oilLevel', 'load', 'ambientTemperature']
+
+/** Fill in whatever the caller left out, so a partial transformer still renders. */
+function withDefaults(sensors: Partial<SensorData> | undefined): SensorData {
+  const out = {} as SensorData
+  for (const k of SENSOR_KEYS) out[k] = sensors?.[k] ?? UNKNOWN
+  return out
+}
+
+function TransformerScene({ transformer, selected, setSelected }: {
+  transformer: Transformer; selected: string | null; setSelected: (id: string | null) => void
 }) {
-  // Subscribe directly to store so component re-renders with live values
-  const transformer = useAppStore((state) => state.transformers.find((t) => t.id === transformerId))
-
-  if (!transformer) return null
-
-  const s = transformer.sensors
+  // Takes the transformer the page already resolved rather than looking it up
+  // again. The lookup used to run against the store's seeded `transformers`, so
+  // a real device that is not one of the demo ids found nothing and returned
+  // null — the page rendered, the canvas mounted, and the twin was simply
+  // absent. The parent re-renders on every live frame, so props carry the live
+  // values the store subscription used to provide.
+  const s = withDefaults(transformer.sensors)
 
   const components: Record<string, ComponentInfo> = {
     'main-tank': {
@@ -813,7 +826,7 @@ export default function Transformer3D({ transformer }: { transformer: Transforme
 
         <Suspense fallback={null}>
           <TransformerScene
-            transformerId={transformer.id}
+            transformer={transformer}
             selected={selected}
             setSelected={setSelected}
           />
