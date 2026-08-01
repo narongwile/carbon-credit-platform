@@ -166,7 +166,7 @@ export const organizations: Organization[] = [
 // Build a rich Transformer (with digital-twin sensors) from a canonical fleet
 // transformer host. The fleet host is the single source of truth for identity,
 // org, site, rating and status; this only synthesizes the sensor telemetry.
-function makeTransformer(host: TransformerHost): Transformer {
+export function makeTransformer(host: TransformerHost): Transformer {
   const status = host.status === 'OFFLINE' ? 'NORMAL' : host.status
   const isWarning = status === 'WARNING'
   const isCritical = status === 'CRITICAL'

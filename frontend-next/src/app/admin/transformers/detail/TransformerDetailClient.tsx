@@ -2,6 +2,9 @@
 
 import { useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
+import { useFleetHosts } from '@/lib/useManagedDevices'
+import { makeTransformer } from '@/lib/mockData'
+import type { TransformerHost } from '@/types/fleet'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeReportButton from '@/components/device/NodeReportButton'
@@ -455,7 +458,21 @@ function ActiveAlarms({ transformerId }: { transformerId: string }) {
 export default function TransformerDetailPage() {
   const id = useSearchParams().get('id') ?? ''
   const { transformers } = useAppStore()
-  const base = transformers.find((t) => t.id === id)
+  const orgId = useAppStore((s) => s.selectedOrgId)
+  // The Overview lists the roster from /api/fleet, but this page used to resolve
+  // the device from the seeded `transformers` array only — so every real device
+  // that is not one of the demo ids (a transformer an ESP32 registered itself)
+  // rendered "Transformer not found" from a card that had just linked to it.
+  // Fall back to the live fleet host, projected through the same makeTransformer
+  // the seed uses, so the asset frame exists and useLiveTransformer can fill it
+  // with real readings.
+  const { hosts, loaded: fleetLoaded } = useFleetHosts(orgId)
+  const base = useMemo(() => {
+    const seeded = transformers.find((t) => t.id === id)
+    if (seeded) return seeded
+    const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
+    return host ? makeTransformer(host as TransformerHost) : undefined
+  }, [transformers, hosts, id])
   const { transformer, live, online, lastReadingAt } = useLiveTransformer(base)
   const [openParam, setOpenParam] = useState<string | null>(null)
   // Both combined charts and all six cards open the same modal, so whichever the
@@ -465,7 +482,9 @@ export default function TransformerDetailPage() {
   if (!transformer) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-slate-500">Transformer not found</div>
+        <div className="text-slate-500">
+          {fleetLoaded ? 'Transformer not found' : 'Loading transformer…'}
+        </div>
       </div>
     )
   }
