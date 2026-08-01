@@ -273,8 +273,15 @@ export const api = {
 
   // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
   orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number; lng?: number }[]>(`/api/orgs`),
+  // provisioned: the tenant database this org needs under TENANT_DB_MODE.
+  // admin.setPasswordUrl: returned only when SMTP is unconfigured, because the
+  // admin row carries no password and that link is then the only way to sign in.
   saveOrg: (body: { id?: string; name: string; status?: string; logoUrl?: string; adminEmail?: string; adminName?: string }) =>
-    req<{ id: string }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
+    req<{
+      id: string
+      provisioned?: { ok?: boolean; db?: string; applied?: number; error?: string } | null
+      admin?: { email?: string; emailed?: boolean; setPasswordUrl?: string; error?: string } | null
+    }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOrg: (id: string) => req(`/api/orgs/${id}`, { method: 'DELETE' }),
   // Per-company branding: org admins set their own org's logo (data URL or
   // hosted URL), display name (shown beside the sidebar logo instead of

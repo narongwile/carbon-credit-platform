@@ -119,6 +119,7 @@ const STEPS = ['Sensor Type', 'Customer', 'Features', 'MQTT Format', 'Review'] a
 function ProvisionWizard({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState(0)
   const [done, setDone] = useState(false)
+  const [outcome, setOutcome] = useState<{ orgId?: string; provisioned?: { ok?: boolean; db?: string; error?: string } | null; admin?: { email?: string; emailed?: boolean; setPasswordUrl?: string; error?: string } | null } | null>(null)
   const [form, setForm] = useState<WizardForm>({
     platform: null,
     customerMode: 'new',
@@ -191,6 +192,11 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
             adminName: `${form.orgName.trim()} Admin`,
           })
           orgId = r?.id || orgId
+          // Both of these can fail while the org itself is created, and both used
+          // to be dropped on the floor: the wizard said "Provisioned" whether or
+          // not the tenant database existed and whether or not anyone could log
+          // in. Report what actually happened.
+          setOutcome({ orgId, provisioned: r?.provisioned, admin: r?.admin })
         }
         if (orgId && form.platform) {
           const cur = (await api.entitlements(orgId)) || []
@@ -233,6 +239,46 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
               <span className="text-white font-medium">{customerLabel}</span> with {enabledCount} feature
               {enabledCount === 1 ? '' : 's'} enabled.
             </p>
+
+            {outcome && (
+              <div className="w-full max-w-md mt-5 space-y-2 text-left">
+                {/* Tenant database — without it the org's first query fails with
+                    "Unknown database", so a silent failure here is not cosmetic. */}
+                {outcome.provisioned?.ok ? (
+                  <div className="rounded-lg px-3 py-2 text-[11px] text-slate-400" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                    Tenant database <span className="text-slate-200 font-mono">{outcome.provisioned.db}</span> created.
+                  </div>
+                ) : outcome.provisioned === null || outcome.provisioned === undefined ? null : (
+                  <div className="rounded-lg px-3 py-2 text-[11px] text-amber-400" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                    Tenant database was NOT created ({outcome.provisioned.error || 'unknown error'}). This org cannot load data until it exists — re-run
+                    <span className="font-mono text-amber-300"> POST /migrate/org/{outcome.orgId}</span> on the migrate service.
+                  </div>
+                )}
+
+                {/* The admin is created without a password; the set-password link
+                    is the only way in when SMTP is not configured. */}
+                {outcome.admin?.emailed && (
+                  <div className="rounded-lg px-3 py-2 text-[11px] text-slate-400" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                    Set-password email sent to <span className="text-slate-200">{outcome.admin.email}</span>.
+                  </div>
+                )}
+                {outcome.admin && outcome.admin.emailed === false && outcome.admin.setPasswordUrl && (
+                  <div className="rounded-lg px-3 py-2 text-[11px]" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                    <div className="text-amber-400 mb-1">Email is not configured — send this set-password link to {outcome.admin.email} yourself (valid 72h):</div>
+                    <div className="flex items-center gap-2">
+                      <input readOnly value={outcome.admin.setPasswordUrl}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="flex-1 rounded px-2 py-1 text-[10px] font-mono text-amber-200 outline-none"
+                        style={{ background: '#0a0e1a', border: '1px solid rgba(245,158,11,0.25)' }} />
+                      <button
+                        onClick={() => navigator.clipboard?.writeText(outcome.admin!.setPasswordUrl!)}
+                        className="px-2 py-1 rounded text-[10px] text-amber-300 hover:text-amber-200"
+                        style={{ border: '1px solid rgba(245,158,11,0.25)' }}>Copy</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex gap-3 mt-7">
               <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
                 Done

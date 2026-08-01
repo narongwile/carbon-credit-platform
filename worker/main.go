@@ -293,6 +293,20 @@ func resolvePool(orgID string) *sql.DB {
 // nodeInfo resolves org/department/status from the control routing index (cached).
 // A short TTL keeps admin approvals (pending → active) reflecting quickly. Returns
 // ("","","") for an unknown node so the caller can auto-register it.
+// nodes.merge_into is added by migrate-v20. Until the migration Job runs, every
+// query naming it fails — so the column is treated as optional and re-probed
+// periodically rather than assumed, and the worker keeps ingesting either way.
+var mergeIntoMissingUntil atomic.Int64
+
+func mergeIntoOK() bool { return time.Now().UnixMilli() >= mergeIntoMissingUntil.Load() }
+
+func noteMergeIntoMissing() {
+	if mergeIntoOK() {
+		log.Printf("nodes.merge_into is missing (migrate-v20 not applied yet) — multi-topic device merging is off until it is")
+	}
+	mergeIntoMissingUntil.Store(time.Now().Add(5 * time.Minute).UnixMilli())
+}
+
 func nodeInfo(nodeID string) (orgID, depID, status, mergeInto string) {
 	if cached, ok := nodeToOrg.Load(nodeID); ok {
 		entry := cached.(OrgCacheEntry)
@@ -302,7 +316,22 @@ func nodeInfo(nodeID string) (orgID, depID, status, mergeInto string) {
 	}
 
 	var org, dep, st, mi sql.NullString
-	err := controlDB.QueryRow("SELECT org_id, department_id, status, merge_into FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st, &mi)
+	var err error
+	// merge_into arrives with migrate-v20, and the flow/worker image rolls
+	// independently of the migration Job. Selecting it unconditionally made
+	// EVERY frame fail resolution during that window — which reads as "unknown
+	// node", so telemetry was auto-registered as pending and dropped for the
+	// whole fleet. Fall back to the pre-v20 shape and retry the full one later,
+	// so ingest survives the gap and picks the column up without a restart.
+	if mergeIntoOK() {
+		err = controlDB.QueryRow("SELECT org_id, department_id, status, merge_into FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st, &mi)
+		if err != nil && strings.Contains(err.Error(), "merge_into") {
+			noteMergeIntoMissing()
+			err = controlDB.QueryRow("SELECT org_id, department_id, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st)
+		}
+	} else {
+		err = controlDB.QueryRow("SELECT org_id, department_id, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st)
+	}
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("Error resolving node %s: %v", nodeID, err)
