@@ -27,16 +27,13 @@ export async function nodesByOrg(orgId: string): Promise<{ id: string; domain: s
 // ---- Fleet (generic, all products) ----------------------------------------
 export async function fleetByOrg(orgId: string, domain?: string): Promise<RowDataPacket[]> {
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT n.id, n.name, n.domain, n.site_id, n.department_id, 
-            COALESCE(n.lat, o.lat) AS lat, COALESCE(n.lng, o.lng) AS lng,
+    `SELECT n.id, n.name, n.domain, n.site_id, n.department_id, n.lat, n.lng,
             p.online, p.last_seen, p.rssi, p.fw,
             (SELECT e.severity FROM alarm_events e
               WHERE e.node_id = n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL
               ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm
-       FROM nodes n 
-       LEFT JOIN device_presence p ON p.node_id = n.id
-       LEFT JOIN organizations o ON o.id = n.org_id
-      WHERE n.org_id = :orgId AND n.status = 'active' ${domain ? 'AND n.domain = :domain' : ''}
+       FROM nodes n LEFT JOIN device_presence p ON p.node_id = n.id
+      WHERE n.org_id = :orgId ${domain ? 'AND n.domain = :domain' : ''}
       ORDER BY n.domain, n.id`,
     { orgId, domain },
   )
@@ -143,9 +140,6 @@ export async function upsertOrg(b: { id?: string; name: string; status?: string;
   return id
 }
 export async function deleteOrg(id: string): Promise<void> { await pool.query('DELETE FROM organizations WHERE id=:id', { id }) }
-export async function updateOrgLogo(orgId: string, logoUrl: string | null): Promise<void> {
-  await pool.query('UPDATE organizations SET logo_url=:l WHERE id=:id', { l: logoUrl, id: orgId })
-}
 export async function getEntitlements(orgId: string): Promise<string[]> {
   const [r] = await pool.query<RowDataPacket[]>('SELECT platform FROM org_entitlements WHERE org_id=:o', { o: orgId })
   return r.map((x) => x.platform as string)
@@ -165,75 +159,15 @@ export async function upsertDepartment(orgId: string, b: { id?: string; name: st
 }
 export async function deleteDepartment(id: string): Promise<void> { await pool.query('DELETE FROM departments WHERE id=:id', { id }) }
 export async function listUsers(orgId: string): Promise<RowDataPacket[]> {
-  const [r] = await pool.query<RowDataPacket[]>('SELECT id,org_id,email,name,phone,role,department_id FROM users WHERE org_id=:o ORDER BY name', { o: orgId })
+  const [r] = await pool.query<RowDataPacket[]>('SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=:o ORDER BY name', { o: orgId })
   return r
 }
-export async function upsertUser(orgId: string, b: { id?: string; email?: string; name: string; phone?: string; role?: string; departmentId?: string; passwordHash?: string }): Promise<string> {
+export async function upsertUser(orgId: string, b: { id?: string; email?: string; name: string; role?: string; departmentId?: string }): Promise<string> {
   const id = b.id || `u-${Date.now()}`
-  await pool.query('INSERT INTO users (id,org_id,email,name,phone,role,department_id,password_hash) VALUES (:id,:o,:e,:n,:ph,:r,:d,:p) ON DUPLICATE KEY UPDATE email=:e,name=:n,phone=:ph,role=:r,department_id=:d' + (b.passwordHash ? ',password_hash=:p' : ''),
-    { id, o: orgId, e: b.email ?? null, n: b.name, ph: b.phone ?? null, r: b.role ?? 'viewer', d: b.departmentId ?? null, p: b.passwordHash ?? null })
+  await pool.query('INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (:id,:o,:e,:n,:r,:d) ON DUPLICATE KEY UPDATE email=:e,name=:n,role=:r,department_id=:d',
+    { id, o: orgId, e: b.email ?? null, n: b.name, r: b.role ?? 'viewer', d: b.departmentId ?? null })
   return id
 }
-
-// ---- Org Employee Directory (CSV allowlist) --------------------------------
-export async function listDirectory(orgId: string): Promise<RowDataPacket[]> {
-  const [r] = await pool.query<RowDataPacket[]>('SELECT id,org_id,name,email,phone,department_id,created_at FROM org_directory WHERE org_id=:o ORDER BY name', { o: orgId })
-  return r
-}
-export async function upsertDirectoryEntries(orgId: string, rows: { name?: string; email?: string; phone?: string; departmentId?: string }[]): Promise<number> {
-  let count = 0
-  for (const r of rows) {
-    if (!r.name && !r.email && !r.phone) continue
-    const id = `dir-${orgId}-${Date.now()}-${count}`
-    await pool.query(
-      'INSERT INTO org_directory (id,org_id,name,email,phone,department_id) VALUES (:id,:o,:n,:e,:ph,:d)',
-      { id, o: orgId, n: r.name ?? null, e: r.email ?? null, ph: r.phone ?? null, d: r.departmentId ?? null }
-    )
-    count++
-  }
-  return count
-}
-export async function clearDirectory(orgId: string): Promise<void> {
-  await pool.query('DELETE FROM org_directory WHERE org_id=:o', { o: orgId })
-}
-export async function matchDirectory(email?: string, phone?: string, name?: string): Promise<RowDataPacket | null> {
-  // Priority: email > phone > name
-  if (email) {
-    const [r] = await pool.query<RowDataPacket[]>('SELECT * FROM org_directory WHERE email=:e LIMIT 1', { e: email })
-    if (r.length) return r[0]
-  }
-  if (phone) {
-    const [r] = await pool.query<RowDataPacket[]>('SELECT * FROM org_directory WHERE phone=:ph LIMIT 1', { ph: phone })
-    if (r.length) return r[0]
-  }
-  if (name) {
-    const [r] = await pool.query<RowDataPacket[]>('SELECT * FROM org_directory WHERE name=:n LIMIT 1', { n: name })
-    if (r.length) return r[0]
-  }
-  return null
-}
-
-export async function updateUserPassword(userId: string, hash: string): Promise<void> {
-  await pool.query('UPDATE users SET password_hash=:h WHERE id=:id', { h: hash, id: userId })
-}
-
-// ---- Password reset tokens --------------------------------------------------
-export async function createResetToken(userId: string, token: string, expiresAt: Date): Promise<void> {
-  await pool.query(
-    'INSERT INTO password_resets (token, user_id, expires_at) VALUES (:t, :u, :e)',
-    { t: token, u: userId, e: expiresAt }
-  )
-}
-export async function getResetToken(token: string): Promise<RowDataPacket | null> {
-  const [r] = await pool.query<RowDataPacket[]>(
-    'SELECT * FROM password_resets WHERE token=:t AND used=0 AND expires_at > NOW()', { t: token }
-  )
-  return r.length ? r[0] : null
-}
-export async function markResetUsed(token: string): Promise<void> {
-  await pool.query('UPDATE password_resets SET used=1 WHERE token=:t', { t: token })
-}
-
 export async function deleteUser(id: string): Promise<void> { await pool.query('DELETE FROM users WHERE id=:id', { id }) }
 export async function getProductAccess(scope: string, scopeId: string): Promise<RowDataPacket[]> {
   const [r] = await pool.query<RowDataPacket[]>('SELECT domain,level FROM product_access WHERE scope=:s AND scope_id=:i', { s: scope, i: scopeId })
@@ -248,78 +182,13 @@ export async function provisionNode(b: { id: string; orgId: string; siteId?: str
     { id: b.id, o: b.orgId, si: b.siteId ?? null, d: b.departmentId ?? null, dom: b.domain, n: b.name, mp: b.mqttPrefix ?? null, la: b.lat ?? null, ln: b.lng ?? null })
 }
 
-// ---- Zero-touch onboarding: pending nodes auto-registered by the ingest worker
-// A superadmin (orgId omitted) sees EVERY org's pending devices, incl. orphans in
-// the '__unassigned__' pool; a tenant admin is scoped to their own org.
-export async function listPendingNodes(orgId?: string): Promise<RowDataPacket[]> {
-  const where = orgId ? 'n.org_id = :o' : '1=1'
-  const [r] = await pool.query<RowDataPacket[]>(
-    `SELECT n.id, n.org_id, o.name AS org_name, n.domain, n.name, n.mqtt_prefix, n.first_seen,
-            p.last_seen, p.online, p.last_sample
-       FROM nodes n
-       LEFT JOIN organizations o ON o.id = n.org_id
-       LEFT JOIN device_presence p ON p.node_id = n.id
-      WHERE ${where} AND n.status = 'pending' ORDER BY n.first_seen DESC`, { o: orgId })
-  return r
-}
-// Returns { ok, error?, status? } so the route can distinguish 403/400/404.
-export async function approveNode(id: string, orgId: string, isSuper: boolean, b: { name?: string; domain?: string; departmentId?: string; orgId?: string; lat?: number; lng?: number }): Promise<{ ok: boolean; status?: number; error?: string; orgId?: string }> {
-  const [rows] = await pool.query<RowDataPacket[]>("SELECT * FROM nodes WHERE id=:id AND status='pending'", { id })
-  if (!rows.length) return { ok: false, status: 404, error: 'pending node not found' }
-  const nd = rows[0]
-  if (!isSuper && nd.org_id !== orgId) return { ok: false, status: 403, error: 'outside your organization' }
-  // A superadmin may reassign the device (belongs to exactly one org) — required
-  // to claim an '__unassigned__' orphan. Target must be a real, active org.
-  const targetOrg = (isSuper && b.orgId) ? b.orgId : nd.org_id
-  const [o] = await pool.query<RowDataPacket[]>("SELECT id FROM organizations WHERE id=:t AND status='active'", { t: targetOrg })
-  if (!o.length) return { ok: false, status: 400, error: 'select a valid active organization for this device' }
-  const reassigned = targetOrg !== nd.org_id
-  const dept = b.departmentId !== undefined ? (b.departmentId || null) : (reassigned ? null : nd.department_id ?? null)
-  const dom = b.domain ?? nd.domain
-  await pool.query(
-    "UPDATE nodes SET status='active', org_id=:org, name=:n, domain=:dom, department_id=:d, lat=:la, lng=:ln WHERE id=:id",
-    { id, org: targetOrg, n: b.name ?? nd.name, dom, d: dept, la: b.lat ?? nd.lat ?? null, ln: b.lng ?? nd.lng ?? null })
-  await seedRuleFromOrgDefault(id, targetOrg, dom)
-  return { ok: true, orgId: targetOrg }
-}
-
-// Org+domain default rule / telemetry param set — persisted at provision time so it
-// exists before any device, then seeds a node's alarm_rules when it comes online.
-export async function upsertOrgDomainRule(orgId: string, domain: string, rule: unknown, updatedBy?: string): Promise<void> {
-  const debounceJson = (rule as { debounceJson?: unknown })?.debounceJson ?? null
-  const ruleJson = JSON.stringify({ ...(rule as object), debounceJson: undefined })
-  // Self-heal the table so this never depends on migrate-v16 running first.
-  await pool.query('CREATE TABLE IF NOT EXISTS org_domain_rules (org_id VARCHAR(64) NOT NULL, domain VARCHAR(32) NOT NULL, rule_json JSON NOT NULL, debounce_json JSON, updated_by VARCHAR(120), updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (org_id, domain))')
-  await pool.query(
-    `INSERT INTO org_domain_rules (org_id,domain,rule_json,debounce_json,updated_by)
-       VALUES (:o,:d,:r,:dj,:u)
-     ON DUPLICATE KEY UPDATE rule_json=:r,debounce_json=:dj,updated_by=:u`,
-    { o: orgId, d: domain, r: ruleJson, dj: debounceJson ? JSON.stringify(debounceJson) : null, u: updatedBy ?? null })
-}
-// Copy the org+domain default into a node's alarm_rules (only if it has none yet).
-// Tolerates a missing org_domain_rules table (migrate-v16 not yet run) — just skips.
-async function seedRuleFromOrgDefault(nodeId: string, orgId: string, domain: string): Promise<void> {
-  try {
-    const [dr] = await pool.query<RowDataPacket[]>('SELECT rule_json, debounce_json FROM org_domain_rules WHERE org_id=:o AND domain=:d', { o: orgId, d: domain })
-    if (!dr.length) return
-    const rj = typeof dr[0].rule_json === 'string' ? dr[0].rule_json : JSON.stringify(dr[0].rule_json)
-    const dj = dr[0].debounce_json == null ? null : (typeof dr[0].debounce_json === 'string' ? dr[0].debounce_json : JSON.stringify(dr[0].debounce_json))
-    await pool.query('INSERT IGNORE INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (:n,:o,:d,:r,:dj,:u)',
-      { n: nodeId, o: orgId, d: domain, r: rj, dj, u: 'provision-default' })
-  } catch (e) { console.warn(`approve: rule seed skipped for ${nodeId}: ${(e as Error).message}`) }
-}
-export async function rejectNode(id: string, orgId: string, isSuper: boolean): Promise<boolean> {
-  const [rows] = await pool.query<RowDataPacket[]>("SELECT org_id FROM nodes WHERE id=:id", { id })
-  if (!rows.length) return false
-  if (!isSuper && (rows[0] as RowDataPacket).org_id !== orgId) return false
-  await pool.query("UPDATE nodes SET status='rejected' WHERE id=:id", { id })
-  return true
-}
-
 // ---- Users + per-user config (configProfile) -------------------------------
 export async function getUser(userId: string): Promise<RowDataPacket | null> {
-  const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, department_id FROM users WHERE id = :id', { id: userId })
+  const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, department_id, phone FROM users WHERE id = :id', { id: userId })
   return rows.length ? rows[0] : null
+}
+export async function updateMe(userId: string, name: string, phone: string): Promise<void> {
+  await pool.query('UPDATE users SET name = :n, phone = :p WHERE id = :id', { n: name, p: phone, id: userId })
 }
 export async function userByEmail(email: string): Promise<RowDataPacket | null> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT id, org_id, email, name, role, password_hash FROM users WHERE email = :e', { e: email })
@@ -400,38 +269,18 @@ export async function putPrefs(userId: string, prefs: unknown): Promise<void> {
   await pool.query('INSERT INTO user_prefs (user_id, prefs) VALUES (:id, :p) ON DUPLICATE KEY UPDATE prefs = :p', { id: userId, p: JSON.stringify(prefs ?? {}) })
 }
 
-// ---- Floor-plan layout images (bytes stored, served path returned) ---------
-export async function upsertFloorplanImage(orgId: string, floorId: string, data: Buffer, contentType: string, url: string): Promise<void> {
-  await pool.query(
-    'INSERT INTO floorplans (org_id, floor_id, image_url, image_data, content_type) VALUES (:o,:f,:u,:d,:c) ON DUPLICATE KEY UPDATE image_url=:u, image_data=:d, content_type=:c',
-    { o: orgId, f: floorId, u: url, d: data, c: contentType })
-}
-export async function getFloorplanImage(orgId: string, floorId: string): Promise<{ data: Buffer; contentType: string } | null> {
-  const [rows] = await pool.query<RowDataPacket[]>('SELECT image_data, content_type FROM floorplans WHERE org_id=:o AND floor_id=:f', { o: orgId, f: floorId })
-  if (!rows.length || !rows[0].image_data) return null
-  return { data: rows[0].image_data as Buffer, contentType: (rows[0].content_type as string) || 'image/png' }
-}
-
-// ---- Cross-org guard for resources addressed by their own id ---------------
-type OrgOwnedTable = 'departments' | 'users' | 'report_schedules' | 'event_problems' | 'ble_beacons'
-// table is a fixed literal from our own code (never user input) → safe to interpolate.
-export async function resourceOrg(table: OrgOwnedTable, id: string): Promise<string | null> {
-  const [r] = await pool.query<RowDataPacket[]>(`SELECT org_id FROM ${table} WHERE id=:id`, { id })
-  return r.length ? ((r[0] as RowDataPacket).org_id as string | null) : null
-}
-
 // ---- Report schedules ------------------------------------------------------
 export async function listSchedules(orgId: string): Promise<RowDataPacket[]> {
   const [rows] = await pool.query<RowDataPacket[]>('SELECT * FROM report_schedules WHERE org_id = :o ORDER BY name', { o: orgId })
   return rows
 }
-export async function upsertSchedule(s: { id?: string; orgId: string; name: string; scope?: string; scopeId?: string; sequence?: string; format?: string; channel?: string; recipients?: string; enabled?: boolean }): Promise<string> {
+export async function upsertSchedule(s: { id?: string; orgId: string; name: string; scope?: string; scopeId?: string; sequence?: string; format?: string; recipients?: string; enabled?: boolean }): Promise<string> {
   const id = s.id || `rpt-${Date.now()}`
   await pool.query(
-    `INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,channel,recipients,enabled,next_run_at)
-       VALUES (:id,:o,:n,:sc,:si,:sq,:f,:ch,:r,:e,NOW(3))
-     ON DUPLICATE KEY UPDATE name=:n,scope=:sc,scope_id=:si,sequence=:sq,format=:f,channel=:ch,recipients=:r,enabled=:e`,
-    { id, o: s.orgId, n: s.name, sc: s.scope ?? 'device', si: s.scopeId ?? null, sq: s.sequence ?? 'daily', f: s.format ?? 'CSV', ch: s.channel ?? 'email', r: s.recipients ?? null, e: s.enabled === false ? 0 : 1 },
+    `INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,recipients,enabled,next_run_at)
+       VALUES (:id,:o,:n,:sc,:si,:sq,:f,:r,:e,NOW(3))
+     ON DUPLICATE KEY UPDATE name=:n,scope=:sc,scope_id=:si,sequence=:sq,format=:f,recipients=:r,enabled=:e`,
+    { id, o: s.orgId, n: s.name, sc: s.scope ?? 'device', si: s.scopeId ?? null, sq: s.sequence ?? 'daily', f: s.format ?? 'CSV', r: s.recipients ?? null, e: s.enabled === false ? 0 : 1 },
   )
   return id
 }
@@ -480,10 +329,10 @@ export async function markEscalated(ids: string[]): Promise<void> {
 }
 
 // ---- Readings (telemetry ingest) ------------------------------------------
-export async function insertReading(nodeId: string, paramKey: string, value: number, takenAt: Date, quality: 'good' | 'sim' | 'error' | 'stale' = 'good'): Promise<void> {
+export async function insertReading(nodeId: string, paramKey: string, value: number, takenAt: Date): Promise<void> {
   await pool.query(
-    'INSERT IGNORE INTO readings (node_id, param_key, value, taken_at, quality) VALUES (:n, :p, :v, :t, :q)',
-    { n: nodeId, p: paramKey, v: value, t: takenAt, q: quality },
+    'INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES (:n, :p, :v, :t)',
+    { n: nodeId, p: paramKey, v: value, t: takenAt },
   )
 }
 
@@ -516,35 +365,4 @@ export async function channelsFor(orgId: string, deptId: string | null): Promise
     { orgId, dept: deptId },
   )
   return rows
-}
-
-export async function getOrgChannels(orgId: string): Promise<RowDataPacket[]> {
-  const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT * FROM notification_channels WHERE org_id = ? AND department_id IS NULL`,
-    [orgId]
-  )
-  return rows
-}
-
-export async function putOrgChannels(orgId: string, channels: { id: string; target: string; enabled: boolean }[]): Promise<void> {
-  // We sync the list by first clearing org-wide channels, then inserting new ones
-  const conn = await pool.getConnection()
-  try {
-    await conn.query(`DELETE FROM notification_channels WHERE org_id = ? AND department_id IS NULL`, [orgId])
-    if (channels.length > 0) {
-      for (const ch of channels) {
-        if (!ch.target) continue
-        await conn.query(
-          `INSERT INTO notification_channels (id, org_id, channel, target, enabled) VALUES (?, ?, ?, ?, ?)`,
-          [`${orgId}-null-${ch.id}`, orgId, ch.id, ch.target, ch.enabled ? 1 : 0]
-        )
-      }
-    }
-  } finally {
-    conn.release()
-  }
-}
-
-export async function updateOrgLocation(orgId: string, lat: number | null, lng: number | null): Promise<void> {
-  await pool.query('UPDATE organizations SET lat=:lat, lng=:lng WHERE id=:id', { lat, lng, id: orgId })
 }
