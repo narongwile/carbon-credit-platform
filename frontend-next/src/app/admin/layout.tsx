@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { getSession, clearSession } from '@/lib/auth'
+import { getSession, clearSession, useSessionRole } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
 import OrgBrand from '@/components/OrgBrand'
 import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
@@ -71,6 +71,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { alarms, selectedOrgId, setSelectedOrgId, setOrgLogo, isLiveMode, toggleLiveMode } = useAppStore()
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
   const [pendingCount, setPendingCount] = useState(0)
+  // useSessionRole (not getSession() in the body): the direct read is null in
+  // the exported HTML and the real role on the client's first paint, and this
+  // branches JSX below — a guaranteed hydration mismatch.
+  const isSuper = useSessionRole() === 'superadmin'
 
   useEffect(() => {
     const session = getSession()
@@ -78,6 +82,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       router.replace('/')
     }
   }, [router])
+
+  // Without the switcher a tenant admin has no way back if selectedOrgId is
+  // wrong, and it is persisted — signing in as a different company on the same
+  // browser would otherwise leave the console pointed at the previous one. The
+  // session is the authority for anyone who cannot switch.
+  useEffect(() => {
+    if (isSuper) return
+    const orgId = getSession()?.orgId
+    if (orgId && orgId !== selectedOrgId) setSelectedOrgId(orgId)
+  }, [isSuper, selectedOrgId, setSelectedOrgId])
 
   // Hydrate per-company logos from the backend (set in admin Settings).
   useEffect(() => {
@@ -147,17 +161,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <span className={clsx('w-2 h-2 rounded-full', isLiveMode ? 'bg-indigo-400' : 'bg-slate-600')} />
               </button>
             )}
-            {/* Tenant switcher — drives entitlement gating */}
-            <select
-              value={selectedOrgId}
-              onChange={(e) => setSelectedOrgId(e.target.value)}
-              className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
-              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
-            >
-              {organizations.map((o) => (
-                <option key={o.id} value={o.id}>{o.name}</option>
-              ))}
-            </select>
+            {/* Tenant switcher — superadmin only. A tenant admin belongs to
+                exactly one organization, so offering the full list let them
+                point the whole console at a company they have no access to:
+                every page would then query an org the API refuses, and the
+                sidebar's entitlement gating would follow the picked org rather
+                than their own. Their org comes from the session at login. */}
+            {isSuper && (
+              <select
+                value={selectedOrgId}
+                onChange={(e) => setSelectedOrgId(e.target.value)}
+                className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
+                style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+              >
+                {organizations.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Nav */}

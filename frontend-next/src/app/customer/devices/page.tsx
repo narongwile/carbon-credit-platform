@@ -30,7 +30,7 @@ export default function CustomerDevicesPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {devices.map((d) => (
-          <Link key={d.id} href={`/customer/devices/detail?id=${d.id}`}>
+          <Link key={d.id} href={d.domain === 'transformer' ? `/customer/transformers/detail?id=${d.id}` : `/customer/devices/detail?id=${d.id}`}>
             <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={surface}>
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2.5">

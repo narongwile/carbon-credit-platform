@@ -455,10 +455,14 @@ function ActiveAlarms({ transformerId }: { transformerId: string }) {
   )
 }
 
-export default function TransformerDetailPage() {
+// Shared by both portals: the admin opens it from Overview, a viewer from their
+// device list. The only differences are whose fleet to resolve the id against
+// and where Back goes, so they are props rather than two copies of the page.
+export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/admin' }: { orgId?: string; backHref?: string } = {}) {
   const id = useSearchParams().get('id') ?? ''
   const { transformers } = useAppStore()
-  const orgId = useAppStore((s) => s.selectedOrgId)
+  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
+  const orgId = orgIdProp ?? selectedOrgId
   // The Overview lists the roster from /api/fleet, but this page used to resolve
   // the device from the seeded `transformers` array only — so every real device
   // that is not one of the demo ids (a transformer an ESP32 registered itself)
@@ -502,7 +506,7 @@ export default function TransformerDetailPage() {
     <div className="h-full flex flex-col overflow-y-auto" style={{ background: '#0a0e1a' }}>
       {/* Top bar */}
       <div className="flex items-center gap-4 px-4 py-2.5 flex-shrink-0" style={{ background: '#0d1117', borderBottom: '1px solid #1e2433' }}>
-        <Link href="/admin" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-white transition-colors">
+        <Link href={backHref} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-white transition-colors">
           <ChevronLeft size={16} />
           Back
         </Link>

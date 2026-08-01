@@ -55,7 +55,7 @@ export default function CustomerMapPage() {
             {devices.map((d, i) => {
               const accent = d.domain ? DOMAIN_META[d.domain].accent : '#6366f1'
               return (
-                <Link key={d.id} href={`/customer/devices/detail?id=${d.id}`}>
+                <Link key={d.id} href={d.domain === 'transformer' ? `/customer/transformers/detail?id=${d.id}` : `/customer/devices/detail?id=${d.id}`}>
                   <div className="absolute -translate-x-1/2 -translate-y-1/2 group cursor-pointer" style={pos(i)}>
                     <MapPin size={26} style={{ color: accent }} fill={accent} className="drop-shadow" />
                     <span className="absolute left-1/2 -translate-x-1/2 mt-0.5 whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded text-white" style={{ background: '#0a0e1a' }}>{d.name}</span>
@@ -69,7 +69,7 @@ export default function CustomerMapPage() {
             {devices.map((d) => {
               const accent = d.domain ? DOMAIN_META[d.domain].accent : '#6366f1'
               return (
-                <Link key={d.id} href={`/customer/devices/detail?id=${d.id}`}>
+                <Link key={d.id} href={d.domain === 'transformer' ? `/customer/transformers/detail?id=${d.id}` : `/customer/devices/detail?id=${d.id}`}>
                   <div className="p-3 rounded-xl cursor-pointer" style={surface}>
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full" style={{ background: accent }} />
