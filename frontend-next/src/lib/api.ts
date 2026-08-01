@@ -311,9 +311,15 @@ export const api = {
       `/api/nodes/pending${orgId ? `?orgId=${encodeURIComponent(orgId)}` : ''}`),
   // orgId reassigns the device to a target org (superadmin only; required to claim
   // an '__unassigned__' orphan). A device belongs to exactly one org.
-  approveNode: (id: string, body: { name?: string; domain?: string; departmentId?: string; orgId?: string; lat?: number; lng?: number }) =>
+  // mergeInto: approve this device as a SECOND FEED of an existing one — a
+  // transformer whose power meter and box sensor publish under different node
+  // ids is one asset, and the worker then stores both topics' readings there.
+  approveNode: (id: string, body: { name?: string; domain?: string; departmentId?: string; orgId?: string; lat?: number; lng?: number; mergeInto?: string }) =>
     req<{ ok: boolean; id: string; orgId: string }>(`/api/nodes/${id}/approve`, { method: 'POST', body: JSON.stringify(body) }),
   rejectNode: (id: string) => req<{ ok: boolean }>(`/api/nodes/${id}/reject`, { method: 'POST' }),
+  /** Pair (mergeInto: id) or unpair (mergeInto: null) an already-approved feed. */
+  setNodeMerge: (id: string, mergeInto: string | null) =>
+    req<{ ok: boolean; id: string; mergeInto: string | null }>(`/api/nodes/${id}/merge`, { method: 'PUT', body: JSON.stringify({ mergeInto }) }),
 
   // Event problem catalog (root causes) — admin maintains, viewers read for ack.
   eventProblems: (orgId: string, departmentId?: string, domain?: string) =>

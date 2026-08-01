@@ -66,7 +66,10 @@ export default function PendingDevicesPage() {
   const [rows, setRows] = useState<PendingNode[]>([])
   const [depts, setDepts] = useState<Dept[]>([])
   const [orgs, setOrgs] = useState<Org[]>([])
-  const [form, setForm] = useState<Record<string, { name: string; domain: string; departmentId: string; orgId: string }>>({})
+  const [form, setForm] = useState<Record<string, { name: string; domain: string; departmentId: string; orgId: string; mergeInto: string }>>({})
+  // Devices already on the fleet — the candidates a second feed can be merged
+  // into. Loaded per org so the picker never offers another tenant's device.
+  const [fleet, setFleet] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
 
@@ -77,7 +80,7 @@ export default function PendingDevicesPage() {
       setRows(mock)
       setForm((prev) => {
         const next = { ...prev }
-        for (const n of mock) if (!next[n.id]) next[n.id] = { name: n.name, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id }
+        for (const n of mock) if (!next[n.id]) next[n.id] = { name: n.name, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id, mergeInto: '' }
         return next
       })
       setDepts(MOCK_DEPTS)
@@ -86,10 +89,11 @@ export default function PendingDevicesPage() {
       return
     }
     // Superadmin: omit orgId → every org's pending devices, incl. orphans.
-    const [pend, dp, og] = await Promise.all([
+    const [pend, dp, og, fl] = await Promise.all([
       api.pendingNodes(isSuper ? undefined : orgId),
       api.departments(orgId),
       isSuper ? api.orgs() : Promise.resolve(null),
+      api.fleet(orgId),
     ])
     if (pend) {
       setRows(pend)
@@ -100,6 +104,7 @@ export default function PendingDevicesPage() {
             name: n.name || n.id,
             domain: n.domain || 'transformer',
             departmentId: '',
+            mergeInto: '',
             // Orphans default to "pick an org"; others keep their attributed org.
             orgId: n.org_id === UNASSIGNED ? '' : n.org_id,
           }
@@ -108,6 +113,7 @@ export default function PendingDevicesPage() {
       })
     }
     if (dp) setDepts(dp as Dept[])
+    if (fl) setFleet(fl.map((d) => ({ id: d.id, name: d.name || d.id })))
     // Real, active orgs only — never offer the '__unassigned__' pool as a target.
     if (og) setOrgs((og as Org[]).filter((o) => o.id !== UNASSIGNED && o.status !== 'suspended'))
     setLoading(false)
@@ -130,6 +136,7 @@ export default function PendingDevicesPage() {
       domain: f.domain,
       departmentId: f.departmentId || undefined,
       orgId: isSuper ? f.orgId : undefined,
+      mergeInto: f.mergeInto || undefined,
     })
     setBusy(null)
     if (res?.ok) { toast.success(`Approved ${f.name}`); setRows((r) => r.filter((x) => x.id !== n.id)) }
@@ -182,7 +189,7 @@ export default function PendingDevicesPage() {
       ) : (
         <div className="space-y-3">
           {rows.map((n) => {
-            const f = form[n.id] ?? { name: n.id, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id }
+            const f = form[n.id] ?? { name: n.id, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id, mergeInto: '' }
             const set = (patch: Partial<typeof f>) => setForm((s) => ({ ...s, [n.id]: { ...f, ...patch } }))
             const isOrphan = n.org_id === UNASSIGNED
             const sample = n.last_sample && typeof n.last_sample === 'object' ? Object.entries(n.last_sample) : []
@@ -218,7 +225,7 @@ export default function PendingDevicesPage() {
                   </div>
                 )}
 
-                <div className={`grid grid-cols-1 gap-3 items-end ${isSuper ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
+                <div className={`grid grid-cols-1 gap-3 items-end ${isSuper ? 'md:grid-cols-6' : 'md:grid-cols-5'}`}>
                   {isSuper && (
                     <div>
                       <label className="block text-[11px] text-slate-500 mb-1">Organization</label>
@@ -248,6 +255,20 @@ export default function PendingDevicesPage() {
                       className="w-full rounded-md px-3 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500" style={inset}>
                       <option value="" className="bg-[#0d1117]">— none —</option>
                       {depts.map((d) => <option key={d.id} value={d.id} className="bg-[#0d1117]">{d.name}</option>)}
+                    </select>
+                  </div>
+                  {/* One asset can publish on two topics — a transformer whose power
+                      meter sends the electrical set and whose box sensor sends
+                      Oiltemp/H2/moisture arrives here as two devices. Approving the
+                      second one INTO the first stores both topics' readings on that
+                      device, so the twin, its alarms and its reports see every
+                      parameter instead of half of each. */}
+                  <div>
+                    <label className="block text-[11px] text-slate-500 mb-1">Second feed of (optional)</label>
+                    <select value={f.mergeInto} onChange={(e) => set({ mergeInto: e.target.value })}
+                      className="w-full rounded-md px-3 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500" style={inset}>
+                      <option value="" className="bg-[#0d1117]">— standalone device —</option>
+                      {fleet.map((d) => <option key={d.id} value={d.id} className="bg-[#0d1117]">{d.name} ({d.id})</option>)}
                     </select>
                   </div>
                   <div className="flex gap-2">

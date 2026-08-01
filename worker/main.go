@@ -121,6 +121,7 @@ type OrgCacheEntry struct {
 	OrgID        string
 	DepartmentID string
 	Status       string // active | pending | rejected
+	MergeInto    string // non-empty → this feed's readings belong to that node
 	ExpiresAt    time.Time
 }
 
@@ -292,30 +293,54 @@ func resolvePool(orgID string) *sql.DB {
 // nodeInfo resolves org/department/status from the control routing index (cached).
 // A short TTL keeps admin approvals (pending → active) reflecting quickly. Returns
 // ("","","") for an unknown node so the caller can auto-register it.
-func nodeInfo(nodeID string) (orgID, depID, status string) {
+func nodeInfo(nodeID string) (orgID, depID, status, mergeInto string) {
 	if cached, ok := nodeToOrg.Load(nodeID); ok {
 		entry := cached.(OrgCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
-			return entry.OrgID, entry.DepartmentID, entry.Status
+			return entry.OrgID, entry.DepartmentID, entry.Status, entry.MergeInto
 		}
 	}
 
-	var org, dep, st sql.NullString
-	err := controlDB.QueryRow("SELECT org_id, department_id, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st)
+	var org, dep, st, mi sql.NullString
+	err := controlDB.QueryRow("SELECT org_id, department_id, status, merge_into FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st, &mi)
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("Error resolving node %s: %v", nodeID, err)
 		}
-		return "", "", "" // unknown → caller auto-registers as pending
+		return "", "", "", "" // unknown → caller auto-registers as pending
 	}
 
 	nodeToOrg.Store(nodeID, OrgCacheEntry{
 		OrgID:        org.String,
 		DepartmentID: dep.String,
 		Status:       st.String,
+		MergeInto:    mi.String,
 		ExpiresAt:    time.Now().Add(2 * time.Minute),
 	})
-	return org.String, dep.String, st.String
+	return org.String, dep.String, st.String, mi.String
+}
+
+// resolveFeed follows nodes.merge_into once: a transformer split across an
+// electrical and an environmental topic publishes under two node ids, and the
+// secondary's readings belong to the primary. Returns the node everything
+// downstream (presence, readings, alarms) should be attributed to, plus that
+// node's org/department/status — approval and tenancy follow the PRIMARY, since
+// that is the device an admin actually approved.
+//
+// Deliberately one hop and never through a missing primary: a chain, a self
+// reference or a dangling target falls back to the publishing node, so a
+// mis-set column can hide data from the fleet but can never discard it.
+func resolveFeed(nodeID string) (target, orgID, depID, status string) {
+	org, dep, st, mergeInto := nodeInfo(nodeID)
+	if mergeInto == "" || mergeInto == nodeID {
+		return nodeID, org, dep, st
+	}
+	pOrg, pDep, pStatus, _ := nodeInfo(mergeInto)
+	if pOrg == "" {
+		log.Printf("merge_into target %q for node %q does not exist — keeping readings on %s", mergeInto, nodeID, nodeID)
+		return nodeID, org, dep, st
+	}
+	return mergeInto, pOrg, pDep, pStatus
 }
 
 // domainFromProduct maps the MQTT topic's product segment to a nodes.domain enum.
@@ -705,6 +730,16 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	// A secondary feed is redirected to its primary BEFORE anything is recorded,
+	// so presence, readings and alarms all describe the one physical asset. The
+	// transformer stays online while EITHER of its topics is publishing, which is
+	// what the operator means by "is it up" — the box sensor going quiet while the
+	// power meter keeps reporting is a link-loss event on the same device, not a
+	// second device disappearing.
+	feedID := t.NodeID
+	target, orgID, depID, status := resolveFeed(t.NodeID)
+	t.NodeID = target
+
 	// Always record presence (every frame means the device is online)
 	updatePresence(t)
 	statPresence.Add(1)
@@ -732,15 +767,16 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	}
 	kafkaClient.Produce(context.Background(), record, nil)
 
-	orgID, depID, status := nodeInfo(t.NodeID)
-
 	// Zero-touch onboarding: an unknown device is auto-registered as a PENDING
 	// node (org from its topic) and awaits admin approval — its data is dropped
 	// until approved. Known-but-not-approved (pending/rejected) devices are kept
 	// "alive" for the approval screen but likewise store no readings/alarms.
+	// Registration always uses the PUBLISHING id: a feed has to exist as its own
+	// row before an admin can point it at a primary, so this is what surfaces the
+	// second topic on the approval screen in the first place.
 	if orgID == "" {
 		sample, _ := json.Marshal(t.Values)
-		autoRegisterPending(t.NodeID, msg.Topic(), sample)
+		autoRegisterPending(feedID, msg.Topic(), sample)
 		statDropped.Add(1)
 		return
 	}

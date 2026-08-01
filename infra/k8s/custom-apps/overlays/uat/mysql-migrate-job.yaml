@@ -83,11 +83,14 @@ spec:
               # up to date. Say so instead of reporting success.
               [ "$found" -gt 0 ] || { echo "FATAL: no migrate-v*.sql found in /sql"; exit 1; }
 
-              # Canary for the newest migration: v19 adds this column and the
-              # presence sweep's LINK_LOST stage reads it. If --force swallowed a
-              # real error, this is what catches it.
+              # Canary for the newest migrations: each adds a column something
+              # reads on every frame, so if --force swallowed a real error this is
+              # what catches it. v19 → the presence sweep's LINK_LOST stage;
+              # v20 → the worker resolving a second feed onto its primary device.
               have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='iothub' AND table_name='device_presence' AND column_name='last_reading_at'")
               [ "$have" = "1" ] || { echo "FATAL: device_presence.last_reading_at missing — migrate-v19 did not apply"; exit 1; }
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='iothub' AND table_name='nodes' AND column_name='merge_into'")
+              [ "$have" = "1" ] || { echo "FATAL: nodes.merge_into missing — migrate-v20 did not apply"; exit 1; }
 
               echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:
