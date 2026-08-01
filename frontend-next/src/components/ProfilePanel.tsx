@@ -61,8 +61,8 @@ export default function ProfilePanel({ portal }: { portal: string }) {
         <h3 className="text-sm font-semibold text-white">Edit Profile</h3>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Full Name" value={profile.name} onChange={(v) => setProfile((p) => ({ ...p, name: v }))} />
-          <Field label="Username" value={profile.username} onChange={(v) => setProfile((p) => ({ ...p, username: v }))} />
-          <Field label="Email" value={profile.email} onChange={(v) => setProfile((p) => ({ ...p, email: v }))} />
+          <Field label="Username" disabled value={profile.username} onChange={(v) => setProfile((p) => ({ ...p, username: v }))} />
+          <Field label="Email" disabled value={profile.email} onChange={(v) => setProfile((p) => ({ ...p, email: v }))} />
           <Field label="Phone" value={profile.phone} onChange={(v) => setProfile((p) => ({ ...p, phone: v }))} />
         </div>
         <button onClick={saveProfile} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white" style={savedProfile ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
@@ -87,12 +87,12 @@ export default function ProfilePanel({ portal }: { portal: string }) {
   )
 }
 
-function Field({ label, value, onChange, type = 'text' }: { label: string; value: string; onChange: (v: string) => void; type?: string }) {
+function Field({ label, value, onChange, type = 'text', disabled = false }: { label: string; value: string; onChange: (v: string) => void; type?: string; disabled?: boolean }) {
   return (
     <div>
       <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}
+        className={`w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`} style={inset} />
     </div>
   )
 }
