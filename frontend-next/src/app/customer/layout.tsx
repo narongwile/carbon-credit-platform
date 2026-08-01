@@ -3,22 +3,28 @@
 import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { getSession, clearSession } from '@/lib/auth'
-import { api, apiEnabled } from '@/lib/api'
+import { getSession, clearSession, useSessionOrgId } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
+import OrgBrand from '@/components/OrgBrand'
+import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
+import api, { isLive } from '@/lib/api'
 import { viewerDepartments } from '@/lib/viewer'
-import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle } from 'lucide-react'
+import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle, LayoutGrid } from 'lucide-react'
 import clsx from 'clsx'
 
-const NAV = [
+// Floor Plans is grouped with the map under Sites & Location — it is
+// site-scoped (site -> building -> floor), the same relationship the admin nav
+// now shows.
+const NAV: NavEntry[] = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
-  { href: '/customer/map', label: 'Live Sensor Map', icon: Map },
-  { href: '/customer/devices', label: 'Devices', icon: HardDrive },
+  { href: '/customer/map', label: 'Live Sensor Map', icon: Map, section: 'Sites & Location' },
+  { href: '/customer/floorplans', label: 'Floor Plans', icon: LayoutGrid },
+  { href: '/customer/devices', label: 'Devices', icon: HardDrive, section: 'Monitoring' },
   { href: '/customer/alarms', label: 'Alarms', icon: Bell },
   { href: '/customer/reports', label: 'Reports', icon: FileBarChart },
-  { href: '/customer/profile', label: 'Profile', icon: UserCircle },
+  { href: '/customer/profile', label: 'Profile', icon: UserCircle, section: 'Account' },
 ]
 
 function RealtimeProvider({ children }: { children: React.ReactNode }) {
@@ -29,9 +35,9 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { viewerUserId, setViewerUserId, orgLogos, setOrgLogo } = useAppStore()
-  const orgLogo = orgLogos['org-1']
-  const orgUsers = getUsersByOrg('org-1').filter((u) => u.role !== 'admin')
+  const { viewerUserId, setViewerUserId, setOrgLogo } = useAppStore()
+  const orgId = useSessionOrgId()
+  const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)
 
   useEffect(() => {
@@ -39,15 +45,16 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
     if (!session || session.role !== 'customer') {
       router.replace('/')
     }
-    if (apiEnabled) {
-      api.orgs().then(orgs => {
-        const org = (orgs as any[])?.find(o => o.id === 'org-1')
-        if (org && org.logo_url) {
-          setOrgLogo('org-1', org.logo_url)
-        }
-      })
-    }
-  }, [router, setOrgLogo])
+  }, [router])
+
+  // Hydrate this company's logo from the backend (set by its admin in Settings).
+  useEffect(() => {
+    if (!isLive()) return
+    api.orgs().then((rows) => {
+      if (!rows) return
+      for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
+    })
+  }, [setOrgLogo])
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href
@@ -56,71 +63,75 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
 
   return (
     <RealtimeProvider>
-      <div className="flex h-screen overflow-hidden" style={{ background: '#0a0e1a' }}>
-        <aside className="w-52 flex flex-col flex-shrink-0" style={{ background: '#0d1117', borderRight: '1px solid #1e2433' }}>
-          <div className="p-4 pb-3" style={{ borderBottom: '1px solid #1e2433' }}>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: orgLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-                {orgLogo ? <img src={orgLogo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
-              </div>
-              <span className="font-bold text-white tracking-wider text-sm">ONEOPS</span>
+      <AppShell brand={<OrgBrand orgId={orgId} />} sidebar={({ collapsed, close }) => (
+        <>
+          <div className={clsx('pb-3', collapsed ? 'lg:p-2' : 'p-4')} style={{ borderBottom: '1px solid #1e2433' }}>
+            <div className={clsx('mb-1', collapsed && 'lg:hidden')}>
+              <OrgBrand orgId={orgId} />
             </div>
-            <div className="text-[10px] text-slate-600 ml-9">Customer Portal</div>
+            <div className={clsx('text-[10px] text-slate-600 ml-9', collapsed && 'lg:hidden')}>Customer Portal</div>
             {/* Acting viewer — drives department-based access */}
             <select
               value={viewerUserId}
               onChange={(e) => setViewerUserId(e.target.value)}
-              className="w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500"
+              className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
               style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
             >
               {orgUsers.map((u) => (
                 <option key={u.id} value={u.id}>{u.name} · {roleLabels[u.role]}</option>
               ))}
             </select>
-            <div className="text-[10px] text-slate-600 mt-1 ml-0.5 truncate">
+            <div className={clsx('text-[10px] text-slate-600 mt-1 ml-0.5 truncate', collapsed && 'lg:hidden')}>
               {depts.length ? depts.map((d) => d.name).join(', ') : 'No department'}
             </div>
           </div>
 
-          <nav className="flex-1 px-2.5 py-3 space-y-0.5">
+          <nav className="flex-1 px-2.5 py-3 space-y-0.5 overflow-y-auto">
             {NAV.map((item) => {
               const active = isActive(item.href, item.exact)
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={clsx(
-                    'flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group',
-                    active ? 'text-white' : 'text-slate-500 hover:text-slate-200 hover:bg-white/5'
-                  )}
-                  style={active ? { background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' } : {}}
-                >
-                  <item.icon size={15} className={active ? 'text-indigo-400' : 'text-slate-600 group-hover:text-slate-400'} />
-                  {item.label}
-                  {active && <ChevronRight size={12} className="ml-auto text-indigo-400" />}
-                </Link>
+                <div key={item.href}>
+                  {item.section && <NavSection title={item.section} collapsed={collapsed} />}
+                  <Link
+                    href={item.href}
+                    onClick={close}
+                    title={item.label}
+                    className={clsx(
+                      'flex items-center gap-2.5 py-2.5 rounded-lg text-sm font-medium transition-all group',
+                      collapsed ? 'lg:justify-center lg:px-0 px-3' : 'px-3',
+                      active ? 'text-white' : 'text-slate-500 hover:text-slate-200 hover:bg-white/5'
+                    )}
+                    style={active ? { background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' } : {}}
+                  >
+                    <item.icon size={15} className={clsx('flex-shrink-0', active ? 'text-indigo-400' : 'text-slate-600 group-hover:text-slate-400')} />
+                    <span className={clsx(collapsed && 'lg:hidden')}>{item.label}</span>
+                    {active && <ChevronRight size={12} className={clsx('ml-auto text-indigo-400', collapsed && 'lg:hidden')} />}
+                  </Link>
+                </div>
               )
             })}
           </nav>
 
           <div className="px-2.5 py-3 space-y-1" style={{ borderTop: '1px solid #1e2433' }}>
-            <div className="px-3 py-2 text-xs text-slate-600">
+            <div className={clsx('px-3 py-2 text-xs text-slate-600', collapsed && 'lg:hidden')}>
               Read-only access
             </div>
             <button
               onClick={() => { clearSession(); router.push('/') }}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-slate-500 hover:text-red-400 hover:bg-red-500/5 transition-all"
+              title="Sign Out"
+              className={clsx(
+                'w-full flex items-center gap-2.5 py-2.5 rounded-lg text-sm text-slate-500 hover:text-red-400 hover:bg-red-500/5 transition-all',
+                collapsed ? 'lg:justify-center lg:px-0 px-3' : 'px-3',
+              )}
             >
-              <LogOut size={15} />
-              Sign Out
+              <LogOut size={15} className="flex-shrink-0" />
+              <span className={clsx(collapsed && 'lg:hidden')}>Sign Out</span>
             </button>
           </div>
-        </aside>
-
-        <main className="flex-1 overflow-auto">
-          {children}
-        </main>
-      </div>
+        </>
+      )}>
+        {children}
+      </AppShell>
     </RealtimeProvider>
   )
 }

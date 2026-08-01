@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import { getSession } from '@/lib/auth'
 import { api, apiEnabled } from '@/lib/api'
-import { UserCircle, Save, KeyRound } from 'lucide-react'
+import { UserCircle, Save, KeyRound, BellRing } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -13,6 +14,9 @@ const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 // Used by both the Admin and Customer (Viewer) portals.
 export default function ProfilePanel({ portal }: { portal: string }) {
   const [profile, setProfile] = useState({ name: '', username: '', email: '', phone: '' })
+  // Per-user notification channel credentials (any role): where THIS user's
+  // alerts go. Stored in user_prefs alongside phone, so no schema change.
+  const [channels, setChannels] = useState({ telegramBotApi: '', lineMsgApi: '', googleChatApi: '' })
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
   const [savedProfile, setSavedProfile] = useState(false)
   const [savedPwd, setSavedPwd] = useState(false)
@@ -22,21 +26,38 @@ export default function ProfilePanel({ portal }: { portal: string }) {
     if (!s) return
     setProfile({ name: s.name, username: s.username, email: s.email, phone: '' })
     if (apiEnabled) api.getMyConfig(s.id).then((r) => {
-      const uPhone = (r as any)?.user?.phone as string | undefined
-      const p = (r?.prefs ?? {}) as { phone?: string }
-      if (uPhone || p.phone) setProfile((cur) => ({ ...cur, phone: (uPhone || p.phone) as string }))
+      const p = (r?.prefs ?? {}) as { phone?: string; telegramBotApi?: string; lineMsgApi?: string; googleChatApi?: string }
+      if (p.phone) setProfile((cur) => ({ ...cur, phone: p.phone as string }))
+      setChannels({
+        telegramBotApi: p.telegramBotApi ?? '',
+        lineMsgApi: p.lineMsgApi ?? '',
+        googleChatApi: p.googleChatApi ?? '',
+      })
     })
   }, [])
 
   const saveProfile = async () => {
     const s = getSession()
-    if (apiEnabled && s) await api.putMyConfig(s.id, { phone: profile.phone, name: profile.name })
-    else await new Promise((r) => setTimeout(r, 300))
-    setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
+    if (s) {
+      try {
+        // putMyConfig REPLACES prefs, so every field must ride along — posting
+        // only the profile part would wipe the saved notification channels.
+        const res = await api.putMyConfig(s.id, { phone: profile.phone, name: profile.name, ...channels })
+        if (!res) throw new Error('Failed to update profile')
+        setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
+      } catch (e: any) { toast.error('Failed to update profile') }
+    }
   }
   const savePwd = async () => {
-    if (!pwd.next || pwd.next !== pwd.confirm) return
-    await new Promise((r) => setTimeout(r, 300)); setSavedPwd(true); setPwd({ current: '', next: '', confirm: '' }); setTimeout(() => setSavedPwd(false), 2000)
+    if (!pwd.current || !pwd.next || pwd.next !== pwd.confirm) return
+    try {
+      const r = await api.updatePassword({ currentPassword: pwd.current, newPassword: pwd.next })
+      if (!r || (r as any).error) throw new Error((r as any)?.error || 'Failed to update')
+      setSavedPwd(true); setPwd({ current: '', next: '', confirm: '' }); setTimeout(() => setSavedPwd(false), 2000)
+      toast.success('Password updated')
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update password')
+    }
   }
 
   return (
@@ -61,12 +82,35 @@ export default function ProfilePanel({ portal }: { portal: string }) {
         <h3 className="text-sm font-semibold text-white">Edit Profile</h3>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Full Name" value={profile.name} onChange={(v) => setProfile((p) => ({ ...p, name: v }))} />
-          <Field label="Username" disabled value={profile.username} onChange={(v) => setProfile((p) => ({ ...p, username: v }))} />
-          <Field label="Email" disabled value={profile.email} onChange={(v) => setProfile((p) => ({ ...p, email: v }))} />
+          {/* Read-only: these identify the account. PUT /api/me/config writes
+              user_prefs and never touches the users table, so an edit here was
+              accepted, showed "Saved!", and silently reverted on reload. */}
+          <Field label="Username" value={profile.username} disabled />
+          <Field label="Email" value={profile.email} disabled />
           <Field label="Phone" value={profile.phone} onChange={(v) => setProfile((p) => ({ ...p, phone: v }))} />
         </div>
         <button onClick={saveProfile} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white" style={savedProfile ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
           <Save size={15} /> {savedProfile ? 'Saved!' : 'Save Profile'}
+        </button>
+      </div>
+
+      {/* Notification channel APIs — all roles */}
+      <div className="rounded-xl p-5 space-y-4" style={surface}>
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2"><BellRing size={15} className="text-indigo-400" /> Notification APIs</h3>
+        <p className="text-[11px] text-slate-500 -mt-2">Where your alarm notifications are delivered. Saved with your profile.</p>
+        <div className="grid grid-cols-1 gap-3">
+          <Field label="Telegram Bot API" value={channels.telegramBotApi}
+            onChange={(v) => setChannels((c) => ({ ...c, telegramBotApi: v }))}
+            placeholder="123456:ABC-DEF… (bot token, or token@chat_id)" />
+          <Field label="LINE Messaging API" value={channels.lineMsgApi}
+            onChange={(v) => setChannels((c) => ({ ...c, lineMsgApi: v }))}
+            placeholder="Channel access token@userId (Messaging API push)" />
+          <Field label="Google Chat API" value={channels.googleChatApi}
+            onChange={(v) => setChannels((c) => ({ ...c, googleChatApi: v }))}
+            placeholder="https://chat.googleapis.com/v1/spaces/…/messages?key=…" />
+        </div>
+        <button onClick={saveProfile} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white" style={savedProfile ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
+          <Save size={15} /> {savedProfile ? 'Saved!' : 'Save'}
         </button>
       </div>
 
@@ -87,12 +131,12 @@ export default function ProfilePanel({ portal }: { portal: string }) {
   )
 }
 
-function Field({ label, value, onChange, type = 'text', disabled = false }: { label: string; value: string; onChange: (v: string) => void; type?: string; disabled?: boolean }) {
+function Field({ label, value, onChange, type = 'text', placeholder, disabled }: { label: string; value: string; onChange?: (v: string) => void; type?: string; placeholder?: string; disabled?: boolean }) {
   return (
     <div>
       <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}
-        className={`w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`} style={inset} />
+      <input type={type} value={value} onChange={(e) => onChange?.(e.target.value)} placeholder={placeholder} disabled={disabled}
+        className={`w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500${disabled ? ' opacity-50 cursor-not-allowed' : ''}`} style={inset} />
     </div>
   )
 }

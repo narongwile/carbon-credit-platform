@@ -4,27 +4,15 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { login, loginRemote, saveSession, getDashboardRoute, authApiEnabled } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
-import { Boxes, Eye, EyeOff, Shield, Users, User } from 'lucide-react'
-import clsx from 'clsx'
+import { Boxes, Eye, EyeOff } from 'lucide-react'
 
-type RoleTab = 'superadmin' | 'admin' | 'customer'
-
-// Demo creds: backend (email + JWT) when an API is configured, else mock usernames.
-const ROLE_TABS: { id: RoleTab; label: string; icon: React.ReactNode; hint: { user: string; pass: string } }[] = authApiEnabled
-  ? [
-      { id: 'superadmin', label: 'Super Admin', icon: <Shield size={14} />, hint: { user: 'super@oneops.demo', pass: 'demo1234' } },
-      { id: 'admin', label: 'Admin', icon: <Users size={14} />, hint: { user: 'admin@kmutt.demo', pass: 'demo1234' } },
-      { id: 'customer', label: 'Customer', icon: <User size={14} />, hint: { user: 'viewer@kmutt.demo', pass: 'demo1234' } },
-    ]
-  : [
-      { id: 'superadmin', label: 'Super Admin', icon: <Shield size={14} />, hint: { user: 'superadmin', pass: 'admin123' } },
-      { id: 'admin', label: 'Admin', icon: <Users size={14} />, hint: { user: 'admin', pass: 'admin123' } },
-      { id: 'customer', label: 'Customer', icon: <User size={14} />, hint: { user: 'customer', pass: 'customer123' } },
-    ]
+// The role selector tabs and demo-credential hints that used to live here were
+// a demo affordance: the role came from the account's JWT, never from the tab,
+// so picking one changed nothing but implied the wrong sign-in had to be chosen.
+// Both are gone for production — sign in with an email and password.
 
 export default function LoginPage() {
   const router = useRouter()
-  const [activeRole, setActiveRole] = useState<RoleTab>('admin')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
@@ -41,7 +29,7 @@ export default function LoginPage() {
     // Real backend (JWT) when configured; the username field carries the email.
     const user = authApiEnabled ? await loginRemote(username, password) : (await new Promise((r) => setTimeout(r, 600)), login(username, password))
     if (!user) {
-      setError(authApiEnabled ? 'Invalid credentials.' : 'Invalid credentials. Check the hints below.')
+      setError('Invalid credentials.')
       setLoading(false)
       return
     }
@@ -49,14 +37,6 @@ export default function LoginPage() {
     // Sync the active org + user so the app shows this tenant's data.
     if (user.orgId) useAppStore.getState().setSelectedOrgId(user.orgId)
     router.push(getDashboardRoute(user))
-  }
-
-  const fillHint = (role: RoleTab) => {
-    const tab = ROLE_TABS.find((t) => t.id === role)!
-    setUsername(tab.hint.user)
-    setPassword(tab.hint.pass)
-    setActiveRole(role)
-    setError('')
   }
 
   return (
@@ -90,26 +70,6 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="rounded-2xl p-8 glass" style={{ border: '1px solid #1e2433' }}>
-          {/* Role selector (Hidden per request) */}
-          {/* <div className="flex rounded-lg p-1 mb-6" style={{ background: '#0a0e1a' }}>
-            {ROLE_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveRole(tab.id)}
-                className={clsx(
-                  'flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-xs font-medium transition-all',
-                  activeRole === tab.id
-                    ? 'text-white'
-                    : 'text-slate-500 hover:text-slate-300'
-                )}
-                style={activeRole === tab.id ? { background: '#6366f1' } : {}}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div> */}
-
           {/* Form */}
           <div className="space-y-4">
             <div>
@@ -176,27 +136,6 @@ export default function LoginPage() {
             <a href="/forgot/" className="text-slate-500 hover:text-indigo-400 transition-colors">Forgot password?</a>
             <a href="/register/" className="text-slate-400 hover:text-white transition-colors">Create an account →</a>
           </div>
-
-          {/* Demo hints (Hidden per request) */}
-          {/* <div className="mt-6 pt-5" style={{ borderTop: '1px solid #1e2433' }}>
-            <p className="text-xs text-slate-600 mb-3 text-center uppercase tracking-wider">Demo Credentials</p>
-            <div className="grid grid-cols-3 gap-2">
-              {ROLE_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => fillHint(tab.id)}
-                  className="p-2.5 rounded-lg text-center hover:border-indigo-500/50 transition-all group"
-                  style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
-                >
-                  <div className="flex justify-center mb-1 text-slate-500 group-hover:text-indigo-400 transition-colors">
-                    {tab.icon}
-                  </div>
-                  <div className="text-xs font-medium text-slate-300 group-hover:text-white">{tab.label}</div>
-                  <div className="text-[10px] text-slate-600 mt-0.5">{tab.hint.user}</div>
-                </button>
-              ))}
-            </div>
-          </div> */}
         </div>
 
         <p className="text-center text-slate-700 text-xs mt-6">
