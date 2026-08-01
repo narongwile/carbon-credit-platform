@@ -157,7 +157,7 @@ export async function upsertDepartment(orgId: string, b: { id?: string; name: st
   await pool.query('INSERT INTO departments (id,org_id,name) VALUES (:id,:o,:n) ON DUPLICATE KEY UPDATE name=:n', { id, o: orgId, n: b.name })
   return id
 }
-export async function deleteDepartment(id: string): Promise<void> { await pool.query('DELETE FROM departments WHERE id=:id', { id }) }
+export async function deleteDepartment(orgId: string, id: string): Promise<void> { await pool.query('DELETE FROM departments WHERE id=:id AND org_id=:o', { id, o: orgId }) }
 export async function listUsers(orgId: string): Promise<RowDataPacket[]> {
   const [r] = await pool.query<RowDataPacket[]>('SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=:o ORDER BY name', { o: orgId })
   return r
@@ -168,7 +168,7 @@ export async function upsertUser(orgId: string, b: { id?: string; email?: string
     { id, o: orgId, e: b.email ?? null, n: b.name, r: b.role ?? 'viewer', d: b.departmentId ?? null })
   return id
 }
-export async function deleteUser(id: string): Promise<void> { await pool.query('DELETE FROM users WHERE id=:id', { id }) }
+export async function deleteUser(orgId: string, id: string): Promise<void> { await pool.query('DELETE FROM users WHERE id=:id AND org_id=:o', { id, o: orgId }) }
 export async function getProductAccess(scope: string, scopeId: string): Promise<RowDataPacket[]> {
   const [r] = await pool.query<RowDataPacket[]>('SELECT domain,level FROM product_access WHERE scope=:s AND scope_id=:i', { s: scope, i: scopeId })
   return r

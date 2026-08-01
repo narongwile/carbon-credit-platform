@@ -94,13 +94,13 @@ router.post('/orgs/:orgId/departments', requireRole('admin'), orgScope('orgId'),
   if (!req.body?.name) return res.status(400).json({ error: 'name required' })
   res.json({ ok: true, id: await upsertDepartment(req.params.orgId, req.body) })
 })
-router.delete('/departments/:id', requireRole('admin'), async (req, res) => { await deleteDepartment(req.params.id); res.json({ ok: true }) })
+router.delete('/departments/:id', requireRole('admin'), async (req, res) => { await deleteDepartment(req.auth!.orgId, req.params.id); res.json({ ok: true }) })
 router.get('/orgs/:orgId/users', orgScope('orgId'), async (req, res) => res.json(await listUsers(req.params.orgId)))
 router.post('/orgs/:orgId/users', requireRole('admin'), orgScope('orgId'), async (req, res) => {
   if (!req.body?.name) return res.status(400).json({ error: 'name required' })
   res.json({ ok: true, id: await upsertUser(req.params.orgId, req.body) })
 })
-router.delete('/users/:id', requireRole('admin'), async (req, res) => { await deleteUser(req.params.id); res.json({ ok: true }) })
+router.delete('/users/:id', requireRole('admin'), async (req, res) => { await deleteUser(req.auth!.orgId, req.params.id); res.json({ ok: true }) })
 router.get('/product-access', async (req, res) => res.json(await getProductAccess((req.query.scope as string) || 'department', (req.query.scopeId as string) || '')))
 router.put('/product-access', requireRole('admin'), async (req, res) => {
   const { scope, scopeId, domain } = req.body ?? {}
