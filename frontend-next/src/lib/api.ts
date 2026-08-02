@@ -388,6 +388,8 @@ export interface FleetNode {
   rssi: number | null
   fw: string | null
   alarm: 'WARNING' | 'CRITICAL' | null
+  /** 1 = no coordinate of its own; this is the org's factory pin, nudged apart. */
+  approx?: 0 | 1
 }
 
 export interface ReportSchedule {

@@ -55,7 +55,7 @@ export function useLiveGeoNodes(orgId: string): GeoNode[] | null {
     geo.push({
       id: n.id, orgId, name: n.name, domain: n.domain,
       platform: meta.platform, accent: meta.accent, health: geoHealth(n),
-      lat: Number(n.lat), lng: Number(n.lng),
+      lat: Number(n.lat), lng: Number(n.lng), approx: n.approx === 1,
       metricLabel: 'Status', metricValue: n.alarm ?? (n.online === 0 ? 'Offline' : 'Online'),
       updated: n.last_seen ?? '—',
     })

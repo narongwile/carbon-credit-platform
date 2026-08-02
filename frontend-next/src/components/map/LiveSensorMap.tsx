@@ -28,6 +28,7 @@ export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNo
          <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${n.accent}">${n.platform}</div></div>
        </div>
        <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
+       ${n.approx ? `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on its floor plan.</div>` : ''}
      </div>`
 
   // Add/update/remove markers to match the current nodes — reusing the map.
@@ -40,12 +41,18 @@ export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNo
       seen.add(n.id)
       const color = healthColor[n.health]
       const existing = markers.get(n.id)
+      // A device with no coordinate of its own is shown at the org's factory pin.
+      // It must not look like a surveyed position: hollow, dashed and dimmer, so
+      // "roughly at this site" is visibly different from "here".
+      const style = n.approx
+        ? { fillColor: color, fillOpacity: 0.25, color, weight: 2, dashArray: '3 3' }
+        : { fillColor: color, fillOpacity: 1, color: '#ffffff', weight: 2, dashArray: undefined }
       if (existing) {
         existing.setLatLng([n.lat, n.lng])
-        existing.setStyle({ fillColor: color })
+        existing.setStyle(style)
         existing.setPopupContent(popupHtml(n))
       } else {
-        const m = L.circleMarker([n.lat, n.lng], { radius: 9, color: '#ffffff', weight: 2, fillColor: color, fillOpacity: 1 })
+        const m = L.circleMarker([n.lat, n.lng], { radius: 9, ...style })
           .addTo(map)
           .bindPopup(popupHtml(n))
         markers.set(n.id, m)

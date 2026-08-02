@@ -21,6 +21,8 @@ export interface GeoNode {
   metricLabel: string
   metricValue: string
   updated: string
+  /** Position is the org's factory pin, not one an admin set for this device. */
+  approx?: boolean
 }
 
 const CITIES: [number, number, string][] = [
