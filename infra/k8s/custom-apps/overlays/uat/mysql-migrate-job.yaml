@@ -91,6 +91,8 @@ spec:
               [ "$have" = "1" ] || { echo "FATAL: device_presence.last_reading_at missing — migrate-v19 did not apply"; exit 1; }
               have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='iothub' AND table_name='nodes' AND column_name='merge_into'")
               [ "$have" = "1" ] || { echo "FATAL: nodes.merge_into missing — migrate-v20 did not apply"; exit 1; }
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='sites'")
+              [ "$have" = "1" ] || { echo "FATAL: sites table missing — migrate-v21 did not apply"; exit 1; }
 
               echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:

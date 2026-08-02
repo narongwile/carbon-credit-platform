@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { useSessionOrgId } from '@/lib/auth'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
+import { managedDevicesFromFleet, getSitesByOrg } from '@/lib/fleetData'
 import { viewerDomains } from '@/lib/viewer'
 import { DOMAIN_META } from '@/types/fleet'
 import { api, apiImageUrl } from '@/lib/api'
-import { MapPin, Image as ImageIcon, Check, Satellite, Radio, Wifi, Bluetooth, Gauge, Eye } from 'lucide-react'
+import { MapPin, Image as ImageIcon, Check, Satellite, Radio, Wifi, Bluetooth, Gauge, Eye, Building2 } from 'lucide-react'
 import clsx from 'clsx'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -24,12 +24,9 @@ const POSITIONING = [
 type PosMethod = (typeof POSITIONING)[number]['id']
 const posMeta = (id: string) => POSITIONING.find((p) => p.id === id) ?? POSITIONING[2]
 
-interface Floor { id: string; name: string }
-const FLOORS: Floor[] = [
-  { id: 'fl-1', name: 'Building A · Floor 1' },
-  { id: 'fl-2', name: 'Building A · Floor 2' },
-  { id: 'fl-b1', name: 'Building A · B1' },
-]
+// Floors are the admin's, saved per site — not a const. A hardcoded list here
+// would show floor ids that no longer exist, i.e. three permanently empty tabs.
+interface Floor { id: string; siteId: string; name: string }
 type Pos = { x: number; y: number }
 
 // Read-only floor-plan view for viewers: shows the transformer coordinates an admin
@@ -40,19 +37,37 @@ export default function CustomerFloorPlansPage() {
   const allowed = viewerDomains(viewerUserId)
   const nodes = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
 
-  const [activeFloor, setActiveFloor] = useState(FLOORS[0].id)
+  const [sites, setSites] = useState<{ id: string; name: string }[]>(() => getSitesByOrg(orgId))
+  const [activeSite, setActiveSite] = useState('')
+  const [floors, setFloors] = useState<Floor[]>([])
+  const [activeFloor, setActiveFloor] = useState('')
   const [images, setImages] = useState<Record<string, string>>({})
   const [positions, setPositions] = useState<Record<string, Record<string, Pos>>>({})
   const [posMethod, setPosMethod] = useState<Record<string, PosMethod>>({})
   const methodOf = (n: { id: string; domain?: string }): PosMethod => posMethod[n.id] ?? (n.domain === 'bloodBox' ? 'ble' : 'wifi')
 
   useEffect(() => {
-    api.getFloorplans(orgId).then((data: any) => {
+    let cancelled = false
+    ;(async () => {
+      const live = await api.sites(orgId)
+      if (cancelled) return
+      const s = live?.sites?.length ? live.sites : getSitesByOrg(orgId)
+      setSites(s)
+      setActiveSite((cur) => (s.some((x) => x.id === cur) ? cur : s[0]?.id ?? ''))
+      const data = (await api.getFloorplans(orgId)) as any
+      if (cancelled) return
       if (data?.images) setImages(data.images)
       if (data?.positions) setPositions(data.positions)
       if (data?.posMethod) setPosMethod(data.posMethod)
-    })
+      if (data?.floors) setFloors(data.floors as Floor[])
+    })()
+    return () => { cancelled = true }
   }, [orgId])
+
+  const siteFloors = useMemo(() => floors.filter((f) => f.siteId === activeSite), [floors, activeSite])
+  useEffect(() => {
+    setActiveFloor((cur) => (siteFloors.some((f) => f.id === cur) ? cur : siteFloors[0]?.id ?? ''))
+  }, [siteFloors])
 
   const img = images[activeFloor]
   const floorPos = positions[activeFloor] ?? {}
@@ -65,8 +80,20 @@ export default function CustomerFloorPlansPage() {
         <p className="text-sm text-slate-500 mt-0.5">Transformer locations as pinned by your organization&apos;s admin.</p>
       </div>
 
+      {/* Site first — a plan is only meaningful for the place it belongs to. */}
       <div className="flex flex-wrap items-center gap-2">
-        {FLOORS.map((f) => (
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><Building2 size={13} /> Site</span>
+        {sites.map((s) => (
+          <button key={s.id} onClick={() => setActiveSite(s.id)}
+            className={clsx('px-3 py-2 rounded-lg text-xs font-semibold transition-all', activeSite === s.id ? 'text-white' : 'text-slate-500')}
+            style={activeSite === s.id ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>
+            {s.name}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        {siteFloors.map((f) => (
           <button key={f.id} onClick={() => setActiveFloor(f.id)}
             className={clsx('px-3 py-2 rounded-lg text-xs font-semibold transition-all', activeFloor === f.id ? 'text-white' : 'text-slate-500')}
             style={activeFloor === f.id ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>

@@ -198,6 +198,21 @@ export const api = {
 
   // Org Rule and Floorplans
   updateOrgRule: (orgId: string, rule: any, updatedBy: string = 'system') => req(`/api/orgs/${orgId}/rule`, { method: 'PUT', body: JSON.stringify({ rule, updatedBy }) }),
+  // Sites — a customer's physical places. Floor plans are reached through one,
+  // and a site's own pin is the coarse fallback for devices with no GPS.
+  sites: (orgId: string) =>
+    req<{ sites: { id: string; name: string; address: string | null; lat: number | null; lng: number | null }[]
+          floors: { floor_id: string; site_id: string | null; nw_lat: number | null; nw_lng: number | null; se_lat: number | null; se_lng: number | null }[] }>(
+      `/api/orgs/${orgId}/sites`),
+  saveSite: (orgId: string, body: { id?: string; name: string; address?: string; lat?: number | null; lng?: number | null }) =>
+    req<{ ok: boolean; id: string }>(`/api/orgs/${orgId}/sites`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteSite: (id: string) => req<{ ok: boolean }>(`/api/sites/${id}`, { method: 'DELETE' }),
+  /** Real-world corners of a floor-plan image — what makes a pin a coordinate. */
+  setFloorGeo: (orgId: string, floorId: string, body: { siteId?: string | null; nwLat?: number | null; nwLng?: number | null; seLat?: number | null; seLng?: number | null }) =>
+    req<{ ok: boolean }>(`/api/orgs/${orgId}/floorplans/${floorId}/geo`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Persist a device's coordinate (and site) so the GPS map matches the layout. */
+  setNodeLocation: (id: string, body: { lat: number | null; lng: number | null; siteId?: string | null }) =>
+    req<{ ok: boolean; id: string; lat: number | null; lng: number | null }>(`/api/nodes/${id}/location`, { method: 'PUT', body: JSON.stringify(body) }),
   getFloorplans: (orgId: string) => req(`/api/orgs/${orgId}/floorplans`),
   updateFloorplans: (orgId: string, data: any) => req(`/api/orgs/${orgId}/floorplans`, { method: 'PUT', body: JSON.stringify(data) }),
   // Upload a floor-plan layout image (base64) → stored in the floorplans table;
