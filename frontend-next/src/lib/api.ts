@@ -117,8 +117,17 @@ export const api = {
     req(`/api/nodes/${nodeId}/rule`, { method: 'PUT', body: JSON.stringify(body) }),
   putOrgRule: (orgId: string, body: { rule: NodeAlarmRule; updatedBy?: string }) =>
     req<{ applied: number }>(`/api/orgs/${orgId}/rule`, { method: 'PUT', body: JSON.stringify(body) }),
-  orgChannels: (orgId: string) => req<any[]>(`/api/orgs/${orgId}/channels`),
-  putOrgChannels: (orgId: string, channels: any[]) => req(`/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels }) }),
+  /** Org-wide alert routing (notification_channels). notify() reads these. */
+  orgChannels: (orgId: string) =>
+    req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number }[]>(`/api/orgs/${orgId}/channels`),
+  // Accepts either shape: the UI models a channel as { id }, the table as
+  // { channel }. The backend reads channel||id, so both are valid here.
+  putOrgChannels: (orgId: string, channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[]) =>
+    req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels }) }),
+  /** Which dashboard themes each department may see: { [departmentId]: themeId[] }. */
+  departmentThemes: (orgId: string) => req<Record<string, string[]>>(`/api/orgs/${orgId}/department-themes`),
+  setDepartmentThemes: (orgId: string, departmentId: string, themeIds: string[]) =>
+    req<{ ok: boolean }>(`/api/orgs/${orgId}/department-themes`, { method: 'PUT', body: JSON.stringify({ departmentId, themeIds }) }),
   events: (nodeId: string) => req<unknown[]>(`/api/nodes/${nodeId}/events`),
   // Link switches + offline-backlog flushes for a device (transport_events
   // merged with offline_sync_log), newest first.
@@ -291,11 +300,14 @@ export const api = {
   // provisioned: the tenant database this org needs under TENANT_DB_MODE.
   // admin.setPasswordUrl: returned only when SMTP is unconfigured, because the
   // admin row carries no password and that link is then the only way to sign in.
-  saveOrg: (body: { id?: string; name: string; status?: string; logoUrl?: string; adminEmail?: string; adminName?: string }) =>
+  // adminPassword: set the new org admin's password at provisioning time and
+  // email it with the sign-in name, so the customer can use the product straight
+  // away. Omit it to fall back to the set-password link.
+  saveOrg: (body: { id?: string; name: string; status?: string; logoUrl?: string; adminEmail?: string; adminName?: string; adminPassword?: string }) =>
     req<{
       id: string
       provisioned?: { ok?: boolean; db?: string; applied?: number; error?: string } | null
-      admin?: { email?: string; emailed?: boolean; setPasswordUrl?: string; error?: string } | null
+      admin?: { email?: string; emailed?: boolean; passwordSet?: boolean; setPasswordUrl?: string; error?: string } | null
     }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOrg: (id: string) => req(`/api/orgs/${id}`, { method: 'DELETE' }),
   // Per-company branding: org admins set their own org's logo (data URL or
@@ -315,7 +327,10 @@ export const api = {
   users: (orgId: string) => req<unknown[]>(`/api/orgs/${orgId}/users`),
   // username is stored (migrate-v22) and unique per org — login accepts it or
   // the email. 409 when it is already taken, which the form surfaces.
-  saveUser: (orgId: string, body: { id?: string; email?: string; username?: string; name: string; role?: string; departmentId?: string }) =>
+  // password: optional on edit (blank keeps the existing one), and the only way
+  // an admin-created account can ever sign in — the row is stored with a NULL
+  // password_hash otherwise and login refuses those.
+  saveUser: (orgId: string, body: { id?: string; email?: string; username?: string; name: string; role?: string; departmentId?: string; password?: string }) =>
     req<{ id: string }>(`/api/orgs/${orgId}/users`, { method: 'POST', body: JSON.stringify(body) }),
   deleteUser: (id: string) => req(`/api/users/${id}`, { method: 'DELETE' }),
   productAccess: (scope: 'department' | 'user', scopeId: string) =>

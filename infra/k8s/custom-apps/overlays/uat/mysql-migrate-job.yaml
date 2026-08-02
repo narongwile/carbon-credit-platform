@@ -95,6 +95,8 @@ spec:
               [ "$have" = "1" ] || { echo "FATAL: sites table missing — migrate-v21 did not apply"; exit 1; }
               have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='iothub' AND table_name='users' AND column_name='username'")
               [ "$have" = "1" ] || { echo "FATAL: users.username missing — migrate-v22 did not apply"; exit 1; }
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='department_themes'")
+              [ "$have" = "1" ] || { echo "FATAL: department_themes missing — migrate-v23 did not apply"; exit 1; }
 
               echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:

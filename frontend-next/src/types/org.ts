@@ -35,6 +35,13 @@ export interface ManagedUser {
   departmentIds: string[]
   status: 'active' | 'invited' | 'disabled'
   /**
+   * Only ever set while SUBMITTING the admin form — never returned by the API
+   * and never held in the roster. Blank on an edit means "keep the current
+   * password"; on a create it is required, because an account stored with a
+   * NULL password_hash can never sign in.
+   */
+  password?: string
+  /**
    * Per-user product-access override, keyed by sensor domain. Absent domain =
    * inherit from the user's department(s). An explicit value can only RESTRICT
    * (it is capped by the department grant): 'none' blocks, 'view'/'manage' lower

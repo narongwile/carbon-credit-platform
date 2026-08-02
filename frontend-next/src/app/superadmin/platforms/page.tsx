@@ -9,6 +9,7 @@ import {
 } from '@/lib/platforms'
 import { organizations } from '@/lib/mockData'
 import { api, isLive } from '@/lib/api'
+import { generatePassword } from '@/lib/password'
 import { getSitesByOrg } from '@/lib/fleetData'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import type { SensorDomain } from '@/types/fleet'
@@ -104,6 +105,7 @@ type WizardForm = {
   orgId: string
   orgName: string
   contactEmail: string
+  adminPassword: string
   country: string
   city: string
   licenseTier: 'basic' | 'professional' | 'enterprise'
@@ -119,13 +121,14 @@ const STEPS = ['Sensor Type', 'Customer', 'Features', 'MQTT Format', 'Review'] a
 function ProvisionWizard({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState(0)
   const [done, setDone] = useState(false)
-  const [outcome, setOutcome] = useState<{ orgId?: string; provisioned?: { ok?: boolean; db?: string; error?: string } | null; admin?: { email?: string; emailed?: boolean; setPasswordUrl?: string; error?: string } | null } | null>(null)
+  const [outcome, setOutcome] = useState<{ orgId?: string; provisioned?: { ok?: boolean; db?: string; error?: string } | null; admin?: { email?: string; emailed?: boolean; passwordSet?: boolean; setPasswordUrl?: string; error?: string } | null } | null>(null)
   const [form, setForm] = useState<WizardForm>({
     platform: null,
     customerMode: 'new',
     orgId: organizations[0]?.id ?? '',
     orgName: '',
     contactEmail: '',
+    adminPassword: '',
     country: 'Thailand',
     city: '',
     licenseTier: 'professional',
@@ -189,6 +192,7 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
           const r = await api.saveOrg({
             name: form.orgName.trim(),
             adminEmail: form.contactEmail.trim() || undefined,
+            adminPassword: form.adminPassword.trim() || undefined,
             adminName: `${form.orgName.trim()} Admin`,
           })
           orgId = r?.id || orgId
@@ -259,7 +263,14 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
                     is the only way in when SMTP is not configured. */}
                 {outcome.admin?.emailed && (
                   <div className="rounded-lg px-3 py-2 text-[11px] text-slate-400" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-                    Set-password email sent to <span className="text-slate-200">{outcome.admin.email}</span>.
+                    {outcome.admin.passwordSet
+                      ? <>Sign-in credentials emailed to <span className="text-slate-200">{outcome.admin.email}</span>.</>
+                      : <>Set-password email sent to <span className="text-slate-200">{outcome.admin.email}</span>.</>}
+                  </div>
+                )}
+                {outcome.admin && outcome.admin.emailed === false && outcome.admin.passwordSet && (
+                  <div className="rounded-lg px-3 py-2 text-[11px] text-amber-400" style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+                    Password set for {outcome.admin.email}, but email is not configured — send it to them yourself.
                   </div>
                 )}
                 {outcome.admin && outcome.admin.emailed === false && outcome.admin.setPasswordUrl && (
@@ -374,6 +385,33 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
                     <div className="grid grid-cols-2 gap-3">
                       <Field label="Organization Name" className="col-span-2" value={form.orgName} onChange={(v) => setForm((f) => ({ ...f, orgName: v }))} placeholder="e.g. Siriraj Hospital" />
                       <Field label="Contact Email" className="col-span-2" value={form.contactEmail} onChange={(v) => setForm((f) => ({ ...f, contactEmail: v }))} placeholder="ops@customer.com" />
+                      {/* The org's admin is created from the contact email. With
+                          a password here they are emailed working credentials and
+                          can sign in immediately; leave it blank to send the
+                          set-password link instead. */}
+                      <div className="col-span-2">
+                        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">
+                          Admin Password
+                          <span className="text-slate-600 normal-case tracking-normal ml-1.5">— blank sends a set-password link instead</span>
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text" value={form.adminPassword}
+                            onChange={(e) => setForm((f) => ({ ...f, adminPassword: e.target.value }))}
+                            placeholder="At least 8 characters"
+                            className="flex-1 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+                            style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
+                          <button
+                            onClick={() => { const p = generatePassword(); setForm((f) => ({ ...f, adminPassword: p })); navigator.clipboard?.writeText(p) }}
+                            className="px-3 rounded-lg text-xs font-medium text-indigo-300 hover:text-indigo-200 whitespace-nowrap"
+                            style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                            Generate
+                          </button>
+                        </div>
+                        {form.adminPassword.trim() && form.adminPassword.trim().length < 8 && (
+                          <p className="text-[10px] text-red-400 mt-1">At least 8 characters, or leave blank</p>
+                        )}
+                      </div>
                       <Field label="City" value={form.city} onChange={(v) => setForm((f) => ({ ...f, city: v }))} placeholder="Bangkok" />
                       <Field label="Country" value={form.country} onChange={(v) => setForm((f) => ({ ...f, country: v }))} />
                       <div className="col-span-2">

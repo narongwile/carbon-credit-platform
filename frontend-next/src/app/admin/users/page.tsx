@@ -16,10 +16,11 @@ import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
   Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check, Boxes,
-  ToggleLeft, ToggleRight, Pencil, Eye, Settings2, Ban, ListChecks, Upload, FileSpreadsheet,
+  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import { generatePassword } from '@/lib/password'
 
 type Tab = 'departments' | 'users' | 'roles' | 'permissions' | 'products' | 'events'
 
@@ -60,7 +61,9 @@ export default function UserManagementPage() {
     let cancelled = false
     api.departments(orgId).then((rows) => {
       if (cancelled || !rows) return
-      setDepartments((rows as Array<{ id: string; name: string }>).map((r) => ({ id: r.id, orgId, name: r.name, themeIds: ['th-overview'] })))
+      // themeIds are filled from department_themes by the permissions tab; a
+      // hardcoded default here is what made the tab look configured when it was not.
+      setDepartments((rows as Array<{ id: string; name: string }>).map((r) => ({ id: r.id, orgId, name: r.name, themeIds: [] })))
     })
     api.users(orgId).then((rows) => {
       if (cancelled || !rows) return
@@ -131,7 +134,7 @@ export default function UserManagementPage() {
 
   const upsertUser = async (u: ManagedUser) => {
     if (isLive()) {
-      const r = await api.saveUser(orgId, { id: u.id, email: u.email, username: u.username, name: u.name, role: u.role, departmentId: u.departmentIds[0] })
+      const r = await api.saveUser(orgId, { id: u.id, email: u.email, username: u.username, name: u.name, role: u.role, departmentId: u.departmentIds[0], password: u.password })
       // null covers the 409 the backend returns when the username is taken —
       // the one failure an admin can actually act on.
       if (!r) { toast.error('Could not save the user — the username or email may already be in use'); return }
@@ -440,16 +443,39 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
   const [selectedDept, setSelectedDept] = useState(departments[0]?.id ?? '')
   const dept = departments.find((d) => d.id === selectedDept)
 
+  // Departments arrive from the users endpoint without their themes (that is a
+  // separate table); merge the stored policy in once it lands.
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.departmentThemes(orgId).then((byDept) => {
+      if (cancelled || !byDept) return
+      setDepartments((ds) => ds.map((d) => (byDept[d.id] ? { ...d, themeIds: byDept[d.id] } : { ...d, themeIds: [] })))
+    })
+    return () => { cancelled = true }
+  }, [orgId, setDepartments])
+
   // Only themes the SUPER ADMIN has granted to this organization are selectable.
   const grantedIds = getOrgThemeGrants(orgId)
   const availableThemes = dashboardThemes.filter((t) => grantedIds.includes(t.id))
 
-  const toggleTheme = (themeId: string) => {
-    if (!grantedIds.includes(themeId)) return
-    setDepartments((prev) => prev.map((d) => d.id !== selectedDept ? d : {
-      ...d,
-      themeIds: d.themeIds.includes(themeId) ? d.themeIds.filter((t) => t !== themeId) : [...d.themeIds, themeId],
-    }))
+  // The toggle used to change React state only, so the whole tab reverted on
+  // reload — it described a permission policy the backend never had. It writes
+  // the department's theme set through now, and rolls back if that fails.
+  const toggleTheme = async (themeId: string) => {
+    if (!grantedIds.includes(themeId) || !dept) return
+    const next = dept.themeIds.includes(themeId)
+      ? dept.themeIds.filter((t) => t !== themeId)
+      : [...dept.themeIds, themeId]
+    const prev = dept.themeIds
+    setDepartments((ds) => ds.map((d) => (d.id !== selectedDept ? d : { ...d, themeIds: next })))
+    if (isLive()) {
+      const r = await api.setDepartmentThemes(orgId, selectedDept, next)
+      if (!r) {
+        setDepartments((ds) => ds.map((d) => (d.id !== selectedDept ? d : { ...d, themeIds: prev })))
+        toast.error('Could not save the dashboard permission')
+      }
+    }
   }
 
   return (
@@ -797,7 +823,13 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
     user ?? { id: `u-${Date.now()}`, orgId, name: '', username: '', email: '', role: 'viewer', departmentIds: [], status: 'invited' }
   )
   const [touched, setTouched] = useState(false)
-  const valid = !!form.name.trim() && !!form.username.trim() && EMAIL_RE.test(form.email.trim())
+  // Blank on EDIT means "leave the password alone"; on CREATE it means the
+  // account would have no password_hash and could never sign in, so it is
+  // required there.
+  const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
+  const pwOk = user ? (!password || password.length >= 8) : password.length >= 8
+  const valid = !!form.name.trim() && !!form.username.trim() && EMAIL_RE.test(form.email.trim()) && pwOk
   const toggleDept = (id: string) =>
     setForm((f) => ({ ...f, departmentIds: f.departmentIds.includes(id) ? f.departmentIds.filter((d) => d !== id) : [...f.departmentIds, id] }))
 
@@ -819,6 +851,33 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
           </div>
           <LabeledInput label="Email" required value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))}
             error={touched && !form.email.trim() ? 'Required' : touched && !EMAIL_RE.test(form.email.trim()) ? 'Enter a valid email address' : undefined} />
+
+          {/* Without this the account is created with no password_hash, and login
+              rejects those — which is why every new user needed a hash written
+              into the table by hand before they could sign in. */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">
+              Password{!user && <span className="text-red-400 ml-0.5">*</span>}
+              {user && <span className="text-slate-600 normal-case tracking-normal ml-1.5">— leave blank to keep the current one</span>}
+            </label>
+            <div className="flex gap-2">
+              <input
+                type={showPw ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder={user ? '••••••••' : 'At least 8 characters'}
+                className="flex-1 rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+                style={{ ...inset, ...(touched && !pwOk ? { border: '1px solid #ef4444' } : {}) }} />
+              <button onClick={() => setShowPw((v) => !v)} title={showPw ? 'Hide' : 'Show'}
+                className="px-3 rounded-lg text-slate-400 hover:text-white" style={inset}>
+                {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+              <button
+                onClick={() => { const p = generatePassword(); setPassword(p); setShowPw(true); navigator.clipboard?.writeText(p); toast.success('Password generated and copied') }}
+                className="px-3 rounded-lg text-xs font-medium text-indigo-300 hover:text-indigo-200 whitespace-nowrap" style={inset}>
+                Generate
+              </button>
+            </div>
+            {touched && !pwOk && <p className="text-[10px] text-red-400 mt-1">{password ? 'At least 8 characters' : 'Required'}</p>}
+          </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Role (assign roll)</label>
             <div className="flex gap-2">
@@ -849,7 +908,7 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
           <button
-            onClick={() => { setTouched(true); if (valid) onSave({ ...form, name: form.name.trim(), username: form.username.trim(), email: form.email.trim() }) }}
+            onClick={() => { setTouched(true); if (valid) onSave({ ...form, name: form.name.trim(), username: form.username.trim(), email: form.email.trim(), password: password || undefined }) }}
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
             style={gradient}>Save</button>
           <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>Cancel</button>
@@ -860,6 +919,7 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 
 function LabeledInput({ label, value, onChange, required, error }: { label: string; value: string; onChange: (v: string) => void; required?: boolean; error?: string }) {
   return (
