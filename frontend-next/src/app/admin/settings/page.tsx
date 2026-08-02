@@ -120,25 +120,25 @@ export default function SettingsPage() {
     }
   }
 
+  // Each write is independent and its result is checked. Before, the factory pin
+  // was saved LAST and behind two calls that throw, so a failing alarm-rule write
+  // silently discarded the coordinate and reported an unrelated error — and the
+  // pin's own result was never looked at, so a rejected save still said "Saved".
   const save = async () => {
-    try {
-      const user = getSession()
-      if (!user) throw new Error('Not logged in')
-      const ruleRes = await api.updateOrgRule(selectedOrgId, buildTransformerRule())
-      if (!ruleRes) throw new Error('Failed to update org rule')
-      const res = await api.putMyConfig(user.id, { emailAlerts })
-      if (!res) throw new Error('API request failed')
-      
-      if (isLive() && orgLat != null && orgLng != null) {
-        await api.updateOrgLocation(selectedOrgId, orgLat, orgLng)
+    const user = getSession()
+    if (!user) { toast.error('Not logged in'); return }
+    const failed: string[] = []
+    if (isLive()) {
+      if (orgLat != null && orgLng != null) {
+        if (!(await api.updateOrgLocation(selectedOrgId, orgLat, orgLng))) failed.push('factory location')
       }
-
-      setSaved(true)
-      toast.success('Settings saved')
-      setTimeout(() => setSaved(false), 2000)
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to save settings')
+      if (!(await api.updateOrgRule(selectedOrgId, buildTransformerRule()))) failed.push('alarm thresholds')
+      if (!(await api.putMyConfig(user.id, { emailAlerts }))) failed.push('preferences')
     }
+    if (failed.length) { toast.error('Could not save: ' + failed.join(', ')); return }
+    setSaved(true)
+    toast.success('Settings saved')
+    setTimeout(() => setSaved(false), 2000)
   }
 
   const inputStyle = {
