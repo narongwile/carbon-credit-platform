@@ -55,7 +55,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: migrate-service
-          image: registry.gitlab.com/narongwile/carbon-credit-platform/migrate-service:01151b09
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/migrate-service:6d4f0011
           imagePullPolicy: Always
           command: ["node", "dist/migrate.js", "--serve"]
           ports:
