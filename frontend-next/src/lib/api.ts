@@ -313,7 +313,9 @@ export const api = {
     req<{ id: string }>(`/api/orgs/${orgId}/departments`, { method: 'POST', body: JSON.stringify(body) }),
   deleteDepartment: (id: string) => req(`/api/departments/${id}`, { method: 'DELETE' }),
   users: (orgId: string) => req<unknown[]>(`/api/orgs/${orgId}/users`),
-  saveUser: (orgId: string, body: { id?: string; email?: string; name: string; role?: string; departmentId?: string }) =>
+  // username is stored (migrate-v22) and unique per org — login accepts it or
+  // the email. 409 when it is already taken, which the form surfaces.
+  saveUser: (orgId: string, body: { id?: string; email?: string; username?: string; name: string; role?: string; departmentId?: string }) =>
     req<{ id: string }>(`/api/orgs/${orgId}/users`, { method: 'POST', body: JSON.stringify(body) }),
   deleteUser: (id: string) => req(`/api/users/${id}`, { method: 'DELETE' }),
   productAccess: (scope: 'department' | 'user', scopeId: string) =>

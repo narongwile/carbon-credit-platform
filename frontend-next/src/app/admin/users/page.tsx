@@ -64,8 +64,10 @@ export default function UserManagementPage() {
     })
     api.users(orgId).then((rows) => {
       if (cancelled || !rows) return
-      setUsers((rows as Array<{ id: string; name: string; email?: string; role?: string; department_id?: string }>).map((r) => ({
-        id: r.id, orgId, name: r.name, username: r.email || r.id, email: r.email || '',
+      setUsers((rows as Array<{ id: string; name: string; email?: string; username?: string; role?: string; department_id?: string }>).map((r) => ({
+        // username is a stored column now — fall back only for rows created
+        // before migrate-v22, which have none yet.
+        id: r.id, orgId, name: r.name, username: r.username || r.email || r.id, email: r.email || '',
         role: (r.role === 'admin' ? 'admin' : 'viewer'), departmentIds: r.department_id ? [r.department_id] : [], status: 'active',
       })))
     })
@@ -76,32 +78,66 @@ export default function UserManagementPage() {
   const [newDept, setNewDept] = useState('')
   const [editingDeptId, setEditingDeptId] = useState<string | null>(null)
   const [editingDeptName, setEditingDeptName] = useState('')
-  const addDept = () => {
-    if (!newDept.trim()) return
-    const id = `dept-${Date.now()}`, name = newDept.trim()
+  // These used to update local state and fire the request without awaiting it,
+  // so a rejected save (duplicate, lost session, backend down) still looked like
+  // it worked until the next reload silently dropped it.
+  const dupDept = (name: string, exceptId?: string) =>
+    departments.some((d) => d.id !== exceptId && d.name.trim().toLowerCase() === name.trim().toLowerCase())
+
+  const addDept = async () => {
+    const name = newDept.trim()
+    if (!name) return
+    if (dupDept(name)) { toast.error(`“${name}” already exists`); return }
+    const id = `dept-${Date.now()}`
+    if (isLive()) {
+      const r = await api.saveDepartment(orgId, { id, name })
+      if (!r) { toast.error('Could not create the department'); return }
+    }
     setDepartments((d) => [...d, { id, orgId, name, themeIds: ['th-overview'] }])
     setNewDept('')
-    if (isLive()) api.saveDepartment(orgId, { id, name })
   }
-  const renameDept = (id: string, name: string) => {
-    if (!name.trim()) return
-    setDepartments((d) => d.map((x) => (x.id === id ? { ...x, name: name.trim() } : x)))
+  const renameDept = async (id: string, raw: string) => {
+    const name = raw.trim()
+    if (!name) return
+    if (dupDept(name, id)) { toast.error(`“${name}” already exists`); return }
+    if (isLive()) {
+      const r = await api.saveDepartment(orgId, { id, name })
+      if (!r) { toast.error('Could not rename the department'); return }
+    }
+    setDepartments((d) => d.map((x) => (x.id === id ? { ...x, name } : x)))
     setEditingDeptId(null); setEditingDeptName('')
-    if (isLive()) api.saveDepartment(orgId, { id, name: name.trim() })
   }
-  const removeDept = (id: string) => {
+  const removeDept = async (id: string) => {
+    const dept = departments.find((d) => d.id === id)
+    const members = users.filter((u) => u.departmentIds.includes(id))
+    // Deleting a department un-scopes its people; say so before it happens
+    // rather than after they lose their product access.
+    const msg = members.length
+      ? `Delete “${dept?.name}”? ${members.length} user${members.length === 1 ? '' : 's'} will be left without a department.`
+      : `Delete “${dept?.name}”?`
+    if (!window.confirm(msg)) return
+    if (isLive()) {
+      const r = await api.deleteDepartment(id)
+      if (!r) { toast.error('Could not delete the department'); return }
+    }
     setDepartments((d) => d.filter((x) => x.id !== id))
     setUsers((u) => u.map((x) => ({ ...x, departmentIds: x.departmentIds.filter((dd) => dd !== id) })))
-    if (isLive()) api.deleteDepartment(id)
+    toast.success('Department deleted')
   }
 
   // ----- Users -----
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
   const [showNewUser, setShowNewUser] = useState(false)
 
-  const upsertUser = (u: ManagedUser) => {
+  const upsertUser = async (u: ManagedUser) => {
+    if (isLive()) {
+      const r = await api.saveUser(orgId, { id: u.id, email: u.email, username: u.username, name: u.name, role: u.role, departmentId: u.departmentIds[0] })
+      // null covers the 409 the backend returns when the username is taken —
+      // the one failure an admin can actually act on.
+      if (!r) { toast.error('Could not save the user — the username or email may already be in use'); return }
+    }
     setUsers((prev) => (prev.some((x) => x.id === u.id) ? prev.map((x) => (x.id === u.id ? u : x)) : [...prev, u]))
-    if (isLive()) api.saveUser(orgId, { id: u.id, email: u.email, name: u.name, role: u.role, departmentId: u.departmentIds[0] })
+    setEditingUser(null); setShowNewUser(false)
   }
   const removeUser = (id: string) => { setUsers((u) => u.filter((x) => x.id !== id)); if (isLive()) api.deleteUser(id) }
 
@@ -760,6 +796,8 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
   const [form, setForm] = useState<ManagedUser>(
     user ?? { id: `u-${Date.now()}`, orgId, name: '', username: '', email: '', role: 'viewer', departmentIds: [], status: 'invited' }
   )
+  const [touched, setTouched] = useState(false)
+  const valid = !!form.name.trim() && !!form.username.trim() && EMAIL_RE.test(form.email.trim())
   const toggleDept = (id: string) =>
     setForm((f) => ({ ...f, departmentIds: f.departmentIds.includes(id) ? f.departmentIds.filter((d) => d !== id) : [...f.departmentIds, id] }))
 
@@ -772,10 +810,15 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <LabeledInput label="Full Name" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
-            <LabeledInput label="Username" value={form.username} onChange={(v) => setForm((f) => ({ ...f, username: v }))} />
+            <LabeledInput label="Full Name" required value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))}
+              error={touched && !form.name.trim() ? 'Required' : undefined} />
+            {/* Required like Email: both are sign-in identifiers now, and a user
+                saved without either can never log in. */}
+            <LabeledInput label="Username" required value={form.username} onChange={(v) => setForm((f) => ({ ...f, username: v }))}
+              error={touched && !form.username.trim() ? 'Required' : undefined} />
           </div>
-          <LabeledInput label="Email" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} />
+          <LabeledInput label="Email" required value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))}
+            error={touched && !form.email.trim() ? 'Required' : touched && !EMAIL_RE.test(form.email.trim()) ? 'Enter a valid email address' : undefined} />
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Role (assign roll)</label>
             <div className="flex gap-2">
@@ -805,7 +848,10 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
           </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
-          <button onClick={() => onSave(form)} className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white" style={gradient}>Save</button>
+          <button
+            onClick={() => { setTouched(true); if (valid) onSave({ ...form, name: form.name.trim(), username: form.username.trim(), email: form.email.trim() }) }}
+            className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+            style={gradient}>Save</button>
           <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>Cancel</button>
         </div>
       </div>
@@ -813,12 +859,18 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
   )
 }
 
-function LabeledInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+function LabeledInput({ label, value, onChange, required, error }: { label: string; value: string; onChange: (v: string) => void; required?: boolean; error?: string }) {
   return (
     <div>
-      <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">{label}</label>
+      <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">
+        {label}{required && <span className="text-red-400 ml-0.5">*</span>}
+      </label>
       <input value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+        className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+        style={{ ...inset, ...(error ? { border: '1px solid #ef4444' } : {}) }} />
+      {error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}
     </div>
   )
 }
