@@ -21,6 +21,25 @@ spec:
     - repoURL: https://gitlab.com/narongwile/carbon-credit-platform.git
       targetRevision: feature/deploy-ingest-worker
       ref: values
+  # Same two controller-owned diffs the mysql and redpanda apps hit — the EMQX
+  # chart ships both a StatefulSet and a PodDisruptionBudget:
+  #   • the API server defaults apiVersion/kind onto each volumeClaimTemplates
+  #     entry and serialises creationTimestamp: null, which the chart output does
+  #     not contain (and a running StatefulSet's VCTs are immutable anyway);
+  #   • a PDB's status tracks live pods, so it can never match a manifest.
+  # With selfHeal on, neither is cosmetic: ArgoCD re-applies on every reconcile
+  # and the app never settles, which hides real drift.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates[]?.apiVersion
+        - .spec.volumeClaimTemplates[]?.kind
+        - .spec.volumeClaimTemplates[]?.metadata.creationTimestamp
+    - group: policy
+      kind: PodDisruptionBudget
+      jsonPointers:
+        - /status
   destination:
     server: https://kubernetes.default.svc
     namespace: iiot-uat
