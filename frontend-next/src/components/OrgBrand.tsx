@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect } from 'react'
-import { api, useIsLive } from '@/lib/api'
+import { api, useIsLive, apiImageUrl } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { Boxes } from 'lucide-react'
 
@@ -42,7 +42,10 @@ export default function OrgBrand({ orgId }: { orgId: string }) {
         className="w-7 h-7 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0"
         style={{ background: logo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
       >
-        {logo ? <img src={logo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
+        {/* The logo is stored as bytes and served by the API now, so the value
+            here is a path — it needs the JWT as ?token=, which an <img> cannot
+            send as a header. A data: URL (demo mode) is rendered as-is. */}
+        {logo ? <img src={logo.startsWith('/api') ? apiImageUrl(logo) : logo} alt="logo" className="w-full h-full object-contain" /> : <Boxes size={14} className="text-white" />}
       </div>
       <span className="font-bold text-white tracking-wider text-sm truncate" title={name || 'ONEOPS'}>
         {name || 'ONEOPS'}

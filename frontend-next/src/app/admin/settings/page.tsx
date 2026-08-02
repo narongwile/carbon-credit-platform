@@ -6,7 +6,7 @@ import { useAppStore } from '@/lib/store'
 import { organizations } from '@/lib/mockData'
 import { Save, Upload, Trash2, Building2, MapPin } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api, isLive } from '@/lib/api'
+import { api, isLive, apiImageUrl } from '@/lib/api'
 import { getSession } from '@/lib/auth'
 import { defaultNodeRule } from '@/lib/alarmParams'
 
@@ -22,21 +22,37 @@ export default function SettingsPage() {
   // "ONEOPS". Seeded from the organizations table (live) or the mock org name.
   const [brandName, setBrandName] = useState('')
   const currentLogo = orgLogos[selectedOrgId]
+  // The result of the save was ignored, so a rejected upload still painted the
+  // logo and only a refresh revealed it had never been stored — which is exactly
+  // how the 64 KB column overflow stayed invisible. Roll back and say so.
   const onLogo = (file?: File) => {
     if (!file) return
     if (file.size > 512 * 1024) { toast.error('Logo too large (max 512 KB)'); return }
     const reader = new FileReader()
     reader.onload = async () => {
       const dataUrl = String(reader.result)
+      const prev = orgLogos[selectedOrgId]
       setOrgLogo(selectedOrgId, dataUrl)                                  // instant local UX
-      if (isLive()) await api.updateOrgBranding(selectedOrgId, { logoUrl: dataUrl }) // persist per-company
+      if (isLive()) {
+        const r = await api.updateOrgBranding(selectedOrgId, { logoUrl: dataUrl })
+        if (!r) { setOrgLogo(selectedOrgId, prev ?? ''); toast.error('Failed to save the logo'); return }
+        // Re-read what the backend actually stored (a served path, not the data
+        // URL), so this session shows the same thing the next reload will.
+        const orgs = await api.orgs()
+        const mine = orgs?.find((o) => o.id === selectedOrgId)
+        if (mine?.logo_url) setOrgLogo(selectedOrgId, mine.logo_url)
+      }
       toast.success('Organization logo updated')
     }
     reader.readAsDataURL(file)
   }
   const removeLogo = async () => {
+    const prev = orgLogos[selectedOrgId]
     setOrgLogo(selectedOrgId, '')
-    if (isLive()) await api.updateOrgBranding(selectedOrgId, { logoUrl: '' })
+    if (isLive()) {
+      const r = await api.updateOrgBranding(selectedOrgId, { logoUrl: '' })
+      if (!r) { setOrgLogo(selectedOrgId, prev ?? ''); toast.error('Failed to remove the logo'); return }
+    }
     toast.success('Logo removed')
   }
   const saveBrandName = async () => {
@@ -162,7 +178,7 @@ export default function SettingsPage() {
         </div>
         <div className="flex items-center gap-5">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center overflow-hidden flex-shrink-0" style={{ background: currentLogo ? '#0a0e1a' : 'linear-gradient(135deg, #6366f1, #8b5cf6)', border: '1px solid #1e2433' }}>
-            {currentLogo ? <img src={currentLogo} alt="logo" className="w-full h-full object-contain" /> : <Building2 size={30} className="text-white" />}
+            {currentLogo ? <img src={currentLogo.startsWith('/api') ? apiImageUrl(currentLogo) : currentLogo} alt="logo" className="w-full h-full object-contain" /> : <Building2 size={30} className="text-white" />}
           </div>
           <div className="flex flex-col gap-2">
             <input ref={logoRef} type="file" accept="image/*" className="hidden" onChange={(e) => onLogo(e.target.files?.[0])} />
