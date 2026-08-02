@@ -16,6 +16,20 @@ spec:
     path: infra/k8s/platform-services-uat
     directory:
       include: 'mysql.yaml'
+  # The API server DEFAULTS apiVersion/kind onto every volumeClaimTemplates entry
+  # and serialises metadata.creationTimestamp: null, while the manifest in git
+  # legitimately omits all three. ArgoCD therefore diffs live against desired for
+  # ever — and with selfHeal it does not just look untidy, it re-applies the
+  # StatefulSet on every reconcile and the app never settles on Synced. The
+  # volumeClaimTemplates of a running StatefulSet are immutable anyway, so there
+  # is nothing real to converge here.
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates[]?.apiVersion
+        - .spec.volumeClaimTemplates[]?.kind
+        - .spec.volumeClaimTemplates[]?.metadata.creationTimestamp
   destination:
     server: https://kubernetes.default.svc
     namespace: iiot-uat

@@ -35,6 +35,16 @@ spec:
             enabled: false
         tls:
           enabled: false
+  # status on a PodDisruptionBudget is written by the disruption controller
+  # (currentHealthy / disruptionsAllowed / expectedPods track live pods), so it
+  # changes whenever a pod does and can never match a rendered manifest. Diffing
+  # it kept the app OutOfSync permanently and, with selfHeal on, had ArgoCD
+  # re-applying a subresource it does not own.
+  ignoreDifferences:
+    - group: policy
+      kind: PodDisruptionBudget
+      jsonPointers:
+        - /status
   destination:
     server: https://kubernetes.default.svc
     namespace: iiot-uat
