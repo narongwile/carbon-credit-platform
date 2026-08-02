@@ -55,6 +55,24 @@ export default function SettingsPage() {
     }
     toast.success('Logo removed')
   }
+  // Dropping a pin and typing coordinates both only moved React state — the
+  // write happened in the page-wide Save button far below, past the whole
+  // thresholds section. That is also inconsistent with the two controls beside
+  // it (the logo persists on upload, the name has its own button), so it was
+  // easy to set a location, navigate away, and lose it without any warning.
+  const [savedLoc, setSavedLoc] = useState(false)
+  const saveLocation = async () => {
+    if ((orgLat == null) !== (orgLng == null)) { toast.error('Enter both latitude and longitude, or clear both'); return }
+    if (isLive()) {
+      // updateOrgBranding (partial) rather than updateOrgLocation: it accepts
+      // null, so clearing the pin is possible instead of being silently skipped.
+      const r = await api.updateOrgBranding(selectedOrgId, { lat: orgLat, lng: orgLng })
+      if (!r) { toast.error('Failed to save the factory location'); return }
+    }
+    setSavedLoc(true); setTimeout(() => setSavedLoc(false), 2000)
+    toast.success(orgLat == null ? 'Factory location cleared' : 'Factory location saved')
+  }
+
   const saveBrandName = async () => {
     const name = brandName.trim()
     if (!name) { toast.error('Organization name cannot be empty'); return }
@@ -234,6 +252,16 @@ export default function SettingsPage() {
                 style={inputStyle}
               />
             </div>
+          </div>
+          <div className="flex items-center gap-2 mt-3">
+            <button onClick={saveLocation}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white"
+              style={savedLoc ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+              <Save size={13} /> {savedLoc ? 'Saved!' : 'Save Location'}
+            </button>
+            <span className="text-[10px] text-slate-600">
+              {orgLat == null ? 'No pin set — GPS-less devices will not appear on the map.' : 'Applied to Eternity devices that report no GPS.'}
+            </span>
           </div>
         </div>
       </div>
