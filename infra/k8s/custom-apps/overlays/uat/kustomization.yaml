@@ -97,7 +97,23 @@ patches:
         value:
           - "sh"
           - "-c"
-          - "sed -i 's/carbon-credit.svc/iiot-uat.svc/g' /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+          # Second sed: strip Strict-Transport-Security. nginx.conf sends it
+          # unconditionally with max-age=1y + includeSubDomains, which is correct
+          # for prod (iiotplatform.thermexpertise.com on standard 80/443) and
+          # actively breaks UAT, which is NodePort-only (30080 http / 30443
+          # https, traefik-values.yaml — no service owns the real port 443).
+          # A browser that ever loaded this UAT host over https:30443 caches the
+          # header and, for the next YEAR, silently upgrades EVERY subsequent
+          # request to that host — including a relative page load AND every
+          # fetch() the app makes — to https://host/ with NO port, i.e. the real
+          # port 443, which nothing answers on. The failure shows up as CORS
+          # ("preflight doesn't pass access control check") and net::ERR_FAILED
+          # because the browser cannot reach anything at that address, not
+          # because Node-RED's CORS_ORIGIN is wrong. Already-poisoned browsers
+          # need chrome://net-internals/#hsts → delete domain, since removing the
+          # header here cannot retroactively clear a cache the browser already
+          # holds.
+          - "sed -i -e 's/carbon-credit.svc/iiot-uat.svc/g' -e '/Strict-Transport-Security/d' /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
   # ── Node-RED External IP for UAT ──
   - target:
       kind: Service
