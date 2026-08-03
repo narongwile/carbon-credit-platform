@@ -361,6 +361,20 @@ export const api = {
       admin?: { email?: string; emailed?: boolean; passwordSet?: boolean; setPasswordUrl?: string; error?: string } | null
     }>(`/api/orgs`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOrg: (id: string) => req(`/api/orgs/${id}`, { method: 'DELETE' }),
+  /**
+   * The maintenance kill switch. A suspended organization is a 403 for all of
+   * its users, at login and on every request; a superadmin keeps full access.
+   * Telemetry ingest is NOT stopped — suspending must not punch a hole in the
+   * customer's history.
+   */
+  setOrgStatus: (orgId: string, status: 'active' | 'suspended', reason?: string) =>
+    req<{ ok: boolean; id: string; status: string; unchanged?: boolean }>(`/api/orgs/${orgId}/status`, {
+      method: 'PUT', body: JSON.stringify({ status, reason }),
+    }),
+  /** Real administrative audit trail (migrate-v30). Most recent first. */
+  auditLog: (opts?: { orgId?: string; limit?: number }) =>
+    req<{ id: number; actor_id: string | null; actor_name: string | null; action: string; org_id: string | null; target: string | null; detail: string | null; at: string }[]>(
+      `/api/platform/audit?limit=${opts?.limit ?? 50}${opts?.orgId ? `&orgId=${encodeURIComponent(opts.orgId)}` : ''}`),
   // Per-company branding: org admins set their own org's logo (data URL or
   // hosted URL), display name (shown beside the sidebar logo instead of
   // "ONEOPS") and factory pin. Partial — only the fields passed are written.
