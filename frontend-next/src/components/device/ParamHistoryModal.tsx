@@ -79,7 +79,18 @@ export default function ParamHistoryModal({
   const [thresh, setThresh] = useState<{ warn: number; critical: number } | null>(null)
   const [savingRule, setSavingRule] = useState(false)
 
-  const param = params.find((p) => p.key === paramKey) ?? params[0]
+  // A caller may open a key that is not in `params`: the device decides what it
+  // reports, and a merged two-topic transformer sends far more than the six
+  // schema slots a page lists. The old `?? params[0]` then titled the modal
+  // "Oil Temperature · °C" while charting VoltAB — the series was right, the
+  // heading lied. An unrecognised key keeps its own identity instead, and joins
+  // the switcher so it can be switched back to.
+  const known = params.some((p) => p.key === paramKey)
+  const param = known ? params.find((p) => p.key === paramKey) : paramKey ? { key: paramKey, label: paramKey } : params[0]
+  const switchable = useMemo(
+    () => (known || !paramKey ? params : [...params, { key: paramKey, label: paramKey }]),
+    [params, paramKey, known],
+  )
   const schemaParam: AlarmParam | undefined = domain
     ? ALARM_SCHEMA[domain].params.find((p) => p.key === paramKey)
     : undefined
@@ -217,9 +228,9 @@ export default function ParamHistoryModal({
         </div>
 
         {/* Parameter switcher — a combined chart opens here with both series */}
-        {params.length > 1 && (
+        {switchable.length > 1 && (
           <div className="px-5 flex flex-wrap gap-1.5 pb-3">
-            {params.map((p) => (
+            {switchable.map((p) => (
               <button
                 key={p.key}
                 onClick={() => setParamKey(p.key)}

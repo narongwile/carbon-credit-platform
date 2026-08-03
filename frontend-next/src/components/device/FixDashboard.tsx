@@ -7,13 +7,15 @@ import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, LEGACY_WIRE_KEYS, paramStatus } from '@/lib/alarmParams'
 import { fmtHM } from '@/lib/displayTime'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
+import DisplayParamPicker from '@/components/device/DisplayParamPicker'
+import { useSessionRole } from '@/lib/auth'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer, SensorReading } from '@/types'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import {
-  Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi,
+  Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi, SlidersHorizontal,
 } from 'lucide-react'
 
 const Fridge3D = dynamic(() => import('@/components/twin/Fridge3D'), { ssr: false, loading: () => <TwinLoading /> })
@@ -251,7 +253,28 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     () => (live && values && Object.keys(values).length ? buildLiveTiles(device, values) : null),
     [live, values, device]
   )
-  const tiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
+  const allTiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
+
+  // Admin-chosen subset. Empty = unconfigured = show everything, so an org that
+  // has never touched this keeps exactly the dashboard it had.
+  const [showKeys, setShowKeys] = useState<string[] | null>(null)
+  const [picking, setPicking] = useState(false)
+  const role = useSessionRole()
+  const canConfigure = role === 'admin' || role === 'superadmin'
+  useEffect(() => {
+    if (!live || !device.domain) return
+    let cancelled = false
+    api.displayParams(device.orgId, device.domain, device.id).then((r) => {
+      if (!cancelled && r) setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+    })
+    return () => { cancelled = true }
+  }, [device.orgId, device.domain, device.id, live])
+
+  const tiles = useMemo(() => {
+    if (!showKeys?.length) return allTiles
+    const order = new Map(showKeys.map((k, i) => [k, i]))
+    return allTiles.filter((t) => order.has(t.key)).sort((a, b) => order.get(a.key)! - order.get(b.key)!)
+  }, [allTiles, showKeys])
   // Every tile on screen is selectable inside the modal, so a user who opened
   // the wrong metric can switch without closing and hunting for the right card.
   const modalParams: ModalParam[] = useMemo(
@@ -317,12 +340,18 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
 
   // The generic chart plots whatever the device reports most of, so a fridge or
   // a BloodBOX still gets a real trend instead of the invented one.
+  // Respects the admin's selection: charting a parameter that was deliberately
+  // hidden from the cards right beside it would be a contradiction on one screen.
   const genericKey = useMemo(() => {
-    const keys = Object.keys(series).filter((k) => (series[k]?.length ?? 0) > 1)
+    let keys = Object.keys(series).filter((k) => (series[k]?.length ?? 0) > 1)
+    if (showKeys?.length) {
+      const visible = keys.filter((k) => showKeys.includes(k))
+      if (visible.length) keys = visible
+    }
     if (!keys.length) return null
     const preferred = device.domain ? ALARM_SCHEMA[device.domain].params.map((p) => p.key) : []
     return preferred.find((k) => keys.includes(k)) ?? keys[0]
-  }, [series, device.domain])
+  }, [series, device.domain, showKeys])
   const genericTrend = genericKey ? (series[genericKey] ?? []).slice(-96).map((p) => ({ time: fmtHM(p.time), value: p.value })) : []
 
   const asset = /transformer/i.test(device.deviceType)
@@ -333,7 +362,18 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
       {/* Sensor cards */}
       <div className="lg:col-span-4 space-y-3">
-        <div className="text-[10px] text-slate-600 uppercase tracking-wider">Sensor Readings</div>
+        <div className="flex items-center gap-2">
+          <div className="text-[10px] text-slate-600 uppercase tracking-wider">Sensor Readings</div>
+          {showKeys?.length ? (
+            <span className="text-[9px] text-indigo-400">{tiles.length}/{allTiles.length}</span>
+          ) : null}
+          {canConfigure && live && (
+            <button onClick={() => setPicking(true)} title="Choose which parameters to show"
+              className="ml-auto flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400">
+              <SlidersHorizontal size={11} /> Configure
+            </button>
+          )}
+        </div>
         {tiles.map((tile) => {
           const sc = statusColor[tile.status]
           return (
@@ -432,6 +472,17 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
           )}
         </button>
       </div>
+
+      {picking && device.domain && (
+        <DisplayParamPicker
+          orgId={device.orgId}
+          domain={device.domain}
+          nodeId={device.id}
+          available={allTiles.map((t) => t.key)}
+          onClose={() => setPicking(false)}
+          onSaved={(keys) => setShowKeys(keys.length ? keys : null)}
+        />
+      )}
 
       {openParam && (
         <ParamHistoryModal

@@ -124,6 +124,15 @@ export const api = {
   // { channel }. The backend reads channel||id, so both are valid here.
   putOrgChannels: (orgId: string, channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[]) =>
     req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels }) }),
+  /**
+   * Which parameters SENSOR READINGS shows. Resolved node-override -> org
+   * default -> none; none means "unconfigured, show everything".
+   */
+  displayParams: (orgId: string, domain: string, nodeId?: string) =>
+    req<{ domain: string; nodeId: string | null; scope: 'none' | 'org' | 'node'; paramKeys: string[] }>(
+      `/api/orgs/${orgId}/display-params?domain=${encodeURIComponent(domain)}${nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : ''}`),
+  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; paramKeys: string[] }) =>
+    req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
   /** Which dashboard themes each department may see: { [departmentId]: themeId[] }. */
   departmentThemes: (orgId: string) => req<Record<string, string[]>>(`/api/orgs/${orgId}/department-themes`),
   setDepartmentThemes: (orgId: string, departmentId: string, themeIds: string[]) =>

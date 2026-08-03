@@ -11,6 +11,8 @@ import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import MyAlertSettings from '@/components/device/MyAlertSettings'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
+import DisplayParamPicker from '@/components/device/DisplayParamPicker'
+import { useSessionRole } from '@/lib/auth'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
@@ -23,7 +25,7 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2
+  ChevronLeft, Maximize2, SlidersHorizontal
 } from 'lucide-react'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
@@ -141,7 +143,7 @@ function useLiveTransformer(base: Transformer | undefined) {
     } as Transformer
   }, [base, live, values, series, online, lastReadingAt])
 
-  return { transformer, live, online, lastReadingAt }
+  return { transformer, live, online, lastReadingAt, values }
 }
 
 function LiveTime() {
@@ -478,11 +480,20 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
     return host ? makeTransformer(host as TransformerHost) : undefined
   }, [transformers, hosts, id])
-  const { transformer, live, online, lastReadingAt } = useLiveTransformer(base)
+  const { transformer, live, online, lastReadingAt, values } = useLiveTransformer(base)
   const [openParam, setOpenParam] = useState<string | null>(null)
-  // Both combined charts and all six cards open the same modal, so whichever the
-  // user clicked they can switch metric inside it.
-  const modalParams: ModalParam[] = ALARM_SCHEMA.transformer.params.map((p) => ({ key: p.key, label: p.label, unit: p.unit }))
+  const [showKeys, setShowKeys] = useState<string[] | null>(null)
+  const [picking, setPicking] = useState(false)
+  const role = useSessionRole()
+  const canConfigure = role === 'admin' || role === 'superadmin'
+  useEffect(() => {
+    if (!live) return
+    let cancelled = false
+    api.displayParams(orgId, 'transformer', id).then((r) => {
+      if (!cancelled && r) setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+    })
+    return () => { cancelled = true }
+  }, [orgId, id, live])
 
   if (!transformer) {
     return (
@@ -493,6 +504,31 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       </div>
     )
   }
+
+  // Keys already shown as one of the six named cards above.
+  const CANONICAL = new Set(Object.values(LIVE_PARAM))
+  /** No selection saved = not configured = show everything, never nothing. */
+  const shown = (k: string) => !showKeys?.length || showKeys.includes(k)
+  const extras = Object.entries(values ?? {})
+    .filter(([k]) => !CANONICAL.has(k))
+    .filter(([k]) => shown(k))
+    .sort(([a], [b]) => a.localeCompare(b))
+
+  // Everything on screen is switchable inside the history modal — including the
+  // extras, whose keys are not in ALARM_SCHEMA. Listing only the schema params
+  // left an extra opening under the wrong heading.
+  const modalParams: ModalParam[] = [
+    ...ALARM_SCHEMA.transformer.params.filter((p) => shown(p.key)).map((p) => ({ key: p.key, label: p.label, unit: p.unit })),
+    // No label to give an unrecognised key but the key itself — inventing a
+    // prettified one would only guess at what the device meant.
+    ...extras.map(([k]) => ({ key: k, label: k })),
+  ]
+  // The picker offers the six named slots plus whatever else this device has
+  // actually reported, so an unconfigured org sees the same list it now shows.
+  const available = [
+    ...ALARM_SCHEMA.transformer.params.map((p) => p.key),
+    ...Object.keys(values ?? {}).filter((k) => !CANONICAL.has(k)).sort((a, b) => a.localeCompare(b)),
+  ]
 
   const s = transformer.sensors
   const statusColors = {
@@ -540,13 +576,42 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       <div className="flex gap-0 overflow-hidden min-h-0 flex-shrink-0" style={{ height: 'clamp(520px, calc(100vh - 160px), 900px)' }}>
         {/* Left panel - sensor cards */}
         <div className="w-56 flex-shrink-0 p-3 space-y-2 overflow-y-auto" style={{ borderRight: '1px solid #1e2433' }}>
-          <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Sensor Readings</div>
-          <SensorCard label="Oil Temperature" icon={<Thermometer size={13} />} sensor={s.oilTemperature} onOpen={() => setOpenParam('oilTemp')} />
-          <SensorCard label="Hydrogen H2" icon={<Activity size={13} />} sensor={s.hydrogen} onOpen={() => setOpenParam('hydrogen')} />
-          <SensorCard label="Moisture" icon={<Droplets size={13} />} sensor={s.moisture} onOpen={() => setOpenParam('moisture')} />
-          <SensorCard label="Oil Level" icon={<Gauge size={13} />} sensor={s.oilLevel} onOpen={() => setOpenParam('oilLevel')} />
-          <SensorCard label="Load" icon={<Zap size={13} />} sensor={s.load} onOpen={() => setOpenParam('load')} />
-          <SensorCard label="Ambient Temp" icon={<Wind size={13} />} sensor={s.ambientTemperature} onOpen={() => setOpenParam('ambientTemp')} />
+          <div className="flex items-center gap-2 mb-2">
+            <div className="text-[10px] text-slate-600 uppercase tracking-wider">Sensor Readings</div>
+            {canConfigure && live && (
+              <button onClick={() => setPicking(true)} title="Choose which parameters to show"
+                className="ml-auto flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400">
+                <SlidersHorizontal size={11} /> Configure
+              </button>
+            )}
+          </div>
+          {shown('oilTemp') && <SensorCard label="Oil Temperature" icon={<Thermometer size={13} />} sensor={s.oilTemperature} onOpen={() => setOpenParam('oilTemp')} />}
+          {shown('hydrogen') && <SensorCard label="Hydrogen H2" icon={<Activity size={13} />} sensor={s.hydrogen} onOpen={() => setOpenParam('hydrogen')} />}
+          {shown('moisture') && <SensorCard label="Moisture" icon={<Droplets size={13} />} sensor={s.moisture} onOpen={() => setOpenParam('moisture')} />}
+          {shown('oilLevel') && <SensorCard label="Oil Level" icon={<Gauge size={13} />} sensor={s.oilLevel} onOpen={() => setOpenParam('oilLevel')} />}
+          {shown('load') && <SensorCard label="Load" icon={<Zap size={13} />} sensor={s.load} onOpen={() => setOpenParam('load')} />}
+          {shown('ambientTemp') && <SensorCard label="Ambient Temp" icon={<Wind size={13} />} sensor={s.ambientTemperature} onOpen={() => setOpenParam('ambientTemp')} />}
+
+          {/* Everything else the device reports. This page used to iterate a
+              fixed list of six keys, so a two-topic transformer — an electrical
+              meter merged with a box sensor, around forty values — showed six of
+              them and silently dropped the rest. Honours the admin's selection
+              when one exists; otherwise shows all of them. */}
+          {extras.length > 0 && (
+            <>
+              <div className="text-[10px] text-slate-600 uppercase tracking-wider pt-3 mb-1">
+                Other parameters <span className="text-slate-700">({extras.length})</span>
+              </div>
+              {extras.map(([k, v]) => (
+                <button key={k} onClick={() => setOpenParam(k)}
+                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left group"
+                  style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                  <span className="text-[10px] text-slate-500 font-mono truncate group-hover:text-indigo-400">{k}</span>
+                  <span className="text-[11px] text-slate-200 font-semibold ml-2 flex-shrink-0">{Number(v.toFixed(3))}</span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
 
         {/* Center - 3D model + charts */}
@@ -645,6 +710,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           </div>
         </div>
       </div>
+
+      {picking && (
+        <DisplayParamPicker
+          orgId={orgId}
+          domain="transformer"
+          nodeId={transformer.id}
+          available={available}
+          onClose={() => setPicking(false)}
+          onSaved={(keys) => setShowKeys(keys.length ? keys : null)}
+        />
+      )}
 
       {openParam && transformer && (
         <ParamHistoryModal

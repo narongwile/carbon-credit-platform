@@ -101,6 +101,14 @@ spec:
               [ "$have" = "1" ] || { echo "FATAL: org_logos missing — migrate-v24 did not apply"; exit 1; }
               have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='user_departments'")
               [ "$have" = "1" ] || { echo "FATAL: user_departments missing — migrate-v25 did not apply"; exit 1; }
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='display_params'")
+              [ "$have" = "1" ] || { echo "FATAL: display_params missing — migrate-v26 did not apply"; exit 1; }
+              # v26 adds the table AND a generated column plus the unique key that
+              # depends on it, in three separate statements. --force would report
+              # success with only the first applied, and a missing node_scope means
+              # every save silently duplicates rows instead of replacing them.
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='iothub' AND table_name='display_params' AND index_name='uq_display_params'")
+              [ "$have" -gt 0 ] || { echo "FATAL: display_params.uq_display_params missing — migrate-v26 only half applied"; exit 1; }
 
               echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:
