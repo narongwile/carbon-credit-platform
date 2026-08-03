@@ -27,6 +27,16 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # Without this, a failed automated sync PARKS: ArgoCD will not retry the same
+    # revision on its own, so the app sits OutOfSync until someone syncs by hand.
+    # The migrate Job is a Sync hook, so any transient MySQL or image-pull problem
+    # fails the whole sync — including the frontend rollout riding along with it.
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -53,3 +63,13 @@ spec:
       selfHeal: true
     syncOptions:
       - CreateNamespace=true
+    # Without this, a failed automated sync PARKS: ArgoCD will not retry the same
+    # revision on its own, so the app sits OutOfSync until someone syncs by hand.
+    # The migrate Job is a Sync hook, so any transient MySQL or image-pull problem
+    # fails the whole sync — including the frontend rollout riding along with it.
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m

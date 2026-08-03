@@ -92,6 +92,14 @@ build_frontend_next:
         -t "$IMAGE:latest" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
     - docker push "$IMAGE:latest"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+    # Marker for deploy_images: this component really was built and pushed
+    # at this tag, so the write-back may pin it. A component whose build was
+    # filtered out leaves no marker and keeps the tag it already had.
+    - mkdir -p .deploy && echo "$CI_COMMIT_SHORT_SHA" > .deploy/frontend-next
+  artifacts:
+    paths:
+      - .deploy/
+    expire_in: 1 day
   rules:
     # Scheduled pipelines run sync only — the sync commit (source=push) rebuilds.
     - if: $CI_PIPELINE_SOURCE == "schedule"
@@ -118,6 +126,14 @@ build_ingest_worker:
     - docker build -t "$IMAGE:latest" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
     - docker push "$IMAGE:latest"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+    # Marker for deploy_images: this component really was built and pushed
+    # at this tag, so the write-back may pin it. A component whose build was
+    # filtered out leaves no marker and keeps the tag it already had.
+    - mkdir -p .deploy && echo "$CI_COMMIT_SHORT_SHA" > .deploy/ingest-worker
+  artifacts:
+    paths:
+      - .deploy/
+    expire_in: 1 day
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
@@ -146,6 +162,14 @@ build_migrate_service:
     - docker build -t "$IMAGE:latest" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
     - docker push "$IMAGE:latest"
     - docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+    # Marker for deploy_images: this component really was built and pushed
+    # at this tag, so the write-back may pin it. A component whose build was
+    # filtered out leaves no marker and keeps the tag it already had.
+    - mkdir -p .deploy && echo "$CI_COMMIT_SHORT_SHA" > .deploy/migrate-service
+  artifacts:
+    paths:
+      - .deploy/
+    expire_in: 1 day
   rules:
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
@@ -154,12 +178,32 @@ build_migrate_service:
         - backend/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
 
-# ── GitOps write-back: pin the freshly-built image tag into the manifests ──────
+# ── GitOps write-back: pin the freshly-built image tags into the manifests ────
 # ArgoCD reconciles the git MANIFEST against the cluster. A floating `:latest` tag
 # never changes the manifest, so a new build is invisible to ArgoCD and never rolls
-# out. These jobs rewrite the Deployment image to the immutable `:$CI_COMMIT_SHORT_SHA`
-# tag that build_* just pushed, and commit it back to this branch — a real git diff
-# that ArgoCD (custom-apps-uat, automated sync) rolls out on its own.
+# out. This job rewrites each Deployment image to the immutable
+# `:$CI_COMMIT_SHORT_SHA` tag that build_* just pushed and commits it back to this
+# branch — a real git diff that ArgoCD (custom-apps-uat, automated sync) rolls out
+# on its own.
+#
+# ONE job, ONE commit — deliberately. This used to be three jobs, each `needs:`-ing
+# only its own build, so each pushed its own commit the moment that build finished.
+# The frontend is a docker-in-docker Next.js build and is always the slowest, so
+# its write-back landed 60-115 s AFTER the other two on every single pipeline:
+#
+#   03:12:42  ci(deploy):migrate-service -> efbace69   <-- frontend still at the OLD tag
+#   03:12:50  ci(deploy):ingest-worker   -> efbace69   <-- frontend still at the OLD tag
+#   03:14:34  ci(deploy):frontend-next   -> efbace69
+#
+# ArgoCD picked up one of the first two commits and synced it — pinning the
+# PREVIOUS frontend image — and a minute later the third commit arrived, leaving
+# the app OutOfSync on exactly one field: the frontend image. A second sync could
+# not start while the first was still running its mysql-auto-migrate Sync hook,
+# which is why the only way out was Terminate + re-sync, every single pipeline.
+#
+# Waiting for all three builds costs the worker and migrate-service rollouts the
+# ~100 s the frontend build takes. That is the price of every commit on this
+# branch describing a cluster state that actually exists.
 #
 # Requires CI/CD variable  WRITEBACK_TOKEN  (Settings > CI/CD > Variables, masked):
 #   a Project Access Token with scope `write_repository`, role Developer
@@ -167,28 +211,53 @@ build_migrate_service:
 # The write-back commit carries [skip ci] so it never re-triggers a pipeline — on
 # this branch the build jobs have no `changes:` filter, so without [skip ci] the
 # push-back would loop forever.
-.writeback:
+deploy_images:
   stage: deploy
   image:
     name: alpine/git:latest
     entrypoint: [""]
   variables:
     GIT_STRATEGY: none          # we clone the branch ourselves with the write token
+  # optional: on main the build jobs are `changes:`-filtered, so some may not be in
+  # the pipeline at all. A job that IS present and FAILS still blocks this one —
+  # a half-pinned commit would deploy one new image beside two stale ones.
+  needs:
+    - job: build_frontend_next
+      optional: true
+      artifacts: true
+    - job: build_ingest_worker
+      optional: true
+      artifacts: true
+    - job: build_migrate_service
+      optional: true
+      artifacts: true
   before_script:
     - test -n "$WRITEBACK_TOKEN" || { echo "WRITEBACK_TOKEN CI/CD variable not set — cannot push tag back"; exit 1; }
     - git clone --depth 1 --branch "$CI_COMMIT_BRANCH" "https://writeback:${WRITEBACK_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" repo
     - cd repo
     - git config user.email "ci-bot@thermexpertise.com"
     - git config user.name  "GitLab CI (deploy)"
-
-deploy_frontend_next:
-  extends: .writeback
-  needs: ["build_frontend_next"]
   script:
-    - 'sed -i "s|\(image: registry.gitlab.com/.*/frontend-next:\).*|\1${CI_COMMIT_SHORT_SHA}|" infra/k8s/custom-apps/base/frontend-next.yaml'
-    - git add infra/k8s/custom-apps/base/frontend-next.yaml
-    - if git diff --cached --quiet; then echo "frontend-next tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
-    - git commit -m "ci(deploy):frontend-next -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
+    # Artifacts land in the job workspace; the clone is the `repo` subdirectory.
+    - MARKERS="$CI_PROJECT_DIR/.deploy"
+    - test -d "$MARKERS" || { echo "no build produced an image in this pipeline — nothing to pin"; exit 0; }
+    - CHANGED=""
+    - |
+      # pin <component> <manifest> — only for a component this pipeline actually
+      # built. Pinning a tag that was never pushed is an ImagePullBackOff.
+      pin() {
+        [ -f "$MARKERS/$1" ] || { echo "skip $1 — not built in this pipeline"; return 0; }
+        tag=$(cat "$MARKERS/$1")
+        sed -i "s|\(image: registry.gitlab.com/.*/$1:\).*|\1${tag}|" "$2"
+        git add "$2"
+        CHANGED="${CHANGED} $1"
+        echo "pinned $1 -> $tag"
+      }
+      pin frontend-next   infra/k8s/custom-apps/base/frontend-next.yaml
+      pin ingest-worker   infra/k8s/custom-apps/base/ingest-worker.yaml
+      pin migrate-service infra/k8s/custom-apps/base/migrate-service.yaml
+    - if git diff --cached --quiet; then echo "every image tag is already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
+    - git commit -m "ci(deploy):${CHANGED# } -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
     - |
       for i in 1 2 3 4 5; do
         git pull --rebase origin "${CI_COMMIT_BRANCH}" || true
@@ -201,48 +270,6 @@ deploy_frontend_next:
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
         - frontend-next/**/*
-    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
-
-deploy_ingest_worker:
-  extends: .writeback
-  needs: ["build_ingest_worker"]
-  script:
-    - 'sed -i "s|\(image: registry.gitlab.com/.*/ingest-worker:\).*|\1${CI_COMMIT_SHORT_SHA}|" infra/k8s/custom-apps/base/ingest-worker.yaml'
-    - git add infra/k8s/custom-apps/base/ingest-worker.yaml
-    - if git diff --cached --quiet; then echo "ingest-worker tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
-    - git commit -m "ci(deploy):ingest-worker -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
-    - |
-      for i in 1 2 3 4 5; do
-        git pull --rebase origin "${CI_COMMIT_BRANCH}" || true
-        if git push origin "HEAD:${CI_COMMIT_BRANCH}"; then break; fi
-        sleep 2
-      done
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == "main"
-      changes:
         - worker/**/*
-    - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
-
-deploy_migrate_service:
-  extends: .writeback
-  needs: ["build_migrate_service"]
-  script:
-    - 'sed -i "s|\(image: registry.gitlab.com/.*/migrate-service:\).*|\1${CI_COMMIT_SHORT_SHA}|" infra/k8s/custom-apps/base/migrate-service.yaml'
-    - git add infra/k8s/custom-apps/base/migrate-service.yaml
-    - if git diff --cached --quiet; then echo "migrate-service tag already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
-    - git commit -m "ci(deploy):migrate-service -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
-    - |
-      for i in 1 2 3 4 5; do
-        git pull --rebase origin "${CI_COMMIT_BRANCH}" || true
-        if git push origin "HEAD:${CI_COMMIT_BRANCH}"; then break; fi
-        sleep 2
-      done
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "schedule"
-      when: never
-    - if: $CI_COMMIT_BRANCH == "main"
-      changes:
         - backend/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
