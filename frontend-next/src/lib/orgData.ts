@@ -135,3 +135,32 @@ export const getDepartmentsByOrg = (orgId: string) => departments.filter((d) => 
 export const getUsersByOrg = (orgId: string) => managedUsers.filter((u) => u.orgId === orgId)
 export const getDevicesByOrg = (orgId: string) => managedDevices.filter((d) => d.orgId === orgId)
 export const getThemeById = (id: string) => dashboardThemes.find((t) => t.id === id)
+
+// ---------------------------------------------------------------------------
+// Dashboard View Permission -> what a viewer's navigation actually shows.
+// ---------------------------------------------------------------------------
+// The admin toggles themes per department; without this map that policy was
+// stored and never applied, so every viewer saw the same menu.
+//
+// Only entries listed here are gated. Alarms, Reports and Profile deliberately
+// are not: they are not dashboards, and a viewer who cannot reach their own
+// profile (to set a password or their notification channels) is locked out of
+// the product by a display preference.
+export const THEME_NAV: Record<string, string[]> = {
+  'th-overview': ['/customer'],
+  // Indoor and outdoor location are one idea to an operator, and the admin nav
+  // already groups them the same way.
+  'th-map': ['/customer/map', '/customer/floorplans'],
+  'th-fix': ['/customer/devices'],
+  'th-free': ['/customer/devices'],
+  'th-refrig': ['/customer/devices'],
+  'th-twin': ['/customer/devices'],
+}
+
+/** Hrefs a set of granted themes unlocks. Empty set = no policy = no gating. */
+export function navHrefsForThemes(themeIds: string[]): Set<string> | null {
+  if (!themeIds.length) return null
+  const out = new Set<string>()
+  for (const t of themeIds) for (const href of THEME_NAV[t] ?? []) out.add(href)
+  return out
+}

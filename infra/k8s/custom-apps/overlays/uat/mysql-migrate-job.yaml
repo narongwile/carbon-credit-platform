@@ -99,6 +99,8 @@ spec:
               [ "$have" = "1" ] || { echo "FATAL: department_themes missing — migrate-v23 did not apply"; exit 1; }
               have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='org_logos'")
               [ "$have" = "1" ] || { echo "FATAL: org_logos missing — migrate-v24 did not apply"; exit 1; }
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='user_departments'")
+              [ "$have" = "1" ] || { echo "FATAL: user_departments missing — migrate-v25 did not apply"; exit 1; }
 
               echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:

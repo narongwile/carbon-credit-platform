@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { getSession, clearSession, useSessionOrgId } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
+import { navHrefsForThemes } from '@/lib/orgData'
 import OrgBrand from '@/components/OrgBrand'
 import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
@@ -27,6 +28,25 @@ const NAV: NavEntry[] = [
   { href: '/customer/profile', label: 'Profile', icon: UserCircle, section: 'Account' },
 ]
 
+// The Dashboard View Permission policy the org's admin set. Resolved from the
+// signed-in user's departments (unioned server-side), not from any client state
+// the viewer could influence. Null until it has loaded, and null forever when no
+// policy exists — the navigation is not gated in either case, so a viewer never
+// briefly loses menus while the request is in flight.
+function useAllowedHrefs(): Set<string> | null {
+  const [allowed, setAllowed] = useState<Set<string> | null>(null)
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.myAccess().then((a) => {
+      if (cancelled || !a) return
+      setAllowed(navHrefsForThemes(a.themeIds ?? []))
+    })
+    return () => { cancelled = true }
+  }, [])
+  return allowed
+}
+
 function RealtimeProvider({ children }: { children: React.ReactNode }) {
   useRealtimeData()
   return <>{children}</>
@@ -37,6 +57,12 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   const pathname = usePathname()
   const { viewerUserId, setViewerUserId, setOrgLogo } = useAppStore()
   const orgId = useSessionOrgId()
+  // Profile is never gated — a viewer who cannot reach it cannot set a password
+  // or their own notification channels.
+  const allowedHrefs = useAllowedHrefs()
+  const visibleNav = allowedHrefs
+    ? NAV.filter((i) => allowedHrefs.has(i.href) || i.href === '/customer/profile')
+    : NAV
   const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)
 
@@ -87,7 +113,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
           </div>
 
           <nav className="flex-1 px-2.5 py-3 space-y-0.5 overflow-y-auto">
-            {NAV.map((item) => {
+            {visibleNav.map((item) => {
               const active = isActive(item.href, item.exact)
               return (
                 <div key={item.href}>

@@ -67,11 +67,13 @@ export default function UserManagementPage() {
     })
     api.users(orgId).then((rows) => {
       if (cancelled || !rows) return
-      setUsers((rows as Array<{ id: string; name: string; email?: string; username?: string; role?: string; department_id?: string }>).map((r) => ({
+      setUsers((rows as Array<{ id: string; name: string; email?: string; username?: string; role?: string; department_id?: string; department_ids?: string[] }>).map((r) => ({
         // username is a stored column now — fall back only for rows created
         // before migrate-v22, which have none yet.
         id: r.id, orgId, name: r.name, username: r.username || r.email || r.id, email: r.email || '',
-        role: (r.role === 'admin' ? 'admin' : 'viewer'), departmentIds: r.department_id ? [r.department_id] : [], status: 'active',
+        role: (r.role === 'admin' ? 'admin' : 'viewer'),
+        // department_ids is the real set; the singular column is the pre-v25 shape.
+        departmentIds: r.department_ids ?? (r.department_id ? [r.department_id] : []), status: 'active',
       })))
     })
     return () => { cancelled = true }
@@ -134,7 +136,7 @@ export default function UserManagementPage() {
 
   const upsertUser = async (u: ManagedUser) => {
     if (isLive()) {
-      const r = await api.saveUser(orgId, { id: u.id, email: u.email, username: u.username, name: u.name, role: u.role, departmentId: u.departmentIds[0], password: u.password })
+      const r = await api.saveUser(orgId, { id: u.id, email: u.email, username: u.username, name: u.name, role: u.role, departmentId: u.departmentIds[0], departmentIds: u.departmentIds, password: u.password })
       // null covers the 409 the backend returns when the username is taken —
       // the one failure an admin can actually act on.
       if (!r) { toast.error('Could not save the user — the username or email may already be in use'); return }

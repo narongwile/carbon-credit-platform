@@ -330,7 +330,11 @@ export const api = {
   // password: optional on edit (blank keeps the existing one), and the only way
   // an admin-created account can ever sign in — the row is stored with a NULL
   // password_hash otherwise and login refuses those.
-  saveUser: (orgId: string, body: { id?: string; email?: string; username?: string; name: string; role?: string; departmentId?: string; password?: string }) =>
+  /** What the signed-in user may see: departments and the union of their themes. */
+  myAccess: () => req<{ userId: string; role: string; departmentIds: string[]; themeIds: string[] }>(`/api/me/access`),
+  // departmentIds is the real assignment (migrate-v25). departmentId is still
+  // sent so a backend without that table keeps the primary one.
+  saveUser: (orgId: string, body: { id?: string; email?: string; username?: string; name: string; role?: string; departmentId?: string; departmentIds?: string[]; password?: string }) =>
     req<{ id: string }>(`/api/orgs/${orgId}/users`, { method: 'POST', body: JSON.stringify(body) }),
   deleteUser: (id: string) => req(`/api/users/${id}`, { method: 'DELETE' }),
   productAccess: (scope: 'department' | 'user', scopeId: string) =>
