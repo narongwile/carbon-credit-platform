@@ -7,6 +7,7 @@ import { DOMAIN_META } from '@/types/fleet'
 import FixDashboard from '@/components/device/FixDashboard'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
+import NodeSitePanel from '@/components/device/NodeSitePanel'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import MyAlertSettings from '@/components/device/MyAlertSettings'
@@ -49,7 +50,10 @@ export default function NodeTwinClient() {
         {meta && <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span>}
         <span className="text-xs text-slate-500">{device.location} · {device.serial}</span>
         <div className="ml-auto flex items-center gap-3">
-          <span className="text-[11px] text-slate-600 hidden xl:inline">3D Digital Twin · click any component to inspect</span>
+          {/* Was "3D Digital Twin · click any component to inspect", which stayed
+              on the page after the twin became a fallback behind the uploaded
+              photo — it told an admin to click parts of an image. */}
+          <span className="text-[11px] text-slate-600 hidden xl:inline">Hover the photo to upload or replace it</span>
           {/* device.status comes from the seed fleet and never changes. The badge
               follows device_presence instead, so it agrees with the Event Log. */}
           <DeviceLiveStatus nodeId={device.id} />
@@ -58,6 +62,11 @@ export default function NodeTwinClient() {
       </div>
 
       <FixDashboard device={device} />
+
+      {/* Which of the customer's sites this unit is at, and what else is there.
+          ETERNITY's customers run from one substation to a dozen plants, so the
+          device page has to answer that without a detour through Sites. */}
+      <NodeSitePanel nodeId={device.id} orgId={device.orgId} currentSiteId={device.siteId} />
 
       <NodeDocuments nodeId={device.id} />
 

@@ -109,6 +109,8 @@ spec:
               # every save silently duplicates rows instead of replacing them.
               have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='iothub' AND table_name='display_params' AND index_name='uq_display_params'")
               [ "$have" -gt 0 ] || { echo "FATAL: display_params.uq_display_params missing — migrate-v26 only half applied"; exit 1; }
+              have=$(m -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iothub' AND table_name='node_images'")
+              [ "$have" = "1" ] || { echo "FATAL: node_images missing — migrate-v27 did not apply"; exit 1; }
 
               echo "Migrations complete! ($found applied, schema verified)"
           volumeMounts:

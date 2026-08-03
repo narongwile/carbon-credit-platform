@@ -8,6 +8,7 @@ import { ALARM_SCHEMA, LEGACY_WIRE_KEYS, paramStatus } from '@/lib/alarmParams'
 import { fmtHM } from '@/lib/displayTime'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
+import DeviceImage from '@/components/device/DeviceImage'
 import { useSessionRole } from '@/lib/auth'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer, SensorReading } from '@/types'
@@ -402,10 +403,12 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
         })}
       </div>
 
-      {/* Center: 3D digital twin + trend */}
+      {/* Center: the device photo (admin-uploaded) + trend. The generic twin is
+          the fallback until someone uploads the real unit — see DeviceImage. */}
       <div className="lg:col-span-5 space-y-4">
         <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
-          <DeviceTwin device={device} values={live ? values : null} />
+          <DeviceImage nodeId={device.id} deviceName={device.name}
+            fallback={<DeviceTwin device={device} values={live ? values : null} />} />
         </div>
         {/* Transformer pair charts — the two the /admin/transformers/detail page
             has. Rendered only when the device has actually reported the pair, so

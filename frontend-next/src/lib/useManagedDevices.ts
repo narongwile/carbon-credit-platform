@@ -72,6 +72,11 @@ export function useManagedDevices(orgId: string, domain?: string): Roster {
   const live = useIsLive()
   const [nodes, setNodes] = useState<FleetNode[] | null>(null)
   const [loaded, setLoaded] = useState(false)
+  // Real sites (migrate-v21). The name used to be looked up in the frontend seed
+  // list, which is the same four hardcoded places for every tenant — so a
+  // customer's own site rendered as its raw id ("site-1754…") in the header of
+  // every device page.
+  const [siteRows, setSiteRows] = useState<{ id: string; name: string }[] | null>(null)
 
   useEffect(() => {
     if (!live || !orgId) { setNodes(null); setLoaded(true); return }
@@ -83,17 +88,26 @@ export function useManagedDevices(orgId: string, domain?: string): Roster {
     return () => { cancelled = true }
   }, [live, orgId, domain])
 
+  useEffect(() => {
+    if (!live || !orgId) { setSiteRows(null); return }
+    let cancelled = false
+    api.sites(orgId).then((r) => { if (!cancelled && r) setSiteRows(r.sites ?? []) })
+    return () => { cancelled = true }
+  }, [live, orgId])
+
   return useMemo(() => {
     const mock = managedDevicesFromFleet(orgId)
     // No backend answer (demo, or an error): the seed fleet, as before.
     if (!nodes) return { devices: mock, loaded, fromBackend: false }
     // An empty array is a real answer — this org genuinely has no devices yet.
     const byId = new Map(mock.map((d) => [d.id, d]))
-    const siteName = new Map(getSitesByOrg(orgId).map((s) => [s.id, s.name]))
+    // Seed names stay as the fallback for demo orgs whose sites are not rows.
+    const siteName = new Map(getSitesByOrg(orgId).map((s) => [s.id, s.name] as [string, string]))
+    for (const s of siteRows ?? []) siteName.set(s.id, s.name)
     const devices = nodes.map((n) =>
       fleetNodeToDevice(n, orgId, byId.get(n.id), n.site_id ? siteName.get(n.site_id) : undefined))
     return { devices, loaded, fromBackend: true }
-  }, [nodes, orgId, loaded])
+  }, [nodes, orgId, loaded, siteRows])
 }
 
 /**

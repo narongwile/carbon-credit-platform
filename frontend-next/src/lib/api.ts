@@ -228,9 +228,26 @@ export const api = {
   /** Real-world corners of a floor-plan image — what makes a pin a coordinate. */
   setFloorGeo: (orgId: string, floorId: string, body: { siteId?: string | null; nwLat?: number | null; nwLng?: number | null; seLat?: number | null; seLng?: number | null }) =>
     req<{ ok: boolean }>(`/api/orgs/${orgId}/floorplans/${floorId}/geo`, { method: 'PUT', body: JSON.stringify(body) }),
-  /** Persist a device's coordinate (and site) so the GPS map matches the layout. */
-  setNodeLocation: (id: string, body: { lat: number | null; lng: number | null; siteId?: string | null }) =>
-    req<{ ok: boolean; id: string; lat: number | null; lng: number | null }>(`/api/nodes/${id}/location`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * Persist a device's coordinate and/or site. Partial: an omitted field is left
+   * alone, so reassigning a site does not clear a pin placed on the floor plan.
+   * Pass an explicit null to actually clear one.
+   */
+  setNodeLocation: (id: string, body: { lat?: number | null; lng?: number | null; siteId?: string | null }) =>
+    req<{ ok: boolean; id: string; lat?: number | null; lng?: number | null; siteId?: string | null }>(`/api/nodes/${id}/location`, { method: 'PUT', body: JSON.stringify(body) }),
+
+  // Device photo — the real unit, uploaded by an admin, shown to every role in
+  // place of the generic 3D twin.
+  /** Is there a photo, and who put it there? One request, no bytes. */
+  nodeImageMeta: (id: string) =>
+    req<{ has: boolean; contentType?: string; caption?: string | null; updatedBy?: string | null; updatedAt?: string; bytes?: number; pending?: string }>(
+      `/api/nodes/${id}/image?meta=1`),
+  /** Served path for an <img>; ?v busts the cache when the photo is replaced. */
+  nodeImageUrl: (id: string, version?: string | number) =>
+    apiImageUrl(`/api/nodes/${id}/image${version ? `?v=${encodeURIComponent(String(version))}` : ''}`),
+  setNodeImage: (id: string, body: { dataBase64?: string; contentType?: string; caption?: string | null }) =>
+    req<{ ok: boolean; id: string; bytes?: number }>(`/api/nodes/${id}/image`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteNodeImage: (id: string) => req<{ ok: boolean }>(`/api/nodes/${id}/image`, { method: 'DELETE' }),
   getFloorplans: (orgId: string) => req(`/api/orgs/${orgId}/floorplans`),
   updateFloorplans: (orgId: string, data: any) => req(`/api/orgs/${orgId}/floorplans`, { method: 'PUT', body: JSON.stringify(data) }),
   // Upload a floor-plan layout image (base64) → stored in the floorplans table;
