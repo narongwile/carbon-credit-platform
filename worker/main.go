@@ -148,6 +148,11 @@ const (
 	// How long to wait before retrying the last_reading_at stamp after it fails
 	// (i.e. before migrate-v19 has run).
 	lastReadingRetry = 5 * time.Minute
+	// How recent a stored reading has to be to override an LWT/offline status
+	// claim on a merged node's shared presence row. Matches LINK_LOST_AFTER_S on
+	// the Node-RED sweep (see updatePresence) — both exist to answer the same
+	// question ("has this device really gone silent?") from the same signal.
+	presenceOverrideWindow = 20 * time.Second
 )
 
 // Unix-ms of the next allowed last_reading_at attempt; 0 = attempt now.
@@ -466,12 +471,32 @@ func updatePresence(t TelemetryPayload) {
 	var downFor time.Duration
 	var prev sql.NullInt64
 	var lastSeen sql.NullTime
-	if err := controlDB.QueryRow("SELECT online, last_seen FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev, &lastSeen); err == nil {
+	var lastReadingAt sql.NullTime
+	if err := controlDB.QueryRow("SELECT online, last_seen, last_reading_at FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev, &lastSeen, &lastReadingAt); err == nil {
 		wasOffline = prev.Valid && prev.Int64 == 0
 		wasOnline = prev.Valid && prev.Int64 == 1
 		if online == 1 && wasOffline && lastSeen.Valid {
 			downFor = time.Since(lastSeen.Time).Round(time.Second)
 		}
+	}
+	// A merged pair (nodes.merge_into, resolveFeed) shares ONE presence row
+	// between two MQTT topics — "the transformer stays online while EITHER
+	// topic is publishing" is the whole reason to merge them; a box sensor's
+	// WiFi dropping is a link event on one half of the physical asset, not the
+	// asset itself going dark. But an LWT/offline status frame from either
+	// topic reaches this function, and unguarded it flips the SHARED row to
+	// offline even while the OTHER topic's readings are landing every second —
+	// a flaky secondary radio then raises repeated CRITICAL "Device Offline"
+	// alarms and LINK_LOST/LINK_RESTORE pairs for a device whose telemetry
+	// never actually stopped.
+	//
+	// last_reading_at is the more trustworthy signal: it only advances when a
+	// reading was actually stored, from either merged topic, so an offline
+	// claim arriving while it is still fresh is outvoted rather than trusted.
+	// A device that has genuinely gone dark stops producing readings too, so
+	// this only suppresses exactly the spurious case.
+	if online == 0 && lastReadingAt.Valid && time.Since(lastReadingAt.Time) < presenceOverrideWindow {
+		online = 1
 	}
 	// A device announcing its own outage (LWT / deep sleep) is worth a line too:
 	// without it the log only ever showed recoveries, so a flapping link looked
