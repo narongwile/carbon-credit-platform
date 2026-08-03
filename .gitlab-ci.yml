@@ -243,19 +243,28 @@ deploy_images:
     - test -d "$MARKERS" || { echo "no build produced an image in this pipeline — nothing to pin"; exit 0; }
     - CHANGED=""
     - |
-      # pin <component> <manifest> — only for a component this pipeline actually
-      # built. Pinning a tag that was never pushed is an ImagePullBackOff.
+      # pin <component> <manifest...> — only for a component this pipeline
+      # actually built. Pinning a tag nobody pushed is an ImagePullBackOff.
       pin() {
-        [ -f "$MARKERS/$1" ] || { echo "skip $1 — not built in this pipeline"; return 0; }
-        tag=$(cat "$MARKERS/$1")
-        sed -i "s|\(image: registry.gitlab.com/.*/$1:\).*|\1${tag}|" "$2"
-        git add "$2"
-        CHANGED="${CHANGED} $1"
-        echo "pinned $1 -> $tag"
+        comp="$1"; shift
+        [ -f "$MARKERS/$comp" ] || { echo "skip $comp — not built in this pipeline"; return 0; }
+        tag=$(cat "$MARKERS/$comp")
+        for f in "$@"; do
+          sed -i "s|\(image: registry.gitlab.com/.*/${comp}:\).*|\1${tag}|" "$f"
+          git add "$f"
+        done
+        CHANGED="${CHANGED} $comp"
+        echo "pinned $comp -> $tag"
       }
       pin frontend-next   infra/k8s/custom-apps/base/frontend-next.yaml
       pin ingest-worker   infra/k8s/custom-apps/base/ingest-worker.yaml
-      pin migrate-service infra/k8s/custom-apps/base/migrate-service.yaml
+      # migrate-service appears TWICE: the long-running provisioning Deployment
+      # and the deploy-time migration Job, which runs the same image so the Job
+      # and the service can never disagree about the schema. Miss the Job and it
+      # migrates with the PREVIOUS release's sql/ — the exact drift the Job is
+      # there to prevent.
+      pin migrate-service infra/k8s/custom-apps/base/migrate-service.yaml \
+                          infra/k8s/custom-apps/overlays/uat/mysql-migrate-job.yaml
     - if git diff --cached --quiet; then echo "every image tag is already at ${CI_COMMIT_SHORT_SHA}"; exit 0; fi
     - git commit -m "ci(deploy):${CHANGED# } -> ${CI_COMMIT_SHORT_SHA} [skip ci]"
     - |

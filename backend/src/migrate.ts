@@ -335,11 +335,37 @@ export async function migrateOrg(orgId: string, opts: { seed?: boolean } = {}): 
 }
 
 /**
+ * Orgs that live in the CONTROL database rather than one of their own. The
+ * data-plane resolver hardcodes the same three (resolvePool in
+ * generate-nodered-backend.mjs: "legacy organizations use control pool"), so
+ * giving them an iothub_org_1 would create a database nothing ever reads while
+ * reporting it as migrated. Overridable because the list is deployment history,
+ * not a law.
+ */
+export const CONTROL_ORG_IDS = new Set(
+  (process.env.CONTROL_ORG_IDS ?? 'org-1,org-2,org-3').split(',').map((s) => s.trim()).filter(Boolean)
+)
+
+export interface OrgMigration { orgId: string; db: string; applied: number }
+export interface AllOrgsResult {
+  migrated: OrgMigration[]
+  /** Orgs whose DB could NOT be brought up to date. Empty means every tenant is current. */
+  failed: Array<{ orgId: string; error: string }>
+  skipped: string[]
+}
+
+/**
  * Upgrade EVERY existing org DB — reads the org list from the control DB
  * (`organizations` table) and runs migrateOrg on each. Use this to roll a new
  * schema version out to all tenants after adding a migrate-vN.sql.
+ *
+ * Failures are RETURNED, not just logged. This used to catch each error, print
+ * it and carry on returning only the successes, so a caller had no way to tell
+ * "every tenant is current" from "one tenant's database is half-migrated" —
+ * the HTTP endpoint answered 200 ok:true either way, and the org whose schema
+ * was missing only surfaced later as a 503 from whichever feature needed it.
  */
-export async function migrateAllOrgs(): Promise<Array<{ orgId: string; db: string; applied: number }>> {
+export async function migrateAllOrgs(): Promise<AllOrgsResult> {
   const controlDb = process.env.CONTROL_DB_NAME || process.env.DB_NAME || 'iothub'
   const conn = await mysql.createConnection(connConfig(controlDb))
   let orgIds: string[] = []
@@ -349,13 +375,48 @@ export async function migrateAllOrgs(): Promise<Array<{ orgId: string; db: strin
   } finally {
     await conn.end()
   }
-  const out: Array<{ orgId: string; db: string; applied: number }> = []
+  const migrated: OrgMigration[] = []
+  const failed: AllOrgsResult['failed'] = []
+  const skipped: string[] = []
   for (const orgId of orgIds) {
-    try { out.push(await migrateOrg(orgId)) }
-    catch (e) { console.error(`[migrate] org ${orgId} FAILED: ${(e as Error).message}`) }
+    if (CONTROL_ORG_IDS.has(orgId)) { skipped.push(orgId); continue }
+    try { migrated.push(await migrateOrg(orgId)) }
+    catch (e) {
+      const error = (e as Error).message
+      console.error(`[migrate] org ${orgId} FAILED: ${error}`)
+      failed.push({ orgId, error })
+    }
   }
-  console.log(`[migrate] all-orgs: migrated ${out.length}/${orgIds.length} org DB(s)`)
-  return out
+  console.log(
+    `[migrate] all-orgs: ${migrated.length} migrated, ${failed.length} failed, ` +
+    `${skipped.length} on the control DB (${skipped.join(', ') || 'none'})`
+  )
+  return { migrated, failed, skipped }
+}
+
+/**
+ * The whole schema, in one call: the control database first, then every tenant
+ * database that has one.
+ *
+ * This is what the deploy-time migration Job runs. Before it existed the Job
+ * piped backend/sql/*.sql into a mysql client, and every one of those files
+ * starts with `USE iothub` — so a deploy migrated the CONTROL database and
+ * nothing else. Tenant databases were upgraded only by a human remembering to
+ * POST /migrate/all-orgs afterwards, and forgetting meant an org on its own
+ * database silently ran an older schema than the code deployed beside it.
+ *
+ * Tenant work is skipped when TENANT_DB_MODE is not on: with the resolver
+ * pointing everything at the control DB, creating iothub_<org> databases would
+ * be inventing state nothing reads.
+ */
+export async function migrateEverything(): Promise<{ control: number; orgs: AllOrgsResult | null }> {
+  const control = await runMigrations()
+  const tenant = (process.env.TENANT_DB_MODE || '').toLowerCase() === 'on'
+  if (!tenant) {
+    console.log('[migrate] TENANT_DB_MODE is not on — control database only')
+    return { control, orgs: null }
+  }
+  return { control, orgs: await migrateAllOrgs() }
 }
 
 /**
@@ -381,7 +442,11 @@ export function startMigrateServer(port = Number(process.env.MIGRATE_PORT || 809
         return send(200, { ok: true, ...r })
       }
       if (req.method === 'POST' && url.startsWith('/migrate/all-orgs')) {
-        return send(200, { ok: true, orgs: await migrateAllOrgs() })
+        const r = await migrateAllOrgs()
+        // 200 ok:true used to come back even when an org's migration threw, so
+        // "the migration ran" and "every tenant is current" were the same
+        // answer. They are not.
+        return send(r.failed.length ? 500 : 200, { ok: !r.failed.length, ...r })
       }
       send(404, { error: 'not found' })
     } catch (e) {
@@ -413,9 +478,27 @@ if (isMain) {
 
   ;(async () => {
     if (flag('--serve')) { startMigrateServer(); return }   // long-running; never exits
+    // --all is what the deploy-time Job runs: control DB, then every tenant DB.
+    // Exits non-zero if ANY database is not current, so a green Job means the
+    // whole platform is on this schema — not merely that the runner finished.
+    if (flag('--all')) {
+      const r = await migrateEverything()
+      const failed = r.orgs?.failed ?? []
+      if (failed.length) {
+        console.error(`[migrate] FATAL: ${failed.length} org DB(s) not migrated:`)
+        for (const f of failed) console.error(`  ${f.orgId}: ${f.error}`)
+        process.exit(1)
+      }
+      console.log(`[migrate] all complete — control:${r.control} applied, tenants:${r.orgs ? r.orgs.migrated.length : 'skipped'}`)
+      process.exit(0)
+    }
     if (flag('--all-orgs')) {
       const r = await migrateAllOrgs()
-      console.log(`[migrate] all-orgs complete (${r.length} org DB(s))`)
+      if (r.failed.length) {
+        console.error(`[migrate] FATAL: ${r.failed.length} org DB(s) not migrated`)
+        process.exit(1)
+      }
+      console.log(`[migrate] all-orgs complete (${r.migrated.length} org DB(s))`)
       process.exit(0)
     }
     const org = value('--org')

@@ -7,8 +7,10 @@ kind: Kustomization
 
 resources:
   - ../../base
-  # Must be listed BEFORE the Job that mounts it (and carries sync-wave -5).
-  - mysql-migrations-configmap.yaml
+  # The Job no longer mounts a ConfigMap of SQL: it runs the migrate-service
+  # image, which carries backend/sql/ next to the runner that reads it. The
+  # 65 KB mysql-migrations ConfigMap it used to mount is gone — with prune:true
+  # ArgoCD removes it from the cluster on the next sync.
   - mysql-migrate-job.yaml
 
 commonAnnotations:
