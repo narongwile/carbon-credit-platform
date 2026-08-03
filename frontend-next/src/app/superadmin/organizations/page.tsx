@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { organizations } from '@/lib/mockData'
 import { api, isLive } from '@/lib/api'
 import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
-import { getOrgThemeGrants, setOrgThemeGrants } from '@/lib/orgThemes'
+import { getOrgThemeGrants, fetchOrgThemeGrants, saveOrgThemeGrants } from '@/lib/orgThemes'
 import type { Organization } from '@/types'
 import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -152,12 +152,23 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
 
   // Per-org dashboard theme grants — super admin only.
   const [grantedThemes, setGrantedThemes] = useState<string[]>(getOrgThemeGrants(org.id))
+  // The stored entitlement, once it lands. Seeding from the demo map alone is
+  // what made a save look successful while the database held something else.
+  useEffect(() => {
+    let cancelled = false
+    fetchOrgThemeGrants(org.id).then((ids) => { if (!cancelled) setGrantedThemes(ids) })
+    return () => { cancelled = true }
+  }, [org.id])
   const toggleTheme = (id: string) =>
     setGrantedThemes((prev) => (prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]))
 
-  const handleSave = () => {
-    // Save theme grants
-    setOrgThemeGrants(org.id, grantedThemes)
+  const handleSave = async () => {
+    // Save theme grants. Awaited: this used to mutate a module-level object and
+    // report success, so the toast said "saved" whether or not anything was.
+    if (!(await saveOrgThemeGrants(org.id, grantedThemes))) {
+      toast.error('Could not save the dashboard theme grants')
+      return
+    }
 
     // Save features to mock data (for UI persistence demo)
     org.platforms.forEach((p) => {

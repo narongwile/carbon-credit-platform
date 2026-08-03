@@ -147,15 +147,28 @@ export const getThemeById = (id: string) => dashboardThemes.find((t) => t.id ===
 // profile (to set a password or their notification channels) is locked out of
 // the product by a display preference.
 export const THEME_NAV: Record<string, string[]> = {
-  'th-overview': ['/customer'],
+  // Alarms and Reports hang off the overview: they are the same "what is my
+  // fleet doing" question over time. They used to appear in NO theme at all, so
+  // the moment an admin granted any theme both items vanished from every
+  // viewer's nav with no way to grant them back — the gate was fail-closed for
+  // two menu items nobody could open.
+  'th-overview': ['/customer', '/customer/alarms', '/customer/reports'],
   // Indoor and outdoor location are one idea to an operator, and the admin nav
-  // already groups them the same way.
+  // already groups them the same way. Both are the Sites feature's surface: a
+  // site's floor plan and the same site's pin on the map.
   'th-map': ['/customer/map', '/customer/floorplans'],
   'th-fix': ['/customer/devices'],
   'th-free': ['/customer/devices'],
   'th-refrig': ['/customer/devices'],
   'th-twin': ['/customer/devices'],
 }
+
+/**
+ * Nav hrefs no theme can gate. Profile is here because a viewer who cannot
+ * reach it cannot change their own password or alert channels — locking someone
+ * out of their own account is never the intent behind a dashboard permission.
+ */
+export const UNGATED_NAV = ['/customer/profile']
 
 /** Hrefs a set of granted themes unlocks. Empty set = no policy = no gating. */
 export function navHrefsForThemes(themeIds: string[]): Set<string> | null {

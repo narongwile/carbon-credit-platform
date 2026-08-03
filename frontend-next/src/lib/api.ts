@@ -97,6 +97,9 @@ async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
+/** Which scope answered a display-params lookup; 'mixed' = a multi-department union. */
+export type DisplayParamScope = 'none' | 'org' | 'org+dept' | 'node' | 'node+dept' | 'mixed'
+
 export interface AuthUser { id: string; orgId: string; role: string; name?: string; email?: string }
 
 export const api = {
@@ -125,14 +128,29 @@ export const api = {
   putOrgChannels: (orgId: string, channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[]) =>
     req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels }) }),
   /**
-   * Which parameters SENSOR READINGS shows. Resolved node-override -> org
-   * default -> none; none means "unconfigured, show everything".
+   * Which parameters SENSOR READINGS shows. Resolved per department, most
+   * specific first: device+department -> device -> organization+department ->
+   * organization -> none. A user in several departments gets the union, the
+   * same most-permissive rule product access uses. 'none' means unconfigured,
+   * which shows everything — never nothing.
    */
-  displayParams: (orgId: string, domain: string, nodeId?: string) =>
-    req<{ domain: string; nodeId: string | null; scope: 'none' | 'org' | 'node'; paramKeys: string[] }>(
-      `/api/orgs/${orgId}/display-params?domain=${encodeURIComponent(domain)}${nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : ''}`),
-  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; paramKeys: string[] }) =>
+  displayParams: (orgId: string, domain: string, nodeId?: string, departmentId?: string | null) =>
+    req<{ domain: string; nodeId: string | null; departmentId: string | null; scope: DisplayParamScope; paramKeys: string[] }>(
+      `/api/orgs/${orgId}/display-params?domain=${encodeURIComponent(domain)}`
+      + (nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : '')
+      // Only an admin may name a department; for anyone else the backend uses
+      // their own, so a viewer cannot read another team's selection.
+      + (departmentId !== undefined ? `&departmentId=${encodeURIComponent(departmentId ?? '')}` : '')),
+  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; departmentId?: string | null; paramKeys: string[] }) =>
     req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** The org's theme entitlement. Superadmin writes it; an admin allocates from it. */
+  themeGrants: (orgId: string) => req<{ orgId: string; themeIds: string[] }>(`/api/orgs/${orgId}/theme-grants`),
+  setThemeGrants: (orgId: string, themeIds: string[]) =>
+    req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/theme-grants`, { method: 'PUT', body: JSON.stringify({ themeIds }) }),
+  /** Every department's and user's product access for one org, in a single call. */
+  orgProductAccess: (orgId: string) =>
+    req<{ departments: Record<string, Record<string, string>>; users: Record<string, Record<string, string>> }>(
+      `/api/orgs/${orgId}/product-access`),
   /** Which dashboard themes each department may see: { [departmentId]: themeId[] }. */
   departmentThemes: (orgId: string) => req<Record<string, string[]>>(`/api/orgs/${orgId}/department-themes`),
   setDepartmentThemes: (orgId: string, departmentId: string, themeIds: string[]) =>
@@ -365,7 +383,8 @@ export const api = {
   deleteUser: (id: string) => req(`/api/users/${id}`, { method: 'DELETE' }),
   productAccess: (scope: 'department' | 'user', scopeId: string) =>
     req<{ domain: string; level: string }[]>(`/api/product-access?scope=${scope}&scopeId=${encodeURIComponent(scopeId)}`),
-  setProductAccess: (body: { scope: 'department' | 'user'; scopeId: string; domain: string; level: string }) =>
+  /** level 'inherit' DELETES the override — it is the absence of a row, not a level. */
+  setProductAccess: (body: { scope: 'department' | 'user'; scopeId: string; domain: string; level: 'none' | 'view' | 'manage' | 'inherit' }) =>
     req(`/api/product-access`, { method: 'PUT', body: JSON.stringify(body) }),
   provisionNode: (body: { id: string; orgId: string; siteId?: string; departmentId?: string; domain: string; name: string; mqttPrefix?: string; lat?: number; lng?: number }) =>
     req<{ id: string }>(`/api/nodes`, { method: 'POST', body: JSON.stringify(body) }),

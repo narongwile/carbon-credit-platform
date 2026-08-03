@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { getSession, clearSession, useSessionOrgId } from '@/lib/auth'
 import { useRealtimeData } from '@/lib/realtime'
 import { useAppStore } from '@/lib/store'
-import { navHrefsForThemes } from '@/lib/orgData'
+import { UNGATED_NAV, navHrefsForThemes } from '@/lib/orgData'
 import OrgBrand from '@/components/OrgBrand'
 import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
@@ -61,7 +61,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   // or their own notification channels.
   const allowedHrefs = useAllowedHrefs()
   const visibleNav = allowedHrefs
-    ? NAV.filter((i) => allowedHrefs.has(i.href) || i.href === '/customer/profile')
+    ? NAV.filter((i) => allowedHrefs.has(i.href) || UNGATED_NAV.includes(i.href))
     : NAV
   const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
   const depts = viewerDepartments(viewerUserId)

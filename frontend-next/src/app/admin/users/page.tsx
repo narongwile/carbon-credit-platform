@@ -10,7 +10,7 @@ import {
   roleLabels,
   getEventProblemsByDept,
 } from '@/lib/orgData'
-import { getOrgThemeGrants } from '@/lib/orgThemes'
+import { getOrgThemeGrants, fetchOrgThemeGrants } from '@/lib/orgThemes'
 import { licensedDomains } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
@@ -458,7 +458,15 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
   }, [orgId, setDepartments])
 
   // Only themes the SUPER ADMIN has granted to this organization are selectable.
-  const grantedIds = getOrgThemeGrants(orgId)
+  // This read a frontend const covering org-1/2/3, so every other organization
+  // fell back to ['th-overview'] and its admin saw a one-row tab no matter what
+  // the super admin had actually granted.
+  const [grantedIds, setGrantedIds] = useState<string[]>(() => getOrgThemeGrants(orgId))
+  useEffect(() => {
+    let cancelled = false
+    fetchOrgThemeGrants(orgId).then((ids) => { if (!cancelled) setGrantedIds(ids) })
+    return () => { cancelled = true }
+  }, [orgId])
   const availableThemes = dashboardThemes.filter((t) => grantedIds.includes(t.id))
 
   // The toggle used to change React state only, so the whole tab reverted on
@@ -554,15 +562,38 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
   const domains = licensedDomains(orgId)
   const [scope, setScope] = useState<'dept' | 'user'>('dept')
 
-  const setAccess = (deptId: string, domain: SensorDomain, level: 'none' | 'view' | 'manage') => {
+  // This tab wrote but never read. Every cell rendered from React state that
+  // started empty, so an admin who reloaded saw "None" on every department and
+  // "Inherit" on every user regardless of what was stored — the screen forgot
+  // the policy it had just saved, and re-saving from that blank view would
+  // overwrite the real one.
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.orgProductAccess(orgId).then((r) => {
+      if (cancelled || !r) return
+      setDepartments((ds) => ds.map((d) => ({ ...d, productAccess: (r.departments[d.id] ?? {}) as Department['productAccess'] })))
+      setUsers((us) => us.map((u) => ({ ...u, productAccess: (r.users[u.id] ?? {}) as ManagedUser['productAccess'] })))
+    })
+    return () => { cancelled = true }
+  }, [orgId, setDepartments, setUsers])
+
+  const setAccess = async (deptId: string, domain: SensorDomain, level: 'none' | 'view' | 'manage') => {
+    const prevPa = departments.find((d) => d.id === deptId)?.productAccess
     setDepartments((prev) => prev.map((d) => {
       if (d.id !== deptId) return d
       const pa = { ...(d.productAccess ?? {}) }
-      if (level === 'none') delete pa[domain]
-      else pa[domain] = level
+      // 'none' is stored, not deleted: a department is denied by default, and a
+      // row saying so is what an admin sees when they come back.
+      pa[domain] = level
       return { ...d, productAccess: pa }
     }))
-    void api.setProductAccess({ scope: 'department', scopeId: deptId, domain, level })
+    if (!isLive()) return
+    const r = await api.setProductAccess({ scope: 'department', scopeId: deptId, domain, level })
+    if (!r) {
+      setDepartments((prev) => prev.map((d) => (d.id === deptId ? { ...d, productAccess: prevPa } : d)))
+      toast.error('Could not save the product access')
+    }
   }
 
   // department-derived level for a user (from local state)
@@ -580,7 +611,8 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
     if (ov === undefined) return dl
     return ACCESS_RANK[ov] < ACCESS_RANK[dl] ? ov : dl
   }
-  const setUserAccess = (userId: string, domain: SensorDomain, value: 'inherit' | 'none' | 'view' | 'manage') => {
+  const setUserAccess = async (userId: string, domain: SensorDomain, value: 'inherit' | 'none' | 'view' | 'manage') => {
+    const prevPa = users.find((u) => u.id === userId)?.productAccess
     setUsers((prev) => prev.map((u) => {
       if (u.id !== userId) return u
       const pa = { ...(u.productAccess ?? {}) }
@@ -588,7 +620,16 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
       else pa[domain] = value
       return { ...u, productAccess: pa }
     }))
-    void api.setProductAccess({ scope: 'user', scopeId: userId, domain, level: value === 'inherit' ? 'none' : value })
+    if (!isLive()) return
+    // 'inherit' used to be sent as level:'none' — an explicit DENY row. Putting a
+    // user back to "Inherit (dept: manage)" therefore locked them out of the
+    // product their department grants, and the UI showed the opposite. It is the
+    // absence of a row, so the backend deletes it.
+    const r = await api.setProductAccess({ scope: 'user', scopeId: userId, domain, level: value })
+    if (!r) {
+      setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, productAccess: prevPa } : u)))
+      toast.error('Could not save the product access')
+    }
   }
 
   const LEVELS = [

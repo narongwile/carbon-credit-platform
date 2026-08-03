@@ -20,8 +20,12 @@ export interface Department {
    * Per-product access for this department's users, keyed by sensor domain
    * ('transformer' | 'carbonNode' | 'bloodBox'). Absent = no access.
    * 'view' = can see the monitoring view; 'manage' = can see & manage.
+   *
+   * 'none' is a stored value, not an absence: product_access holds a row for it,
+   * so the tab shows the deny an admin actually set rather than rendering it the
+   * same as "never configured".
    */
-  productAccess?: Record<string, 'view' | 'manage'>
+  productAccess?: Record<string, 'none' | 'view' | 'manage'>
 }
 
 export interface ManagedUser {
