@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   PLATFORM_TEMPLATES,
   statusBadge,
@@ -141,6 +141,32 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
 
   const [newParam, setNewParam] = useState({ key: '', label: '', unit: '' })
 
+  // "Existing Customer" used to list only the frontend's seed orgs (org-1/2/3),
+  // so a customer provisioned moments ago through THIS wizard could not be
+  // picked to license a second platform — the picker simply did not know it
+  // existed. Live-loaded; the seed list is the demo-mode / pre-fetch fallback.
+  const [liveOrgs, setLiveOrgs] = useState<{ id: string; name: string; city?: string; country?: string }[]>(
+    () => organizations.map((o) => ({ id: o.id, name: o.name, city: o.city, country: o.country })),
+  )
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.orgs().then((rows) => {
+      if (cancelled || !rows) return
+      setLiveOrgs((rows as Array<{ id: string; name: string }>).map((r) => ({ id: r.id, name: r.name })))
+    })
+    return () => { cancelled = true }
+  }, [])
+  // If the pre-fetch default (or a stale selection) isn't in the real list once
+  // it lands, fall to the first real org rather than silently targeting one
+  // that may not exist.
+  useEffect(() => {
+    if (liveOrgs.length && !liveOrgs.some((o) => o.id === form.orgId)) {
+      setForm((f) => ({ ...f, orgId: liveOrgs[0].id }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveOrgs])
+
   const orgSites = useMemo(() => getSitesByOrg(form.orgId), [form.orgId])
 
   const template = useMemo(
@@ -171,7 +197,7 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
 
   const customerLabel =
     form.customerMode === 'existing'
-      ? organizations.find((o) => o.id === form.orgId)?.name ?? '—'
+      ? liveOrgs.find((o) => o.id === form.orgId)?.name ?? '—'
       : form.orgName || '—'
 
   const siteLabel = useExistingSite
@@ -376,8 +402,8 @@ function ProvisionWizard({ onClose }: { onClose: () => void }) {
                         className="w-full rounded-lg px-4 py-3 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
                         style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
                       >
-                        {organizations.map((o) => (
-                          <option key={o.id} value={o.id}>{o.name} — {o.city}, {o.country}</option>
+                        {liveOrgs.map((o) => (
+                          <option key={o.id} value={o.id}>{o.name}{o.city ? ` — ${o.city}, ${o.country}` : ''}</option>
                         ))}
                       </select>
                     </div>

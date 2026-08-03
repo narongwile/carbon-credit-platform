@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { organizations } from '@/lib/mockData'
 import { api, isLive } from '@/lib/api'
 import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
 import { getOrgThemeGrants, fetchOrgThemeGrants, saveOrgThemeGrants } from '@/lib/orgThemes'
+import { PLATFORM_TEMPLATES } from '@/lib/platforms'
 import type { Organization } from '@/types'
 import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -45,9 +47,34 @@ function RoleIcon({ role }: { role: string }) {
 }
 
 // Read-only org -> admin -> department (view) -> users tree for the superadmin.
+// Looked up every department and user from the frontend's seed arrays, so this
+// showed "no departments or users provisioned" for any organization that isn't
+// one of the three demo orgs — including one just created through the
+// Provision Wizard, which is precisely when a superadmin opens this to check
+// what exists. Live-loaded; the seed lookup is the demo-mode fallback.
 function OrgHierarchy({ orgId }: { orgId: string }) {
-  const departments = getDepartmentsByOrg(orgId)
-  const users = getUsersByOrg(orgId)
+  const [departments, setDepartments] = useState(() => getDepartmentsByOrg(orgId))
+  const [users, setUsers] = useState(() => getUsersByOrg(orgId))
+  useEffect(() => {
+    if (!isLive()) { setDepartments(getDepartmentsByOrg(orgId)); setUsers(getUsersByOrg(orgId)); return }
+    let cancelled = false
+    Promise.all([api.departments(orgId), api.users(orgId)]).then(([deptRows, userRows]) => {
+      if (cancelled) return
+      if (deptRows) {
+        setDepartments((deptRows as Array<{ id: string; name: string }>).map((d) => ({
+          id: d.id, orgId, name: d.name, themeIds: [] as string[],
+        })))
+      }
+      if (userRows) {
+        setUsers((userRows as Array<{ id: string; name: string; role?: string; department_id?: string; department_ids?: string[] }>).map((u) => ({
+          id: u.id, orgId, name: u.name, username: u.name, email: '',
+          role: (u.role === 'admin' ? 'admin' : 'viewer') as 'admin' | 'viewer',
+          departmentIds: u.department_ids ?? (u.department_id ? [u.department_id] : []), status: 'active' as const,
+        })))
+      }
+    })
+    return () => { cancelled = true }
+  }, [orgId])
   const admins = users.filter((u) => u.role === 'admin')
   const branch = { borderLeft: '1px solid #1e2433' }
 
@@ -113,40 +140,35 @@ function OrgHierarchy({ orgId }: { orgId: string }) {
   )
 }
 
-// Mock platform ids → backend platform ids (org_entitlements / platforms.ts).
-const PLATFORM_MAP: Record<string, string> = { eternity: 'eternityTransformers', carbonbox: 'refrigerationDataLogger', bloodbox: 'bloodBox' }
-const toBackendPlatform = (mockId: string) => PLATFORM_MAP[mockId] ?? mockId
-
 function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) {
-  const [expandedPlatform, setExpandedPlatform] = useState<string | null>('eternity')
+  const [expandedPlatform, setExpandedPlatform] = useState<string | null>(PLATFORM_TEMPLATES[0]?.id ?? null)
   const [entryPlatform, setEntryPlatform] = useState('eternity')
-  const [features, setFeatures] = useState<Record<string, boolean>>(
-    Object.fromEntries(org.platforms.flatMap((p) => p.features.map((f) => [f.id, f.enabled])))
-  )
 
-  const toggleFeature = (id: string) => setFeatures((prev) => ({ ...prev, [id]: !prev[id] }))
-
-  // Platform licensing ↔ backend org_entitlements (superadmin). Live-loaded.
-  const [licensed, setLicensed] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(org.platforms.map((p) => [p.platformId, p.licensed])),
-  )
+  // Platform licensing ↔ backend org_entitlements (superadmin-only write). This
+  // used to render org.platforms — a field only the three seeded demo orgs
+  // carried, from a frontend mock array — so a real organization (including one
+  // just created through the Provision Wizard) showed no platform cards at all,
+  // and there was nothing here to click LICENSED on. Sourced from
+  // PLATFORM_TEMPLATES (the same registry the wizard licenses FROM) instead, so
+  // every organization gets the full catalog, and `licensed` keys directly on
+  // the backend platform id — no more mock-id ↔ backend-id translation layer.
+  const [licensed, setLicensed] = useState<Record<string, boolean>>({})
   useEffect(() => {
     if (!isLive()) return
     let cancelled = false
     api.entitlements(org.id).then((ents) => {
       if (cancelled || !ents) return
-      setLicensed(Object.fromEntries(org.platforms.map((p) => [p.platformId, ents.includes(toBackendPlatform(p.platformId))])))
+      setLicensed(Object.fromEntries(PLATFORM_TEMPLATES.map((p) => [p.id, ents.includes(p.id)])))
     })
     return () => { cancelled = true }
   }, [org.id])
   const toggleLicense = (platformId: string) => {
-    setLicensed((prev) => {
-      const next = { ...prev, [platformId]: !prev[platformId] }
-      if (isLive()) {
-        const platforms = Object.keys(next).filter((k) => next[k]).map(toBackendPlatform)
-        api.setEntitlements(org.id, platforms)
-      }
-      return next
+    const prev = licensed
+    const next = { ...prev, [platformId]: !prev[platformId] }
+    setLicensed(next)
+    if (!isLive()) return
+    api.setEntitlements(org.id, Object.keys(next).filter((k) => next[k])).then((r) => {
+      if (!r) { setLicensed(prev); toast.error('Could not update the license') }
     })
   }
 
@@ -169,13 +191,6 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
       toast.error('Could not save the dashboard theme grants')
       return
     }
-
-    // Save features to mock data (for UI persistence demo)
-    org.platforms.forEach((p) => {
-      p.features.forEach((f) => {
-        if (features[f.id] !== undefined) f.enabled = features[f.id]
-      })
-    })
 
     toast.success('Organization settings saved')
     onClose()
@@ -215,48 +230,46 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
             </div>
           </div>
 
-          {/* Platform cards */}
+          {/* Platform cards — licenses org_entitlements. The catalog itself
+              (name, features) comes from PLATFORM_TEMPLATES, same as the
+              Provision Wizard, so every organization sees every product it
+              could be licensed for rather than only whichever three the
+              frontend happened to seed by hand. */}
           <div>
             <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Platform Access</label>
             <div className="space-y-2">
-              {org.platforms.map((platform) => (
-                <div key={platform.platformId} className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+              {PLATFORM_TEMPLATES.map((platform) => (
+                <div key={platform.id} className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
                   <div
                     className="flex items-center justify-between p-4 cursor-pointer hover:bg-white/3 transition-colors"
-                    onClick={() => setExpandedPlatform(expandedPlatform === platform.platformId ? null : platform.platformId)}
+                    onClick={() => setExpandedPlatform(expandedPlatform === platform.id ? null : platform.id)}
                     style={{ background: '#0a0e1a' }}
                   >
                     <div className="flex items-center gap-3">
-                      {expandedPlatform === platform.platformId ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
-                      <span className="text-sm font-semibold text-white">{platform.platformName}</span>
+                      {expandedPlatform === platform.id ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
+                      <span className="text-sm font-semibold text-white">{platform.name}</span>
                     </div>
                     <button
-                      onClick={(e) => { e.stopPropagation(); toggleLicense(platform.platformId) }}
+                      onClick={(e) => { e.stopPropagation(); toggleLicense(platform.id) }}
                       className="text-xs px-2.5 py-1 rounded-full font-medium transition-colors hover:opacity-80"
                       title="Toggle platform license"
-                      style={licensed[platform.platformId]
+                      style={licensed[platform.id]
                         ? { background: 'rgba(74,222,128,0.1)', color: '#4ade80' }
                         : { background: 'rgba(107,114,128,0.1)', color: '#6b7280' }}
                     >
-                      {licensed[platform.platformId] ? 'LICENSED' : 'UNLICENSED'}
+                      {licensed[platform.id] ? 'LICENSED' : 'UNLICENSED'}
                     </button>
                   </div>
 
-                  {expandedPlatform === platform.platformId && (
+                  {expandedPlatform === platform.id && (
                     <div className="p-4 space-y-2" style={{ background: '#0d1117', borderTop: '1px solid #1e2433' }}>
+                      {/* Informational only — org_entitlements licenses the whole
+                          platform; there is no per-feature flag in the schema to
+                          toggle here, so this no longer pretends to be one. */}
                       {platform.features.map((feat) => (
-                        <div key={feat.id} className="flex items-center justify-between py-1.5">
+                        <div key={feat.name} className="flex items-center justify-between py-1.5">
                           <span className="text-sm text-slate-300">{feat.name}</span>
-                          <button
-                            onClick={() => toggleFeature(feat.id)}
-                            className="transition-colors"
-                          >
-                            {features[feat.id] ? (
-                              <ToggleRight size={22} className="text-indigo-400" />
-                            ) : (
-                              <ToggleLeft size={22} className="text-slate-600" />
-                            )}
-                          </button>
+                          <span className="text-[10px] text-slate-600">{feat.category}</span>
                         </div>
                       ))}
                     </div>
@@ -332,14 +345,34 @@ export default function OrganizationsPage() {
   const [selected, setSelected] = useState<Organization | null>(null)
   const [orgs, setOrgs] = useState<Organization[]>(organizations)
 
-  // Live org list (name + status) from the backend; structure stays from mock.
+  // Live org list from the backend is now the PRIMARY source — the superadmin
+  // sees every organization that exists, not merged names onto the frontend's
+  // three seeded ids. That merge-only-existing approach meant an org created
+  // moments ago through the Provision Wizard never appeared here at all: there
+  // was no row to click, so there was no way to license it — the very thing
+  // this screen exists for. Cosmetic mock fields (contactEmail, city, type,
+  // transformerCount, licenseTier) still overlay onto a matching seeded id;
+  // a real org gets neutral placeholders instead of invented ones.
   useEffect(() => {
     if (!isLive()) return
     let cancelled = false
     api.orgs().then((rows) => {
       if (cancelled || !rows) return
-      const byId = new Map((rows as Array<{ id: string; name: string; status?: string }>).map((r) => [r.id, r]))
-      setOrgs(organizations.map((o) => (byId.has(o.id) ? { ...o, name: byId.get(o.id)!.name, status: (byId.get(o.id)!.status as Organization['status']) ?? o.status } : o)))
+      const byId = new Map(organizations.map((o) => [o.id, o]))
+      const merged = (rows as Array<{ id: string; name: string; status?: string }>).map((r) => {
+        const mock = byId.get(r.id)
+        return {
+          ...(mock ?? {
+            type: '—', country: '—', city: '—', lat: 0, lng: 0,
+            transformerCount: 0, licenseTier: 'basic' as const,
+            platforms: [], createdAt: new Date().toISOString(), contactEmail: '',
+          }),
+          id: r.id,
+          name: r.name,
+          status: (r.status as Organization['status']) ?? mock?.status ?? 'active',
+        }
+      })
+      setOrgs(merged)
     })
     return () => { cancelled = true }
   }, [])
@@ -358,9 +391,12 @@ export default function OrganizationsPage() {
           <h1 className="text-xl font-bold text-white">Organizations</h1>
           <p className="text-sm text-slate-500 mt-1">Manage tenant organizations and their configurations</p>
         </div>
-        <button className="px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+        {/* Provisioning a new org is one step of the Provision Wizard on
+            /superadmin/platforms (pick a platform, then "New Customer") — this
+            button had no onClick at all, going nowhere. */}
+        <Link href="/superadmin/platforms" className="px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
           + New Organization
-        </button>
+        </Link>
       </div>
 
       {/* Search */}
