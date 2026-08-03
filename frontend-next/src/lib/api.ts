@@ -151,6 +151,13 @@ export const api = {
   orgProductAccess: (orgId: string) =>
     req<{ departments: Record<string, Record<string, string>>; users: Record<string, Record<string, string>> }>(
       `/api/orgs/${orgId}/product-access`),
+  /** Which of the org's sites each department may see: { [departmentId]: siteId[] }. */
+  departmentSites: (orgId: string) => req<Record<string, string[]>>(`/api/orgs/${orgId}/department-sites`),
+  /** An empty list REMOVES the restriction — it never blinds the department. */
+  setDepartmentSites: (orgId: string, departmentId: string, siteIds: string[]) =>
+    req<{ ok: boolean; count: number; restricted: boolean }>(`/api/orgs/${orgId}/department-sites`, {
+      method: 'PUT', body: JSON.stringify({ departmentId, siteIds }),
+    }),
   /** Which dashboard themes each department may see: { [departmentId]: themeId[] }. */
   departmentThemes: (orgId: string) => req<Record<string, string[]>>(`/api/orgs/${orgId}/department-themes`),
   setDepartmentThemes: (orgId: string, departmentId: string, themeIds: string[]) =>

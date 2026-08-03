@@ -16,7 +16,7 @@ import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
   Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check, Boxes,
-  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet,
+  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet, MapPin,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -457,6 +457,38 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
     return () => { cancelled = true }
   }, [orgId, setDepartments])
 
+  // ---- Sites a department may see -----------------------------------------
+  // Themes decide WHICH SCREENS a team gets; this decides WHICH PLACES. A
+  // customer running a dozen plants had every viewer seeing every plant, because
+  // the fleet query — which also drives the map, the floor plans and the alarm
+  // feed — filtered by organization and department but never by site.
+  const [sites, setSites] = useState<{ id: string; name: string }[]>([])
+  const [deptSites, setDeptSites] = useState<Record<string, string[]>>({})
+  const [savingSites, setSavingSites] = useState(false)
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.sites(orgId).then((r) => { if (!cancelled && r) setSites(r.sites ?? []) })
+    api.departmentSites(orgId).then((r) => { if (!cancelled && r) setDeptSites(r) })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  const toggleSite = async (siteId: string) => {
+    if (!dept) return
+    const cur = deptSites[dept.id] ?? []
+    const next = cur.includes(siteId) ? cur.filter((s) => s !== siteId) : [...cur, siteId]
+    setDeptSites((m) => ({ ...m, [dept.id]: next }))
+    if (!isLive()) return
+    setSavingSites(true)
+    const r = await api.setDepartmentSites(orgId, dept.id, next)
+    setSavingSites(false)
+    if (!r) {
+      setDeptSites((m) => ({ ...m, [dept.id]: cur }))
+      toast.error('Could not save the site permission')
+    }
+  }
+  const selectedSites = dept ? (deptSites[dept.id] ?? []) : []
+
   // Only themes the SUPER ADMIN has granted to this organization are selectable.
   // This read a frontend const covering org-1/2/3, so every other organization
   // fell back to ['th-overview'] and its admin saw a one-row tab no matter what
@@ -542,6 +574,50 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
             )
           })}
         </div>
+        )}
+      </div>
+
+      {/* Sites this department may see */}
+      <div className="rounded-xl p-4 lg:col-span-3" style={surface}>
+        <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+          <MapPin size={14} className="text-cyan-400" /> Sites
+          <span className="text-slate-500 font-normal">(select multiple)</span>
+          {savingSites && <span className="text-[10px] text-slate-600">saving…</span>}
+        </h3>
+        <p className="text-xs text-slate-500 mb-3">
+          {selectedSites.length === 0 ? (
+            <>
+              <span className="text-amber-400">No restriction.</span> Everyone in {dept?.name ?? 'this department'} sees
+              devices, maps, floor plans and alarms at <span className="text-slate-300">every</span> site. Pick sites to
+              limit them; clearing the selection removes the limit again.
+            </>
+          ) : (
+            <>
+              {dept?.name ?? 'This department'} sees only the {selectedSites.length} selected
+              site{selectedSites.length === 1 ? '' : 's'} — in the device list, the sensor map, the floor plans and the
+              alarm feed. A device not assigned to any site stays visible to everyone.
+            </>
+          )}
+        </p>
+        {sites.length === 0 ? (
+          <div className="p-4 rounded-lg text-xs text-slate-500" style={inset}>
+            This organization has no sites yet. Add them from a device’s Site panel or the Sites page, then come back to
+            decide who sees which.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {sites.map((st) => {
+              const on = selectedSites.includes(st.id)
+              return (
+                <button key={st.id} onClick={() => toggleSite(st.id)} disabled={!dept}
+                  className="flex items-center justify-between p-3 rounded-lg text-left transition-all disabled:opacity-40"
+                  style={{ background: '#0a0e1a', border: `1px solid ${on ? '#06b6d4' : '#1e2433'}` }}>
+                  <span className="text-sm text-slate-200 truncate">{st.name}</span>
+                  {on ? <ToggleRight size={22} style={{ color: '#06b6d4' }} /> : <ToggleLeft size={22} className="text-slate-600" />}
+                </button>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>
