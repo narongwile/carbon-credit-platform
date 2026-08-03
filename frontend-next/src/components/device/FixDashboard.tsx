@@ -5,11 +5,12 @@ import dynamic from 'next/dynamic'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, LEGACY_WIRE_KEYS, paramStatus } from '@/lib/alarmParams'
+import { fmtHM } from '@/lib/displayTime'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer, SensorReading } from '@/types'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import {
   Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi,
@@ -276,11 +277,53 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     if (!seen) return 70 + (hash(device.id) % 28)
     return Math.max(0, Math.min(100, 100 - penalty))
   }, [live, values, device])
-  const trend = useMemo(() => {
-    const seed = hash(device.id); const out: { t: string; a: number; b: number }[] = []
-    for (let i = 23; i >= 0; i--) out.push({ t: `${i}h`, a: 60 + ((seed + i * 5) % 25), b: 40 + ((seed + i * 9) % 30) })
-    return out.reverse()
-  }, [device])
+  // Was a curve computed from hash(device.id) — a deterministic pattern rendered
+  // under the heading "Performance · last 24h" with two unlabelled series. It
+  // looked like telemetry and was not; nothing here had ever fetched history.
+  const [series, setSeries] = useState<Record<string, { time: string; value: number }[]>>({})
+  useEffect(() => {
+    if (!live) { setSeries({}); return }
+    let cancelled = false
+    const load = () => {
+      api.readings(device.id, 1440, (1440 * 60) / 96).then((rows) => {
+        if (cancelled || !rows) return
+        const out: Record<string, { time: string; value: number }[]> = {}
+        for (const r of rows) (out[r.param_key] ||= []).push({ time: r.taken_at, value: Number(r.value) })
+        setSeries(out)
+      })
+    }
+    load()
+    const t = setInterval(load, 30000)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [device.id, live])
+
+  /** Chart rows for a pair of params, aligned on the first one's buckets. */
+  const pairSeries = (aKey: string, bKey: string) => {
+    const a = series[aKey] ?? [], b = series[bKey] ?? []
+    if (!a.length && !b.length) return []
+    const base = (a.length ? a : b).slice(-96)
+    return base.map((p, i) => ({
+      time: fmtHM(p.time),
+      [aKey]: a[i]?.value ?? null,
+      [bKey]: b[i]?.value ?? null,
+    })) as Record<string, string | number | null>[]
+  }
+
+  // Only for transformers, and only once the device has actually reported the
+  // pair — an empty axis is worse than no card.
+  const isTransformer = device.domain === 'transformer'
+  const loadOil = isTransformer ? pairSeries('oilTemp', 'load') : []
+  const h2Moist = isTransformer ? pairSeries('hydrogen', 'moisture') : []
+
+  // The generic chart plots whatever the device reports most of, so a fridge or
+  // a BloodBOX still gets a real trend instead of the invented one.
+  const genericKey = useMemo(() => {
+    const keys = Object.keys(series).filter((k) => (series[k]?.length ?? 0) > 1)
+    if (!keys.length) return null
+    const preferred = device.domain ? ALARM_SCHEMA[device.domain].params.map((p) => p.key) : []
+    return preferred.find((k) => keys.includes(k)) ?? keys[0]
+  }, [series, device.domain])
+  const genericTrend = genericKey ? (series[genericKey] ?? []).slice(-96).map((p) => ({ time: fmtHM(p.time), value: p.value })) : []
 
   const asset = /transformer/i.test(device.deviceType)
     ? [['ID', device.serial], ['Model', 'TR-6787'], ['Rating', '2500 kVA'], ['Voltage', '22kV/0.4kV']]
@@ -324,19 +367,70 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
         <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
           <DeviceTwin device={device} values={live ? values : null} />
         </div>
-        <div className="rounded-xl p-5" style={surface}>
-          <div className="text-sm font-semibold text-white mb-3">Performance · last 24h</div>
+        {/* Transformer pair charts — the two the /admin/transformers/detail page
+            has. Rendered only when the device has actually reported the pair, so
+            a transformer that sends only electrical values does not get an empty
+            axis. Clicking opens the same history modal the tiles use. */}
+        {isTransformer && loadOil.length > 0 && (
+          <button onClick={() => setOpenParam('oilTemp')} className="w-full text-left rounded-xl p-5 group" style={surface}>
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 group-hover:text-indigo-400">Load &amp; Oil Temperature · click for history</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={loadOil} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
+                <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} minTickGap={28} />
+                <YAxis yAxisId="temp" stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="load" orientation="right" stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ background: '#0a0e1a', border: '1px solid #1e2433', borderRadius: 8, color: '#fff' }} />
+                <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
+                <Line yAxisId="temp" type="monotone" dataKey="oilTemp" stroke="#f97316" strokeWidth={1.5} dot={false} name="Oil Temp (°C)" connectNulls={false} isAnimationActive={false} />
+                <Line yAxisId="load" type="monotone" dataKey="load" stroke="#6366f1" strokeWidth={1.5} dot={false} name="Load (%)" connectNulls={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </button>
+        )}
+        {isTransformer && h2Moist.length > 0 && (
+          <button onClick={() => setOpenParam('hydrogen')} className="w-full text-left rounded-xl p-5 group" style={surface}>
+            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 group-hover:text-indigo-400">Hydrogen &amp; Moisture · click for history</div>
+            <ResponsiveContainer width="100%" height={140}>
+              <LineChart data={h2Moist} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
+                <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} minTickGap={28} />
+                <YAxis yAxisId="h2" stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="moist" orientation="right" stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ background: '#0a0e1a', border: '1px solid #1e2433', borderRadius: 8, color: '#fff' }} />
+                <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
+                <Line yAxisId="h2" type="monotone" dataKey="hydrogen" stroke="#22c55e" strokeWidth={1.5} dot={false} name="Hydrogen (ppm)" connectNulls={false} isAnimationActive={false} />
+                <Line yAxisId="moist" type="monotone" dataKey="moisture" stroke="#a78bfa" strokeWidth={1.5} dot={false} name="Moisture (ppm)" connectNulls={false} isAnimationActive={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </button>
+        )}
+
+        {/* Generic trend. Was unclickable AND synthetic; it plots a real stored
+            parameter now and opens that parameter's history. */}
+        <button onClick={() => genericKey && setOpenParam(genericKey)} disabled={!genericKey}
+          className="w-full text-left rounded-xl p-5 group disabled:cursor-default" style={surface}>
+          <div className="text-sm font-semibold text-white mb-3 group-enabled:group-hover:text-indigo-400">
+            {genericKey
+              ? `${modalParams.find((m) => m.key === genericKey)?.label ?? genericKey} · last 24h · click for history`
+              : 'Performance · last 24h'}
+          </div>
+          {genericTrend.length > 1 ? (
           <ResponsiveContainer width="100%" height={150}>
-            <LineChart data={trend} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+            <LineChart data={genericTrend} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-              <XAxis dataKey="t" stroke="#64748b" fontSize={10} tickLine={false} minTickGap={24} />
+              <XAxis dataKey="time" stroke="#64748b" fontSize={10} tickLine={false} minTickGap={24} />
               <YAxis stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={{ background: '#0a0e1a', border: '1px solid #1e2433', borderRadius: 8, color: '#fff' }} />
-              <Line type="monotone" dataKey="a" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
-              <Line type="monotone" dataKey="b" stroke="#06b6d4" strokeWidth={2} dot={false} isAnimationActive={false} />
+              <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+          ) : (
+            <div className="h-[150px] flex items-center justify-center text-xs text-slate-600">
+              No stored readings yet for this device.
+            </div>
+          )}
+        </button>
       </div>
 
       {openParam && (

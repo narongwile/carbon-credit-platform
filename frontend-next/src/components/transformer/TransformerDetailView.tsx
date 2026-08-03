@@ -14,6 +14,7 @@ import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHis
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
+import { fmtHM, fmtDateTime } from '@/lib/displayTime'
 import dynamic from 'next/dynamic'
 import { useState, useEffect, useMemo } from 'react'
 import {
@@ -286,9 +287,9 @@ function TrendChart({ transformer, type }: { transformer: Transformer; type: 'lo
   const moistHistory = transformer.sensors.moisture.history.slice(-48)
 
   const data = history.map((p, i) => {
-    const t = new Date(p.time)
     return {
-      time: `${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}`,
+      // Was t.getHours() — the browser's zone. Readings are +07:00 events.
+      time: fmtHM(p.time),
       oilTemp: p.value,
       load: loadHistory[i]?.value || 0,
       hydrogen: h2History[i]?.value || 0,
@@ -396,7 +397,7 @@ function LiveActiveAlarms({ nodeId }: { nodeId: string }) {
             <div className="text-xs text-slate-300">{a.message}</div>
             <div className="flex items-center gap-1 text-[10px] text-slate-600 mt-0.5">
               <Clock size={9} />
-              {new Date(a.ts).toLocaleString()}
+              {fmtDateTime(a.ts)}
             </div>
           </div>
         </div>
@@ -439,7 +440,7 @@ function ActiveAlarms({ transformerId }: { transformerId: string }) {
             <div className="text-xs text-slate-300 truncate">{alarm.message}</div>
             <div className="flex items-center gap-1 text-[10px] text-slate-600 mt-0.5">
               <Clock size={9} />
-              {new Date(alarm.timestamp).toLocaleTimeString()}
+              {fmtHM(alarm.timestamp)}
             </div>
           </div>
           <button
@@ -599,7 +600,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               </div>
             </div>
             {live && lastReadingAt
-              ? <div className="text-[10px] text-slate-600">Last reading: {new Date(lastReadingAt).toLocaleString()}</div>
+              ? <div className="text-[10px] text-slate-600">Last reading: {fmtDateTime(lastReadingAt)}</div>
               : <LiveTime />}
           </div>
 
