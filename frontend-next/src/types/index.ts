@@ -52,8 +52,11 @@ export interface Transformer {
   healthIndex: number
   kva: number
   voltage: string
-  manufacturer: string
-  installDate: string
+  // Optional: real values come from node_nameplates (migrate-v31) once an
+  // admin enters them, not from the seed. Was populated by hashing the
+  // device id into a fake manufacturer/date — see mockData.ts makeTransformer.
+  manufacturer?: string
+  installDate?: string
   model: string
   serialNumber: string
   sensors: SensorData

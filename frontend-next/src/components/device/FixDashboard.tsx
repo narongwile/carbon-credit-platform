@@ -9,6 +9,9 @@ import { fmtHM } from '@/lib/displayTime'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import DeviceImage from '@/components/device/DeviceImage'
+import NameplateEditor from '@/components/device/NameplateEditor'
+import { useNodeNameplate } from '@/lib/useNodeNameplate'
+import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
 import { useSessionRole } from '@/lib/auth'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer, SensorReading } from '@/types'
@@ -16,7 +19,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import {
-  Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi, SlidersHorizontal,
+  Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi, SlidersHorizontal, Pencil,
 } from 'lucide-react'
 
 const Fridge3D = dynamic(() => import('@/components/twin/Fridge3D'), { ssr: false, loading: () => <TwinLoading /> })
@@ -355,8 +358,20 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
   }, [series, device.domain, showKeys])
   const genericTrend = genericKey ? (series[genericKey] ?? []).slice(-96).map((p) => ({ time: fmtHM(p.time), value: p.value })) : []
 
-  const asset = /transformer/i.test(device.deviceType)
-    ? [['ID', device.serial], ['Model', 'TR-6787'], ['Rating', '2500 kVA'], ['Voltage', '22kV/0.4kV']]
+  // A transformer's real nameplate — was a hardcoded 'TR-6787' / '2500 kVA' /
+  // '22kV/0.4kV' shown for every transformer on the platform regardless of its
+  // actual rating. An admin now enters what is actually on the unit; until
+  // they do, each field says so instead of showing a fabricated number.
+  const { data: nameplate, refetch: refetchNameplate } = useNodeNameplate(device.id)
+  const [editingNameplate, setEditingNameplate] = useState(false)
+  const sizeClass = classifyByKva(nameplate?.ratedKva)
+  const asset = isTransformer
+    ? [
+        ['ID', device.serial],
+        ['Model', nameplate?.model || 'Not entered'],
+        ['Rating', nameplate?.ratedKva != null ? `${nameplate.ratedKva} kVA` : 'Not entered'],
+        ['Voltage', nameplate?.voltageClass || 'Not entered'],
+      ]
     : [['ID', device.serial], ['Type', device.deviceType], ['Range', '-20°C to 10°C'], ['Logger', 'RDL-v2']]
 
   return (
@@ -514,17 +529,37 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
           <div className="text-[11px] text-slate-600 mt-1">Last update: just now</div>
         </div>
         <div className="rounded-xl p-4" style={surface}>
-          <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Asset Info</div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] text-slate-600 uppercase tracking-wider">Asset Info</div>
+            <div className="flex items-center gap-1.5">
+              {isTransformer && sizeClass && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-indigo-300" style={{ background: 'rgba(99,102,241,0.12)' }}>
+                  {TRANSFORMER_CLASS_LABEL[sizeClass]}
+                </span>
+              )}
+              {isTransformer && canConfigure && live && (
+                <button onClick={() => setEditingNameplate(true)} title="Edit nameplate"
+                  className="text-slate-500 hover:text-indigo-400 flex-shrink-0">
+                  <Pencil size={11} />
+                </button>
+              )}
+            </div>
+          </div>
           <div className="space-y-2">
             {asset.map(([k, v]) => (
               <div key={k} className="flex justify-between text-sm">
                 <span className="text-slate-500">{k}</span>
-                <span className="text-white font-medium">{v}</span>
+                <span className={v === 'Not entered' ? 'text-slate-600 italic' : 'text-white font-medium'}>{v}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
+
+      {editingNameplate && (
+        <NameplateEditor nodeId={device.id} current={nameplate}
+          onClose={() => setEditingNameplate(false)} onSaved={refetchNameplate} />
+      )}
     </div>
   )
 }

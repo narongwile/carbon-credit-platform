@@ -12,6 +12,9 @@ import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import MyAlertSettings from '@/components/device/MyAlertSettings'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
+import NameplateEditor from '@/components/device/NameplateEditor'
+import { useNodeNameplate } from '@/lib/useNodeNameplate'
+import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
 import { useSessionRole } from '@/lib/auth'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
@@ -25,7 +28,7 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2, SlidersHorizontal
+  ChevronLeft, Maximize2, SlidersHorizontal, Pencil
 } from 'lucide-react'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
@@ -486,6 +489,13 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const [picking, setPicking] = useState(false)
   const role = useSessionRole()
   const canConfigure = role === 'admin' || role === 'superadmin'
+  // Real nameplate — was reading transformer.model/.kva/.voltage/.manufacturer/
+  // .installDate/.serialNumber, which for any real (non-seed) device fall back
+  // to '—'/0 placeholders because nothing ever wrote them. Overrides those
+  // fields additively when a real nameplate has been entered.
+  const { data: nameplate, refetch: refetchNameplate } = useNodeNameplate(id)
+  const [editingNameplate, setEditingNameplate] = useState(false)
+  const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
   useEffect(() => {
     if (!live) return
     let cancelled = false
@@ -669,23 +679,42 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               : <LiveTime />}
           </div>
 
-          {/* Transformer info */}
+          {/* Transformer info — real nameplate (node_nameplates) overrides the
+              seed/placeholder fields additively wherever an admin has entered
+              one. "Not entered" replaces what used to be a 0/'—' placeholder
+              or, on FixDashboard's twin, an outright fabricated value. */}
           <div className="rounded-xl p-3 space-y-2" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-            <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Asset Info</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] text-slate-600 uppercase tracking-wider">Asset Info</div>
+              <div className="flex items-center gap-1.5">
+                {sizeClass && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-indigo-300" style={{ background: 'rgba(99,102,241,0.12)' }}>
+                    {TRANSFORMER_CLASS_LABEL[sizeClass]}
+                  </span>
+                )}
+                {canConfigure && live && (
+                  <button onClick={() => setEditingNameplate(true)} title="Edit nameplate"
+                    className="text-slate-500 hover:text-indigo-400 flex-shrink-0">
+                    <Pencil size={11} />
+                  </button>
+                )}
+              </div>
+            </div>
             {[
               { icon: <Hash size={10} />, label: 'ID', value: transformer.name },
-              { icon: <Building2 size={10} />, label: 'Model', value: transformer.model },
-              { icon: <Zap size={10} />, label: 'Rating', value: `${transformer.kva} kVA` },
-              { icon: <Activity size={10} />, label: 'Voltage', value: transformer.voltage },
-              { icon: <Building2 size={10} />, label: 'Mfg.', value: transformer.manufacturer },
-              { icon: <Calendar size={10} />, label: 'Installed', value: transformer.installDate },
-              { icon: <Hash size={10} />, label: 'S/N', value: transformer.serialNumber },
+              { icon: <Building2 size={10} />, label: 'Model', value: nameplate?.model || transformer.model || 'Not entered' },
+              { icon: <Zap size={10} />, label: 'Rating', value: nameplate?.ratedKva != null ? `${nameplate.ratedKva} kVA` : (transformer.kva ? `${transformer.kva} kVA` : 'Not entered') },
+              { icon: <Activity size={10} />, label: 'Voltage', value: nameplate?.voltageClass || transformer.voltage || 'Not entered' },
+              { icon: <Wind size={10} />, label: 'Cooling', value: nameplate?.coolingType || 'Not entered' },
+              { icon: <Building2 size={10} />, label: 'Mfg.', value: nameplate?.manufacturer || transformer.manufacturer || 'Not entered' },
+              { icon: <Calendar size={10} />, label: 'Installed', value: nameplate?.yearInstalled ? String(nameplate.yearInstalled) : (transformer.installDate || 'Not entered') },
+              { icon: <Hash size={10} />, label: 'S/N', value: nameplate?.serialNumber || transformer.serialNumber || 'Not entered' },
             ].map((item) => (
               <div key={item.label} className="flex items-start gap-2">
                 <span className="text-slate-600 mt-0.5 flex-shrink-0">{item.icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-[10px] text-slate-600">{item.label}</div>
-                  <div className="text-[11px] text-slate-300 truncate">{item.value}</div>
+                  <div className={`text-[11px] truncate ${item.value === 'Not entered' ? 'text-slate-600 italic' : 'text-slate-300'}`}>{item.value}</div>
                 </div>
               </div>
             ))}
@@ -710,6 +739,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           </div>
         </div>
       </div>
+
+      {editingNameplate && (
+        <NameplateEditor nodeId={id} current={nameplate}
+          onClose={() => setEditingNameplate(false)} onSaved={refetchNameplate} />
+      )}
 
       {picking && (
         <DisplayParamPicker

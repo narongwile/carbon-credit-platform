@@ -273,6 +273,24 @@ export const api = {
   setNodeImage: (id: string, body: { dataBase64?: string; contentType?: string; caption?: string | null }) =>
     req<{ ok: boolean; id: string; bytes?: number }>(`/api/nodes/${id}/image`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteNodeImage: (id: string) => req<{ ok: boolean }>(`/api/nodes/${id}/image`, { method: 'DELETE' }),
+
+  // Transformer nameplate — real per-device spec (kVA, voltage, manufacturer…),
+  // replacing the fabricated Asset Info that used to show the same fake unit
+  // for every transformer regardless of its actual rating.
+  nodeNameplate: (id: string) =>
+    req<{
+      has: boolean; manufacturer?: string | null; model?: string | null; serialNumber?: string | null
+      ratedKva?: number | null; voltageClass?: string | null; coolingType?: string | null
+      yearInstalled?: number | null; updatedBy?: string | null; updatedAt?: string; pending?: string
+    }>(`/api/nodes/${id}/nameplate`),
+  /** Partial update — an omitted key is left alone; null/'' clears just that field. */
+  setNodeNameplate: (id: string, body: {
+    manufacturer?: string | null; model?: string | null; serialNumber?: string | null
+    ratedKva?: number | null; voltageClass?: string | null; coolingType?: string | null; yearInstalled?: number | null
+  }) => req<{ ok: boolean; id: string }>(`/api/nodes/${id}/nameplate`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Whole-org map, so the fleet list can show real ratings without one request per device. */
+  orgNameplates: (orgId: string) =>
+    req<Record<string, { model: string | null; ratedKva: number | null; voltageClass: string | null }>>(`/api/orgs/${orgId}/nameplates`),
   getFloorplans: (orgId: string) => req(`/api/orgs/${orgId}/floorplans`),
   updateFloorplans: (orgId: string, data: any) => req(`/api/orgs/${orgId}/floorplans`, { method: 'PUT', body: JSON.stringify(data) }),
   // Upload a floor-plan layout image (base64) → stored in the floorplans table;

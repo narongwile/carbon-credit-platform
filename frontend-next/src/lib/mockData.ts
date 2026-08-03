@@ -186,8 +186,11 @@ export function makeTransformer(host: TransformerHost): Transformer {
     healthIndex: host.healthIndex,
     kva: host.kva,
     voltage: host.voltage,
-    manufacturer: ['ABB', 'Siemens', 'Schneider Electric', 'GE', 'Mitsubishi'][seed % 5],
-    installDate: `201${seed % 9}-0${(seed % 9) + 1}-15`,
+    // manufacturer/installDate are left unset here — they used to be hashed
+    // from the device id into a fake value ('ABB'/'Siemens'/… and a fabricated
+    // date), which is exactly the "looks real, isn't" problem node_nameplates
+    // (migrate-v31) exists to fix. TransformerDetailView/FixDashboard read the
+    // real nameplate and fall back to "Not entered", never to an invented one.
     model: host.model,
     serialNumber: host.serial,
     lastUpdated: new Date().toISOString(),

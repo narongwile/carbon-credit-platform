@@ -121,6 +121,12 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
   const live = useIsLive()
   const [nodes, setNodes] = useState<FleetNode[] | null>(null)
   const [loaded, setLoaded] = useState(false)
+  // Real nameplates (kVA/model/voltage), fetched once per org rather than once
+  // per device — was hardcoding kva:0/voltage:'—'/model:'—' for every real
+  // transformer with no seed match, because nothing else ever supplied a real
+  // value. Takes priority over the seed's fabricated numbers too, when an
+  // admin has actually entered one: real data wins over a demo placeholder.
+  const [nameplates, setNameplates] = useState<Record<string, { model: string | null; ratedKva: number | null; voltageClass: string | null }>>({})
 
   useEffect(() => {
     if (!live || !orgId) { setNodes(null); setLoaded(true); return }
@@ -132,6 +138,13 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
     return () => { cancelled = true }
   }, [live, orgId])
 
+  useEffect(() => {
+    if (!live || !orgId) { setNameplates({}); return }
+    let cancelled = false
+    api.orgNameplates(orgId).then((r) => { if (!cancelled && r) setNameplates(r) })
+    return () => { cancelled = true }
+  }, [live, orgId])
+
   return useMemo(() => {
     const mock = getHostsByOrg(orgId)
     if (!nodes) return { hosts: mock, loaded, fromBackend: false }
@@ -139,12 +152,25 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
     const hosts = nodes.map((n): SensorHost => {
       const seed = byId.get(n.id)
       const status = statusFromLive(n)
-      if (seed) return { ...seed, status, name: n.name || seed.name }
+      if (seed) {
+        if (seed.domain === 'transformer') {
+          const np = nameplates[n.id]
+          return {
+            ...seed, status, name: n.name || seed.name,
+            model: np?.model || seed.model, kva: np?.ratedKva ?? seed.kva, voltage: np?.voltageClass || seed.voltage,
+          }
+        }
+        return { ...seed, status, name: n.name || seed.name }
+      }
       const base = {
         id: n.id, orgId, siteId: n.site_id ?? '—', name: n.name || n.id, status, sensorCount: 0,
       }
       if (n.domain === 'transformer') {
-        return { ...base, domain: 'transformer', model: '—', serial: n.id.toUpperCase(), kva: 0, voltage: '—', healthIndex: 0, openAlarms: 0 }
+        const np = nameplates[n.id]
+        return {
+          ...base, domain: 'transformer', model: np?.model || '—', serial: n.id.toUpperCase(),
+          kva: np?.ratedKva ?? 0, voltage: np?.voltageClass || '—', healthIndex: 0, openAlarms: 0,
+        }
       }
       if (n.domain === 'carbonNode') {
         return { ...base, domain: 'carbonNode', cabinetZone: '—', targetMinC: 2, targetMaxC: 8, refrigerantType: '—', co2eSavedKg: 0, creditsIssued: 0 }
@@ -152,7 +178,7 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
       return { ...base, domain: 'bloodBox', boxCode: n.id.toUpperCase(), setLowC: 2, setHighC: 6, floor: '—', excursions: 0, inTransit: false }
     })
     return { hosts, loaded, fromBackend: true }
-  }, [nodes, orgId, loaded])
+  }, [nodes, orgId, loaded, nameplates])
 }
 
 /**
