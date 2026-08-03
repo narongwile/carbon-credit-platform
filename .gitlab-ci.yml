@@ -95,7 +95,14 @@ build_frontend_next:
     # Marker for deploy_images: this component really was built and pushed
     # at this tag, so the write-back may pin it. A component whose build was
     # filtered out leaves no marker and keeps the tag it already had.
-    - mkdir -p .deploy && echo "$CI_COMMIT_SHORT_SHA" > .deploy/frontend-next
+    #
+    # $CI_PROJECT_DIR, NOT a bare path: `script` has already cd'd into the
+    # component directory, so "mkdir .deploy" wrote frontend-next/.deploy/ while
+    # artifacts:paths resolves from the project root. The artifact came out
+    # EMPTY, deploy_images found no markers, printed "nothing to pin" and exited
+    # GREEN — so four commits in a row built images that nothing ever pinned and
+    # the cluster stayed on an older frontend.
+    - mkdir -p "$CI_PROJECT_DIR/.deploy" && echo "$CI_COMMIT_SHORT_SHA" > "$CI_PROJECT_DIR/.deploy/frontend-next"
   artifacts:
     paths:
       - .deploy/
@@ -129,7 +136,14 @@ build_ingest_worker:
     # Marker for deploy_images: this component really was built and pushed
     # at this tag, so the write-back may pin it. A component whose build was
     # filtered out leaves no marker and keeps the tag it already had.
-    - mkdir -p .deploy && echo "$CI_COMMIT_SHORT_SHA" > .deploy/ingest-worker
+    #
+    # $CI_PROJECT_DIR, NOT a bare path: `script` has already cd'd into the
+    # component directory, so "mkdir .deploy" wrote ingest-worker/.deploy/ while
+    # artifacts:paths resolves from the project root. The artifact came out
+    # EMPTY, deploy_images found no markers, printed "nothing to pin" and exited
+    # GREEN — so four commits in a row built images that nothing ever pinned and
+    # the cluster stayed on an older frontend.
+    - mkdir -p "$CI_PROJECT_DIR/.deploy" && echo "$CI_COMMIT_SHORT_SHA" > "$CI_PROJECT_DIR/.deploy/ingest-worker"
   artifacts:
     paths:
       - .deploy/
@@ -165,7 +179,14 @@ build_migrate_service:
     # Marker for deploy_images: this component really was built and pushed
     # at this tag, so the write-back may pin it. A component whose build was
     # filtered out leaves no marker and keeps the tag it already had.
-    - mkdir -p .deploy && echo "$CI_COMMIT_SHORT_SHA" > .deploy/migrate-service
+    #
+    # $CI_PROJECT_DIR, NOT a bare path: `script` has already cd'd into the
+    # component directory, so "mkdir .deploy" wrote migrate-service/.deploy/ while
+    # artifacts:paths resolves from the project root. The artifact came out
+    # EMPTY, deploy_images found no markers, printed "nothing to pin" and exited
+    # GREEN — so four commits in a row built images that nothing ever pinned and
+    # the cluster stayed on an older frontend.
+    - mkdir -p "$CI_PROJECT_DIR/.deploy" && echo "$CI_COMMIT_SHORT_SHA" > "$CI_PROJECT_DIR/.deploy/migrate-service"
   artifacts:
     paths:
       - .deploy/
@@ -240,7 +261,13 @@ deploy_images:
   script:
     # Artifacts land in the job workspace; the clone is the `repo` subdirectory.
     - MARKERS="$CI_PROJECT_DIR/.deploy"
-    - test -d "$MARKERS" || { echo "no build produced an image in this pipeline — nothing to pin"; exit 0; }
+    # FAIL, do not shrug. This job only runs when at least one build job ran, so
+    # an empty marker directory means the artifact never arrived — which is a
+    # broken pipeline, not "nothing to deploy". Exiting 0 here is precisely how
+    # four releases went out with the manifest still pinned to an older image
+    # while every pipeline showed green.
+    - 'test -d "$MARKERS" || { echo "FATAL - no build markers in $MARKERS; a build job ran but its artifact did not arrive"; exit 1; }'
+    - 'test -n "$(ls -A "$MARKERS" 2>/dev/null)" || { echo "FATAL - build marker directory is empty; nothing was pinned"; exit 1; }'
     - CHANGED=""
     - |
       # pin <component> <manifest...> — only for a component this pipeline
