@@ -92,7 +92,7 @@ export default function TransformerModelsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">Transformer Models</h1>
-          <p className="text-sm text-slate-500 mt-0.5">This organization's model catalog — pick one on approval or a device's nameplate instead of retyping its spec.</p>
+          <p className="text-sm text-slate-500 mt-0.5">This organization&apos;s model catalog — pick one on approval or a device&apos;s nameplate instead of retyping its spec.</p>
         </div>
         <button onClick={() => { setEditing(null); setShowModal(true) }} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}>
           <Plus size={15} /> Add Model
@@ -115,7 +115,7 @@ export default function TransformerModelsPage() {
             {!loading && active.map((m) => <Row key={m.id} m={m} />)}
             {!loading && !models.length && (
               <tr><td colSpan={6} className="py-10 text-center text-sm text-slate-500">
-                No models yet. Add the ones your fleet is actually built from — Pending Devices and each device's nameplate can then pick from this list instead of typing the same spec every time.
+                No models yet. Add the ones your fleet is actually built from — Pending Devices and each device&apos;s nameplate can then pick from this list instead of typing the same spec every time.
               </td></tr>
             )}
           </tbody>

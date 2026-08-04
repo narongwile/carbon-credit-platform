@@ -21,6 +21,15 @@ function monitorRoute(domain: SensorDomain, id: string): string {
   return domain === 'transformer' ? `/admin/transformers/detail?id=${id}` : `/admin/nodes/detail?id=${id}`
 }
 
+const ago = (ts: string | null): string => {
+  if (!ts) return 'never reported'
+  const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000))
+  if (s < 60) return `seen ${s}s ago`
+  if (s < 3600) return `seen ${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `seen ${Math.floor(s / 3600)}h ago`
+  return `seen ${Math.floor(s / 86400)}d ago`
+}
+
 /** Row shape both the real (GET /api/fleet, every org) and mock/demo (fleetData.ts) sources fill in. */
 interface Row {
   id: string
@@ -30,7 +39,17 @@ interface Row {
   name: string
   domain: SensorDomain
   status: string
+  /**
+   * Free-text device detail. Deliberately NOT a restatement of `status`: the
+   * live path first rendered online/alarm state here, which is exactly what
+   * the adjacent Status column already shows, so the column carried no
+   * information of its own. Live rows now carry real telemetry metadata
+   * (rating from the nameplate catalog, last-seen, signal); mock rows carry
+   * the seed fleet's per-domain business figures. Both are "details about
+   * this device", which is what the column is labelled.
+   */
   metric: string
+  /** Sub-sensor count — a seed-fleet concept; the node table has no equivalent. */
   sensorCount: number | null
 }
 
@@ -55,23 +74,38 @@ export default function SuperAdminMonitoringPage() {
     api.orgs().then(async (orgs) => {
       if (cancelled || !orgs) return
       const realOrgs = orgs.filter((o) => o.id !== '__unassigned__')
-      setOrgList(realOrgs.map((o) => ({ id: o.id, name: o.name })))
-      const [nodesByOrg, sitesByOrg] = await Promise.all([
+      // Nameplates give real ratings (migrate-v31/v32) — one bulk map per org,
+      // the same request shape as sites, so the Detail column can show
+      // something real instead of restating the Status column.
+      const [nodesByOrg, sitesByOrg, platesByOrg] = await Promise.all([
         Promise.all(realOrgs.map((o) => api.fleet(o.id))),
         Promise.all(realOrgs.map((o) => api.sites(o.id))),
+        Promise.all(realOrgs.map((o) => api.orgNameplates(o.id))),
       ])
       if (cancelled) return
       const rows: Row[] = []
       realOrgs.forEach((o, i) => {
         const siteName = new Map((sitesByOrg[i]?.sites ?? []).map((s) => [s.id, s.name] as [string, string]))
+        const plates = platesByOrg[i] ?? {}
         for (const n of nodesByOrg[i] ?? []) {
+          const bits: string[] = []
+          const kva = plates[n.id]?.ratedKva
+          if (kva != null) bits.push(`${kva} kVA`)
+          bits.push(ago(n.last_seen))
+          if (n.rssi != null) bits.push(`RSSI ${n.rssi}`)
           rows.push({
             id: n.id, orgId: o.id, orgName: o.name, siteName: n.site_id ? (siteName.get(n.site_id) ?? n.site_id) : '—',
             name: n.name || n.id, domain: n.domain, status: statusFromLive(n),
-            metric: n.online === 0 ? 'Offline' : n.alarm ? `${n.alarm} alarm` : 'Online', sensorCount: null,
+            metric: bits.join(' · '), sensorCount: null,
           })
         }
       })
+      // Both land in the same commit. setOrgList used to fire as soon as
+      // api.orgs() resolved, i.e. BEFORE the fleet fetch above finished — so
+      // for that window the org picker already listed the real orgs while
+      // `rows` was still the mock fallback, and choosing one of them showed
+      // "No sensors match the filters" until the rest arrived.
+      setOrgList(realOrgs.map((o) => ({ id: o.id, name: o.name })))
       setLiveRows(rows)
     })
     return () => { cancelled = true }
@@ -97,8 +131,6 @@ export default function SuperAdminMonitoringPage() {
 
   const openMonitor = (r: Row) => { setSelectedOrgId(r.orgId); router.push(monitorRoute(r.domain, r.id)) }
 
-  const totalSensors = filtered.reduce((a, r) => a + (r.sensorCount ?? 0), 0)
-
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -110,7 +142,11 @@ export default function SuperAdminMonitoringPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: 'Sensor Hosts', value: filtered.length, color: '#6366f1' },
-          { label: 'Total Sensors', value: liveRows ? '—' : totalSensors, color: '#06b6d4' },
+          // Was "Total Sensors" — a sub-sensor count only the seed fleet has,
+          // so it read '—' for every real org while still being summed on
+          // every render. Offline is real on both paths and is what a
+          // superadmin is actually scanning this page for.
+          { label: 'Offline', value: filtered.filter((r) => r.status === 'OFFLINE').length, color: '#06b6d4' },
           { label: 'Organizations', value: new Set(filtered.map(r => r.orgId)).size, color: '#a78bfa' },
           { label: 'Critical', value: filtered.filter((r) => r.status === 'CRITICAL').length, color: '#ef4444' },
         ].map((s) => (
@@ -148,7 +184,7 @@ export default function SuperAdminMonitoringPage() {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
-              {['Sensor Host', 'Organization', 'Site', 'Product', 'Status', 'Metric', ''].map((h) => (
+              {['Sensor Host', 'Organization', 'Site', 'Product', 'Status', 'Detail', ''].map((h) => (
                 <th key={h} className="py-3 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>
               ))}
             </tr>

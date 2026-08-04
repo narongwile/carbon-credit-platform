@@ -161,7 +161,7 @@ function DeviceModal({ device, departments, onClose, onSave }: {
               <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Serial / MAC</label>
               <input value={device.serial} disabled
                 className="w-full rounded-lg px-3 py-2.5 text-sm text-slate-500 font-mono outline-none cursor-not-allowed" style={inset} />
-              <p className="text-[11px] text-slate-600 mt-1">Auto-recorded from the device's own MQTT identity — nothing to type.</p>
+              <p className="text-[11px] text-slate-600 mt-1">Auto-recorded from the device&apos;s own MQTT identity — nothing to type.</p>
             </div>
           </div>
           <div>
@@ -170,7 +170,7 @@ function DeviceModal({ device, departments, onClose, onSave }: {
               style={domainMeta ? { color: domainMeta.accent, background: `${domainMeta.accent}1f`, border: `1px solid ${domainMeta.accent}55` } : inset}>
               {domainMeta ? domainMeta.platform : device.deviceType}
             </div>
-            <p className="text-[11px] text-slate-600 mt-1">Set once, from the device's telemetry topic, when it was approved in Pending Devices — not editable here.</p>
+            <p className="text-[11px] text-slate-600 mt-1">Set once, from the device&apos;s telemetry topic, when it was approved in Pending Devices — not editable here.</p>
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Department</label>
@@ -193,7 +193,7 @@ function DeviceModal({ device, departments, onClose, onSave }: {
             <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ color: device.theme === 'fix' ? '#22c55e' : '#a78bfa', background: device.theme === 'fix' ? 'rgba(34,197,94,0.12)' : 'rgba(167,139,250,0.12)' }}>
               {device.theme === 'fix' ? 'FIX' : 'Free Style'}
             </span>
-            <span>Dashboard theme has no effect on the admin view (always shows FIX) and only sets the viewer's default, which they can switch per visit. Not editable here.</span>
+            <span>Dashboard theme has no effect on the admin view (always shows FIX) and only sets the viewer&apos;s default, which they can switch per visit. Not editable here.</span>
           </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
