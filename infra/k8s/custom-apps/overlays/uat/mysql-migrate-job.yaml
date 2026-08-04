@@ -73,7 +73,7 @@ spec:
           # Pinned by CI (deploy_images) to the same tag as the migrate-service
           # Deployment, so the Job and the provisioning service always run the
           # identical runner and the identical sql/.
-          image: registry.gitlab.com/narongwile/carbon-credit-platform/migrate-service:929f2309
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/migrate-service:7d38f820
           imagePullPolicy: IfNotPresent
           command: ["node", "dist/migrate.js", "--all"]
           env:
