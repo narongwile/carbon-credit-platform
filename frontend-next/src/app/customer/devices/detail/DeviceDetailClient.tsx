@@ -55,19 +55,31 @@ export default function DeviceDetailClient() {
   // Was `find(...) ?? managedDevices[0]`: opening a device id this viewer's org
   // does not have showed the FIRST seed device's name and location instead of
   // saying it does not exist.
-  const { device, loaded, found } = useManagedDevice(orgId, id)
+  const { device, loaded, found, verified } = useManagedDevice(orgId, id)
   const domain = device?.domain
   // GET /api/fleet (behind useManagedDevice) already scopes which devices the
-  // SIGNED-IN viewer can see — reaching this point with a device at all means
-  // access is already real. The mock viewerCanAccess() (keyed on
-  // viewerUserId, a demo persona id no real login ever sets) evaluated to
-  // "no access" for every real viewer, so this page showed "access denied"
-  // for every device, every real viewer, regardless of their actual
-  // department. levelOf(myAccess, domain) supplies the view/manage
-  // DISTINCTION real access doesn't expose any other way, defaulting to the
-  // safer 'none' while it is still loading.
+  // SIGNED-IN viewer can see — but `found` alone isn't proof of that: an id
+  // not in this org's real roster still falls back to a STATIC cross-org
+  // seed list (useManagedDevice's allManagedDevices() branch, meant for the
+  // admin twin's "superadmin can open any node" case), with `found: true`
+  // and zero relationship to the caller's real access. `verified` is true
+  // only for the first, real branch — checking `live` alone (an earlier
+  // version of this fix did) treated "the fetch mechanism is real" as "this
+  // specific device passed access control," which they are not the same
+  // claim: a viewer could open /customer/devices/detail?id=<another org's
+  // seed device id> and see its fabricated name/location/dashboard, because
+  // that id matches the seed list even though /api/fleet correctly omitted
+  // it from their own roster.
+  //
+  // The mock viewerCanAccess() (keyed on viewerUserId, a demo persona id no
+  // real login ever sets) evaluated to "no access" for every real viewer, so
+  // this page showed "access denied" for every device, every real viewer,
+  // regardless of their actual department — that half of the original bug
+  // report. levelOf(myAccess, domain) supplies the view/manage DISTINCTION
+  // real access doesn't expose any other way, defaulting to the safer
+  // 'none' while it is still loading.
   const myAccess = useMyAccess()
-  const canView = !domain || live || viewerCanAccess(viewerUserId, domain)
+  const canView = !domain || (live ? verified : viewerCanAccess(viewerUserId, domain))
   const canManage = !domain || (live ? levelOf(myAccess, domain) === 'manage' : viewerCanManage(viewerUserId, domain))
   // The device arrives asynchronously, so the theme cannot seed useState.
   // null = "follow the device's configured theme"; a value = user preview.

@@ -202,21 +202,36 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
  * One device by id. `found` distinguishes "still loading" from "this id is not
  * in the fleet" — pages previously did `find(...) ?? devices[0]`, which silently
  * rendered a DIFFERENT device's name, serial and location for an unknown id.
+ *
+ * `verified` distinguishes WHICH of the two lists `found` matched: true only
+ * when the hit came from `devices` — the org-scoped, access-controlled result
+ * of useManagedDevices(orgId) (real /api/fleet in Live mode, already filtered
+ * server-side to what the caller may see). false when it came from the
+ * allManagedDevices() fallback below, which is the static cross-ORG seed list
+ * with no access control at all — kept for the admin twin (a superadmin
+ * legitimately opens devices outside their selected org), but NOT proof that
+ * the CALLER may see this device. A consumer that gates real content on
+ * access (the customer portal's device-detail page) must check `verified`,
+ * not just `found` — `found` alone was true for a mock cross-org id
+ * regardless of who was asking, which combined with a `live ? true : ...`
+ * shortcut elsewhere read as "the fetch is real, so access must be real too."
  */
 export function useManagedDevice(orgId: string, id: string): {
   device: ManagedDevice | null
   loaded: boolean
   found: boolean
+  verified: boolean
 } {
-  const { devices, loaded } = useManagedDevices(orgId)
+  const { devices, loaded, fromBackend } = useManagedDevices(orgId)
   return useMemo(() => {
     const hit = devices.find((d) => d.id === id)
-    if (hit) return { device: hit, loaded, found: true }
+    if (hit) return { device: hit, loaded, found: true, verified: fromBackend }
     // Not in this org's roster. It may still be a real device in ANOTHER org — a
     // superadmin can open any node — so fall back to the full seed list before
     // declaring it missing, and only once the roster has actually arrived
-    // (otherwise the page flashes "not found" on every load).
+    // (otherwise the page flashes "not found" on every load). This branch is
+    // never verified: it is static seed data, not an access-checked fetch.
     const anyMock = allManagedDevices().find((d) => d.id === id)
-    return { device: anyMock ?? null, loaded, found: !!anyMock }
-  }, [devices, id, loaded])
+    return { device: anyMock ?? null, loaded, found: !!anyMock, verified: false }
+  }, [devices, id, loaded, fromBackend])
 }

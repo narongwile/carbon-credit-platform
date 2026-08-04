@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDept, eventProblems as mockEventProblems } from '@/lib/orgData'
 import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
-import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
+import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive, useIsLive } from '@/lib/api'
@@ -40,17 +40,20 @@ export default function AlarmNotificationPage() {
 
   // Real entitlements — which product tabs to offer at all. licensedDomains()
   // only knows the 3 seed orgs (mockData.ts), so a real org either showed the
-  // wrong tabs or none.
-  const [orgDomains, setOrgDomains] = useState<SensorDomain[]>(['transformer', 'carbonNode', 'bloodBox'])
+  // wrong tabs or none. Demo mode keeps the mock list (dropped entirely at
+  // first — Demo showed all 3 tabs regardless of what mockData.ts licensed).
+  // Depends on `live` (reactive), not a one-time isLive() snapshot: toggling
+  // Live/Demo in place, without navigating away, must re-sync this.
+  const [orgDomains, setOrgDomains] = useState<SensorDomain[]>(() => licensedDomains(orgId))
   useEffect(() => {
-    if (!isLive()) return
+    if (!live) { setOrgDomains(licensedDomains(orgId)); return }
     let cancelled = false
     api.entitlements(orgId).then((ents) => {
       if (cancelled || !ents) return
       setOrgDomains((['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
     })
     return () => { cancelled = true }
-  }, [orgId])
+  }, [live, orgId])
   const [product, setProduct] = useState<SensorDomain>('transformer')
   useEffect(() => { if (orgDomains.length && !orgDomains.includes(product)) setProduct(orgDomains[0]) }, [orgDomains, product])
   const setRuleDB = useAlarmDB((s) => s.setRule)
@@ -85,11 +88,11 @@ export default function AlarmNotificationPage() {
   // demo/offline fallback.
   const [orgDepts, setOrgDepts] = useState<{ id: string; name: string }[]>(() => getDepartmentsByOrg(orgId))
   useEffect(() => {
-    if (!isLive()) { setOrgDepts(getDepartmentsByOrg(orgId)); return }
+    if (!live) { setOrgDepts(getDepartmentsByOrg(orgId)); return }
     let cancelled = false
     api.departments(orgId).then((r) => { if (!cancelled && r) setOrgDepts(r as { id: string; name: string }[]) })
     return () => { cancelled = true }
-  }, [orgId])
+  }, [live, orgId])
 
   // Create Event in each department (per-department eventProblem catalog).
   // This used to be local React state only — Add/Remove never called
@@ -103,7 +106,10 @@ export default function AlarmNotificationPage() {
     () => Object.fromEntries(getDepartmentsByOrg(orgId).map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
   )
   useEffect(() => {
-    if (!isLive()) return
+    if (!live) {
+      setDeptEvents(Object.fromEntries(getDepartmentsByOrg(orgId).map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])))
+      return
+    }
     let cancelled = false
     api.eventProblems(orgId).then((rows) => {
       if (cancelled || !rows) return
@@ -115,7 +121,7 @@ export default function AlarmNotificationPage() {
       setDeptEvents(grouped)
     })
     return () => { cancelled = true }
-  }, [orgId])
+  }, [live, orgId])
   const [newEvent, setNewEvent] = useState('')
   const deptList = deptEvents[deptId] ?? []
   // Event Selection & Edit (below) reuses the same real, per-department fetch

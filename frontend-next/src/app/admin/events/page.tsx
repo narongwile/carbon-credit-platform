@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Clock, AlertTriangle, Info } from 'lucide-react'
+import { Clock, AlertTriangle } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import { useOrgAlarms } from '@/lib/useOrgAlarms'
 import { api, useIsLive } from '@/lib/api'
@@ -40,8 +40,10 @@ export default function EventsPage() {
             className="flex gap-4 p-4 rounded-xl"
             style={{ background: '#0d1117', border: '1px solid #1e2433' }}
           >
+            {/* alarm_events.severity is WARNING/CRITICAL only — no INFO exists at
+                any layer (DB enum, API type), so there is no third case here. */}
             <div className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#0a0e1a' }}>
-              {event.severity === 'CRITICAL' ? <AlertTriangle size={14} className="text-red-400" /> : event.severity === 'WARNING' ? <AlertTriangle size={14} className="text-amber-400" /> : <Info size={14} className="text-blue-400" />}
+              <AlertTriangle size={14} className={event.severity === 'CRITICAL' ? 'text-red-400' : 'text-amber-400'} />
             </div>
             <div className="flex-1">
               <div className="flex items-start justify-between">

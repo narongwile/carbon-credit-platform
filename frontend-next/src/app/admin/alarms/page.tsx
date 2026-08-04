@@ -9,7 +9,10 @@ import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
 
-interface EventProblem { id: string; label: string; department_id: string | null; domain: string | null }
+// Only id/label are ever read (the ack picker); department_id/domain came
+// along in the API response but nothing here scopes by them — this page is
+// admin/superadmin-only, so every department's catalog applies.
+interface EventProblem { id: string; label: string }
 
 // Quick ranges mirror the operator-facing picker: a label plus how many hours
 // back it covers. 'all' disables the time filter entirely.

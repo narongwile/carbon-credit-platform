@@ -26,7 +26,6 @@ interface Row {
   id: string
   orgId: string
   orgName: string
-  siteId: string
   siteName: string
   name: string
   domain: SensorDomain
@@ -67,7 +66,7 @@ export default function SuperAdminMonitoringPage() {
         const siteName = new Map((sitesByOrg[i]?.sites ?? []).map((s) => [s.id, s.name] as [string, string]))
         for (const n of nodesByOrg[i] ?? []) {
           rows.push({
-            id: n.id, orgId: o.id, orgName: o.name, siteId: n.site_id ?? '—', siteName: n.site_id ? (siteName.get(n.site_id) ?? n.site_id) : '—',
+            id: n.id, orgId: o.id, orgName: o.name, siteName: n.site_id ? (siteName.get(n.site_id) ?? n.site_id) : '—',
             name: n.name || n.id, domain: n.domain, status: statusFromLive(n),
             metric: n.online === 0 ? 'Offline' : n.alarm ? `${n.alarm} alarm` : 'Online', sensorCount: null,
           })
@@ -80,7 +79,7 @@ export default function SuperAdminMonitoringPage() {
 
   const rows: Row[] = liveRows ?? mockHosts.map((h) => ({
     id: h.id, orgId: h.orgId, orgName: mockOrgs.find((o) => o.id === h.orgId)?.name ?? h.orgId,
-    siteId: h.siteId, siteName: mockSites.find((s) => s.id === h.siteId)?.name ?? h.siteId,
+    siteName: mockSites.find((s) => s.id === h.siteId)?.name ?? h.siteId,
     name: h.name, domain: h.domain, status: h.status,
     metric: h.domain === 'transformer' ? `Health ${h.healthIndex} · ${h.kva} kVA`
       : h.domain === 'carbonNode' ? `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} credits`

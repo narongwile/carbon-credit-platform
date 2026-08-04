@@ -72,7 +72,7 @@ export default function ThemesPage() {
         <span>
           Adding a genuinely new theme means a new dashboard component and a new nav route, not a form here — this list is a
           reference. To license a theme to an org, use <span className="text-slate-300">Organizations</span>; to decide which
-          of an org's licensed themes a department actually sees, use <span className="text-slate-300">User Management → Dashboard View Permission</span>.
+          of an org&apos;s licensed themes a department actually sees, use <span className="text-slate-300">User Management → Dashboard View Permission</span>.
         </span>
       </div>
 
