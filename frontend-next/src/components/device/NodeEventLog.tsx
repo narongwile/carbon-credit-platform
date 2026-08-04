@@ -8,8 +8,6 @@ import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { defaultNodeRule } from '@/lib/alarmParams'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { getSession } from '@/lib/auth'
-import { useAppStore } from '@/lib/store'
-import { getViewerUser } from '@/lib/viewer'
 import type { SensorDomain } from '@/types/fleet'
 import { Check, Bell, Download, FileText } from 'lucide-react'
 
@@ -50,7 +48,6 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   // org-wide ones that carry no department).
   const [problems, setProblems] = useState<EventProblem[]>([])
   const [picked, setPicked] = useState<Record<string, string>>({})
-  const viewerUserId = useAppStore((st) => st.viewerUserId)
   const [transport, setTransport] = useState<{ id: string; ts: string; type: string; desc: string; isOfflineSync: boolean }[] | null>(null)
 
   const loadLive = useCallback(() => {
@@ -76,22 +73,31 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     api.transportEvents(nodeId).then((rows) => { if (rows) setTransport(rows) })
   }, [live, nodeId])
 
-  // Problem catalogue, scoped by role.
+  // Problem catalogue, scoped by role. A viewer's departments used to come from
+  // the customer portal's "acting viewer" picker — a DEMO affordance that lists
+  // fictional sample users and defaults to one of them ('u-cc') regardless of
+  // who is actually signed in. A real viewer's session never matched any of
+  // those ids, so myDepts was always [] and every department-scoped problem
+  // (i.e. every problem that isn't org-wide) was filtered out — the picker next
+  // to Acknowledge came up empty on every device page. /api/me/access already
+  // resolves the SIGNED-IN user's real department(s) server-side (the same call
+  // the nav-gating in customer/layout.tsx uses); read that instead.
   useEffect(() => {
     if (!live) { setProblems([]); return }
     const session = getSession()
     const orgId = session?.orgId
     if (!orgId) return
-    const isAdmin = session?.role === 'admin' || session?.role === 'superadmin'
-    const myDepts = isAdmin ? null : (getViewerUser(viewerUserId)?.departmentIds ?? [])
-    api.eventProblems(orgId, undefined, domain).then((rows) => {
+    const isAdmin = session?.role === 'admin' || session?.role === 'superadmin';
+    (async () => {
+      const myDepts = isAdmin ? null : ((await api.myAccess())?.departmentIds ?? [])
+      const rows = await api.eventProblems(orgId, undefined, domain)
       if (!rows) return
       setProblems(isAdmin || !myDepts
         ? rows
         // Viewer: their departments' problems + the org-wide ones (no department).
         : rows.filter((r) => r.department_id === null || myDepts.includes(r.department_id)))
-    })
-  }, [live, domain, viewerUserId])
+    })()
+  }, [live, domain])
 
   // Keep both tables live, the way the sensor tiles are. Two triggers:
   //  • a WS alarm frame for THIS device (the worker publishes one the moment a
