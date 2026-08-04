@@ -280,6 +280,14 @@ export const api = {
    */
   setNodeLocation: (id: string, body: { lat?: number | null; lng?: number | null; siteId?: string | null }) =>
     req<{ ok: boolean; id: string; lat?: number | null; lng?: number | null; siteId?: string | null }>(`/api/nodes/${id}/location`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * Rename / reassign the department of an already-approved device. Partial,
+   * same rule as setNodeLocation: an omitted field is left alone. Domain and
+   * serial are not editable here — domain is fixed at approval from the
+   * device's real MQTT topic, and serial is the node id itself.
+   */
+  updateNodeProfile: (id: string, body: { name?: string; departmentId?: string | null }) =>
+    req<{ ok: boolean; id: string; name?: string; departmentId?: string | null }>(`/api/nodes/${id}/profile`, { method: 'PUT', body: JSON.stringify(body) }),
 
   // Device photo — the real unit, uploaded by an admin, shown to every role in
   // place of the generic 3D twin.

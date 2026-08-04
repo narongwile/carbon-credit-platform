@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useAppStore } from '@/lib/store'
 import { useSessionRole } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
+import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { PlugZap, Check, X, RefreshCw, Building2, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -72,6 +73,13 @@ export default function PendingDevicesPage() {
   const [fleet, setFleet] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  // Which sensor domains each org is actually licensed for (org_entitlements),
+  // so approving a device can't quietly assign it to a product the org never
+  // bought — e.g. an org provisioned with ETERNITY only should not see
+  // Refrigeration/BloodBOX as options here. Empty/missing entry = unknown yet
+  // (still loading, or entitlements fetch failed) → don't filter, same as the
+  // rest of the app's "no entitlement answer yet" fallback.
+  const [entsByOrg, setEntsByOrg] = useState<Record<string, string[]>>({})
 
   const load = useCallback(async () => {
     if (!isLive()) {
@@ -125,6 +133,32 @@ export default function PendingDevicesPage() {
     const t = setInterval(load, 10000)    // poll so newly-connected devices appear
     return () => clearInterval(t)
   }, [load])
+
+  // Fetch entitlements once per distinct set of orgs in view — an admin only
+  // ever needs their own org; a superadmin needs every org offered in the
+  // "Organization" picker (orphans get filtered once an org is actually chosen).
+  useEffect(() => {
+    if (!isLive()) return
+    const orgIds = Array.from(new Set([orgId, ...orgs.map((o) => o.id)])).filter((id) => id && id !== UNASSIGNED)
+    let cancelled = false
+    Promise.all(orgIds.map(async (id) => [id, (await api.entitlements(id)) ?? null] as const)).then((pairs) => {
+      if (cancelled) return
+      setEntsByOrg((prev) => {
+        const next = { ...prev }
+        for (const [id, ents] of pairs) if (ents) next[id] = ents
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [orgId, orgs])
+
+  // Domains this org is licensed for. Undefined (not fetched yet / fetch
+  // failed) means "unknown" — show every domain rather than guess wrong.
+  const domainsFor = (targetOrgId: string) => {
+    const ents = entsByOrg[targetOrgId]
+    if (!ents) return DOMAINS
+    return DOMAINS.filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d.value as keyof typeof DOMAIN_TO_PLATFORM]))
+  }
 
   const approve = async (n: PendingNode) => {
     const f = form[n.id]
@@ -246,7 +280,19 @@ export default function PendingDevicesPage() {
                     <label className="block text-[11px] text-slate-500 mb-1">Product / Domain</label>
                     <select value={f.domain} onChange={(e) => set({ domain: e.target.value })}
                       className="w-full rounded-md px-3 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500" style={inset}>
-                      {DOMAINS.map((d) => <option key={d.value} value={d.value} className="bg-[#0d1117]">{d.label}</option>)}
+                      {(() => {
+                        const targetOrg = isSuper ? f.orgId : orgId
+                        const licensed = targetOrg ? domainsFor(targetOrg) : DOMAINS
+                        // The device's actual telemetry domain always stays selectable,
+                        // even if unlicensed — hiding it would silently approve the
+                        // device into a DIFFERENT domain than what it's really sending.
+                        const opts = licensed.some((d) => d.value === f.domain) ? licensed : [...licensed, ...DOMAINS.filter((d) => d.value === f.domain)]
+                        return opts.map((d) => (
+                          <option key={d.value} value={d.value} className="bg-[#0d1117]">
+                            {d.label}{!licensed.some((x) => x.value === d.value) ? ' — not licensed' : ''}
+                          </option>
+                        ))
+                      })()}
                     </select>
                   </div>
                   <div>
