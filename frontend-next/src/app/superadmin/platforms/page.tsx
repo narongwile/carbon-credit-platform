@@ -652,8 +652,31 @@ function ReviewRow({ icon, label, value, sub }: { icon: React.ReactNode; label: 
 export default function PlatformsPage() {
   const [wizard, setWizard] = useState(false)
 
-  const tenantCount = (id: string) =>
+  // Real per-platform tenant counts (org_entitlements) — the mock count
+  // compared against organizations[].platforms using a LEGACY id
+  // ('eternity'/'carbonbox'/'bloodbox') that only the 3 seed orgs carry, so
+  // this badge was frozen at whatever the mock data said regardless of how
+  // many real orgs are actually licensed. Same fan-out License Manager
+  // already uses (one entitlements fetch per org).
+  const [realTenantCounts, setRealTenantCounts] = useState<Record<string, number> | null>(null)
+  useEffect(() => {
+    if (!isLive()) { setRealTenantCounts(null); return }
+    let cancelled = false
+    api.orgs().then(async (orgs) => {
+      if (cancelled || !orgs) return
+      const reals = orgs.filter((o) => o.id !== '__unassigned__')
+      const pairs = await Promise.all(reals.map(async (o) => (await api.entitlements(o.id)) ?? []))
+      if (cancelled) return
+      const counts: Record<string, number> = {}
+      for (const ents of pairs) for (const p of ents) counts[p] = (counts[p] ?? 0) + 1
+      setRealTenantCounts(counts)
+    })
+    return () => { cancelled = true }
+  }, [])
+  const tenantCountMock = (id: string) =>
     organizations.filter((o) => o.platforms.some((p) => p.platformId === id && p.licensed)).length
+  const tenantCount = (platformId: PlatformType, legacy: string) =>
+    realTenantCounts ? (realTenantCounts[platformId] ?? 0) : tenantCountMock(legacy)
 
   // Map registry ids to the platformId used in mock organization data.
   const legacyId: Record<PlatformType, string> = {
@@ -704,7 +727,7 @@ export default function PlatformsPage() {
 
             <div className="flex items-center justify-between mt-5 pt-4" style={{ borderTop: '1px solid #1e2433' }}>
               <span className="text-xs text-slate-500">
-                <span className="text-white font-semibold">{tenantCount(legacyId[p.id])}</span> tenant{tenantCount(legacyId[p.id]) === 1 ? '' : 's'}
+                <span className="text-white font-semibold">{tenantCount(p.id, legacyId[p.id])}</span> tenant{tenantCount(p.id, legacyId[p.id]) === 1 ? '' : 's'}
               </span>
               {p.moduleRoute ? (
                 <a href={p.moduleRoute} className="flex items-center gap-1 text-xs font-medium" style={{ color: p.accent }}>

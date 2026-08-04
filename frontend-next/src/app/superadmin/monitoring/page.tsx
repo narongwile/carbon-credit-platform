@@ -2,32 +2,37 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { hosts, sites } from '@/lib/fleetData'
-import { organizations } from '@/lib/mockData'
+import { hosts as mockHosts, sites as mockSites } from '@/lib/fleetData'
+import { organizations as mockOrgs } from '@/lib/mockData'
 import { useAppStore } from '@/lib/store'
 import { api, isLive } from '@/lib/api'
 import { statusFromLive } from '@/lib/useFleetLive'
-import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
+import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import { Activity, Search, Zap, Thermometer, Droplet, ExternalLink } from 'lucide-react'
-import clsx from 'clsx'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet }
 const statusColor = (s: string) => (s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280')
-const orgName = (id: string) => organizations.find((o) => o.id === id)?.name ?? id
-const siteName = (id: string) => sites.find((s) => s.id === id)?.name ?? id
 
-function metric(h: SensorHost): string {
-  if (h.domain === 'transformer') return `Health ${h.healthIndex} · ${h.kva} kVA`
-  if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} credits`
-  return `set ${h.setLowC}–${h.setHighC}°C · ${h.excursions} excursions`
-}
-function monitorRoute(h: SensorHost): string {
+function monitorRoute(domain: SensorDomain, id: string): string {
   // transformer keeps its dedicated rich twin; others use the shared node twin
-  if (h.domain === 'transformer') return `/admin/transformers/detail?id=${h.id}`
-  return `/admin/nodes/detail?id=${h.id}`
+  return domain === 'transformer' ? `/admin/transformers/detail?id=${id}` : `/admin/nodes/detail?id=${id}`
+}
+
+/** Row shape both the real (GET /api/fleet, every org) and mock/demo (fleetData.ts) sources fill in. */
+interface Row {
+  id: string
+  orgId: string
+  orgName: string
+  siteId: string
+  siteName: string
+  name: string
+  domain: SensorDomain
+  status: string
+  metric: string
+  sensorCount: number | null
 }
 
 export default function SuperAdminMonitoringPage() {
@@ -38,32 +43,62 @@ export default function SuperAdminMonitoringPage() {
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
 
-  // Live cross-tenant status overlay (superadmin sees every org's fleet).
-  const [live, setLive] = useState<Map<string, string>>(new Map())
+  // Real org list + real fleet across EVERY org — "every sensor across all
+  // products and all customer organizations" used to mean the fixed 3-org
+  // mock roster no matter what: the one live fetch that existed only
+  // OVERLAID a status onto ids already in that mock list, so a real org's
+  // real device could never appear here at all, live backend or not.
+  const [orgList, setOrgList] = useState<{ id: string; name: string }[]>(() => mockOrgs.map((o) => ({ id: o.id, name: o.name })))
+  const [liveRows, setLiveRows] = useState<Row[] | null>(null)
   useEffect(() => {
-    if (!isLive()) return
+    if (!isLive()) { setLiveRows(null); return }
     let cancelled = false
-    Promise.all(organizations.map((o) => api.fleet(o.id))).then((results) => {
+    api.orgs().then(async (orgs) => {
+      if (cancelled || !orgs) return
+      const realOrgs = orgs.filter((o) => o.id !== '__unassigned__')
+      setOrgList(realOrgs.map((o) => ({ id: o.id, name: o.name })))
+      const [nodesByOrg, sitesByOrg] = await Promise.all([
+        Promise.all(realOrgs.map((o) => api.fleet(o.id))),
+        Promise.all(realOrgs.map((o) => api.sites(o.id))),
+      ])
       if (cancelled) return
-      const m = new Map<string, string>()
-      results.forEach((rows) => (rows || []).forEach((n) => m.set(n.id, statusFromLive(n))))
-      setLive(m)
+      const rows: Row[] = []
+      realOrgs.forEach((o, i) => {
+        const siteName = new Map((sitesByOrg[i]?.sites ?? []).map((s) => [s.id, s.name] as [string, string]))
+        for (const n of nodesByOrg[i] ?? []) {
+          rows.push({
+            id: n.id, orgId: o.id, orgName: o.name, siteId: n.site_id ?? '—', siteName: n.site_id ? (siteName.get(n.site_id) ?? n.site_id) : '—',
+            name: n.name || n.id, domain: n.domain, status: statusFromLive(n),
+            metric: n.online === 0 ? 'Offline' : n.alarm ? `${n.alarm} alarm` : 'Online', sensorCount: null,
+          })
+        }
+      })
+      setLiveRows(rows)
     })
     return () => { cancelled = true }
   }, [])
-  const eff = (h: SensorHost) => live.get(h.id) ?? h.status
 
-  const filtered = useMemo(() => hosts.filter((h) => {
-    if (org !== 'all' && h.orgId !== org) return false
-    if (domain !== 'all' && h.domain !== domain) return false
-    if (status !== 'all' && eff(h) !== status) return false
-    if (search && !`${h.name} ${siteName(h.siteId)}`.toLowerCase().includes(search.toLowerCase())) return false
+  const rows: Row[] = liveRows ?? mockHosts.map((h) => ({
+    id: h.id, orgId: h.orgId, orgName: mockOrgs.find((o) => o.id === h.orgId)?.name ?? h.orgId,
+    siteId: h.siteId, siteName: mockSites.find((s) => s.id === h.siteId)?.name ?? h.siteId,
+    name: h.name, domain: h.domain, status: h.status,
+    metric: h.domain === 'transformer' ? `Health ${h.healthIndex} · ${h.kva} kVA`
+      : h.domain === 'carbonNode' ? `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} credits`
+      : `set ${h.setLowC}–${h.setHighC}°C · ${h.excursions} excursions`,
+    sensorCount: h.sensorCount,
+  }))
+
+  const filtered = useMemo(() => rows.filter((r) => {
+    if (org !== 'all' && r.orgId !== org) return false
+    if (domain !== 'all' && r.domain !== domain) return false
+    if (status !== 'all' && r.status !== status) return false
+    if (search && !`${r.name} ${r.siteName}`.toLowerCase().includes(search.toLowerCase())) return false
     return true
-  }), [org, domain, status, search, live])
+  }), [rows, org, domain, status, search])
 
-  const openMonitor = (h: SensorHost) => { setSelectedOrgId(h.orgId); router.push(monitorRoute(h)) }
+  const openMonitor = (r: Row) => { setSelectedOrgId(r.orgId); router.push(monitorRoute(r.domain, r.id)) }
 
-  const totalSensors = filtered.reduce((a, h) => a + h.sensorCount, 0)
+  const totalSensors = filtered.reduce((a, r) => a + (r.sensorCount ?? 0), 0)
 
   return (
     <div className="p-6 space-y-6">
@@ -76,9 +111,9 @@ export default function SuperAdminMonitoringPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: 'Sensor Hosts', value: filtered.length, color: '#6366f1' },
-          { label: 'Total Sensors', value: totalSensors, color: '#06b6d4' },
-          { label: 'Organizations', value: new Set(filtered.map(h => h.orgId)).size, color: '#a78bfa' },
-          { label: 'Critical', value: filtered.filter((h) => eff(h) === 'CRITICAL').length, color: '#ef4444' },
+          { label: 'Total Sensors', value: liveRows ? '—' : totalSensors, color: '#06b6d4' },
+          { label: 'Organizations', value: new Set(filtered.map(r => r.orgId)).size, color: '#a78bfa' },
+          { label: 'Critical', value: filtered.filter((r) => r.status === 'CRITICAL').length, color: '#ef4444' },
         ].map((s) => (
           <div key={s.label} className="rounded-xl p-4" style={surface}>
             <div className="text-xs text-slate-500 mb-1">{s.label}</div>
@@ -96,7 +131,7 @@ export default function SuperAdminMonitoringPage() {
         </div>
         <select value={org} onChange={(e) => setOrg(e.target.value)} className="rounded-lg px-3 py-2.5 text-sm text-white outline-none" style={inset}>
           <option value="all">All organizations</option>
-          {organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          {orgList.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
         <select value={domain} onChange={(e) => setDomain(e.target.value as 'all' | SensorDomain)} className="rounded-lg px-3 py-2.5 text-sm text-white outline-none" style={inset}>
           <option value="all">All products</option>
@@ -105,7 +140,7 @@ export default function SuperAdminMonitoringPage() {
           <option value="bloodBox">BloodBOX</option>
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-lg px-3 py-2.5 text-sm text-white outline-none" style={inset}>
-          {['all', 'NORMAL', 'WARNING', 'CRITICAL'].map((s) => <option key={s} value={s}>{s === 'all' ? 'All status' : s}</option>)}
+          {['all', 'NORMAL', 'WARNING', 'CRITICAL', 'OFFLINE'].map((s) => <option key={s} value={s}>{s === 'all' ? 'All status' : s}</option>)}
         </select>
       </div>
 
@@ -120,27 +155,27 @@ export default function SuperAdminMonitoringPage() {
             </tr>
           </thead>
           <tbody style={{ background: '#0d1117' }}>
-            {filtered.map((h) => {
-              const meta = DOMAIN_META[h.domain]
-              const Icon = domainIcon[h.domain]
+            {filtered.map((r) => {
+              const meta = DOMAIN_META[r.domain]
+              const Icon = domainIcon[r.domain]
               return (
-                <tr key={h.id} className="hover:bg-white/3 transition-colors" style={{ borderBottom: '1px solid #1e2433' }}>
+                <tr key={r.id} className="hover:bg-white/3 transition-colors" style={{ borderBottom: '1px solid #1e2433' }}>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2.5">
                       <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${meta.accent}1f` }}><Icon size={14} style={{ color: meta.accent }} /></span>
                       <div>
-                        <div className="text-white font-medium">{h.name}</div>
-                        <div className="text-[10px] text-slate-600">{h.sensorCount} sensors</div>
+                        <div className="text-white font-medium">{r.name}</div>
+                        {r.sensorCount !== null && <div className="text-[10px] text-slate-600">{r.sensorCount} sensors</div>}
                       </div>
                     </div>
                   </td>
-                  <td className="py-3 px-4 text-slate-400">{orgName(h.orgId)}</td>
-                  <td className="py-3 px-4 text-slate-400">{siteName(h.siteId)}</td>
+                  <td className="py-3 px-4 text-slate-400">{r.orgName}</td>
+                  <td className="py-3 px-4 text-slate-400">{r.siteName}</td>
                   <td className="py-3 px-4"><span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span></td>
-                  <td className="py-3 px-4"><span className="flex items-center gap-1.5 text-xs"><span className="w-2 h-2 rounded-full" style={{ background: statusColor(eff(h)) }} /><span style={{ color: statusColor(eff(h)) }}>{eff(h)}</span></span></td>
-                  <td className="py-3 px-4 text-xs text-slate-400">{metric(h)}</td>
+                  <td className="py-3 px-4"><span className="flex items-center gap-1.5 text-xs"><span className="w-2 h-2 rounded-full" style={{ background: statusColor(r.status) }} /><span style={{ color: statusColor(r.status) }}>{r.status}</span></span></td>
+                  <td className="py-3 px-4 text-xs text-slate-400">{r.metric}</td>
                   <td className="py-3 px-4 text-right">
-                    <button onClick={() => openMonitor(h)} className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300">
+                    <button onClick={() => openMonitor(r)} className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300">
                       Monitor <ExternalLink size={12} />
                     </button>
                   </td>
