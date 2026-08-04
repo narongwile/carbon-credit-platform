@@ -11,7 +11,7 @@ import {
   getEventProblemsByDept,
 } from '@/lib/orgData'
 import { getOrgThemeGrants, fetchOrgThemeGrants } from '@/lib/orgThemes'
-import { licensedDomains } from '@/lib/entitlements'
+import { licensedDomains, DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
@@ -635,7 +635,22 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
   users: ManagedUser[]
   setUsers: React.Dispatch<React.SetStateAction<ManagedUser[]>>
 }) {
-  const domains = licensedDomains(orgId)
+  // Which product columns to show. licensedDomains() reads the static mock org
+  // list (mockData.ts) — only org-1/2/3 are in it, so any real org provisioned
+  // afterward (every org a superadmin actually creates) got "no licensed
+  // products yet" here even with real org_entitlements rows, because
+  // getOrg(orgId) came back undefined. Read the real entitlements instead;
+  // mock stays only as the offline/demo fallback.
+  const [domains, setDomains] = useState<SensorDomain[]>(() => licensedDomains(orgId))
+  useEffect(() => {
+    if (!isLive()) { setDomains(licensedDomains(orgId)); return }
+    let cancelled = false
+    api.entitlements(orgId).then((ents) => {
+      if (cancelled || !ents) return
+      setDomains((['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
+    })
+    return () => { cancelled = true }
+  }, [orgId])
   const [scope, setScope] = useState<'dept' | 'user'>('dept')
 
   // This tab wrote but never read. Every cell rendered from React state that
