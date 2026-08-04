@@ -1,22 +1,22 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAppStore } from '@/lib/store'
-import { viewerDomains } from '@/lib/viewer'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
-import { api } from '@/lib/api'
+import { useManagedDevices } from '@/lib/useManagedDevices'
+import { api, useIsLive } from '@/lib/api'
 import { AlertTriangle, XCircle, Info, Clock, Check } from 'lucide-react'
 import { useSessionOrgId } from '@/lib/auth'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 export default function CustomerAlarmsPage() {
-  const { viewerUserId } = useAppStore()
   const orgId = useSessionOrgId()
-  
-  // Filter devices by viewer domain access
-  const allowed = viewerDomains(viewerUserId)
-  const devices = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
+  const live = useIsLive()
+
+  // The real fleet (GET /api/fleet) already scopes to devices this viewer can
+  // see — same domain + department check the map/device list use — so a
+  // viewer's alarm feed is device-scoped for free by reading it instead of the
+  // unfiltered demo seed list.
+  const { devices } = useManagedDevices(orgId)
 
   const [events, setEvents] = useState<any[]>([])
   const [evProblems, setEvProblems] = useState<any[]>([])
@@ -27,18 +27,33 @@ export default function CustomerAlarmsPage() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
 
+  // Root-cause catalogue for the "Event Selection" filter and each row's ack
+  // picker. A viewer only sees their own department's problems + org-wide ones
+  // (no department) — otherwise picking "Cooling fan failure" from Substation A
+  // could file an alarm on a Substation B device under a cause that department
+  // never defined. /api/me/access resolves the SIGNED-IN user's real
+  // department(s) server-side (the same call the nav gating in
+  // customer/layout.tsx uses) — not the demo "acting viewer" picker.
+  useEffect(() => {
+    if (!live) { setEvProblems([]); return }
+    let cancelled = false
+    ;(async () => {
+      const myDepts = (await api.myAccess())?.departmentIds ?? []
+      const rows = await api.eventProblems(orgId).catch(() => null)
+      if (cancelled || !rows) return
+      setEvProblems(rows.filter((r: any) => r.department_id === null || myDepts.includes(r.department_id)))
+    })()
+    return () => { cancelled = true }
+  }, [live, orgId])
+
   useEffect(() => {
     setLoading(true)
-    Promise.all([
-      api.eventProblems(orgId).catch(() => []),
-      ...devices.map(d => api.events(d.id).catch(() => []))
-    ]).then(([probs, ...res]) => {
-      setEvProblems(probs || [])
+    Promise.all(devices.map(d => api.events(d.id).catch(() => []))).then((res) => {
       const allEvents = res.flat().filter(Boolean).sort((a: any, b: any) => new Date(b.raised_at).getTime() - new Date(a.raised_at).getTime())
       setEvents(allEvents)
       setLoading(false)
     })
-  }, [devices.length, orgId])
+  }, [devices.map((d) => d.id).join(','), orgId])
 
   const handleAck = async (eventId: string) => {
     try {
