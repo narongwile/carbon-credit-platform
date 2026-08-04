@@ -13,6 +13,8 @@ import MyAlertSettings from '@/components/device/MyAlertSettings'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import NameplateEditor from '@/components/device/NameplateEditor'
+import DeviceImage from '@/components/device/DeviceImage'
+import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
 import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
 import { useSessionRole } from '@/lib/auth'
@@ -28,12 +30,23 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2, SlidersHorizontal, Pencil
+  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera
 } from 'lucide-react'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
+
+// Shown instead of the generic 3D model when an org has turned it off
+// (migrate-v33) and this device has no uploaded photo yet.
+function NoPhotoPlaceholder() {
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-600">
+      <Camera size={28} className="opacity-40" />
+      <span className="text-xs">No photo uploaded yet</span>
+    </div>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Live data overlay
@@ -495,6 +508,9 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // fields additively when a real nameplate has been entered.
   const { data: nameplate, refetch: refetchNameplate } = useNodeNameplate(id)
   const [editingNameplate, setEditingNameplate] = useState(false)
+  // transformer.orgId, not the page-level orgId — a superadmin viewing
+  // another org's device needs THAT org's toggle, not their own selected one.
+  const show3d = useShow3dFallback(transformer?.orgId ?? '')
   const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
   useEffect(() => {
     if (!live) return
@@ -626,10 +642,16 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
 
         {/* Center - 3D model + charts */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* 3D canvas */}
+          {/* The device photo (admin-uploaded), same as FixDashboard's twin slot —
+              this page never picked up that fix when node_images shipped
+              (migrate-v27), so a photographed unit still rendered the generic 3D
+              model here regardless. The 3D canvas is now the FALLBACK, shown
+              (and labelled "Generic model — not this unit" by DeviceImage
+              itself) only until a photo exists, exactly like the FIX theme. */}
           <div className="flex-1 relative" style={{ minHeight: '320px' }}>
             <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, #0a0e1a 0%, #0d1117 50%, #0a0e1a 100%)' }}>
-              <Transformer3D transformer={transformer} />
+              <DeviceImage nodeId={id} deviceName={transformer.name}
+                fallback={show3d ? <Transformer3D transformer={transformer} /> : <NoPhotoPlaceholder />} />
             </div>
           </div>
 

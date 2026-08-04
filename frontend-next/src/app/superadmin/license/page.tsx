@@ -32,14 +32,14 @@ import { PLATFORM_TEMPLATES } from '@/lib/platforms'
 import { downloadCSV } from '@/lib/exportFile'
 import { fmtDateTime } from '@/lib/displayTime'
 import {
-  Building2, Boxes, ShieldAlert, Search, Play, Pause, Loader2, ScrollText, RefreshCw,
+  Building2, Boxes, ShieldAlert, Search, Play, Pause, Loader2, ScrollText, RefreshCw, Box, Camera,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
-interface OrgRow { id: string; name: string; status: string }
+interface OrgRow { id: string; name: string; status: string; show3d: boolean }
 type EntMap = Record<string, string[]>
 
 function StatCard({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: string; color: string }) {
@@ -72,7 +72,7 @@ export default function LicensePage() {
     setLoading(true)
     try {
       const rows = (await api.orgs()) ?? []
-      const list = rows.map((r) => ({ id: r.id, name: r.name, status: r.status ?? 'active' }))
+      const list = rows.map((r) => ({ id: r.id, name: r.name, status: r.status ?? 'active', show3d: r.show_3d_fallback !== 0 }))
       setOrgs(list)
       // Entitlements are per-org endpoints; fan out once and index by org.
       const pairs = await Promise.all(list.map(async (o) => [o.id, (await api.entitlements(o.id)) ?? []] as const))
@@ -95,6 +95,18 @@ export default function LicensePage() {
     if (!r) { toast.error(`Could not ${status === 'suspended' ? 'suspend' : 'resume'} ${org.name}`); return }
     setOrgs((prev) => prev.map((o) => (o.id === org.id ? { ...o, status } : o)))
     toast.success(status === 'suspended' ? `${org.name} suspended — its users are locked out` : `${org.name} resumed`)
+    api.auditLog({ limit: 12 }).then((a) => a && setAudit(a))
+  }
+
+  // Whether a device with no uploaded photo yet shows the generic 3D
+  // transformer model, or a plain "no photo" placeholder instead.
+  const toggle3d = async (org: OrgRow) => {
+    setBusyOrg(org.id)
+    const r = await api.set3dFallback(org.id, !org.show3d)
+    setBusyOrg(null)
+    if (!r) { toast.error(`Could not update ${org.name}`); return }
+    setOrgs((prev) => prev.map((o) => (o.id === org.id ? { ...o, show3d: !org.show3d } : o)))
+    toast.success(!org.show3d ? `${org.name}: 3D model restored` : `${org.name}: 3D model hidden — unphotographed devices show a placeholder`)
     api.auditLog({ limit: 12 }).then((a) => a && setAudit(a))
   }
 
@@ -158,17 +170,17 @@ export default function LicensePage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
-                    {['Organization', 'Licensed platforms', 'Status', 'Maintenance'].map((h) => (
+                    {['Organization', 'Licensed platforms', 'Status', 'Maintenance', 'Display'].map((h) => (
                       <th key={h} className="py-3 px-4 text-left text-xs text-slate-500 font-medium whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody style={{ background: '#0d1117' }}>
                   {loading && !orgs.length && (
-                    <tr><td colSpan={4} className="py-8 text-center text-slate-600 text-xs">Loading…</td></tr>
+                    <tr><td colSpan={5} className="py-8 text-center text-slate-600 text-xs">Loading…</td></tr>
                   )}
                   {!loading && !filtered.length && (
-                    <tr><td colSpan={4} className="py-8 text-center text-slate-600 text-xs">
+                    <tr><td colSpan={5} className="py-8 text-center text-slate-600 text-xs">
                       {orgs.length ? 'No organization matches that search.' : 'No organizations yet.'}
                     </td></tr>
                   )}
@@ -209,6 +221,22 @@ export default function LicensePage() {
                             {busyOrg === org.id ? <Loader2 size={12} className="animate-spin" />
                               : isSuspended ? <Play size={12} /> : <Pause size={12} />}
                             {isSuspended ? 'Resume' : 'Suspend'}
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button
+                            onClick={() => toggle3d(org)}
+                            disabled={busyOrg === org.id}
+                            title={org.show3d
+                              ? 'A device with no uploaded photo yet shows a generic 3D model. Click to hide it — those devices show a plain placeholder instead.'
+                              : 'The generic 3D model is hidden. Click to restore it as the fallback for devices with no photo yet.'}
+                            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md font-medium disabled:opacity-50"
+                            style={org.show3d
+                              ? { color: '#a5b4fc', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.25)' }
+                              : { color: '#94a3b8', background: 'rgba(100,116,139,0.08)', border: '1px solid rgba(100,116,139,0.25)' }}>
+                            {busyOrg === org.id ? <Loader2 size={12} className="animate-spin" />
+                              : org.show3d ? <Box size={12} /> : <Camera size={12} />}
+                            {org.show3d ? '3D model on' : '3D model off'}
                           </button>
                         </td>
                       </tr>

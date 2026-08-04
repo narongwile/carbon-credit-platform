@@ -415,7 +415,7 @@ export const api = {
     req<{ ok: boolean; from?: string }>(`/api/platform/settings/test`, { method: 'POST', body: JSON.stringify({ channel, to }) }),
 
   // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
-  orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number; lng?: number }[]>(`/api/orgs`),
+  orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number; lng?: number; show_3d_fallback?: number }[]>(`/api/orgs`),
   // provisioned: the tenant database this org needs under TENANT_DB_MODE.
   // admin.setPasswordUrl: returned only when SMTP is unconfigured, because the
   // admin row carries no password and that link is then the only way to sign in.
@@ -438,6 +438,16 @@ export const api = {
   setOrgStatus: (orgId: string, status: 'active' | 'suspended', reason?: string) =>
     req<{ ok: boolean; id: string; status: string; unchanged?: boolean }>(`/api/orgs/${orgId}/status`, {
       method: 'PUT', body: JSON.stringify({ status, reason }),
+    }),
+  /**
+   * Whether a device with no uploaded photo yet shows the generic 3D model
+   * (FixDashboard's twin slot, TransformerDetailView's 3D canvas) or nothing
+   * 3D at all. Defaults to true for every org (migrate-v33) — today's
+   * behavior, unchanged until a superadmin turns it off.
+   */
+  set3dFallback: (orgId: string, show: boolean) =>
+    req<{ ok: boolean; id: string; show: boolean; unchanged?: boolean }>(`/api/orgs/${orgId}/3d-fallback`, {
+      method: 'PUT', body: JSON.stringify({ show }),
     }),
   /** Real administrative audit trail (migrate-v30). Most recent first. */
   auditLog: (opts?: { orgId?: string; limit?: number }) =>

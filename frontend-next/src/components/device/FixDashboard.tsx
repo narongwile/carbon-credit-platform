@@ -12,6 +12,7 @@ import DeviceImage from '@/components/device/DeviceImage'
 import NameplateEditor from '@/components/device/NameplateEditor'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
 import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
+import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useSessionRole } from '@/lib/auth'
 import type { ManagedDevice } from '@/types/org'
 import type { Transformer, SensorReading } from '@/types'
@@ -19,7 +20,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import {
-  Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi, SlidersHorizontal, Pencil,
+  Thermometer, Droplets, Activity, Zap, Gauge, Wind, DoorClosed, Wifi, SlidersHorizontal, Pencil, Camera,
 } from 'lucide-react'
 
 const Fridge3D = dynamic(() => import('@/components/twin/Fridge3D'), { ssr: false, loading: () => <TwinLoading /> })
@@ -34,7 +35,7 @@ function TwinLoading() {
 // readings are available the twin reflects them (temperature, door/lid, battery)
 // instead of the placeholder pose — a shut door on the model while the sensor
 // reports OPEN is worse than no twin at all.
-function DeviceTwin({ device, values }: { device: ManagedDevice; values?: Record<string, number> | null }) {
+function DeviceTwin({ device, values, show3d }: { device: ManagedDevice; values?: Record<string, number> | null; show3d: boolean }) {
   const v = values ?? {}
   const live = v.tempHigh ?? v.tempLow ?? v.oilTemp
   const temp = live ?? (parseFloat(device.lastValue ?? '') || 4.2)
@@ -46,6 +47,17 @@ function DeviceTwin({ device, values }: { device: ManagedDevice; values?: Record
   if (device.domain === 'bloodBox') {
     const warn = ALARM_SCHEMA.bloodBox.params.find((p) => p.key === 'tempHigh')?.warn ?? 6
     return <BloodBox3D device={{ name: device.name, temperature: temp, battery: v.battery ?? 85, lidOpen: open, threshold: warn }} />
+  }
+  // migrate-v33: an org can turn off the generic 3D transformer model
+  // entirely, so a device with no photo yet shows a plain placeholder here
+  // instead — same toggle TransformerDetailView's 3D canvas respects.
+  if (device.domain === 'transformer' && !show3d) {
+    return (
+      <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-600">
+        <Camera size={28} className="opacity-40" />
+        <span className="text-xs">No photo uploaded yet</span>
+      </div>
+    )
   }
   if (device.domain === 'transformer') {
     // Was `{ id: device.id } as Transformer` — the twin used to re-look-up the
@@ -365,6 +377,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
   const { data: nameplate, refetch: refetchNameplate } = useNodeNameplate(device.id)
   const [editingNameplate, setEditingNameplate] = useState(false)
   const sizeClass = classifyByKva(nameplate?.ratedKva)
+  const show3d = useShow3dFallback(device.orgId)
   const asset = isTransformer
     ? [
         ['ID', device.serial],
@@ -424,7 +437,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
       <div className="lg:col-span-5 space-y-4">
         <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
           <DeviceImage nodeId={device.id} deviceName={device.name}
-            fallback={<DeviceTwin device={device} values={live ? values : null} />} />
+            fallback={<DeviceTwin device={device} values={live ? values : null} show3d={show3d} />} />
         </div>
         {/* Transformer pair charts — the two the /admin/transformers/detail page
             has. Rendered only when the device has actually reported the pair, so
