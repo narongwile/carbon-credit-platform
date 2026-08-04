@@ -307,18 +307,40 @@ export const api = {
   // for every transformer regardless of its actual rating.
   nodeNameplate: (id: string) =>
     req<{
-      has: boolean; manufacturer?: string | null; model?: string | null; serialNumber?: string | null
+      has: boolean; modelId?: string | null; modelCode?: string | null; modelActive?: boolean | null
+      manufacturer?: string | null; model?: string | null; serialNumber?: string | null
       ratedKva?: number | null; voltageClass?: string | null; coolingType?: string | null
       yearInstalled?: number | null; updatedBy?: string | null; updatedAt?: string; pending?: string
+      resolved?: { model?: string | null; manufacturer?: string | null; ratedKva?: number | null; voltageClass?: string | null; coolingType?: string | null }
     }>(`/api/nodes/${id}/nameplate`),
-  /** Partial update — an omitted key is left alone; null/'' clears just that field. */
+  /**
+   * Partial update — an omitted key is left alone; null/'' clears just that
+   * field. modelId links/unlinks a transformer_models catalog row (migrate-
+   * v32); pass null to unlink back to free-typed fields.
+   */
   setNodeNameplate: (id: string, body: {
+    modelId?: string | null
     manufacturer?: string | null; model?: string | null; serialNumber?: string | null
     ratedKva?: number | null; voltageClass?: string | null; coolingType?: string | null; yearInstalled?: number | null
   }) => req<{ ok: boolean; id: string }>(`/api/nodes/${id}/nameplate`, { method: 'PUT', body: JSON.stringify(body) }),
   /** Whole-org map, so the fleet list can show real ratings without one request per device. */
   orgNameplates: (orgId: string) =>
     req<Record<string, { model: string | null; ratedKva: number | null; voltageClass: string | null }>>(`/api/orgs/${orgId}/nameplates`),
+
+  // Transformer model catalog (migrate-v32) — each org's own copy, never a
+  // shared cross-org list. See src/lib/useNodeNameplate.ts's TransformerModel.
+  transformerModels: (orgId: string) =>
+    req<{ id: string; modelCode: string; manufacturer: string | null; ratedKva: number | null; voltageClass: string | null; coolingType: string | null; active: boolean; createdBy: string | null; updatedAt: string }[]>(
+      `/api/orgs/${orgId}/transformer-models`),
+  /** Upsert: omit id to create, pass it back to edit. */
+  saveTransformerModel: (orgId: string, body: { id?: string; modelCode: string; manufacturer?: string | null; ratedKva?: number | null; voltageClass?: string | null; coolingType?: string | null }) =>
+    req<{ ok: boolean; id: string }>(`/api/orgs/${orgId}/transformer-models`, { method: 'POST', body: JSON.stringify(body) }),
+  /** Retire/restore — never deletes, so units already linked keep resolving. */
+  setTransformerModelActive: (orgId: string, id: string, active: boolean) =>
+    req<{ ok: boolean; id: string; active: boolean }>(`/api/orgs/${orgId}/transformer-models/${id}/active`, { method: 'PUT', body: JSON.stringify({ active }) }),
+  /** Hard delete — the backend refuses (409) while any device is linked. */
+  deleteTransformerModel: (orgId: string, id: string) =>
+    req<{ ok: boolean }>(`/api/orgs/${orgId}/transformer-models/${id}`, { method: 'DELETE' }),
   getFloorplans: (orgId: string) => req(`/api/orgs/${orgId}/floorplans`),
   updateFloorplans: (orgId: string, data: any) => req(`/api/orgs/${orgId}/floorplans`, { method: 'PUT', body: JSON.stringify(data) }),
   // Upload a floor-plan layout image (base64) → stored in the floorplans table;
@@ -469,7 +491,7 @@ export const api = {
   // mergeInto: approve this device as a SECOND FEED of an existing one — a
   // transformer whose power meter and box sensor publish under different node
   // ids is one asset, and the worker then stores both topics' readings there.
-  approveNode: (id: string, body: { name?: string; domain?: string; departmentId?: string; orgId?: string; lat?: number; lng?: number; mergeInto?: string }) =>
+  approveNode: (id: string, body: { name?: string; domain?: string; departmentId?: string; orgId?: string; lat?: number; lng?: number; mergeInto?: string; modelId?: string }) =>
     req<{ ok: boolean; id: string; orgId: string }>(`/api/nodes/${id}/approve`, { method: 'POST', body: JSON.stringify(body) }),
   rejectNode: (id: string) => req<{ ok: boolean }>(`/api/nodes/${id}/reject`, { method: 'POST' }),
   /** Pair (mergeInto: id) or unpair (mergeInto: null) an already-approved feed. */

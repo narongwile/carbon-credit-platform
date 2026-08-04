@@ -5,6 +5,7 @@ import { useAppStore } from '@/lib/store'
 import { useSessionRole } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
+import type { TransformerModel } from '@/lib/useNodeNameplate'
 import { PlugZap, Check, X, RefreshCw, Building2, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -67,7 +68,7 @@ export default function PendingDevicesPage() {
   const [rows, setRows] = useState<PendingNode[]>([])
   const [depts, setDepts] = useState<Dept[]>([])
   const [orgs, setOrgs] = useState<Org[]>([])
-  const [form, setForm] = useState<Record<string, { name: string; domain: string; departmentId: string; orgId: string; mergeInto: string }>>({})
+  const [form, setForm] = useState<Record<string, { name: string; domain: string; departmentId: string; orgId: string; mergeInto: string; modelId: string }>>({})
   // Devices already on the fleet — the candidates a second feed can be merged
   // into. Loaded per org so the picker never offers another tenant's device.
   const [fleet, setFleet] = useState<{ id: string; name: string }[]>([])
@@ -88,7 +89,7 @@ export default function PendingDevicesPage() {
       setRows(mock)
       setForm((prev) => {
         const next = { ...prev }
-        for (const n of mock) if (!next[n.id]) next[n.id] = { name: n.name, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id, mergeInto: '' }
+        for (const n of mock) if (!next[n.id]) next[n.id] = { name: n.name, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id, mergeInto: '', modelId: '' }
         return next
       })
       setDepts(MOCK_DEPTS)
@@ -113,6 +114,7 @@ export default function PendingDevicesPage() {
             domain: n.domain || 'transformer',
             departmentId: '',
             mergeInto: '',
+            modelId: '',
             // Orphans default to "pick an org"; others keep their attributed org.
             orgId: n.org_id === UNASSIGNED ? '' : n.org_id,
           }
@@ -160,6 +162,26 @@ export default function PendingDevicesPage() {
     return DOMAINS.filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d.value as keyof typeof DOMAIN_TO_PLATFORM]))
   }
 
+  // Transformer model catalog per org (migrate-v32) — same org set as
+  // entitlements above, so a device approved as 'transformer' can be linked
+  // to its real spec (manufacturer/kVA/voltage) in the same step instead of
+  // an admin retyping it on the device's own page right after.
+  const [modelsByOrg, setModelsByOrg] = useState<Record<string, TransformerModel[]>>({})
+  useEffect(() => {
+    if (!isLive()) return
+    const orgIds = Array.from(new Set([orgId, ...orgs.map((o) => o.id)])).filter((id) => id && id !== UNASSIGNED)
+    let cancelled = false
+    Promise.all(orgIds.map(async (id) => [id, await api.transformerModels(id)] as const)).then((pairs) => {
+      if (cancelled) return
+      setModelsByOrg((prev) => {
+        const next = { ...prev }
+        for (const [id, models] of pairs) if (models) next[id] = models.filter((m) => m.active)
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [orgId, orgs])
+
   const approve = async (n: PendingNode) => {
     const f = form[n.id]
     if (isSuper && !f.orgId) { toast.error('Select an organization for this device'); return }
@@ -171,6 +193,7 @@ export default function PendingDevicesPage() {
       departmentId: f.departmentId || undefined,
       orgId: isSuper ? f.orgId : undefined,
       mergeInto: f.mergeInto || undefined,
+      modelId: f.domain === 'transformer' ? (f.modelId || undefined) : undefined,
     })
     setBusy(null)
     if (res?.ok) { toast.success(`Approved ${f.name}`); setRows((r) => r.filter((x) => x.id !== n.id)) }
@@ -223,7 +246,7 @@ export default function PendingDevicesPage() {
       ) : (
         <div className="space-y-3">
           {rows.map((n) => {
-            const f = form[n.id] ?? { name: n.id, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id, mergeInto: '' }
+            const f = form[n.id] ?? { name: n.id, domain: n.domain, departmentId: '', orgId: n.org_id === UNASSIGNED ? '' : n.org_id, mergeInto: '', modelId: '' }
             const set = (patch: Partial<typeof f>) => setForm((s) => ({ ...s, [n.id]: { ...f, ...patch } }))
             const isOrphan = n.org_id === UNASSIGNED
             const sample = n.last_sample && typeof n.last_sample === 'object' ? Object.entries(n.last_sample) : []
@@ -303,6 +326,24 @@ export default function PendingDevicesPage() {
                       {depts.map((d) => <option key={d.id} value={d.id} className="bg-[#0d1117]">{d.name}</option>)}
                     </select>
                   </div>
+                  {/* Only for transformer: link its real spec (migrate-v32) so the
+                      unit doesn't start life with every Asset Info field reading
+                      "Not entered" until someone retypes what's already known from
+                      the model it was ordered as. */}
+                  {f.domain === 'transformer' && (
+                    <div>
+                      <label className="block text-[11px] text-slate-500 mb-1">Transformer model (optional)</label>
+                      <select value={f.modelId} onChange={(e) => set({ modelId: e.target.value })}
+                        className="w-full rounded-md px-3 py-1.5 text-sm text-white outline-none focus:ring-1 focus:ring-indigo-500" style={inset}>
+                        <option value="" className="bg-[#0d1117]">— not in catalog —</option>
+                        {(modelsByOrg[isSuper ? f.orgId : orgId] ?? []).map((m) => (
+                          <option key={m.id} value={m.id} className="bg-[#0d1117]">
+                            {m.modelCode}{m.ratedKva != null ? ` · ${m.ratedKva} kVA` : ''}{m.voltageClass ? ` · ${m.voltageClass}` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   {/* One asset can publish on two topics — a transformer whose power
                       meter sends the electrical set and whose box sensor sends
                       Oiltemp/H2/moisture arrives here as two devices. Approving the

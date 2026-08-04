@@ -368,9 +368,10 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
   const asset = isTransformer
     ? [
         ['ID', device.serial],
-        ['Model', nameplate?.model || 'Not entered'],
-        ['Rating', nameplate?.ratedKva != null ? `${nameplate.ratedKva} kVA` : 'Not entered'],
-        ['Voltage', nameplate?.voltageClass || 'Not entered'],
+        // resolved.X = override ?? linked catalog model's value (migrate-v32).
+        ['Model', nameplate?.resolved?.model || nameplate?.model || 'Not entered'],
+        ['Rating', (nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva) != null ? `${nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva} kVA` : 'Not entered'],
+        ['Voltage', nameplate?.resolved?.voltageClass || nameplate?.voltageClass || 'Not entered'],
       ]
     : [['ID', device.serial], ['Type', device.deviceType], ['Range', '-20°C to 10°C'], ['Logger', 'RDL-v2']]
 
@@ -557,7 +558,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
       </div>
 
       {editingNameplate && (
-        <NameplateEditor nodeId={device.id} current={nameplate}
+        <NameplateEditor nodeId={device.id} orgId={device.orgId} current={nameplate}
           onClose={() => setEditingNameplate(false)} onSaved={refetchNameplate} />
       )}
     </div>

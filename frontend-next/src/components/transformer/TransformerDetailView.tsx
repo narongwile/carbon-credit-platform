@@ -702,11 +702,14 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             </div>
             {[
               { icon: <Hash size={10} />, label: 'ID', value: transformer.name },
-              { icon: <Building2 size={10} />, label: 'Model', value: nameplate?.model || transformer.model || 'Not entered' },
-              { icon: <Zap size={10} />, label: 'Rating', value: nameplate?.ratedKva != null ? `${nameplate.ratedKva} kVA` : (transformer.kva ? `${transformer.kva} kVA` : 'Not entered') },
-              { icon: <Activity size={10} />, label: 'Voltage', value: nameplate?.voltageClass || transformer.voltage || 'Not entered' },
-              { icon: <Wind size={10} />, label: 'Cooling', value: nameplate?.coolingType || 'Not entered' },
-              { icon: <Building2 size={10} />, label: 'Mfg.', value: nameplate?.manufacturer || transformer.manufacturer || 'Not entered' },
+              // resolved.X is override ?? catalog model's value (migrate-v32);
+              // falls back to the raw field for a backend not yet migrated,
+              // then to the seed placeholder, same as before this existed.
+              { icon: <Building2 size={10} />, label: 'Model', value: nameplate?.resolved?.model || nameplate?.model || transformer.model || 'Not entered' },
+              { icon: <Zap size={10} />, label: 'Rating', value: (nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva) != null ? `${nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva} kVA` : (transformer.kva ? `${transformer.kva} kVA` : 'Not entered') },
+              { icon: <Activity size={10} />, label: 'Voltage', value: nameplate?.resolved?.voltageClass || nameplate?.voltageClass || transformer.voltage || 'Not entered' },
+              { icon: <Wind size={10} />, label: 'Cooling', value: nameplate?.resolved?.coolingType || nameplate?.coolingType || 'Not entered' },
+              { icon: <Building2 size={10} />, label: 'Mfg.', value: nameplate?.resolved?.manufacturer || nameplate?.manufacturer || transformer.manufacturer || 'Not entered' },
               { icon: <Calendar size={10} />, label: 'Installed', value: nameplate?.yearInstalled ? String(nameplate.yearInstalled) : (transformer.installDate || 'Not entered') },
               { icon: <Hash size={10} />, label: 'S/N', value: nameplate?.serialNumber || transformer.serialNumber || 'Not entered' },
             ].map((item) => (
@@ -741,7 +744,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       </div>
 
       {editingNameplate && (
-        <NameplateEditor nodeId={id} current={nameplate}
+        <NameplateEditor nodeId={id} orgId={transformer.orgId} current={nameplate}
           onClose={() => setEditingNameplate(false)} onSaved={refetchNameplate} />
       )}
 

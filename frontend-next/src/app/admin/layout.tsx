@@ -15,7 +15,7 @@ import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck, Droplet, PlugZap, Radio
+  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -39,6 +39,7 @@ const NAV: NavItem[] = [
   { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu, section: 'Devices' },
   { href: '/admin/devices', label: 'Device Management', icon: HardDrive },
   { href: '/admin/pending', label: 'Pending Devices', icon: PlugZap, badge: 'pending' },
+  { href: '/admin/transformer-models', label: 'Transformer Models', icon: Package, requires: { platform: 'eternityTransformers' } },
   { href: '/admin/live-raw', label: 'Live Raw Telemetry', icon: Radio },
 
   // No platform gate any more: the page compares whichever product the org
