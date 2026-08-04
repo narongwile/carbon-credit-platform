@@ -15,19 +15,18 @@ import { licensedDomains, DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
-  Users, Building2, ShieldCheck, Palette, Plus, Trash2, X, Check, Boxes,
+  Users, Building2, Palette, Plus, Trash2, X, Check, Boxes,
   ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet, MapPin,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { generatePassword } from '@/lib/password'
 
-type Tab = 'departments' | 'users' | 'roles' | 'permissions' | 'products' | 'events'
+type Tab = 'departments' | 'users' | 'permissions' | 'products' | 'events'
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'departments', label: 'Departments', icon: Building2 },
   { id: 'users', label: 'Users', icon: Users },
-  { id: 'roles', label: 'User Roles', icon: ShieldCheck },
   { id: 'permissions', label: 'Dashboard View Permission', icon: Palette },
   { id: 'products', label: 'Product Access', icon: Boxes },
   { id: 'events', label: 'Event Catalog', icon: ListChecks },
@@ -377,33 +376,6 @@ export default function UserManagementPage() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
-
-      {/* ROLES */}
-      {tab === 'roles' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {ROLES.map((r) => {
-            const count = users.filter((u) => u.role === r).length
-            const perms: Record<ManagedRole, string[]> = {
-              admin: ['Manage departments & users', 'Assign roles & organize', 'Configure devices & alarms', 'Full dashboard access'],
-              editor: ['Edit device settings', 'Acknowledge alarms', 'Export & schedule reports', 'View all assigned dashboards'],
-              viewer: ['Read-only dashboards', 'Acknowledge alarms', 'View & export device graphs', 'Receive notifications'],
-            }
-            return (
-              <div key={r} className="rounded-xl p-5" style={surface}>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-bold capitalize px-2.5 py-1 rounded-full" style={roleColor[r]}>{roleLabels[r]}</span>
-                  <span className="text-xs text-slate-500">{count} user{count === 1 ? '' : 's'}</span>
-                </div>
-                <ul className="space-y-1.5">
-                  {perms[r].map((p) => (
-                    <li key={p} className="flex items-center gap-2 text-xs text-slate-400"><Check size={12} className="text-indigo-400 flex-shrink-0" /> {p}</li>
-                  ))}
-                </ul>
-              </div>
-            )
-          })}
         </div>
       )}
 
