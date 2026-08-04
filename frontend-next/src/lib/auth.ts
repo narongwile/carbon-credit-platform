@@ -23,14 +23,26 @@ export function login(username: string, password: string): User | null {
   return user
 }
 
-// Real login via the backend (JWT). The username field carries the email.
-// Maps the backend role ('viewer') to the app role ('customer').
-export async function loginRemote(email: string, password: string): Promise<User | null> {
+/**
+ * Real login via the backend (JWT). The username field carries the email.
+ * Maps the backend role ('viewer') to the app role ('customer').
+ *
+ * Returns the backend's actual error and status on failure — a wrong
+ * password (401), too many attempts (429) and a suspended org (403) are
+ * different situations needing different messages, not one generic
+ * "Invalid credentials" that hides which one actually happened.
+ */
+export async function loginRemote(email: string, password: string): Promise<
+  { ok: true; user: User } | { ok: false; status: number; error: string }
+> {
   const r = await api.login(email, password)
-  if (!r?.user) return null
+  if (!r.ok) return r
   const u = r.user
   const role = (u.role === 'viewer' ? 'customer' : u.role) as User['role']
-  return { id: u.id, username: u.email || u.id, role, orgId: u.orgId || undefined, name: u.name || u.email || u.id, email: u.email || '' }
+  return {
+    ok: true,
+    user: { id: u.id, username: u.email || u.id, role, orgId: u.orgId || undefined, name: u.name || u.email || u.id, email: u.email || '' },
+  }
 }
 
 export function saveSession(user: User): void {

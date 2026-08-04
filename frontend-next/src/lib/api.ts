@@ -104,10 +104,30 @@ export interface AuthUser { id: string; orgId: string; role: string; name?: stri
 
 export const api = {
   // Auth — stores the JWT on success so subsequent calls are authenticated.
-  login: async (email: string, password: string): Promise<{ token: string; user: AuthUser } | null> => {
-    const r = await req<{ token: string; user: AuthUser }>(`/api/auth/login`, { method: 'POST', body: JSON.stringify({ email, password }) })
-    if (r?.token) setToken(r.token)
-    return r
+  /**
+   * A dedicated fetch, not req(): req() discards the response body on any
+   * non-2xx, so wrong password (401), too many attempts (429) and a suspended
+   * org (403) all collapsed into the exact same generic "Invalid credentials"
+   * on screen — indistinguishable from each other AND from a genuine server
+   * error, which is exactly the information someone needs when something goes
+   * wrong here. The backend already returns a real message for each
+   * (loginFunc); this is what actually reads it.
+   */
+  login: async (email: string, password: string): Promise<
+    { ok: true; user: AuthUser } | { ok: false; status: number; error: string }
+  > => {
+    if (!isLive()) return { ok: false, status: 0, error: 'offline' }
+    try {
+      const r = await fetch(`${BASE}/api/auth/login`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }),
+      })
+      const body = await r.json().catch(() => null) as { token?: string; user?: AuthUser; error?: string } | null
+      if (!r.ok || !body?.token) return { ok: false, status: r.status, error: body?.error || 'login failed' }
+      setToken(body.token)
+      return { ok: true, user: body.user as AuthUser }
+    } catch {
+      return { ok: false, status: 0, error: 'network error' }
+    }
   },
   register: async (b: any) => req(`/api/auth/register`, { method: 'POST', body: JSON.stringify(b) }),
   forgotPassword: async (email: string) => req(`/api/auth/forgot`, { method: 'POST', body: JSON.stringify({ email }) }),

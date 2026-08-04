@@ -27,7 +27,31 @@ export default function LoginPage() {
     }
     setLoading(true)
     // Real backend (JWT) when configured; the username field carries the email.
-    const user = authApiEnabled ? await loginRemote(username, password) : (await new Promise((r) => setTimeout(r, 600)), login(username, password))
+    if (authApiEnabled) {
+      const r = await loginRemote(username, password)
+      setLoading(false)
+      if (!r.ok) {
+        // The backend already distinguishes these (loginFunc); show what it
+        // actually said instead of a single generic message that reads
+        // identically whether the password was wrong, the account is
+        // rate-limited, the organization is suspended, or the server itself
+        // is having a bad moment — each needs a different next step from
+        // whoever is looking at this screen.
+        setError(
+          r.status === 429 ? r.error || 'Too many attempts — please wait and try again.'
+          : r.status === 403 ? r.error || 'This organization is suspended.'
+          : r.status === 401 ? 'Invalid credentials.'
+          : 'Could not reach the server. Please try again.'
+        )
+        return
+      }
+      saveSession(r.user)
+      if (r.user.orgId) useAppStore.getState().setSelectedOrgId(r.user.orgId)
+      router.push(getDashboardRoute(r.user))
+      return
+    }
+    await new Promise((r) => setTimeout(r, 600))
+    const user = login(username, password)
     if (!user) {
       setError('Invalid credentials.')
       setLoading(false)

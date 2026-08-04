@@ -28,6 +28,25 @@ const DEVICE_TYPE: Record<NonNullable<ManagedDevice['domain']>, string> = {
   bloodBox: 'BloodBOX Cold Storage',
 }
 
+// api.fleet() resolves to null on ANY failure — a genuinely empty roster and a
+// dropped request are indistinguishable to the caller (req() in api.ts never
+// rejects: a non-2xx or a network error both become `null`). Without a retry,
+// one transient blip (a cold pod, a momentary DB hiccup) permanently fell back
+// to the seed roster for that hook instance's whole lifetime — a REAL device
+// (say, a transformer clicked from a list that had just shown it fine) would
+// read "not found" on the very next page, because the fresh fetch on that page
+// failed once and nothing ever tried again. Three attempts with backoff is
+// enough to ride out a blip without turning a real, sustained outage into an
+// infinite retry loop.
+async function fetchFleetWithRetry(orgId: string, domain?: string): Promise<FleetNode[] | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const rows = await api.fleet(orgId, domain)
+    if (rows) return rows
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * (attempt + 1)))
+  }
+  return null
+}
+
 /**
  * Project a backend node onto the shape the device pages consume. `mock` is the
  * seed entry for the same id when one exists — the backend has no serial,
@@ -82,9 +101,8 @@ export function useManagedDevices(orgId: string, domain?: string): Roster {
     if (!live || !orgId) { setNodes(null); setLoaded(true); return }
     let cancelled = false
     setLoaded(false)
-    api.fleet(orgId, domain)
-      .then((rows) => { if (!cancelled) { setNodes(rows ?? null); setLoaded(true) } })
-      .catch(() => { if (!cancelled) { setNodes(null); setLoaded(true) } })
+    fetchFleetWithRetry(orgId, domain)
+      .then((rows) => { if (!cancelled) { setNodes(rows); setLoaded(true) } })
     return () => { cancelled = true }
   }, [live, orgId, domain])
 
@@ -132,9 +150,8 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
     if (!live || !orgId) { setNodes(null); setLoaded(true); return }
     let cancelled = false
     setLoaded(false)
-    api.fleet(orgId)
-      .then((rows) => { if (!cancelled) { setNodes(rows ?? null); setLoaded(true) } })
-      .catch(() => { if (!cancelled) { setNodes(null); setLoaded(true) } })
+    fetchFleetWithRetry(orgId)
+      .then((rows) => { if (!cancelled) { setNodes(rows); setLoaded(true) } })
     return () => { cancelled = true }
   }, [live, orgId])
 
