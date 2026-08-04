@@ -18,6 +18,15 @@
 // to say so. "Everyone" writes the organization-wide row that any department
 // without its own selection inherits — so configuring one team never changes
 // what the others see.
+//
+// This picker is always opened FROM one device's page, so it saves to that
+// device unless the admin explicitly widens the scope. It used to default the
+// "apply to every device" box to CHECKED, which meant the ordinary act of
+// opening a transformer, ticking the parameters you want on it and pressing
+// Save silently rewrote the organization-wide row — and every other
+// transformer changed with it. Widening the blast radius past the device you
+// are looking at is now an explicit, single-click opt-in, and the footer spells
+// out what Save is about to affect either way.
 
 import { useEffect, useState } from 'react'
 import { api, isLive } from '@/lib/api'
@@ -44,9 +53,11 @@ export default function DisplayParamPicker({
 }) {
   const [selected, setSelected] = useState<string[]>([])
   const [scope, setScope] = useState<DisplayParamScope>('none')
-  // Applying to the product covers every device of it, which is what an admin
-  // configuring "what a transformer shows" usually means.
-  const [applyToAll, setApplyToAll] = useState(true)
+  // Off by default, and reset to off on every scope change below: this picker
+  // is opened from one device, so Save means that device until the admin says
+  // otherwise. Defaulting it ON is what made a per-device edit rewrite the
+  // org-wide row and change every other device of the same product.
+  const [applyToAll, setApplyToAll] = useState(false)
   // '' = everyone in the organization (the row departments inherit).
   const [deptId, setDeptId] = useState('')
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
@@ -70,7 +81,12 @@ export default function DisplayParamPicker({
       if (cancelled || !r) return
       setSelected(r.paramKeys ?? [])
       setScope(r.scope ?? 'none')
-      setApplyToAll(!String(r.scope ?? '').startsWith('node'))
+      // Deliberately NOT re-derived from the loaded scope. It used to be
+      // `!scope.startsWith('node')`, so a device merely INHERITING the
+      // org-wide list came up with "apply to every device" pre-ticked, and
+      // adjusting one device's parameters overwrote the shared row for the
+      // whole fleet. Widening scope is always an explicit choice.
+      setApplyToAll(false)
     })
     return () => { cancelled = true }
   }, [orgId, domain, nodeId, deptId])
@@ -81,6 +97,16 @@ export default function DisplayParamPicker({
   const toggle = (k: string) =>
     setSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]))
 
+  const deviceWord = domain === 'transformer' ? 'transformer' : 'device of this product'
+  const deptName = deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'that department') : ''
+  // Exactly what Save writes — spelled out rather than left to be inferred
+  // from a checkbox, because the two scopes differ by the entire fleet.
+  const target = applyToAll
+    ? `every ${deviceWord} in this organization${deptName ? ` — ${deptName} only` : ''}`
+    : `this device only${deptName ? ` — ${deptName} only` : ''}`
+  // The device is showing a list it did not set itself.
+  const inherited = selected.length > 0 && !String(scope).startsWith('node')
+
   const save = async () => {
     setBusy(true)
     const r = await api.setDisplayParams(orgId, {
@@ -88,10 +114,9 @@ export default function DisplayParamPicker({
     })
     setBusy(false)
     if (!r) { toast.error('Could not save the parameter selection'); return }
-    const who = deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'that department') : 'everyone'
     toast.success(selected.length
-      ? `${selected.length} parameter${selected.length === 1 ? '' : 's'} for ${who}`
-      : `Cleared — ${who} sees every parameter again`)
+      ? `${selected.length} parameter${selected.length === 1 ? '' : 's'} · ${target}`
+      : `Cleared — ${target} shows every parameter again`)
     onSaved(selected)
     onClose()
   }
@@ -119,19 +144,17 @@ export default function DisplayParamPicker({
             {available.length} parameter{available.length === 1 ? '' : 's'} reported by this device.
             {selected.length === 0 && ' Nothing selected — every parameter is shown.'}
           </p>
-          {/* Say where the values on screen came from, so an admin editing a
-              department does not mistake an inherited list for one they set. */}
-          {deptId && (scope === 'org' || scope === 'node') && selected.length > 0 && (
+          {/* Say where the values on screen came from, so an admin does not
+              mistake a list this device merely INHERITS for one it owns —
+              editing an inherited list used to overwrite it for the whole
+              fleet. */}
+          {inherited && (
             <p className="text-[11px] text-amber-400">
-              Inherited from the organization-wide selection. Saving here makes it this department’s own.
+              Inherited from the {scope === 'org' || scope === 'node' ? 'organization-wide' : 'shared'} selection — this device has no
+              selection of its own yet. Saving gives it one, leaving the shared list untouched.
             </p>
           )}
-          {!deptId && (
-            <p className="text-[11px] text-slate-600">
-              This is the fallback every department without its own selection uses.
-            </p>
-          )}
-          {String(scope).startsWith('node') && !applyToAll && (
+          {String(scope).startsWith('node') && (
             <p className="text-[11px] text-slate-600">Currently set for this device only.</p>
           )}
         </div>
@@ -158,11 +181,16 @@ export default function DisplayParamPicker({
         </div>
 
         <div className="p-5 space-y-3" style={{ borderTop: '1px solid #1e2433' }}>
-          <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+          <label className="flex items-center gap-2 text-xs cursor-pointer"
+            style={{ color: applyToAll ? '#fbbf24' : '#94a3b8' }}>
             <input type="checkbox" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} />
-            Apply to every {domain === 'transformer' ? 'transformer' : 'device of this product'}
-            {deptId ? ' for this department' : ' in this organization'}
+            Apply to every {deviceWord}{deptId ? ' for this department' : ' in this organization'}
           </label>
+          {/* The two scopes differ by the whole fleet, so Save states which
+              one it is instead of leaving it to be read off a checkbox. */}
+          <p className="text-[11px]" style={{ color: applyToAll ? '#fbbf24' : '#64748b' }}>
+            Saving affects: <span className="font-semibold">{target}</span>
+          </p>
           <div className="flex gap-3">
             <button onClick={save} disabled={busy}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={gradient}>
