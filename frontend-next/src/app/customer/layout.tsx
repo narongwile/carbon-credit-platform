@@ -10,8 +10,9 @@ import { UNGATED_NAV, navHrefsForThemes } from '@/lib/orgData'
 import OrgBrand from '@/components/OrgBrand'
 import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
 import { getUsersByOrg, roleLabels } from '@/lib/orgData'
-import api, { isLive } from '@/lib/api'
+import api, { isLive, useIsLive } from '@/lib/api'
 import { viewerDepartments } from '@/lib/viewer'
+import { useMyAccess } from '@/lib/useMyAccess'
 import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle, LayoutGrid } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -55,6 +56,7 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
+  const live = useIsLive()
   const { viewerUserId, setViewerUserId, setOrgLogo } = useAppStore()
   const orgId = useSessionOrgId()
   // Profile is never gated — a viewer who cannot reach it cannot set a password
@@ -63,8 +65,31 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   const visibleNav = allowedHrefs
     ? NAV.filter((i) => allowedHrefs.has(i.href) || UNGATED_NAV.includes(i.href))
     : NAV
+  // The "acting viewer" picker below is a DEMO affordance — it lets someone
+  // exploring the product pretend to be one of a fixed set of sample users
+  // to see how department-scoped access differs between them. It has no
+  // meaning for a real signed-in viewer, who has exactly one identity (their
+  // own session) — shown only in Demo mode.
   const orgUsers = getUsersByOrg(orgId).filter((u) => u.role !== 'admin')
-  const depts = viewerDepartments(viewerUserId)
+  const mockDepts = viewerDepartments(viewerUserId)
+  // Real department name(s) for the signed-in viewer. useMyAccess() only
+  // has ids; cross-referencing the real department list (same source
+  // Pending Devices/Reports/Notifications already use) gets the names this
+  // label actually needs to show something other than an id.
+  const myAccess = useMyAccess()
+  const [deptNames, setDeptNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!live) return
+    let cancelled = false
+    api.departments(orgId).then((rows) => {
+      if (cancelled || !rows) return
+      setDeptNames(Object.fromEntries((rows as { id: string; name: string }[]).map((d) => [d.id, d.name])))
+    })
+    return () => { cancelled = true }
+  }, [live, orgId])
+  const deptLabel = live
+    ? (myAccess?.departmentIds.length ? myAccess.departmentIds.map((id) => deptNames[id] ?? id).join(', ') : 'No department')
+    : (mockDepts.length ? mockDepts.map((d) => d.name).join(', ') : 'No department')
 
   useEffect(() => {
     const session = getSession()
@@ -96,19 +121,21 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
               <OrgBrand orgId={orgId} />
             </div>
             <div className={clsx('text-[10px] text-slate-600 ml-9', collapsed && 'lg:hidden')}>Customer Portal</div>
-            {/* Acting viewer — drives department-based access */}
-            <select
-              value={viewerUserId}
-              onChange={(e) => setViewerUserId(e.target.value)}
-              className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
-              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
-            >
-              {orgUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} · {roleLabels[u.role]}</option>
-              ))}
-            </select>
+            {/* Acting viewer (Demo only) — drives department-based access simulation */}
+            {!live && (
+              <select
+                value={viewerUserId}
+                onChange={(e) => setViewerUserId(e.target.value)}
+                className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
+                style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+              >
+                {orgUsers.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name} · {roleLabels[u.role]}</option>
+                ))}
+              </select>
+            )}
             <div className={clsx('text-[10px] text-slate-600 mt-1 ml-0.5 truncate', collapsed && 'lg:hidden')}>
-              {depts.length ? depts.map((d) => d.name).join(', ') : 'No department'}
+              {deptLabel}
             </div>
           </div>
 
