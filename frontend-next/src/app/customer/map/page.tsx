@@ -7,7 +7,9 @@ import { getGeoNodes } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
-import { viewerDomains, getViewerUser } from '@/lib/viewer'
+import { useSessionOrgId } from '@/lib/auth'
+import { useIsLive } from '@/lib/api'
+import { viewerDomains } from '@/lib/viewer'
 import { DOMAIN_META } from '@/types/fleet'
 import { Map as MapIcon, LayoutGrid, MapPin } from 'lucide-react'
 import clsx from 'clsx'
@@ -18,12 +20,19 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 export default function CustomerMapPage() {
+  const live = useIsLive()
+  // The real session's org, not the demo "acting viewer" picker's mock user.
+  const orgId = useSessionOrgId()
   const { viewerUserId } = useAppStore()
+  // GET /api/fleet (behind useLiveGeoNodes/useManagedDevices) already scopes
+  // both of these to the SIGNED-IN viewer's accessible products server-side;
+  // the mock viewerDomains() filter is needed only for the demo/offline
+  // fallback (getGeoNodes seed / unscoped seed roster), which is unscoped.
   const allowed = viewerDomains(viewerUserId)
-  const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
-  const nodes = (useLiveGeoNodes(orgId) ?? getGeoNodes(orgId)).filter((n) => allowed.includes(n.domain))
-  const { devices: roster } = useManagedDevices(orgId)
-  const devices = roster.filter((d) => !d.domain || allowed.includes(d.domain))
+  const liveNodes = useLiveGeoNodes(orgId)
+  const nodes = live && liveNodes ? liveNodes : getGeoNodes(orgId).filter((n) => allowed.includes(n.domain))
+  const { devices: roster, fromBackend } = useManagedDevices(orgId)
+  const devices = fromBackend ? roster : roster.filter((d) => !d.domain || allowed.includes(d.domain))
   const [tab, setTab] = useState<'map' | 'layout'>('map')
 
   // deterministic layout positions

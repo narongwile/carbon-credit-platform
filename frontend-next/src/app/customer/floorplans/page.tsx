@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '@/lib/store'
 import { useSessionOrgId } from '@/lib/auth'
-import { managedDevicesFromFleet, getSitesByOrg } from '@/lib/fleetData'
+import { getSitesByOrg } from '@/lib/fleetData'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { viewerDomains } from '@/lib/viewer'
 import { DOMAIN_META } from '@/types/fleet'
 import { api, apiImageUrl } from '@/lib/api'
@@ -34,8 +35,14 @@ type Pos = { x: number; y: number }
 export default function CustomerFloorPlansPage() {
   const { viewerUserId } = useAppStore()
   const orgId = useSessionOrgId()
+  // GET /api/fleet (behind useManagedDevices) already scopes this to the
+  // SIGNED-IN viewer's accessible products server-side; managedDevicesFromFleet
+  // was the mock seed unconditionally, in Live mode or not, so a real device
+  // never appeared here and the mock viewerDomains() filter on top of it
+  // resolved to nothing for any real user id anyway.
+  const { devices: roster, fromBackend } = useManagedDevices(orgId)
   const allowed = viewerDomains(viewerUserId)
-  const nodes = managedDevicesFromFleet(orgId).filter((d) => !d.domain || allowed.includes(d.domain))
+  const nodes = fromBackend ? roster : roster.filter((d) => !d.domain || allowed.includes(d.domain))
 
   const [sites, setSites] = useState<{ id: string; name: string }[]>(() => getSitesByOrg(orgId))
   const [activeSite, setActiveSite] = useState('')

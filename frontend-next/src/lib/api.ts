@@ -183,6 +183,22 @@ export const api = {
   setDepartmentThemes: (orgId: string, departmentId: string, themeIds: string[]) =>
     req<{ ok: boolean }>(`/api/orgs/${orgId}/department-themes`, { method: 'PUT', body: JSON.stringify({ departmentId, themeIds }) }),
   events: (nodeId: string) => req<unknown[]>(`/api/nodes/${nodeId}/events`),
+  /**
+   * Every alarm across the org in one call, instead of fanning out per
+   * device — already department- and domain-scoped server-side for a
+   * non-admin caller (same accessFor() visibility rule /api/fleet uses), so
+   * the sidebar badge, admin Alarms, and a viewer's Overview notifications
+   * all read the SAME real list. open=true narrows to unacknowledged +
+   * uncleared (the badge/notifications use case); omit for the full history.
+   */
+  orgAlarms: (orgId: string, open?: boolean) =>
+    req<{
+      id: string; node_id: string; org_id: string; department_id: string | null
+      param_key: string; param_label: string; severity: 'WARNING' | 'CRITICAL'; kind: string
+      value: number; threshold: number; unit: string | null; raised_at: string
+      acknowledged_at: string | null; acknowledged_by: string | null; event_problem_id: string | null
+      cleared_at: string | null; domain: 'transformer' | 'carbonNode' | 'bloodBox'; node_name: string
+    }[]>(`/api/orgs/${orgId}/alarms${open ? '?open=1' : ''}`),
   // Link switches + offline-backlog flushes for a device (transport_events
   // merged with offline_sync_log), newest first.
   transportEvents: (nodeId: string) =>
@@ -474,7 +490,18 @@ export const api = {
   // an admin-created account can ever sign in — the row is stored with a NULL
   // password_hash otherwise and login refuses those.
   /** What the signed-in user may see: departments and the union of their themes. */
-  myAccess: () => req<{ userId: string; role: string; departmentIds: string[]; themeIds: string[] }>(`/api/me/access`),
+  /**
+   * The SIGNED-IN user's real org, department(s) and per-domain access level
+   * — orgId/levels delegate server-side to accessFor(), the same helper
+   * /api/fleet's own visibility filter trusts, so this can never disagree
+   * with what a page's real data already scoped out. levels omits a domain
+   * entirely rather than sending 'none' for it — treat an absent key as
+   * 'none', not as truthy.
+   */
+  myAccess: () => req<{
+    userId: string; orgId: string; role: string; departmentIds: string[]; themeIds: string[]
+    levels: Partial<Record<'transformer' | 'carbonNode' | 'bloodBox', 'none' | 'view' | 'manage'>>
+  }>(`/api/me/access`),
   // departmentIds is the real assignment (migrate-v25). departmentId is still
   // sent so a backend without that table keeps the primary one.
   saveUser: (orgId: string, body: { id?: string; email?: string; username?: string; name: string; role?: string; departmentId?: string; departmentIds?: string[]; password?: string }) =>

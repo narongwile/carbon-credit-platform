@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
+import { useOrgAlarms, type OrgAlarmRow } from '@/lib/useOrgAlarms'
 import { getSession } from '@/lib/auth'
-import { getViewerUser } from '@/lib/viewer'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
@@ -99,12 +99,31 @@ function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string
   )
 }
 
+// OrgAlarmRow (real, alarm_events) -> Alarm (this page's shape, historically
+// mockData.ts's). alarm_events has no INFO severity — it is threshold/rate/
+// offline detection only — so a real alarm never matches that filter button;
+// that is honest, not a gap: mockData.ts invented severities the schema
+// never had.
+const toAlarm = (a: OrgAlarmRow, orgId: string): Alarm => ({
+  id: a.id, transformerId: a.nodeId, transformerName: a.nodeName, orgId,
+  severity: a.severity, message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
+  sensor: a.paramLabel, value: a.value, unit: a.unit, threshold: a.threshold, timestamp: a.raisedAt,
+  acknowledged: !!a.acknowledgedAt, acknowledgedBy: a.acknowledgedBy ?? undefined, acknowledgedAt: a.acknowledgedAt ?? undefined,
+})
+
 export default function AlarmsPage() {
-  const { alarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
+  // useAppStore().alarms is seeded ONCE from mockData.ts at store creation and
+  // nothing ever refreshes it from a real endpoint — this page's list, its
+  // Critical/Warning counters and every filter below used to run entirely on
+  // that mock data regardless of Live/Demo mode, while Acknowledge (below)
+  // already wrote through to the real backend. A real CRITICAL alarm on a
+  // real device never appeared here at all.
+  const { alarms: mockAlarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
   const [filter, setFilter] = useState<'all' | 'CRITICAL' | 'WARNING' | 'INFO'>('all')
   const [showAcked, setShowAcked] = useState(false)
   const live = useIsLive()
-  const viewerUserId = useAppStore((st) => st.viewerUserId)
+  const { alarms: liveOrgAlarms, refetch: refetchAlarms } = useOrgAlarms(selectedOrgId, { pollMs: live ? 20000 : undefined })
+  const alarms = live ? liveOrgAlarms.map((a) => toAlarm(a, selectedOrgId)) : mockAlarms
 
   // Time range: a quick preset, or explicit from/to when the operator sets them.
   const [quick, setQuick] = useState<string>('Last 24 hours')
@@ -122,21 +141,17 @@ export default function AlarmsPage() {
       : { start: Date.now() - hrs * 3600_000, end: Infinity, label: quick }
   }, [quick, from, to])
 
-  // Root causes offered on acknowledge — admins see every department's, viewers
-  // only their own (plus org-wide entries with no department).
+  // Root causes offered on acknowledge. This page is admin/superadmin-only
+  // (see admin/layout.tsx's route guard), so every department's problems
+  // apply — no department scoping needed, unlike the equivalent viewer-facing
+  // pickers (NodeEventLog, customer's Alarms).
   const [problems, setProblems] = useState<EventProblem[]>([])
   useEffect(() => {
     if (!live) { setProblems([]); return }
-    const session = getSession()
-    const orgId = session?.orgId ?? selectedOrgId
+    const orgId = getSession()?.orgId ?? selectedOrgId
     if (!orgId) return
-    const isAdmin = session?.role === 'admin' || session?.role === 'superadmin'
-    const myDepts = isAdmin ? null : (getViewerUser(viewerUserId)?.departmentIds ?? [])
-    api.eventProblems(orgId).then((rows) => {
-      if (!rows) return
-      setProblems(isAdmin || !myDepts ? rows : rows.filter((r) => r.department_id === null || myDepts.includes(r.department_id)))
-    })
-  }, [live, selectedOrgId, viewerUserId])
+    api.eventProblems(orgId).then((rows) => { if (rows) setProblems(rows) })
+  }, [live, selectedOrgId])
 
   const orgAlarms = alarms.filter((a) => a.orgId === selectedOrgId)
   const filtered = orgAlarms.filter((a) => {
@@ -147,10 +162,11 @@ export default function AlarmsPage() {
     return true
   })
 
-  // Acknowledge writes through to the backend in Live mode (with the chosen root
-  // cause), and falls back to the local store in Demo.
+  // Acknowledge writes through to the backend in Live mode (with the chosen
+  // root cause) and refetches the real list; falls back to the local mock
+  // store in Demo.
   const onAck = async (id: string, problemId?: string) => {
-    if (live) { await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId }) }
+    if (live) { await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId }); refetchAlarms(); return }
     acknowledgeAlarm(id, 'admin')
   }
 

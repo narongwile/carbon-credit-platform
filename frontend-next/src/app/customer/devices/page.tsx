@@ -3,23 +3,27 @@
 import Link from 'next/link'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
-import { viewerDomains, getViewerUser } from '@/lib/viewer'
+import { useSessionOrgId } from '@/lib/auth'
+import { viewerDomains } from '@/lib/viewer'
 import { Activity, Wifi, WifiOff, ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 
 export default function CustomerDevicesPage() {
+  // The real session's org, not the demo "acting viewer" picker's mock user
+  // (which defaults to a persona id a real login never sets).
+  const orgId = useSessionOrgId()
   const { viewerUserId } = useAppStore()
-  // Viewer only sees devices for products their department(s) can access.
-  const allowed = viewerDomains(viewerUserId)
-  const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
-  
+
   // Roster from the backend when live (so an auto-registered device shows up
-  // and a seed-only device does not), filtered to the products this viewer's
-  // department may access.
-  const { devices: roster } = useManagedDevices(orgId)
-  const devices = roster.filter((d) => !d.domain || allowed.includes(d.domain))
+  // and a seed-only device does not). GET /api/fleet already scopes this to
+  // the products the SIGNED-IN viewer's department(s) may access — only the
+  // demo/offline fallback (unscoped seed devices) still needs the mock
+  // viewerDomains() filter on top.
+  const { devices: roster, fromBackend } = useManagedDevices(orgId)
+  const allowed = viewerDomains(viewerUserId)
+  const devices = fromBackend ? roster : roster.filter((d) => !d.domain || allowed.includes(d.domain))
 
   return (
     <div className="p-6 space-y-5">

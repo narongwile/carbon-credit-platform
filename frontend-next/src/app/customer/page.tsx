@@ -3,7 +3,10 @@
 import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
-import { viewerDomains, getViewerUser } from '@/lib/viewer'
+import { useOrgAlarms } from '@/lib/useOrgAlarms'
+import { useSessionOrgId } from '@/lib/auth'
+import { useIsLive } from '@/lib/api'
+import { viewerDomains } from '@/lib/viewer'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight } from 'lucide-react'
 
@@ -18,21 +21,41 @@ function metric(h: SensorHost): string {
 }
 
 export default function CustomerPage() {
-  const { viewerUserId, alarms } = useAppStore()
+  const live = useIsLive()
+  // The real session's org — getViewerUser(viewerUserId)?.orgId used to
+  // resolve this, but viewerUserId is the customer portal's DEMO "acting
+  // viewer" picker (defaults to a persona id a real login never sets), so it
+  // silently fell back to the 'org-1' literal for every real viewer whose
+  // org was not org-1.
+  const orgId = useSessionOrgId()
+  const { viewerUserId } = useAppStore()
+
+  // Roster and status both from /api/fleet in Live mode. The backend already
+  // scopes this to the products the SIGNED-IN viewer's department(s) may
+  // access (accessFor(), the same rule fleetListFunc's own visibility filter
+  // uses) — re-filtering by the mock viewerDomains() on top of a real,
+  // already-scoped list only ever narrowed it to nothing, since that helper
+  // never recognizes a real user id. Only the demo/offline fallback (the
+  // seed hosts, unscoped) still needs it.
+  const { hosts, fromBackend } = useFleetHosts(orgId)
   const allowed = viewerDomains(viewerUserId)
-  const orgId = getViewerUser(viewerUserId)?.orgId || 'org-1'
-  
-  // Roster and status both from /api/fleet in Live mode, narrowed to the
-  // products this viewer's department may access.
-  const { hosts } = useFleetHosts(orgId)
-  const devices = hosts.filter((h) => allowed.includes(h.domain))
+  const devices = fromBackend ? hosts : hosts.filter((h) => allowed.includes(h.domain))
 
   const normal = devices.filter((d) => d.status === 'NORMAL').length
   const warning = devices.filter((d) => d.status === 'WARNING').length
   const critical = devices.filter((d) => d.status === 'CRITICAL' || d.status === 'OFFLINE').length
 
-  // all notification alarms for the current org
-  const orgAlarms = alarms.filter((a) => a.orgId === orgId)
+  // Real, open alarms for this org (department/domain-scoped server-side) —
+  // useAppStore().alarms is seeded once from mockData.ts and never refreshed,
+  // so it never showed a real alarm regardless of mode.
+  const { alarms: liveAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 20000 })
+  const { alarms: mockAlarms } = useAppStore()
+  const orgAlarms = live
+    ? liveAlarms.map((a) => ({
+        id: a.id, message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
+        transformerName: a.nodeName, timestamp: a.raisedAt, acknowledged: !!a.acknowledgedAt, severity: a.severity,
+      }))
+    : mockAlarms.filter((a) => a.orgId === orgId)
 
   return (
     <div className="p-6 space-y-6">

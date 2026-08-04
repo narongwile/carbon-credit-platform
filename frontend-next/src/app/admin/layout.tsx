@@ -10,7 +10,8 @@ import AppShell, { NavSection, type NavEntry } from '@/components/nav/AppShell'
 import { useRealtimeData } from '@/lib/realtime'
 import { isEntitled, type Entitlement } from '@/lib/entitlements'
 import { organizations } from '@/lib/mockData'
-import api, { isLive } from '@/lib/api'
+import { useOrgAlarms } from '@/lib/useOrgAlarms'
+import api, { isLive, useIsLive } from '@/lib/api'
 import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
@@ -69,9 +70,15 @@ function RealtimeProvider({ children }: { children: React.ReactNode }) {
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
+  const live = useIsLive()
   const { alarms, selectedOrgId, setSelectedOrgId, setOrgLogo, isLiveMode, toggleLiveMode } = useAppStore()
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
   const [pendingCount, setPendingCount] = useState(0)
+  // Real org list for the tenant switcher — the seed `organizations` array is
+  // the demo/offline fallback. A superadmin could previously only ever switch
+  // to org-1/2/3: the dropdown listed the mock array directly and the one
+  // live fetch that existed (below) only used its result to hydrate logos.
+  const [orgList, setOrgList] = useState<{ id: string; name: string }[]>(organizations)
   // useSessionRole (not getSession() in the body): the direct read is null in
   // the exported HTML and the real role on the client's first paint, and this
   // branches JSX below — a guaranteed hydration mismatch.
@@ -94,11 +101,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     if (orgId && orgId !== selectedOrgId) setSelectedOrgId(orgId)
   }, [isSuper, selectedOrgId, setSelectedOrgId])
 
-  // Hydrate per-company logos from the backend (set in admin Settings).
+  // Real org list (tenant switcher) + hydrate per-company logos, from the
+  // same fetch — one request instead of two, and the switcher and the logos
+  // can never show a different set of organizations than each other.
   useEffect(() => {
     if (!isLive()) return
     api.orgs().then((rows) => {
       if (!rows) return
+      setOrgList(rows.map((o) => ({ id: o.id, name: o.name })))
       for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
     })
   }, [setOrgLogo])
@@ -117,8 +127,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return () => clearInterval(t)
   }, [selectedOrgId])
 
-  const unackedAlarms = alarms.filter((a) => !a.acknowledged && a.orgId === selectedOrgId)
-  const criticalCount = unackedAlarms.filter((a) => a.severity === 'CRITICAL').length
+  // Real open alarms for the selected org — useAppStore().alarms is seeded
+  // once from mockData.ts at store creation and never refreshed from
+  // anywhere, so this badge never reflected a real alarm regardless of mode.
+  const { alarms: liveOpenAlarms } = useOrgAlarms(selectedOrgId, { open: true, pollMs: 15000 })
+  const mockUnacked = alarms.filter((a) => !a.acknowledged && a.orgId === selectedOrgId)
+  const criticalCount = live
+    ? liveOpenAlarms.filter((a) => a.severity === 'CRITICAL').length
+    : mockUnacked.filter((a) => a.severity === 'CRITICAL').length
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href
@@ -175,7 +191,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 className={clsx('w-full mt-2 rounded-lg px-2 py-1.5 text-[11px] text-slate-300 outline-none focus:ring-2 focus:ring-indigo-500', collapsed && 'lg:hidden')}
                 style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
               >
-                {organizations.map((o) => (
+                {orgList.map((o) => (
                   <option key={o.id} value={o.id}>{o.name}</option>
                 ))}
               </select>

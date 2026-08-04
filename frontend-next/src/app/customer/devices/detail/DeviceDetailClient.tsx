@@ -21,6 +21,9 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useManagedDevice } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
+import { useSessionOrgId } from '@/lib/auth'
+import { useIsLive } from '@/lib/api'
+import { useMyAccess, levelOf } from '@/lib/useMyAccess'
 import { viewerCanManage, viewerCanAccess, getViewerUser } from '@/lib/viewer'
 import FixDashboard from '@/components/device/FixDashboard'
 import FreestyleDashboard from '@/components/device/FreestyleDashboard'
@@ -40,17 +43,32 @@ const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
 export default function DeviceDetailClient() {
   const id = useSearchParams().get('id') ?? ''
-  // Viewer -> department -> product access
+  const live = useIsLive()
+  // The real session's org — getViewerUser(viewerUserId)?.orgId used to
+  // resolve this, but viewerUserId is the customer portal's DEMO "acting
+  // viewer" picker (defaults to a persona id a real login never sets), so
+  // this silently fell back to the 'org-1' literal for every real viewer
+  // whose org was not org-1.
+  const orgId = useSessionOrgId()
   const viewerUserId = useAppStore((s) => s.viewerUserId)
   const me = getViewerUser(viewerUserId)
-  const orgId = me?.orgId || 'org-1'
   // Was `find(...) ?? managedDevices[0]`: opening a device id this viewer's org
   // does not have showed the FIRST seed device's name and location instead of
   // saying it does not exist.
   const { device, loaded, found } = useManagedDevice(orgId, id)
   const domain = device?.domain
-  const canManage = !domain || viewerCanManage(viewerUserId, domain)
-  const canView = !domain || viewerCanAccess(viewerUserId, domain)
+  // GET /api/fleet (behind useManagedDevice) already scopes which devices the
+  // SIGNED-IN viewer can see — reaching this point with a device at all means
+  // access is already real. The mock viewerCanAccess() (keyed on
+  // viewerUserId, a demo persona id no real login ever sets) evaluated to
+  // "no access" for every real viewer, so this page showed "access denied"
+  // for every device, every real viewer, regardless of their actual
+  // department. levelOf(myAccess, domain) supplies the view/manage
+  // DISTINCTION real access doesn't expose any other way, defaulting to the
+  // safer 'none' while it is still loading.
+  const myAccess = useMyAccess()
+  const canView = !domain || live || viewerCanAccess(viewerUserId, domain)
+  const canManage = !domain || (live ? levelOf(myAccess, domain) === 'manage' : viewerCanManage(viewerUserId, domain))
   // The device arrives asynchronously, so the theme cannot seed useState.
   // null = "follow the device's configured theme"; a value = user preview.
   const [viewOverride, setViewOverride] = useState<'fix' | 'freestyle' | null>(null)
