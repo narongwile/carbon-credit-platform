@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
-import { api } from '@/lib/api'
+import { api, isLive } from '@/lib/api'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { getDepartmentsByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
-import { managedDevicesFromFleet } from '@/lib/fleetData'
 import type { ReportSchedule, ReportSequence } from '@/types/org'
 import { FileBarChart, Download, Clock, CheckCircle, CalendarClock, Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
 import clsx from 'clsx'
@@ -26,8 +26,20 @@ const SEQUENCES: ReportSequence[] = ['daily', 'weekly', 'monthly']
 export default function ReportsPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
-  const departments = getDepartmentsByOrg(orgId)
-  const devices = managedDevicesFromFleet(orgId)
+  // Real departments (matches Pending Devices' load() pattern), mock as the
+  // demo/offline fallback.
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>(() => getDepartmentsByOrg(orgId))
+  useEffect(() => {
+    if (!isLive()) { setDepartments(getDepartmentsByOrg(orgId)); return }
+    let cancelled = false
+    api.departments(orgId).then((r) => { if (!cancelled && r) setDepartments(r as { id: string; name: string }[]) })
+    return () => { cancelled = true }
+  }, [orgId])
+  // Real fleet — CSV/PDF exports and the "per device" schedule scope picker
+  // used to build from managedDevicesFromFleet (the demo seed) unconditionally,
+  // in Live mode or not, so a downloaded "Health Status Report" for a real org
+  // contained the wrong (demo) devices, not its own fleet.
+  const { devices } = useManagedDevices(orgId)
 
   const [selected, setSelected] = useState<string[]>([])
   const [format, setFormat] = useState<'PDF' | 'XLSX' | 'CSV'>('PDF')

@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
-import { defaultNotificationChannels, eventProblems, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
-import { managedDevicesFromFleet, getHostsByOrg } from '@/lib/fleetData'
-import { licensedDomains } from '@/lib/entitlements'
+import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDept, eventProblems as mockEventProblems } from '@/lib/orgData'
+import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
+import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import { useAlarmDB } from '@/server/alarmStore'
-import { api } from '@/lib/api'
+import { api, isLive, useIsLive } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig, EventProblem } from '@/types/org'
@@ -28,15 +28,34 @@ const channelIcon = {
 } as const
 
 export default function AlarmNotificationPage() {
+  const live = useIsLive()
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
-  const devices = managedDevicesFromFleet(orgId)
+  // Real fleet — the "Apply to device" picker AND applyRuleToOrg's actual
+  // targets used to both come from the mock seed (managedDevicesFromFleet /
+  // getHostsByOrg) unconditionally, so "Applied to N node(s) across your
+  // org" silently wrote a rule onto demo devices instead of the real fleet.
+  const { devices } = useManagedDevices(orgId)
+  const { hosts } = useFleetHosts(orgId)
 
-  const orgDomains = licensedDomains(orgId)
-  const [product, setProduct] = useState<SensorDomain>(orgDomains[0] ?? 'transformer')
+  // Real entitlements — which product tabs to offer at all. licensedDomains()
+  // only knows the 3 seed orgs (mockData.ts), so a real org either showed the
+  // wrong tabs or none.
+  const [orgDomains, setOrgDomains] = useState<SensorDomain[]>(['transformer', 'carbonNode', 'bloodBox'])
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.entitlements(orgId).then((ents) => {
+      if (cancelled || !ents) return
+      setOrgDomains((['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
+    })
+    return () => { cancelled = true }
+  }, [orgId])
+  const [product, setProduct] = useState<SensorDomain>('transformer')
+  useEffect(() => { if (orgDomains.length && !orgDomains.includes(product)) setProduct(orgDomains[0]) }, [orgDomains, product])
   const setRuleDB = useAlarmDB((s) => s.setRule)
   const applyRuleToOrg = (rule: NodeAlarmRule) => {
-    const targets = getHostsByOrg(orgId).filter((h) => h.domain === product)
+    const targets = hosts.filter((h) => h.domain === product)
     targets.forEach((h) => setRuleDB(h.id, rule, orgId))
     void api.putOrgRule(orgId, { rule })
     toast.success(`Applied to ${targets.length} ${DOMAIN_META[product].platform} node(s) across your org`)
@@ -62,20 +81,63 @@ export default function AlarmNotificationPage() {
     return () => { cancelled = true }
   }, [orgId])
 
-  // Create Event in each department (per-department eventProblem catalog)
-  const orgDepts = getDepartmentsByOrg(orgId)
-  const [deptId, setDeptId] = useState(orgDepts[0]?.id ?? '')
+  // Real departments (matches Pending Devices' load() pattern), mock as the
+  // demo/offline fallback.
+  const [orgDepts, setOrgDepts] = useState<{ id: string; name: string }[]>(() => getDepartmentsByOrg(orgId))
+  useEffect(() => {
+    if (!isLive()) { setOrgDepts(getDepartmentsByOrg(orgId)); return }
+    let cancelled = false
+    api.departments(orgId).then((r) => { if (!cancelled && r) setOrgDepts(r as { id: string; name: string }[]) })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  // Create Event in each department (per-department eventProblem catalog).
+  // This used to be local React state only — Add/Remove never called
+  // api.saveEventProblem/deleteEventProblem (both already exist and are
+  // exactly what the Event Catalog tab on User Management uses for the same
+  // table), so every "Event added to department" toast was a lie: nothing
+  // survived a reload, and it duplicated a feature that already works.
+  const [deptId, setDeptId] = useState('')
+  useEffect(() => { if (orgDepts.length && !orgDepts.some((d) => d.id === deptId)) setDeptId(orgDepts[0]?.id ?? '') }, [orgDepts, deptId])
   const [deptEvents, setDeptEvents] = useState<Record<string, EventProblem[]>>(
-    () => Object.fromEntries(orgDepts.map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
+    () => Object.fromEntries(getDepartmentsByOrg(orgId).map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
   )
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.eventProblems(orgId).then((rows) => {
+      if (cancelled || !rows) return
+      const grouped: Record<string, EventProblem[]> = {}
+      for (const r of rows) {
+        if (!r.department_id) continue
+        ;(grouped[r.department_id] ??= []).push({ id: r.id, label: r.label, departmentId: r.department_id })
+      }
+      setDeptEvents(grouped)
+    })
+    return () => { cancelled = true }
+  }, [orgId])
   const [newEvent, setNewEvent] = useState('')
   const deptList = deptEvents[deptId] ?? []
-  const addDeptEvent = () => {
-    if (!newEvent.trim()) return
-    setDeptEvents((c) => ({ ...c, [deptId]: [...(c[deptId] ?? []), { id: `ev-${deptId}-${Date.now()}`, label: newEvent.trim(), departmentId: deptId }] }))
+  // Event Selection & Edit (below) reuses the same real, per-department fetch
+  // — flattened — instead of the separate hardcoded mock list it read before.
+  const eventProblems = live ? Object.values(deptEvents).flat() : mockEventProblems
+  const addDeptEvent = async () => {
+    if (!newEvent.trim() || !deptId) return
+    const label = newEvent.trim()
+    if (isLive()) {
+      const r = await api.saveEventProblem({ orgId, departmentId: deptId, label })
+      if (!r?.id) { toast.error('Could not add the event'); return }
+      setDeptEvents((c) => ({ ...c, [deptId]: [...(c[deptId] ?? []), { id: r.id, label, departmentId: deptId }] }))
+    } else {
+      setDeptEvents((c) => ({ ...c, [deptId]: [...(c[deptId] ?? []), { id: `ev-${deptId}-${Date.now()}`, label, departmentId: deptId }] }))
+    }
     setNewEvent(''); toast.success('Event added to department')
   }
-  const removeDeptEvent = (id: string) => { setDeptEvents((c) => ({ ...c, [deptId]: (c[deptId] ?? []).filter((e) => e.id !== id) })); toast.success('Event removed') }
+  const removeDeptEvent = (id: string) => {
+    setDeptEvents((c) => ({ ...c, [deptId]: (c[deptId] ?? []).filter((e) => e.id !== id) }))
+    if (isLive()) api.deleteEventProblem(id)
+    toast.success('Event removed')
+  }
 
   const toggleChannel = (id: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
   const setTarget = (id: string, target: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, target } : x)))
