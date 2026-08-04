@@ -160,7 +160,7 @@ function useLiveTransformer(base: Transformer | undefined) {
     } as Transformer
   }, [base, live, values, series, online, lastReadingAt])
 
-  return { transformer, live, online, lastReadingAt, values }
+  return { transformer, live, online, lastReadingAt, values, series }
 }
 
 function LiveTime() {
@@ -233,15 +233,19 @@ function SensorCard({ label, icon, sensor, onOpen }: { label: string; icon: Reac
   const sc = statusConfig[sensor.status]
   const recentHistory = sensor.history.slice(-12)
 
-  // Mini sparkline points
+  // Mini sparkline points. A param with 0 or 1 stored points draws nothing
+  // rather than NaN coordinates: every reported key now gets a card, and an
+  // extra the device has only just started sending has no history yet.
   const max = Math.max(...recentHistory.map((p) => p.value))
   const min = Math.min(...recentHistory.map((p) => p.value))
   const range = max - min || 1
   const w = 100
   const h = 24
-  const points = recentHistory
-    .map((p, i) => `${(i / (recentHistory.length - 1)) * w},${h - ((p.value - min) / range) * h}`)
-    .join(' ')
+  const points = recentHistory.length > 1
+    ? recentHistory
+        .map((p, i) => `${(i / (recentHistory.length - 1)) * w},${h - ((p.value - min) / range) * h}`)
+        .join(' ')
+    : ''
 
   return (
     // A button so the whole card is one keyboard-reachable target — the history
@@ -497,7 +501,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
     return host ? makeTransformer(host as TransformerHost) : undefined
   }, [transformers, hosts, id])
-  const { transformer, live, online, lastReadingAt, values } = useLiveTransformer(base)
+  const { transformer, live, online, lastReadingAt, values, series } = useLiveTransformer(base)
   const [openParam, setOpenParam] = useState<string | null>(null)
   const [showKeys, setShowKeys] = useState<string[] | null>(null)
   const [picking, setPicking] = useState(false)
@@ -526,6 +530,79 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     return () => { cancelled = true }
   }, [orgId, id, live])
 
+  /** Admin's parameter selection; empty = unconfigured = show everything. */
+  const isShown = useMemo(() => (k: string) => !showKeys?.length || showKeys.includes(k), [showKeys])
+  // ── Sensor cards, built from what the device ACTUALLY reports ────────────
+  // This panel used to be six fixed cards (the ALARM_SCHEMA slots) plus a
+  // cramped one-line list for everything else. On a real transformer that is
+  // backwards: a merged two-topic asset reports around forty values and the
+  // six schema slots are simply the ones this platform happens to have names
+  // and thresholds for — not the ones that matter most on that unit. Worse,
+  // a schema slot the device does NOT report still drew a card, showing the
+  // seed value as if it were live.
+  //
+  // Every reported key now gets the same full card. Schema params keep their
+  // thresholds, status colour and unit and come first (they are the ones with
+  // alarm meaning); everything else follows alphabetically with a plain
+  // NORMAL card. Demo mode, which has no `values`, keeps the six seeded
+  // sensors so the page still demonstrates without a backend.
+  const schemaByKey = useMemo(
+    () => Object.fromEntries(ALARM_SCHEMA.transformer.params.map((p) => [p.key, p])),
+    [],
+  )
+  const cardIcon = (k: string) => {
+    if (k.toLowerCase().includes('temp')) return <Thermometer size={13} />
+    if (k === 'hydrogen' || k.startsWith('H2')) return <Activity size={13} />
+    if (k.toLowerCase().includes('moist') || k.toLowerCase().startsWith('rh')) return <Droplets size={13} />
+    if (k === 'oilLevel') return <Gauge size={13} />
+    if (k === 'load' || k.toLowerCase().includes('volt') || k.toLowerCase().includes('curr') || k.toLowerCase().includes('power')) return <Zap size={13} />
+    return <Activity size={13} />
+  }
+  const cards = useMemo(() => {
+    const out: { key: string; label: string; icon: React.ReactNode; reading: SensorReading }[] = []
+    // Runs above the not-found guard (hooks cannot be conditional), so the
+    // device may not be resolved yet on the first passes.
+    if (!transformer) return out
+    if (live && values && Object.keys(values).length) {
+      const keys = Object.keys(values)
+      const ordered = [
+        ...ALARM_SCHEMA.transformer.params.map((p) => p.key).filter((k) => keys.includes(k)),
+        ...keys.filter((k) => !schemaByKey[k]).sort((a, b) => a.localeCompare(b)),
+      ]
+      for (const k of ordered) {
+        if (!isShown(k)) continue
+        const v = values[k]
+        const p = schemaByKey[k]
+        const hist = series[k] ?? []
+        const prev = hist.length > 1 ? hist[hist.length - 2].value : v
+        out.push({
+          key: k,
+          label: paramLabel(k),
+          icon: cardIcon(k),
+          reading: {
+            value: v,
+            unit: p?.unit ?? '',
+            min: 0,
+            max: (p?.critical ?? Math.abs(v) * 1.5) || 100,
+            status: p ? paramStatus(v, p) : 'NORMAL',
+            threshold: { warning: p?.warn ?? 0, critical: p?.critical ?? 0 },
+            trend: Math.abs(v - prev) < 1e-6 ? 'stable' : v > prev ? 'up' : 'down',
+            delta: v - prev,
+            history: hist,
+          },
+        })
+      }
+      return out
+    }
+    // Demo / device has reported nothing yet: the seeded six.
+    for (const [field, key] of Object.entries(LIVE_PARAM) as [keyof SensorData, string][]) {
+      if (!isShown(key)) continue
+      out.push({ key, label: paramLabel(key), icon: cardIcon(key), reading: transformer.sensors[field] })
+    }
+    return out
+  }, [live, values, series, schemaByKey, isShown, paramLabel, transformer])
+
+
   if (!transformer) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -539,7 +616,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // Keys already shown as one of the six named cards above.
   const CANONICAL = new Set(Object.values(LIVE_PARAM))
   /** No selection saved = not configured = show everything, never nothing. */
-  const shown = (k: string) => !showKeys?.length || showKeys.includes(k)
+  const shown = isShown
   const extras = Object.entries(values ?? {})
     .filter(([k]) => !CANONICAL.has(k))
     .filter(([k]) => shown(k))
@@ -548,13 +625,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // Everything on screen is switchable inside the history modal — including the
   // extras, whose keys are not in ALARM_SCHEMA. Listing only the schema params
   // left an extra opening under the wrong heading.
-  const modalParams: ModalParam[] = [
-    ...ALARM_SCHEMA.transformer.params.filter((p) => shown(p.key)).map((p) => ({ key: p.key, label: paramLabel(p.key), unit: p.unit })),
-    // An unrecognised key has no built-in name, so it falls back to the key
-    // itself — unless an admin has given it one, which is exactly the case
-    // custom names exist for.
-    ...extras.map(([k]) => ({ key: k, label: paramLabel(k) })),
-  ]
+  // Exactly the cards on screen, so the modal's switcher and the panel can
+  // never disagree about which parameters this device has. An unrecognised key
+  // has no built-in name and falls back to the key itself — unless an admin
+  // has given it one, which is what custom names exist for.
+  const modalParams: ModalParam[] = cards.map((c) => ({ key: c.key, label: c.label, unit: c.reading.unit || undefined }))
   // The picker offers the six named slots plus whatever else this device has
   // actually reported, so an unconfigured org sees the same list it now shows.
   const available = [
@@ -562,7 +637,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     ...Object.keys(values ?? {}).filter((k) => !CANONICAL.has(k)).sort((a, b) => a.localeCompare(b)),
   ]
 
-  const s = transformer.sensors
   const statusColors = {
     NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.1)', border: 'rgba(74,222,128,0.2)' },
     WARNING: { color: '#fbbf24', bg: 'rgba(251,191,36,0.1)', border: 'rgba(251,191,36,0.2)' },
@@ -617,35 +691,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               </button>
             )}
           </div>
-          {shown('oilTemp') && <SensorCard label={paramLabel('oilTemp')} icon={<Thermometer size={13} />} sensor={s.oilTemperature} onOpen={() => setOpenParam('oilTemp')} />}
-          {shown('hydrogen') && <SensorCard label={paramLabel('hydrogen')} icon={<Activity size={13} />} sensor={s.hydrogen} onOpen={() => setOpenParam('hydrogen')} />}
-          {shown('moisture') && <SensorCard label={paramLabel('moisture')} icon={<Droplets size={13} />} sensor={s.moisture} onOpen={() => setOpenParam('moisture')} />}
-          {shown('oilLevel') && <SensorCard label={paramLabel('oilLevel')} icon={<Gauge size={13} />} sensor={s.oilLevel} onOpen={() => setOpenParam('oilLevel')} />}
-          {shown('load') && <SensorCard label={paramLabel('load')} icon={<Zap size={13} />} sensor={s.load} onOpen={() => setOpenParam('load')} />}
-          {shown('ambientTemp') && <SensorCard label={paramLabel('ambientTemp')} icon={<Wind size={13} />} sensor={s.ambientTemperature} onOpen={() => setOpenParam('ambientTemp')} />}
-
-          {/* Everything else the device reports. This page used to iterate a
-              fixed list of six keys, so a two-topic transformer — an electrical
-              meter merged with a box sensor, around forty values — showed six of
-              them and silently dropped the rest. Honours the admin's selection
-              when one exists; otherwise shows all of them. */}
-          {extras.length > 0 && (
-            <>
-              <div className="text-[10px] text-slate-600 uppercase tracking-wider pt-3 mb-1">
-                Other parameters <span className="text-slate-700">({extras.length})</span>
-              </div>
-              {extras.map(([k, v]) => (
-                <button key={k} onClick={() => setOpenParam(k)}
-                  className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left group"
-                  style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[10px] text-slate-400 truncate group-hover:text-indigo-400">{paramLabel(k)}</span>
-                    {paramLabel(k) !== k && <span className="block text-[9px] text-slate-600 font-mono truncate">{k}</span>}
-                  </span>
-                  <span className="text-[11px] text-slate-200 font-semibold ml-2 flex-shrink-0">{Number(v.toFixed(3))}</span>
-                </button>
-              ))}
-            </>
+          {/* One card per parameter the device actually reports — schema slots
+              (with thresholds and status colour) first, then everything else.
+              No fixed six, and nothing drawn for a slot this unit never
+              sends. */}
+          {cards.map((c) => (
+            <SensorCard key={c.key} label={c.label} icon={c.icon} sensor={c.reading} onOpen={() => setOpenParam(c.key)} />
+          ))}
+          {cards.length === 0 && (
+            <p className="text-[11px] text-slate-600 py-4">
+              {live ? 'This device has not reported any readings yet.' : 'No parameters selected for display.'}
+            </p>
           )}
         </div>
 

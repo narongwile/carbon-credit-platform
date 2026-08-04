@@ -42,7 +42,7 @@ export default function DeviceManagementPage() {
 
   const deptName = (id: string) => depts.find((d) => d.id === id)?.name ?? id
 
-  const save = async (d: ManagedDevice, patch: { name: string; departmentId: string | null }) => {
+  const save = async (d: ManagedDevice, patch: { name: string; departmentId: string | null; visibleTo: string[] | null }) => {
     const next: ManagedDevice = { ...d, name: patch.name, departmentIds: patch.departmentId ? [patch.departmentId] : [] }
     if (!isLive() || !fromBackend) {
       toast.success(`Saved ${patch.name} (demo)`)
@@ -50,14 +50,19 @@ export default function DeviceManagementPage() {
       setEditing(null)
       return
     }
-    const res = await api.updateNodeProfile(d.id, patch)
-    if (res?.ok) {
-      toast.success(`Saved ${patch.name}`)
-      setOverride((o) => ({ ...o, [d.id]: next }))
-      setEditing(null)
-    } else {
-      toast.error('Save failed')
-    }
+    // Two writes: the profile (name + owning department) and the visibility
+    // grants. visibleTo is null only while the modal was still loading them,
+    // in which case there is nothing to write — never send an empty set that
+    // was never read, which would silently clear the device's grants.
+    const [prof, grants] = await Promise.all([
+      api.updateNodeProfile(d.id, { name: patch.name, departmentId: patch.departmentId }),
+      patch.visibleTo === null ? Promise.resolve({ ok: true }) : api.setNodeDepartments(d.id, patch.visibleTo),
+    ])
+    if (!prof?.ok) { toast.error('Save failed'); return }
+    if (!grants?.ok) { toast.error('Device saved, but its department access was not'); return }
+    toast.success(`Saved ${patch.name}`)
+    setOverride((o) => ({ ...o, [d.id]: next }))
+    setEditing(null)
   }
 
   return (
@@ -135,11 +140,38 @@ function DeviceModal({ device, departments, onClose, onSave }: {
   device: ManagedDevice
   departments: Dept[]
   onClose: () => void
-  onSave: (patch: { name: string; departmentId: string | null }) => void
+  onSave: (patch: { name: string; departmentId: string | null; visibleTo: string[] | null }) => void
 }) {
   const [name, setName] = useState(device.name)
   const [deptId, setDeptId] = useState<string | null>(device.departmentIds[0] ?? null)
-  const dirty = name.trim() !== device.name || deptId !== (device.departmentIds[0] ?? null)
+  // Which departments may SEE this device (node_departments, migrate-v35) —
+  // a SET, and a different question from the owning department above (which
+  // is where its alarms are routed). null while the grants are still loading,
+  // so an unsaved modal can never write an empty set it never read.
+  const [visibleTo, setVisibleTo] = useState<string[] | null>(null)
+  const [loadedGrants, setLoadedGrants] = useState<string[] | null>(null)
+  useEffect(() => {
+    if (!isLive()) { setVisibleTo([]); setLoadedGrants([]); return }
+    let cancelled = false
+    api.nodeDepartments(device.id).then((r) => {
+      if (cancelled || !r) return
+      // `effective` is what the rule applies today (grants, or the owning
+      // department when there are none) — pre-selecting it means the admin
+      // edits the real current state instead of an empty list that would read
+      // as "nobody sees this".
+      setVisibleTo(r.effective ?? [])
+      setLoadedGrants(r.effective ?? [])
+    })
+    return () => { cancelled = true }
+  }, [device.id])
+
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
+  const dirty = name.trim() !== device.name
+    || deptId !== (device.departmentIds[0] ?? null)
+    || (visibleTo !== null && loadedGrants !== null && !sameSet(visibleTo, loadedGrants))
+
+  const toggleVisible = (id: string) =>
+    setVisibleTo((v) => (v === null ? v : v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
 
   const domainMeta = device.domain ? DOMAIN_META[device.domain] : null
 
@@ -173,7 +205,8 @@ function DeviceModal({ device, departments, onClose, onSave }: {
             <p className="text-[11px] text-slate-600 mt-1">Set once, from the device&apos;s telemetry topic, when it was approved in Pending Devices — not editable here.</p>
           </div>
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Department</label>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Owning department</label>
+            <p className="text-[11px] text-slate-600 mb-1.5">Whose device this is — where its alarms are routed.</p>
             <div className="flex flex-wrap gap-2">
               <button onClick={() => setDeptId(null)}
                 className={clsx('px-3 py-1.5 rounded-lg text-xs transition-all', deptId === null ? 'text-white' : 'text-slate-400')}
@@ -189,6 +222,37 @@ function DeviceModal({ device, departments, onClose, onSave }: {
               ))}
             </div>
           </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Visible to departments</label>
+            <p className="text-[11px] text-slate-600 mb-1.5">
+              Who may open this device at all. Independent of the owner above — grant it to several teams (an internal
+              one and the customer, say) and every one of them sees it. Leave every department off and it falls back to
+              the owning department, or to the whole organization if it has none — it is never hidden from everybody.
+            </p>
+            {visibleTo === null ? (
+              <p className="text-[11px] text-slate-600">Loading…</p>
+            ) : departments.length === 0 ? (
+              <p className="text-[11px] text-slate-600">This organization has no departments yet.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {departments.map((d) => {
+                  const on = visibleTo.includes(d.id)
+                  return (
+                    <button key={d.id} onClick={() => toggleVisible(d.id)}
+                      className={clsx('px-3 py-1.5 rounded-lg text-xs transition-all', on ? 'text-white' : 'text-slate-400')}
+                      style={on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : inset}>
+                      {on ? '✓ ' : ''}{d.name}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {visibleTo !== null && visibleTo.length === 0 && (
+              <p className="text-[11px] text-amber-400 mt-1.5">
+                Nothing granted — falls back to {deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'the owning department') : 'everyone in this organization'}.
+              </p>
+            )}
+          </div>
           <div className="p-3 rounded-lg text-xs text-slate-500 flex items-start gap-2" style={inset}>
             <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ color: device.theme === 'fix' ? '#22c55e' : '#a78bfa', background: device.theme === 'fix' ? 'rgba(34,197,94,0.12)' : 'rgba(167,139,250,0.12)' }}>
               {device.theme === 'fix' ? 'FIX' : 'Free Style'}
@@ -197,7 +261,7 @@ function DeviceModal({ device, departments, onClose, onSave }: {
           </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
-          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId })} disabled={!dirty || !name.trim()}
+          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId, visibleTo })} disabled={!dirty || !name.trim()}
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-40" style={gradient}>
             Save Changes
           </button>

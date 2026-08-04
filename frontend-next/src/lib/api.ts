@@ -318,6 +318,20 @@ export const api = {
    */
   updateNodeProfile: (id: string, body: { name?: string; departmentId?: string | null }) =>
     req<{ ok: boolean; id: string; name?: string; departmentId?: string | null }>(`/api/nodes/${id}/profile`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * Which departments may SEE this device (migrate-v35). Distinct from
+   * updateNodeProfile's departmentId, which is the OWNING department — the
+   * one alarms route to. `granted` is what is stored; `effective` is what the
+   * visibility rule actually applies, falling back to the owner when nothing
+   * has been granted.
+   */
+  nodeDepartments: (id: string) =>
+    req<{ id: string; owner: string | null; granted: string[]; effective: string[]; pending?: string }>(
+      `/api/nodes/${id}/departments`),
+  /** An empty array clears the grants — the device reverts to its owning department, never to nobody. */
+  setNodeDepartments: (id: string, departmentIds: string[]) =>
+    req<{ ok: boolean; id: string; departmentIds: string[]; count: number }>(
+      `/api/nodes/${id}/departments`, { method: 'PUT', body: JSON.stringify({ departmentIds }) }),
 
   // Device photo — the real unit, uploaded by an admin, shown to every role in
   // place of the generic 3D twin.
