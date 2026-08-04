@@ -163,6 +163,20 @@ export const api = {
       + (departmentId !== undefined ? `&departmentId=${encodeURIComponent(departmentId ?? '')}` : '')),
   setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; departmentId?: string | null; paramKeys: string[] }) =>
     req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * Admin-editable display names for MQTT parameter keys (migrate-v34).
+   * `labels` is the resolved map to render from (org-wide default with this
+   * device's overrides on top); `own` is only the rows at the exact scope,
+   * so an editor can tell an inherited name from one this device set itself.
+   * The wire key is never renamed — this only decides what a human sees.
+   */
+  paramLabels: (orgId: string, domain: string, nodeId?: string) =>
+    req<{ domain: string; nodeId: string | null; labels: Record<string, string>; own: Record<string, string>; pending?: string }>(
+      `/api/orgs/${orgId}/param-labels?domain=${encodeURIComponent(domain)}`
+      + (nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : '')),
+  /** Per-key upsert; a blank value deletes that row (reverts to the built-in name). */
+  setParamLabels: (orgId: string, body: { domain: string; nodeId?: string | null; labels: Record<string, string> }) =>
+    req<{ ok: boolean; set: number; cleared: number }>(`/api/orgs/${orgId}/param-labels`, { method: 'PUT', body: JSON.stringify(body) }),
   /** The org's theme entitlement. Superadmin writes it; an admin allocates from it. */
   themeGrants: (orgId: string) => req<{ orgId: string; themeIds: string[] }>(`/api/orgs/${orgId}/theme-grants`),
   setThemeGrants: (orgId: string, themeIds: string[]) =>

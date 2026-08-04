@@ -16,6 +16,7 @@ import NameplateEditor from '@/components/device/NameplateEditor'
 import DeviceImage from '@/components/device/DeviceImage'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
+import { useParamLabels } from '@/lib/useParamLabels'
 import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
 import { useSessionRole } from '@/lib/auth'
 import { api, useIsLive } from '@/lib/api'
@@ -507,6 +508,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // to '—'/0 placeholders because nothing ever wrote them. Overrides those
   // fields additively when a real nameplate has been entered.
   const { data: nameplate, refetch: refetchNameplate } = useNodeNameplate(id)
+  // Admin-renamed parameters (migrate-v34). The six cards below used
+  // hardcoded English strings and the extras list showed the raw wire key,
+  // so a rename made on this very page changed nothing on it.
+  const { labelOf: paramLabel, refetch: refetchParamLabels } = useParamLabels(orgId, 'transformer', id)
   const [editingNameplate, setEditingNameplate] = useState(false)
   // transformer.orgId, not the page-level orgId — a superadmin viewing
   // another org's device needs THAT org's toggle, not their own selected one.
@@ -544,10 +549,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // extras, whose keys are not in ALARM_SCHEMA. Listing only the schema params
   // left an extra opening under the wrong heading.
   const modalParams: ModalParam[] = [
-    ...ALARM_SCHEMA.transformer.params.filter((p) => shown(p.key)).map((p) => ({ key: p.key, label: p.label, unit: p.unit })),
-    // No label to give an unrecognised key but the key itself — inventing a
-    // prettified one would only guess at what the device meant.
-    ...extras.map(([k]) => ({ key: k, label: k })),
+    ...ALARM_SCHEMA.transformer.params.filter((p) => shown(p.key)).map((p) => ({ key: p.key, label: paramLabel(p.key), unit: p.unit })),
+    // An unrecognised key has no built-in name, so it falls back to the key
+    // itself — unless an admin has given it one, which is exactly the case
+    // custom names exist for.
+    ...extras.map(([k]) => ({ key: k, label: paramLabel(k) })),
   ]
   // The picker offers the six named slots plus whatever else this device has
   // actually reported, so an unconfigured org sees the same list it now shows.
@@ -611,12 +617,12 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               </button>
             )}
           </div>
-          {shown('oilTemp') && <SensorCard label="Oil Temperature" icon={<Thermometer size={13} />} sensor={s.oilTemperature} onOpen={() => setOpenParam('oilTemp')} />}
-          {shown('hydrogen') && <SensorCard label="Hydrogen H2" icon={<Activity size={13} />} sensor={s.hydrogen} onOpen={() => setOpenParam('hydrogen')} />}
-          {shown('moisture') && <SensorCard label="Moisture" icon={<Droplets size={13} />} sensor={s.moisture} onOpen={() => setOpenParam('moisture')} />}
-          {shown('oilLevel') && <SensorCard label="Oil Level" icon={<Gauge size={13} />} sensor={s.oilLevel} onOpen={() => setOpenParam('oilLevel')} />}
-          {shown('load') && <SensorCard label="Load" icon={<Zap size={13} />} sensor={s.load} onOpen={() => setOpenParam('load')} />}
-          {shown('ambientTemp') && <SensorCard label="Ambient Temp" icon={<Wind size={13} />} sensor={s.ambientTemperature} onOpen={() => setOpenParam('ambientTemp')} />}
+          {shown('oilTemp') && <SensorCard label={paramLabel('oilTemp')} icon={<Thermometer size={13} />} sensor={s.oilTemperature} onOpen={() => setOpenParam('oilTemp')} />}
+          {shown('hydrogen') && <SensorCard label={paramLabel('hydrogen')} icon={<Activity size={13} />} sensor={s.hydrogen} onOpen={() => setOpenParam('hydrogen')} />}
+          {shown('moisture') && <SensorCard label={paramLabel('moisture')} icon={<Droplets size={13} />} sensor={s.moisture} onOpen={() => setOpenParam('moisture')} />}
+          {shown('oilLevel') && <SensorCard label={paramLabel('oilLevel')} icon={<Gauge size={13} />} sensor={s.oilLevel} onOpen={() => setOpenParam('oilLevel')} />}
+          {shown('load') && <SensorCard label={paramLabel('load')} icon={<Zap size={13} />} sensor={s.load} onOpen={() => setOpenParam('load')} />}
+          {shown('ambientTemp') && <SensorCard label={paramLabel('ambientTemp')} icon={<Wind size={13} />} sensor={s.ambientTemperature} onOpen={() => setOpenParam('ambientTemp')} />}
 
           {/* Everything else the device reports. This page used to iterate a
               fixed list of six keys, so a two-topic transformer — an electrical
@@ -632,7 +638,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 <button key={k} onClick={() => setOpenParam(k)}
                   className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left group"
                   style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-                  <span className="text-[10px] text-slate-500 font-mono truncate group-hover:text-indigo-400">{k}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[10px] text-slate-400 truncate group-hover:text-indigo-400">{paramLabel(k)}</span>
+                    {paramLabel(k) !== k && <span className="block text-[9px] text-slate-600 font-mono truncate">{k}</span>}
+                  </span>
                   <span className="text-[11px] text-slate-200 font-semibold ml-2 flex-shrink-0">{Number(v.toFixed(3))}</span>
                 </button>
               ))}
@@ -777,7 +786,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           nodeId={transformer.id}
           available={available}
           onClose={() => setPicking(false)}
-          onSaved={(keys) => setShowKeys(keys.length ? keys : null)}
+          onSaved={(keys) => { setShowKeys(keys.length ? keys : null); refetchParamLabels() }}
         />
       )}
 

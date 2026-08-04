@@ -30,7 +30,7 @@
 
 import { useEffect, useState } from 'react'
 import { api, isLive } from '@/lib/api'
-import { ALARM_SCHEMA } from '@/lib/alarmParams'
+import { useParamLabels, schemaLabel } from '@/lib/useParamLabels'
 import type { SensorDomain } from '@/types/fleet'
 import type { DisplayParamScope } from '@/lib/api'
 import { X, SlidersHorizontal, Save } from 'lucide-react'
@@ -53,6 +53,12 @@ export default function DisplayParamPicker({
 }) {
   const [selected, setSelected] = useState<string[]>([])
   const [scope, setScope] = useState<DisplayParamScope>('none')
+  // Custom display names. `labels` is what the device currently renders with
+  // (org default + this device's overrides); `draft` is what the inputs hold.
+  // Only keys the admin actually changed are sent, so a save never rewrites a
+  // name they did not touch.
+  const { labels, labelOf, refetch: refetchLabels } = useParamLabels(orgId, domain, nodeId)
+  const [draft, setDraft] = useState<Record<string, string>>({})
   // Off by default, and reset to off on every scope change below: this picker
   // is opened from one device, so Save means that device until the admin says
   // otherwise. Defaulting it ON is what made a per-device edit rewrite the
@@ -91,11 +97,12 @@ export default function DisplayParamPicker({
     return () => { cancelled = true }
   }, [orgId, domain, nodeId, deptId])
 
-  const labelOf = (key: string) =>
-    ALARM_SCHEMA[domain]?.params.find((p) => p.key === key)?.label ?? key
-
   const toggle = (k: string) =>
     setSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]))
+
+  // What the input shows: the admin's unsaved edit, else the name in force.
+  const nameOf = (k: string) => draft[k] ?? labelOf(k)
+  const allSelected = available.length > 0 && available.every((k) => selected.includes(k))
 
   const deviceWord = domain === 'transformer' ? 'transformer' : 'device of this product'
   const deptName = deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'that department') : ''
@@ -109,14 +116,38 @@ export default function DisplayParamPicker({
 
   const save = async () => {
     setBusy(true)
-    const r = await api.setDisplayParams(orgId, {
-      domain, nodeId: applyToAll ? null : nodeId, departmentId: deptId || null, paramKeys: selected,
-    })
+    // Only the names actually edited, and only where they differ from what is
+    // already in force — a save must not turn an inherited name into a copy
+    // owned by this scope just because its input was rendered.
+    const changed: Record<string, string> = {}
+    for (const [k, v] of Object.entries(draft)) {
+      const now = labels[k] ?? ''
+      const next = v.trim()
+      // Typing the built-in name back is a revert, not a custom name worth storing.
+      const normalised = next === schemaLabel(domain, k) ? '' : next
+      if (normalised !== now) changed[k] = normalised
+    }
+    const [dp, pl] = await Promise.all([
+      api.setDisplayParams(orgId, {
+        domain, nodeId: applyToAll ? null : nodeId, departmentId: deptId || null, paramKeys: selected,
+      }),
+      Object.keys(changed).length
+        ? api.setParamLabels(orgId, { domain, nodeId: applyToAll ? null : nodeId, labels: changed })
+        : Promise.resolve({ ok: true, set: 0, cleared: 0 }),
+    ])
     setBusy(false)
-    if (!r) { toast.error('Could not save the parameter selection'); return }
-    toast.success(selected.length
-      ? `${selected.length} parameter${selected.length === 1 ? '' : 's'} · ${target}`
-      : `Cleared — ${target} shows every parameter again`)
+    if (!dp) { toast.error('Could not save the parameter selection'); return }
+    if (!pl) { toast.error('Parameters saved, but the custom names were not'); return }
+    const renamed = Object.keys(changed).length
+    toast.success(
+      (selected.length
+        ? `${selected.length} parameter${selected.length === 1 ? '' : 's'}`
+        : 'Cleared — every parameter shown')
+      + (renamed ? `, ${renamed} renamed` : '')
+      + ` · ${target}`,
+    )
+    setDraft({})
+    refetchLabels()
     onSaved(selected)
     onClose()
   }
@@ -163,19 +194,31 @@ export default function DisplayParamPicker({
           {available.length === 0 && (
             <p className="col-span-2 text-xs text-slate-600">This device has not reported any readings yet.</p>
           )}
+          {/* Each box: tick on the left, the EDITABLE display name next to it,
+              and the device's raw MQTT key pinned right. The key is what the
+              firmware actually sends and is never renamed — it stays visible
+              so an admin can always tell which wire value a name belongs to,
+              which matters most on exactly the keys worth renaming (RHamb,
+              Tbox, THD_VoltCA…). */}
           {available.map((k) => {
             const on = selected.includes(k)
             return (
-              <button key={k} onClick={() => toggle(k)}
-                className="flex items-center gap-2 px-2.5 py-2 rounded-lg text-left transition-all"
+              <div key={k}
+                className="flex items-center gap-2 px-2.5 py-2 rounded-lg transition-all"
                 style={on ? { background: 'rgba(99,102,241,0.15)', border: '1px solid #6366f1' } : inset}>
-                <span className="w-3.5 h-3.5 rounded flex-shrink-0 flex items-center justify-center text-[9px] text-white"
-                  style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>{on ? '✓' : ''}</span>
-                <span className="min-w-0">
-                  <span className={`block text-xs truncate ${on ? 'text-white' : 'text-slate-400'}`}>{labelOf(k)}</span>
-                  {labelOf(k) !== k && <span className="block text-[9px] text-slate-600 font-mono truncate">{k}</span>}
-                </span>
-              </button>
+                <button onClick={() => toggle(k)} aria-label={`${nameOf(k)} — ${on ? 'shown' : 'hidden'}`}
+                  className="w-3.5 h-3.5 rounded flex-shrink-0 flex items-center justify-center text-[9px] text-white"
+                  style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>{on ? '✓' : ''}</button>
+                <input
+                  value={nameOf(k)}
+                  onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+                  placeholder={schemaLabel(domain, k)}
+                  maxLength={120}
+                  title="Display name — edit to rename this parameter on the dashboard"
+                  className={`flex-1 min-w-0 bg-transparent text-xs text-left outline-none focus:underline decoration-indigo-400 ${on ? 'text-white' : 'text-slate-400'}`}
+                />
+                <span className="text-[9px] text-slate-600 font-mono text-right shrink-0 max-w-[45%] truncate" title={`MQTT key: ${k}`}>{k}</span>
+              </div>
             )
           })}
         </div>
@@ -196,10 +239,25 @@ export default function DisplayParamPicker({
               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={gradient}>
               <Save size={15} /> {busy ? 'Saving…' : 'Save'}
             </button>
-            <button onClick={() => setSelected([])} className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>
-              Show all
+            {/* Was a single "Show all" that CLEARED the selection: correct in
+                storage terms (no rows = show everything) but it left every box
+                unticked, so the button looked broken. Ticking all is what it
+                appears to do, so that is what it now does — and "Clear" keeps
+                the genuinely different unconfigured state reachable, which
+                also lets a NEW key the device starts reporting later appear on
+                its own instead of being excluded by a frozen list. */}
+            <button onClick={() => setSelected(allSelected ? [] : [...available])}
+              disabled={!available.length}
+              className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white disabled:opacity-40" style={inset}>
+              {allSelected ? 'Clear' : 'Select all'}
             </button>
           </div>
+          {allSelected && (
+            <p className="text-[11px] text-slate-600">
+              All {available.length} selected. Clearing instead leaves it unconfigured — which also shows everything,
+              including any new parameter this device starts reporting later.
+            </p>
+          )}
         </div>
       </div>
     </div>

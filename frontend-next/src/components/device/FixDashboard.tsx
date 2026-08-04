@@ -12,6 +12,7 @@ import DeviceImage from '@/components/device/DeviceImage'
 import NameplateEditor from '@/components/device/NameplateEditor'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
 import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
+import { useParamLabels } from '@/lib/useParamLabels'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useSessionRole } from '@/lib/auth'
 import type { ManagedDevice } from '@/types/org'
@@ -269,7 +270,17 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     () => (live && values && Object.keys(values).length ? buildLiveTiles(device, values) : null),
     [live, values, device]
   )
-  const allTiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
+  const builtTiles = useMemo(() => liveTiles ?? buildTiles(device), [liveTiles, device])
+  // Admin-renamed parameters (migrate-v34). Applied over the built tiles rather
+  // than inside buildTiles, so every downstream consumer — the tiles, the
+  // history modal's switcher, the chart heading — gets the same name from one
+  // place. The tile KEY is untouched: it is still the wire key everything else
+  // joins on.
+  const { labelOf: paramLabel, refetch: refetchLabels } = useParamLabels(device.orgId, device.domain, device.id)
+  const allTiles = useMemo(
+    () => builtTiles.map((t) => ({ ...t, label: paramLabel(t.key) })),
+    [builtTiles, paramLabel],
+  )
 
   // Admin-chosen subset. Empty = unconfigured = show everything, so an org that
   // has never touched this keeps exactly the dashboard it had.
@@ -512,7 +523,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
           nodeId={device.id}
           available={allTiles.map((t) => t.key)}
           onClose={() => setPicking(false)}
-          onSaved={(keys) => setShowKeys(keys.length ? keys : null)}
+          onSaved={(keys) => { setShowKeys(keys.length ? keys : null); refetchLabels() }}
         />
       )}
 
