@@ -8,7 +8,7 @@ import { ALARM_SCHEMA, LEGACY_WIRE_KEYS, paramStatus } from '@/lib/alarmParams'
 import { fmtHM } from '@/lib/displayTime'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
-import DeviceImage from '@/components/device/DeviceImage'
+import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
 import NameplateEditor from '@/components/device/NameplateEditor'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
 import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
@@ -443,11 +443,12 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
         })}
       </div>
 
-      {/* Center: the device photo (admin-uploaded) + trend. The generic twin is
-          the fallback until someone uploads the real unit — see DeviceImage. */}
+      {/* Center: the device photos (admin-uploaded) + trend. The generic twin
+          is the fallback until someone uploads the real unit — see
+          DevicePhotoGallery. */}
       <div className="lg:col-span-5 space-y-4">
         <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
-          <DeviceImage nodeId={device.id} deviceName={device.name}
+          <DevicePhotoGallery nodeId={device.id} deviceName={device.name}
             fallback={<DeviceTwin device={device} values={live ? values : null} show3d={show3d} />} />
         </div>
         {/* Transformer pair charts — the two the /admin/transformers/detail page

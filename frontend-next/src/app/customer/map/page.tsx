@@ -10,6 +10,8 @@ import { useAppStore } from '@/lib/store'
 import { useSessionOrgId } from '@/lib/auth'
 import { useIsLive } from '@/lib/api'
 import { viewerDomains } from '@/lib/viewer'
+import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
+import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META } from '@/types/fleet'
 import { Map as MapIcon, LayoutGrid, MapPin } from 'lucide-react'
 import clsx from 'clsx'
@@ -34,6 +36,8 @@ export default function CustomerMapPage() {
   const { devices: roster, fromBackend } = useManagedDevices(orgId)
   const devices = fromBackend ? roster : roster.filter((d) => !d.domain || allowed.includes(d.domain))
   const [tab, setTab] = useState<'map' | 'layout'>('map')
+  const covers = useOrgPhotoCovers(orgId)
+  const [previewId, setPreviewId] = useState<string | null>(null)
 
   // deterministic layout positions
   const pos = (i: number) => ({ left: `${14 + ((i * 23) % 72)}%`, top: `${18 + ((i * 37) % 62)}%` })
@@ -55,7 +59,12 @@ export default function CustomerMapPage() {
       </div>
 
       {tab === 'map' ? (
-        <LiveSensorMap nodes={nodes} />
+        <>
+          <LiveSensorMap nodes={nodes} photoCovers={covers} onOpenPhotos={setPreviewId} />
+          {previewId && (
+            <NodePhotoPreview nodeId={previewId} onClose={() => setPreviewId(null)} />
+          )}
+        </>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
           {/* schematic site layout */}

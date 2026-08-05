@@ -6,6 +6,7 @@ import { useSessionRole } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import type { TransformerModel } from '@/lib/useNodeNameplate'
+import PhotoStrip from '@/components/device/PhotoStrip'
 import { PlugZap, Check, X, RefreshCw, Building2, Activity } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -281,6 +282,18 @@ export default function PendingDevicesPage() {
                     ))}
                   </div>
                 )}
+
+                {/* What the thing actually is. Readings say a device is alive;
+                    they do not say whether it is the pole-mount at Gate 3 or a
+                    bench unit someone left powered in the workshop — and the
+                    admin approving it has usually never stood in front of it.
+                    Photos attach to the node id, which approval does not
+                    change, so one added here is already on the device page the
+                    moment it is approved. */}
+                <div className="mb-3">
+                  <PhotoStrip nodeId={n.id} deviceName={f.name} canEdit
+                    emptyHint="No site photo — ask whoever installed it, or approve without one" />
+                </div>
 
                 <div className={`grid grid-cols-1 gap-3 items-end ${isSuper ? 'md:grid-cols-6' : 'md:grid-cols-5'}`}>
                   {isSuper && (

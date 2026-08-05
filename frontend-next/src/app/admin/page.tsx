@@ -6,6 +6,8 @@ import { useAppStore } from '@/lib/store'
 import { getGeoNodes } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useFleetHosts } from '@/lib/useManagedDevices'
+import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
+import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
 import Link from 'next/link'
 import clsx from 'clsx'
@@ -294,6 +296,8 @@ export default function AdminDashboardPage() {
   // only when it does not, so a real device is never missing from the map.
   const liveNodes = useLiveGeoNodes(selectedOrgId || 'org-1')
   const nodes = liveNodes ?? getGeoNodes(selectedOrgId || 'org-1')
+  const covers = useOrgPhotoCovers(selectedOrgId || 'org-1')
+  const [previewId, setPreviewId] = useState<string | null>(null)
 
   return (
     <div className="p-5 space-y-5">
@@ -312,7 +316,14 @@ export default function AdminDashboardPage() {
       </div>
 
       {tab === 'overview' && <OverviewTab />}
-      {tab === 'location' && <LiveSensorMap nodes={nodes} height="62vh" />}
+      {tab === 'location' && (
+        <>
+          <LiveSensorMap nodes={nodes} height="62vh" photoCovers={covers} onOpenPhotos={setPreviewId} />
+          {previewId && (
+            <NodePhotoPreview nodeId={previewId} canEdit onClose={() => setPreviewId(null)} />
+          )}
+        </>
+      )}
       {tab === 'alarm' && <AlarmTab />}
     </div>
   )

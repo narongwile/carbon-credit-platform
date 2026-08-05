@@ -13,7 +13,7 @@ import MyAlertSettings from '@/components/device/MyAlertSettings'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import NameplateEditor from '@/components/device/NameplateEditor'
-import DeviceImage from '@/components/device/DeviceImage'
+import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
 import { useParamLabels } from '@/lib/useParamLabels'
@@ -707,15 +707,16 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
 
         {/* Center - 3D model + charts */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* The device photo (admin-uploaded), same as FixDashboard's twin slot —
-              this page never picked up that fix when node_images shipped
+          {/* The device photos (admin-uploaded), same as FixDashboard's twin
+              slot — this page never picked up that fix when node_images shipped
               (migrate-v27), so a photographed unit still rendered the generic 3D
               model here regardless. The 3D canvas is now the FALLBACK, shown
-              (and labelled "Generic model — not this unit" by DeviceImage
-              itself) only until a photo exists, exactly like the FIX theme. */}
+              (and labelled "Generic model — not this unit" by
+              DevicePhotoGallery itself) only until a photo exists, exactly like
+              the FIX theme. */}
           <div className="flex-1 relative" style={{ minHeight: '320px' }}>
             <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, #0a0e1a 0%, #0d1117 50%, #0a0e1a 100%)' }}>
-              <DeviceImage nodeId={id} deviceName={transformer.name}
+              <DevicePhotoGallery nodeId={id} deviceName={transformer.name}
                 fallback={show3d ? <Transformer3D transformer={transformer} /> : <NoPhotoPlaceholder />} />
             </div>
           </div>

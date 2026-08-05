@@ -6,6 +6,9 @@ import { useAppStore } from '@/lib/store'
 import { getDepartmentsByOrg } from '@/lib/orgData'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { api, isLive } from '@/lib/api'
+import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
+import { NodeThumb, NodePhotoPreview } from '@/components/device/NodePhotoThumb'
+import PhotoStrip from '@/components/device/PhotoStrip'
 import { DOMAIN_META } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
 import { HardDrive, X, Wifi, WifiOff, MapPin, PlugZap } from 'lucide-react'
@@ -39,6 +42,10 @@ export default function DeviceManagementPage() {
   const [override, setOverride] = useState<Record<string, ManagedDevice>>({})
   const devices = roster.map((d) => override[d.id] ?? d)
   const [editing, setEditing] = useState<ManagedDevice | null>(null)
+  // Cover photo per device, one request for the whole table — a column of ids
+  // is a column of ids; a column of pictures is a fleet you can recognise.
+  const covers = useOrgPhotoCovers(orgId)
+  const [previewing, setPreviewing] = useState<ManagedDevice | null>(null)
 
   const deptName = (id: string) => depts.find((d) => d.id === id)?.name ?? id
 
@@ -91,7 +98,12 @@ export default function DeviceManagementPage() {
               <tr key={d.id} className="hover:bg-white/3 cursor-pointer" style={{ borderBottom: '1px solid #1e2433' }} onClick={() => setEditing(d)}>
                 <td className="py-3 px-4">
                   <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.12)' }}><HardDrive size={14} className="text-indigo-400" /></div>
+                    {covers[d.id] ? (
+                      <NodeThumb nodeId={d.id} cover={covers[d.id]} name={d.name} size={34}
+                        onOpen={() => setPreviewing(d)} />
+                    ) : (
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.12)' }}><HardDrive size={14} className="text-indigo-400" /></div>
+                    )}
                     <span className="text-white font-medium">{d.name}</span>
                   </div>
                 </td>
@@ -131,6 +143,11 @@ export default function DeviceManagementPage() {
           onClose={() => setEditing(null)}
           onSave={(patch) => save(editing, patch)}
         />
+      )}
+
+      {previewing && (
+        <NodePhotoPreview nodeId={previewing.id} deviceName={previewing.name} canEdit
+          onClose={() => setPreviewing(null)} />
       )}
     </div>
   )
@@ -195,6 +212,11 @@ function DeviceModal({ device, departments, onClose, onSave }: {
                 className="w-full rounded-lg px-3 py-2.5 text-sm text-slate-500 font-mono outline-none cursor-not-allowed" style={inset} />
               <p className="text-[11px] text-slate-600 mt-1">Auto-recorded from the device&apos;s own MQTT identity — nothing to type.</p>
             </div>
+          </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Photos</label>
+            <PhotoStrip nodeId={device.id} deviceName={device.name} canEdit
+              emptyHint="No photo yet — add the overview and the nameplate" />
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Sensor Domain</label>

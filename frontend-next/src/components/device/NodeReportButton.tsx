@@ -15,6 +15,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, useIsLive } from '@/lib/api'
 import { buildDeviceReport, type DeviceReport } from '@/lib/deviceReport'
+import { fetchPhotoDataUrl } from '@/lib/photoDataUrl'
 import { downloadCSVSections, downloadText } from '@/lib/exportFile'
 import { downloadXLSX } from '@/lib/xlsx'
 import type { SensorDomain } from '@/types/fleet'
@@ -81,11 +82,46 @@ export default function NodeReportButton({
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
     const doc = new jsPDF({ orientation: 'landscape' })
+    const pageWidth = doc.internal.pageSize.getWidth()
+
+    // The photo goes in the top-right corner: whoever reads a printed report
+    // away from the dashboard — a contractor, an insurer — gets the same "is
+    // this the right unit" recognition the live pages give, on paper. Fetched
+    // at report time, not baked into buildDeviceReport, since only the PDF
+    // format can hold an image; CSV/XLSX/JSON stay data-only.
+    const cover = await api.nodePhotos(nodeId).then((r) => r?.photos?.[0] ?? null)
+    let photoBottom = 0
+    if (cover) {
+      const photo = await fetchPhotoDataUrl(nodeId, cover.id, { thumb: true, v: cover.updatedAt, width: cover.width ?? undefined, height: cover.height ?? undefined })
+      if (photo) {
+        const maxW = 46, maxH = 32
+        const scale = Math.min(maxW / photo.width, maxH / photo.height)
+        const w = photo.width * scale, h = photo.height * scale
+        const x = pageWidth - 14 - w
+        try {
+          doc.addImage(photo.dataUrl, photo.format, x, 12, w, h)
+          doc.setDrawColor(200, 200, 200)
+          doc.rect(x, 12, w, h)
+          photoBottom = 12 + h
+          if (cover.caption) {
+            doc.setFontSize(7); doc.setTextColor(120, 120, 120)
+            doc.text(cover.caption, x + w / 2, photoBottom + 4, { align: 'center', maxWidth: w })
+            photoBottom += 4
+          }
+        } catch {
+          // A malformed data URL must not fail the whole report — the tables
+          // are the substance; the photo is a bonus.
+        }
+      }
+    }
+
     doc.setFontSize(16); doc.setTextColor(99, 102, 241)
     doc.text(report.title, 14, 16)
     doc.setFontSize(9); doc.setTextColor(90, 90, 90)
     report.meta.forEach((line, i) => doc.text(line, 14, 24 + i * 5))
-    let y = 26 + report.meta.length * 5
+    // Leave room for the photo if it is taller than the meta block, so the
+    // first table never starts underneath it.
+    let y = Math.max(26 + report.meta.length * 5, photoBottom + 10)
 
     for (const section of report.sections) {
       doc.setFontSize(11); doc.setTextColor(30, 30, 30)

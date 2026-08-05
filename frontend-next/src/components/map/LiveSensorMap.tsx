@@ -3,6 +3,10 @@
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
+import { api } from '@/lib/api'
+
+/** Cover photo id per device — see useOrgPhotoCovers. One request for the whole map. */
+export type PhotoCovers = Record<string, { photoId: string; v: string }>
 
 // Real geographic Live Sensor Map (Leaflet + OpenStreetMap tiles).
 // The map is created ONCE and markers are updated in place — previously the whole
@@ -10,7 +14,16 @@ import { healthColor, type GeoNode } from '@/lib/geoNodes'
 // effect depended on `nodes` (a fresh array each render), which looked like the map
 // "refreshing every second". Now data updates only re-sync markers; the user's
 // pan/zoom and any open popup are preserved.
-export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNode[]; height?: string }) {
+export default function LiveSensorMap({
+  nodes, height = '70vh', photoCovers, onOpenPhotos,
+}: {
+  nodes: GeoNode[]
+  height?: string
+  /** Thumbnail shown in the popup, keyed by node id. Omit to render the popup exactly as before. */
+  photoCovers?: PhotoCovers
+  /** Fired when the popup thumbnail is clicked — the caller owns the lightbox. */
+  onOpenPhotos?: (nodeId: string) => void
+}) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const LRef = useRef<any>(null)
@@ -19,9 +32,27 @@ export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNo
   // Always read the latest nodes (avoids a stale closure in the mount effect).
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
+  const coversRef = useRef(photoCovers)
+  coversRef.current = photoCovers
+  const onOpenPhotosRef = useRef(onOpenPhotos)
+  onOpenPhotosRef.current = onOpenPhotos
 
-  const popupHtml = (n: GeoNode) =>
-    `<div style="min-width:180px">
+  // A responder walking up to the wrong grey box at 2am is the whole reason the
+  // device photo exists (see DevicePhotoGallery) — the map popup is exactly
+  // where that recognition needs to happen, before they've even arrived. The
+  // thumbnail is the ~320px copy the gallery already produced; this view adds
+  // no new image, just another place the existing one earns its keep.
+  const popupHtml = (n: GeoNode) => {
+    const cover = coversRef.current?.[n.id]
+    const photo = cover
+      ? `<button type="button" class="gsm-photo-btn" data-node-id="${n.id}"
+           style="display:block;width:100%;height:96px;padding:0;margin:0 0 8px;border:1px solid #1e2433;border-radius:6px;overflow:hidden;cursor:pointer;background:#0a0e1a">
+           <img src="${api.nodePhotoUrl(n.id, cover.photoId, { thumb: true, v: cover.v })}" alt=""
+             style="width:100%;height:100%;object-fit:cover;display:block" />
+         </button>`
+      : ''
+    return `<div style="min-width:180px">
+       ${photo}
        <div style="font-weight:700;font-size:14px;margin-bottom:6px">${n.name}</div>
        <div style="display:flex;gap:16px;font-size:12px">
          <div><div style="color:#64748b">${n.metricLabel}</div><div style="font-weight:700">${n.metricValue}</div></div>
@@ -30,6 +61,7 @@ export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNo
        <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
        ${n.approx ? `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on its floor plan.</div>` : ''}
      </div>`
+  }
 
   // Add/update/remove markers to match the current nodes — reusing the map.
   const syncMarkers = () => {
@@ -80,6 +112,16 @@ export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNo
         attribution: '&copy; OpenStreetMap contributors',
         maxZoom: 19,
       }).addTo(map)
+      // Popup content is a raw HTML string (Leaflet, not React), so the click
+      // is wired via delegation on each popup as it opens rather than a React
+      // handler — the button re-renders fresh HTML every sync, a bound
+      // listener on it would not.
+      map.on('popupopen', (e: any) => {
+        const el: HTMLElement | undefined = e.popup?.getElement?.()
+        const btn = el?.querySelector<HTMLElement>('.gsm-photo-btn')
+        const nodeId = btn?.getAttribute('data-node-id')
+        if (btn && nodeId) btn.onclick = () => onOpenPhotosRef.current?.(nodeId)
+      })
       syncMarkers()
     })()
     return () => {
@@ -91,9 +133,12 @@ export default function LiveSensorMap({ nodes, height = '70vh' }: { nodes: GeoNo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Re-sync markers when the data changes (no map recreation).
+  // Re-sync markers when the data — or the cover photos — changes (no map
+  // recreation). setPopupContent() on an OPEN popup updates it live, which is
+  // what lets a photo just uploaded on the device page appear here without a
+  // reload.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { syncMarkers() }, [nodes])
+  useEffect(() => { syncMarkers() }, [nodes, photoCovers])
 
   return (
     <div className="relative">

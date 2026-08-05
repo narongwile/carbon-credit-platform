@@ -19,6 +19,60 @@ export interface DevicePresence {
   transport?: string | null
 }
 
+/**
+ * What a device photo is FOR. A transformer's photos are not alternative shots
+ * of the same thing — each answers a different question, and the answer is
+ * wanted at a different moment, which is why the gallery groups by this rather
+ * than showing one undifferentiated pile.
+ */
+export type NodePhotoKind = 'overview' | 'nameplate' | 'tapchanger' | 'thermal' | 'condition' | 'other'
+
+export const PHOTO_KINDS: { key: NodePhotoKind; label: string; hint: string }[] = [
+  { key: 'overview',   label: 'Overview',    hint: 'The whole unit — what you are walking up to' },
+  { key: 'nameplate',  label: 'Nameplate',   hint: 'The rating plate, close enough to read' },
+  { key: 'tapchanger', label: 'Tap changer', hint: 'Position indicator and counter' },
+  { key: 'thermal',    label: 'Thermal',     hint: 'IR scan — compare against the visible-light shot' },
+  { key: 'condition',  label: 'Condition',   hint: 'As-found / after-repair, a record over time' },
+  { key: 'other',      label: 'Other',       hint: 'Anything else worth keeping' },
+]
+
+/**
+ * A marker drawn on a photo. Coordinates are normalised 0..1 against the image,
+ * so an arrow pointing at a hotspot stays on that hotspot at thumbnail size, in
+ * the lightbox and in the PDF.
+ */
+export interface PhotoAnnotation {
+  /** 'arrow' has a tail (x,y) and a head (x2,y2); 'box' is a rectangle; 'dot' marks a point. */
+  type: 'arrow' | 'box' | 'dot'
+  x: number
+  y: number
+  x2?: number
+  y2?: number
+  label?: string
+  color?: string
+}
+
+/** One row of GET /api/nodes/:id/photos — metadata only, never the bytes. */
+export interface NodePhoto {
+  id: string
+  kind: NodePhotoKind
+  position: number
+  contentType?: string | null
+  width?: number | null
+  height?: number | null
+  bytes?: number | null
+  caption?: string | null
+  /** EXIF DateTimeOriginal — when the shutter fired, not when it was uploaded. */
+  takenAt?: string | null
+  lat?: number | null
+  lng?: number | null
+  annotations: PhotoAnnotation[]
+  /** false for photos carried over from node_images; the read path falls back to the full image. */
+  hasThumb: boolean
+  updatedBy?: string | null
+  updatedAt: string
+}
+
 /** Payload of GET /api/fleet/:id/latest. */
 export interface NodeLatest {
   nodeId: string
@@ -345,6 +399,49 @@ export const api = {
   setNodeImage: (id: string, body: { dataBase64?: string; contentType?: string; caption?: string | null }) =>
     req<{ ok: boolean; id: string; bytes?: number }>(`/api/nodes/${id}/image`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteNodeImage: (id: string) => req<{ ok: boolean }>(`/api/nodes/${id}/image`, { method: 'DELETE' }),
+
+  // Device photo gallery (migrate-v36) — many photos per device, each with a
+  // KIND, because a real transformer needs the overview, the nameplate close-up,
+  // the tap changer, a thermal scan and before/after condition shots at the same
+  // time. The single-photo routes above still work and now serve the cover.
+  nodePhotos: (id: string) =>
+    req<{ nodeId: string; photos: NodePhoto[]; pending?: string }>(`/api/nodes/${id}/photos`),
+  /**
+   * Served path for an <img>. `thumb` asks for the ~320px copy, which is what
+   * every table, strip and map popup should use — the full image is 1600px and
+   * only the lightbox needs it. `v` is the photo's updatedAt: the bytes at a
+   * given version never change, so the response is cached immutably and a
+   * caption edit (which bumps updatedAt) is what re-fetches it.
+   */
+  nodePhotoUrl: (id: string, photoId: string, opts?: { thumb?: boolean; v?: string | number }) => {
+    const q: string[] = []
+    if (opts?.thumb) q.push('thumb=1')
+    if (opts?.v) q.push(`v=${encodeURIComponent(String(opts.v))}`)
+    return apiImageUrl(`/api/nodes/${id}/photos/${photoId}${q.length ? `?${q.join('&')}` : ''}`)
+  },
+  /** Append a photo. Both sizes are produced in the browser — see src/lib/imagePipeline.ts. */
+  addNodePhoto: (id: string, body: {
+    dataBase64: string; thumbBase64?: string; contentType?: string
+    kind?: NodePhotoKind; caption?: string | null
+    width?: number; height?: number
+    takenAt?: string | null; lat?: number | null; lng?: number | null
+  }) => req<{ ok: boolean; id: string; nodeId: string; bytes: number }>(
+    `/api/nodes/${id}/photos`, { method: 'POST', body: JSON.stringify(body) }),
+  /** Partial: an omitted key is left alone, so saving a caption never drops the annotations. */
+  patchNodePhoto: (id: string, photoId: string, body: { caption?: string | null; kind?: NodePhotoKind; annotations?: PhotoAnnotation[] | null }) =>
+    req<{ ok: boolean; id: string }>(`/api/nodes/${id}/photos/${photoId}`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Reorder; the first id becomes the cover every other surface shows. */
+  orderNodePhotos: (id: string, ids: string[]) =>
+    req<{ ok: boolean; count: number }>(`/api/nodes/${id}/photos/order`, { method: 'PUT', body: JSON.stringify({ ids }) }),
+  deleteNodePhoto: (id: string, photoId: string) =>
+    req<{ ok: boolean }>(`/api/nodes/${id}/photos/${photoId}`, { method: 'DELETE' }),
+  /**
+   * Cover photo id per device for a whole org, in one request. Lists render a
+   * thumbnail per row from this without asking each device separately, and each
+   * <img> then caches its own bytes.
+   */
+  orgPhotoCovers: (orgId: string) =>
+    req<Record<string, { photoId: string; v: string }>>(`/api/orgs/${orgId}/photo-covers`),
 
   // Transformer nameplate — real per-device spec (kVA, voltage, manufacturer…),
   // replacing the fabricated Asset Info that used to show the same fake unit
