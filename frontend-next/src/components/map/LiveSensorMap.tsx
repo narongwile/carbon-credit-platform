@@ -113,14 +113,17 @@ export default function LiveSensorMap({
         maxZoom: 19,
       }).addTo(map)
       // Popup content is a raw HTML string (Leaflet, not React), so the click
-      // is wired via delegation on each popup as it opens rather than a React
-      // handler — the button re-renders fresh HTML every sync, a bound
-      // listener on it would not.
-      map.on('popupopen', (e: any) => {
-        const el: HTMLElement | undefined = e.popup?.getElement?.()
-        const btn = el?.querySelector<HTMLElement>('.gsm-photo-btn')
+      // is wired via delegation on the map's own container rather than bound
+      // to the button element itself. It has to be: every live telemetry tick
+      // re-syncs markers, and setPopupContent() on an OPEN popup replaces the
+      // popup's innerHTML — including this button — without firing 'popupopen'
+      // again, which silently killed a directly-bound listener within seconds
+      // of the popup opening. A listener on the container never goes stale
+      // because it never lived on the node that gets replaced.
+      elRef.current.addEventListener('click', (e: MouseEvent) => {
+        const btn = (e.target as HTMLElement).closest<HTMLElement>('.gsm-photo-btn')
         const nodeId = btn?.getAttribute('data-node-id')
-        if (btn && nodeId) btn.onclick = () => onOpenPhotosRef.current?.(nodeId)
+        if (nodeId) onOpenPhotosRef.current?.(nodeId)
       })
       syncMarkers()
     })()

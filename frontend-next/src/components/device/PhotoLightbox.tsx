@@ -82,10 +82,23 @@ export default function PhotoLightbox({
     setMarks(photo?.annotations ?? [])
   }, [photo?.id, photo?.annotations])
 
+  // The photo-change effect above wipes `marks`/the caption draft on every
+  // index change with no warning — fine for a clean navigation, silent data
+  // loss for one mid-edit. Every way to change photos (arrow keys, the
+  // chevrons, the filmstrip) funnels through this so none of them can bypass
+  // the guard the others respect.
+  const tryIndex = useCallback((i: number) => {
+    if (drawing || editingMeta) {
+      toast.error(drawing ? 'Save or discard the markers first' : 'Save or cancel the caption edit first')
+      return
+    }
+    onIndex(i)
+  }, [drawing, editingMeta, onIndex])
+
   const go = useCallback((d: number) => {
     if (photos.length < 2) return
-    onIndex((index + d + photos.length) % photos.length)
-  }, [index, photos.length, onIndex])
+    tryIndex((index + d + photos.length) % photos.length)
+  }, [index, photos.length, tryIndex])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -444,7 +457,7 @@ export default function PhotoLightbox({
         {photos.length > 1 && (
           <div className="flex gap-1.5 overflow-x-auto pb-0.5">
             {photos.map((p, i) => (
-              <button key={p.id} onClick={() => onIndex(i)} title={`${kindLabel(p.kind)}${p.caption ? ` — ${p.caption}` : ''}`}
+              <button key={p.id} onClick={() => tryIndex(i)} title={`${kindLabel(p.kind)}${p.caption ? ` — ${p.caption}` : ''}`}
                 className="flex-shrink-0 w-16 h-12 rounded-md overflow-hidden"
                 style={{ border: i === index ? '2px solid #6366f1' : '1px solid #1e2433', opacity: i === index ? 1 : 0.6 }}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}

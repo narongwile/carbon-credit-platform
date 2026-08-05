@@ -84,7 +84,13 @@ export default function DevicePhotoGallery({
     if (!r.added) return
     toast.success(`${r.added === 1 ? 'Photo' : `${r.added} photos`} added · ${savedLine(r)}`)
     setUploadKind(null)
+    // Reset alongside the filter, same as every other place kindFilter
+    // changes — otherwise `selected` still indexes into the PREVIOUS
+    // (possibly filtered) list, and against the new unfiltered `photos` that
+    // numeric index can land on an unrelated photo until something else
+    // changes it.
     setKindFilter('all')
+    setSelected(0)
     reload()
     // The coordinate the camera recorded standing in front of the unit is very
     // often the coordinate the device should have — but it is an offer, never
