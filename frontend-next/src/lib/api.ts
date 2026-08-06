@@ -399,8 +399,21 @@ export const api = {
    * serial are not editable here — domain is fixed at approval from the
    * device's real MQTT topic, and serial is the node id itself.
    */
-  updateNodeProfile: (id: string, body: { name?: string; departmentId?: string | null }) =>
-    req<{ ok: boolean; id: string; name?: string; departmentId?: string | null }>(`/api/nodes/${id}/profile`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * `mergeInto` links this device as the SECOND FEED of another (nodes.merge_into,
+   * migrate-v20) — one physical transformer publishing on two MQTT topics. The
+   * worker then stores both topics' readings under the primary, so the device
+   * page shows one asset with every parameter instead of two half-populated
+   * ones, and readings already stored under this id are re-pointed so the
+   * history is whole too. Pass null to unlink.
+   */
+  updateNodeProfile: (id: string, body: { name?: string; departmentId?: string | null; mergeInto?: string | null }) =>
+    req<{ ok: boolean; id: string; name?: string; departmentId?: string | null; mergeInto?: string | null; readingsMoved?: number }>(
+      `/api/nodes/${id}/profile`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Devices linked as SECOND FEEDS of this one — what makes a merge undoable. */
+  nodeFeeds: (id: string) =>
+    req<{ id: string; feeds: { id: string; name: string | null; domain: string | null; mqtt_prefix: string | null }[] }>(
+      `/api/nodes/${id}/feeds`),
   /**
    * Which departments may SEE this device (migrate-v35). Distinct from
    * updateNodeProfile's departmentId, which is the OWNING department — the

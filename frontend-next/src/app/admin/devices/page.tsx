@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
 import { getDepartmentsByOrg } from '@/lib/orgData'
@@ -49,7 +49,7 @@ export default function DeviceManagementPage() {
 
   const deptName = (id: string) => depts.find((d) => d.id === id)?.name ?? id
 
-  const save = async (d: ManagedDevice, patch: { name: string; departmentId: string | null; visibleTo: string[] | null }) => {
+  const save = async (d: ManagedDevice, patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null }) => {
     const next: ManagedDevice = { ...d, name: patch.name, departmentIds: patch.departmentId ? [patch.departmentId] : [] }
     if (!isLive() || !fromBackend) {
       toast.success(`Saved ${patch.name} (demo)`)
@@ -62,12 +62,25 @@ export default function DeviceManagementPage() {
     // in which case there is nothing to write — never send an empty set that
     // was never read, which would silently clear the device's grants.
     const [prof, grants] = await Promise.all([
-      api.updateNodeProfile(d.id, { name: patch.name, departmentId: patch.departmentId }),
+      api.updateNodeProfile(d.id, {
+        name: patch.name,
+        departmentId: patch.departmentId,
+        // Only sent when the admin actually changed it — an undefined key
+        // leaves the linkage alone, same partial-update rule as every other
+        // field here.
+        ...(patch.mergeInto !== undefined ? { mergeInto: patch.mergeInto } : {}),
+      }),
       patch.visibleTo === null ? Promise.resolve({ ok: true }) : api.setNodeDepartments(d.id, patch.visibleTo),
     ])
     if (!prof?.ok) { toast.error('Save failed'); return }
     if (!grants?.ok) { toast.error('Device saved, but its department access was not'); return }
-    toast.success(`Saved ${patch.name}`)
+    if (patch.mergeInto) {
+      toast.success(prof.readingsMoved
+        ? `${patch.name} is now a second feed · ${prof.readingsMoved} stored readings moved across`
+        : `${patch.name} is now a second feed`)
+    } else {
+      toast.success(`Saved ${patch.name}`)
+    }
     setOverride((o) => ({ ...o, [d.id]: next }))
     setEditing(null)
   }
@@ -140,6 +153,7 @@ export default function DeviceManagementPage() {
         <DeviceModal
           device={editing}
           departments={depts}
+          others={devices.filter((d) => d.id !== editing.id)}
           onClose={() => setEditing(null)}
           onSave={(patch) => save(editing, patch)}
         />
@@ -153,11 +167,13 @@ export default function DeviceManagementPage() {
   )
 }
 
-function DeviceModal({ device, departments, onClose, onSave }: {
+function DeviceModal({ device, departments, others, onClose, onSave }: {
   device: ManagedDevice
   departments: Dept[]
+  /** The other devices in this org — merge targets. */
+  others: ManagedDevice[]
   onClose: () => void
-  onSave: (patch: { name: string; departmentId: string | null; visibleTo: string[] | null }) => void
+  onSave: (patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null }) => void
 }) {
   const [name, setName] = useState(device.name)
   const [deptId, setDeptId] = useState<string | null>(device.departmentIds[0] ?? null)
@@ -167,6 +183,27 @@ function DeviceModal({ device, departments, onClose, onSave }: {
   // so an unsaved modal can never write an empty set it never read.
   const [visibleTo, setVisibleTo] = useState<string[] | null>(null)
   const [loadedGrants, setLoadedGrants] = useState<string[] | null>(null)
+  // Second-feed linkage (nodes.merge_into). undefined = untouched, so a save
+  // that never opened this control leaves the linkage exactly as it was.
+  const [mergeInto, setMergeInto] = useState<string | null | undefined>(undefined)
+  // Devices already linked INTO this one. They are hidden from every list
+  // (GET /api/fleet filters merge_into IS NULL), so this is the only place
+  // they can be seen — and the only way to undo a merge.
+  const [feeds, setFeeds] = useState<{ id: string; name: string | null }[]>([])
+  const [feedBusy, setFeedBusy] = useState<string | null>(null)
+  const loadFeeds = useCallback(() => {
+    if (!isLive()) { setFeeds([]); return }
+    api.nodeFeeds(device.id).then((r) => setFeeds(r?.feeds ?? []))
+  }, [device.id])
+  useEffect(() => { loadFeeds() }, [loadFeeds])
+
+  const unlinkFeed = async (feedId: string) => {
+    setFeedBusy(feedId)
+    const r = await api.updateNodeProfile(feedId, { mergeInto: null })
+    setFeedBusy(null)
+    if (r?.ok) { toast.success('Unlinked — it is its own device again'); loadFeeds() }
+    else toast.error('Could not unlink that feed')
+  }
   useEffect(() => {
     if (!isLive()) { setVisibleTo([]); setLoadedGrants([]); return }
     let cancelled = false
@@ -185,6 +222,7 @@ function DeviceModal({ device, departments, onClose, onSave }: {
   const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
   const dirty = name.trim() !== device.name
     || deptId !== (device.departmentIds[0] ?? null)
+    || mergeInto !== undefined
     || (visibleTo !== null && loadedGrants !== null && !sameSet(visibleTo, loadedGrants))
 
   const toggleVisible = (id: string) =>
@@ -275,6 +313,64 @@ function DeviceModal({ device, departments, onClose, onSave }: {
               </p>
             )}
           </div>
+          {/* One physical transformer often publishes on TWO MQTT topics — a
+              power meter sending the electrical set and a box sensor sending
+              oil/gas/humidity — so it arrives as two devices, each showing
+              half the parameters. Linking them here stores both topics'
+              readings under the primary, and moves the readings already
+              stored under this one across, so the device page shows one asset
+              with everything. Pending Devices could only do this at approval;
+              two devices approved separately had no way back until now. */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Second feed of</label>
+            <p className="text-[11px] text-slate-600 mb-1.5">
+              Only if this device is the second MQTT topic of a transformer already on the fleet. Its readings — including
+              the ones already stored — move onto that device, and this one stops appearing as its own.
+            </p>
+            <select value={mergeInto ?? ''} onChange={(e) => setMergeInto(e.target.value || null)}
+              disabled={feeds.length > 0}
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50" style={inset}>
+              <option value="" className="bg-[#0d1117]">— standalone device —</option>
+              {others.map((o) => (
+                <option key={o.id} value={o.id} className="bg-[#0d1117]">{o.name} ({o.id})</option>
+              ))}
+            </select>
+            {feeds.length > 0 && (
+              <p className="text-[11px] text-slate-600 mt-1.5">
+                This device is a primary — other feeds point at it, so it cannot become a second feed itself.
+              </p>
+            )}
+            {mergeInto && (
+              <p className="text-[11px] text-amber-400 mt-1.5">
+                Readings stored under {device.name} will be moved onto {others.find((o) => o.id === mergeInto)?.name ?? mergeInto}. Undo it from that device.
+              </p>
+            )}
+          </div>
+
+          {/* The merged-in feeds, and the only route back out of a merge:
+              these devices are hidden from every list by design. */}
+          {feeds.length > 0 && (
+            <div>
+              <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Second feeds of this device</label>
+              <p className="text-[11px] text-slate-600 mb-1.5">
+                Their readings are stored under this device. They are hidden from the fleet list, so this is where to unlink them.
+              </p>
+              <div className="space-y-1.5">
+                {feeds.map((f) => (
+                  <div key={f.id} className="flex items-center gap-2 px-3 py-2 rounded-lg" style={inset}>
+                    <span className="text-xs text-slate-200 flex-1 min-w-0 truncate">{f.name || f.id}</span>
+                    <span className="text-[10px] font-mono text-slate-600">{f.id}</span>
+                    <button onClick={() => unlinkFeed(f.id)} disabled={feedBusy === f.id}
+                      className="text-[10px] px-2 py-1 rounded-md text-slate-300 hover:text-white disabled:opacity-50"
+                      style={{ border: '1px solid #1e2433' }}>
+                      {feedBusy === f.id ? 'Unlinking…' : 'Unlink'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="p-3 rounded-lg text-xs text-slate-500 flex items-start gap-2" style={inset}>
             <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ color: device.theme === 'fix' ? '#22c55e' : '#a78bfa', background: device.theme === 'fix' ? 'rgba(34,197,94,0.12)' : 'rgba(167,139,250,0.12)' }}>
               {device.theme === 'fix' ? 'FIX' : 'Free Style'}
@@ -283,7 +379,7 @@ function DeviceModal({ device, departments, onClose, onSave }: {
           </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
-          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId, visibleTo })} disabled={!dirty || !name.trim()}
+          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId, visibleTo, ...(mergeInto !== undefined ? { mergeInto } : {}) })} disabled={!dirty || !name.trim()}
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-40" style={gradient}>
             Save Changes
           </button>
