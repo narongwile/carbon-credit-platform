@@ -19,10 +19,11 @@
 //     photo can never end up pointing at a kind that no longer exists.
 // ---------------------------------------------------------------------------
 
-import { useState } from 'react'
-import { api, type CatalogKind, type KindScope } from '@/lib/api'
+import { useEffect, useState } from 'react'
+import { api, isLive, type CatalogKind, type KindScope } from '@/lib/api'
 import { useKindCatalog } from '@/lib/useKindCatalog'
-import { X, Plus, Save, Trash2, Eye, EyeOff, Loader2, Lock, AlertTriangle } from 'lucide-react'
+import { useSessionRole, useSessionOrgId } from '@/lib/auth'
+import { X, Plus, Save, Trash2, Eye, EyeOff, Loader2, Lock, AlertTriangle, Building2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -46,6 +47,24 @@ export default function KindCatalogEditor({
 }) {
   const { all, loading, reload } = useKindCatalog(orgId, scope)
   const [busy, setBusy] = useState<string | null>(null)
+  // Whose catalog is this? A superadmin doing maintenance can point the whole
+  // console at a customer's organization from the sidebar switcher, and this
+  // modal previously said only "Photo types" — so an org switched by mistake
+  // meant editing a customer's list believing it was your own, with nothing on
+  // screen to catch it.
+  const role = useSessionRole()
+  const ownOrgId = useSessionOrgId('')
+  const foreign = role === 'superadmin' && !!ownOrgId && orgId !== ownOrgId
+  const [orgName, setOrgName] = useState<string | null>(null)
+  useEffect(() => {
+    if (!isLive() || !orgId) { setOrgName(null); return }
+    let cancelled = false
+    api.orgs().then((rows) => {
+      if (cancelled) return
+      setOrgName(rows?.find((o) => o.id === orgId)?.name ?? null)
+    })
+    return () => { cancelled = true }
+  }, [orgId])
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [confirmDel, setConfirmDel] = useState<string | null>(null)
   const [newKey, setNewKey] = useState('')
@@ -109,11 +128,40 @@ export default function KindCatalogEditor({
     <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
       <div className="w-full max-w-xl rounded-2xl max-h-[85vh] flex flex-col" style={surface}>
         <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid #1e2433' }}>
-          <div>
-            <h2 className="text-base font-bold text-white">{TITLE[scope]}</h2>
+          <div className="min-w-0">
+            <h2 className="text-base font-bold text-white flex items-center gap-2 flex-wrap">
+              {TITLE[scope]}
+              {(orgName || orgId) && (
+                <span className="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full"
+                  style={foreign
+                    ? { color: '#fbbf24', background: 'rgba(251,191,36,0.12)', border: '1px solid #f59e0b55' }
+                    : { color: '#94a3b8', background: 'rgba(148,163,184,0.1)' }}>
+                  <Building2 size={10} /> {orgName ?? orgId}
+                </span>
+              )}
+            </h2>
             <p className="text-[11px] text-slate-500 mt-0.5">{BLURB[scope]}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"><X size={18} /></button>
+        </div>
+
+        {foreign && (
+          <div className="mx-5 mt-4 flex items-start gap-2 px-3 py-2 rounded-lg"
+            style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid #f59e0b55' }}>
+            <AlertTriangle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+            <span className="text-[11px] text-amber-300">
+              You are editing <b>{orgName ?? orgId}</b>&rsquo;s list, not your own. Everyone in that organization sees
+              these names on every upload.
+            </span>
+          </div>
+        )}
+
+        {/* What the padlocks mean. It was a hover-only tooltip, which is no use
+            to someone deciding whether it is safe to hide a type. */}
+        <div className="px-5 pt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-slate-500">
+          <span className="flex items-center gap-1"><Lock size={10} className="text-amber-500" /> Built in · other features match on it — hiding it degrades them</span>
+          <span className="flex items-center gap-1"><Lock size={10} className="text-slate-600" /> Built in · safe to rename or hide</span>
+          <span className="flex items-center gap-1"><Trash2 size={10} className="text-slate-600" /> Added by you · deletable when unused</span>
         </div>
 
         <div className="p-5 space-y-2 overflow-y-auto">
