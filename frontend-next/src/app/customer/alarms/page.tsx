@@ -96,12 +96,15 @@ export default function CustomerAlarmsPage() {
         </div>
         <div>
           <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">From</label>
-          <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)}
+          {/* type="datetime" per explicit request — this HTML5 type has no
+              browser support (removed from the spec), so it renders as a plain
+              text box; the placeholder is the only hint at the expected shape. */}
+          <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={from} onChange={(e) => setFrom(e.target.value)}
             className="rounded-lg px-3 py-2 text-sm text-white outline-none" style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
         </div>
         <div>
           <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">To</label>
-          <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)}
+          <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={to} onChange={(e) => setTo(e.target.value)}
             className="rounded-lg px-3 py-2 text-sm text-white outline-none" style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
         </div>
       </div>

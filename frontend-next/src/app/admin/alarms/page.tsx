@@ -224,10 +224,14 @@ export default function AlarmsPage() {
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Absolute range</div>
                   <label className="block text-[10px] text-slate-500 mb-1">From</label>
-                  <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)}
+                  {/* type="datetime" per explicit request — this HTML5 type has no
+                      browser support (removed from the spec), so it renders as a
+                      plain text box; the placeholder is the only hint at the
+                      expected shape. */}
+                  <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={from} onChange={(e) => setFrom(e.target.value)}
                     className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200 mb-2" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
                   <label className="block text-[10px] text-slate-500 mb-1">To</label>
-                  <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)}
+                  <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={to} onChange={(e) => setTo(e.target.value)}
                     className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
                   <button onClick={() => setPickerOpen(false)}
                     className="mt-3 w-full text-xs font-medium text-white px-3 py-1.5 rounded-lg" style={{ background: '#6366f1' }}>
