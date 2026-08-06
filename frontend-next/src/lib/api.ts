@@ -154,6 +154,15 @@ async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
 /** Which scope answered a display-params lookup; 'mixed' = a multi-department union. */
 export type DisplayParamScope = 'none' | 'org' | 'org+dept' | 'node' | 'node+dept' | 'mixed'
 
+/**
+ * How a shown parameter renders (migrate-v37). 'card' is the full sensor
+ * card — icon, number, sparkline, status pill; 'list' is a dense row, same
+ * shape the old fixed "Other parameters" block used. Every key defaults to
+ * 'card' unless the admin demotes it, so a selection made before this existed
+ * still renders exactly as it always did.
+ */
+export type ParamLayout = 'card' | 'list'
+
 export interface AuthUser { id: string; orgId: string; role: string; name?: string; email?: string }
 
 export const api = {
@@ -209,13 +218,14 @@ export const api = {
    * which shows everything — never nothing.
    */
   displayParams: (orgId: string, domain: string, nodeId?: string, departmentId?: string | null) =>
-    req<{ domain: string; nodeId: string | null; departmentId: string | null; scope: DisplayParamScope; paramKeys: string[] }>(
+    req<{ domain: string; nodeId: string | null; departmentId: string | null; scope: DisplayParamScope; paramKeys: string[]; layout: Record<string, ParamLayout> }>(
       `/api/orgs/${orgId}/display-params?domain=${encodeURIComponent(domain)}`
       + (nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : '')
       // Only an admin may name a department; for anyone else the backend uses
       // their own, so a viewer cannot read another team's selection.
       + (departmentId !== undefined ? `&departmentId=${encodeURIComponent(departmentId ?? '')}` : '')),
-  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; departmentId?: string | null; paramKeys: string[] }) =>
+  /** `layout` is per-key; an omitted key defaults to 'card' server-side. */
+  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; departmentId?: string | null; paramKeys: string[]; layout?: Record<string, ParamLayout> }) =>
     req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
   /**
    * Admin-editable display names for MQTT parameter keys (migrate-v34).

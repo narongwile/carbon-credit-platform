@@ -14,12 +14,13 @@ import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHis
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import NameplateEditor from '@/components/device/NameplateEditor'
 import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
+import SensorListSection from '@/components/device/SensorList'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
 import { useParamLabels } from '@/lib/useParamLabels'
 import { classifyByKva, TRANSFORMER_CLASS_LABEL } from '@/lib/transformerClass'
 import { useSessionRole } from '@/lib/auth'
-import { api, useIsLive } from '@/lib/api'
+import { api, useIsLive, type ParamLayout } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, healthFromValues, paramStatus } from '@/lib/alarmParams'
 import { fmtHM, fmtDateTime } from '@/lib/displayTime'
@@ -521,17 +522,26 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // another org's device needs THAT org's toggle, not their own selected one.
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
   const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
+  // card = a full SensorCard (icon, number, sparkline); list = a dense row
+  // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
+  // device's twenty-odd secondary values do not each cost a full card's worth
+  // of space. A key with no entry defaults to 'card', which is also what every
+  // selection made before this existed already renders as.
+  const [paramLayout, setParamLayout] = useState<Record<string, ParamLayout>>({})
   useEffect(() => {
     if (!live) return
     let cancelled = false
     api.displayParams(orgId, 'transformer', id).then((r) => {
-      if (!cancelled && r) setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+      if (cancelled || !r) return
+      setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+      setParamLayout(r.layout ?? {})
     })
     return () => { cancelled = true }
   }, [orgId, id, live])
 
   /** Admin's parameter selection; empty = unconfigured = show everything. */
   const isShown = useMemo(() => (k: string) => !showKeys?.length || showKeys.includes(k), [showKeys])
+  const layoutOf = useMemo(() => (k: string): ParamLayout => paramLayout[k] ?? 'card', [paramLayout])
   // ── Sensor cards, built from what the device ACTUALLY reports ────────────
   // This panel used to be six fixed cards (the ALARM_SCHEMA slots) plus a
   // cramped one-line list for everything else. On a real transformer that is
@@ -559,7 +569,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     return <Activity size={13} />
   }
   const cards = useMemo(() => {
-    const out: { key: string; label: string; icon: React.ReactNode; reading: SensorReading }[] = []
+    const out: { key: string; label: string; icon: React.ReactNode; reading: SensorReading; layout: ParamLayout }[] = []
     // Runs above the not-found guard (hooks cannot be conditional), so the
     // device may not be resolved yet on the first passes.
     if (!transformer) return out
@@ -579,6 +589,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           key: k,
           label: paramLabel(k),
           icon: cardIcon(k),
+          layout: layoutOf(k),
           reading: {
             value: v,
             unit: p?.unit ?? '',
@@ -597,10 +608,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     // Demo / device has reported nothing yet: the seeded six.
     for (const [field, key] of Object.entries(LIVE_PARAM) as [keyof SensorData, string][]) {
       if (!isShown(key)) continue
-      out.push({ key, label: paramLabel(key), icon: cardIcon(key), reading: transformer.sensors[field] })
+      out.push({ key, label: paramLabel(key), icon: cardIcon(key), layout: layoutOf(key), reading: transformer.sensors[field] })
     }
     return out
-  }, [live, values, series, schemaByKey, isShown, paramLabel, transformer])
+  }, [live, values, series, schemaByKey, isShown, layoutOf, paramLabel, transformer])
+
+  // Split for rendering: cards keep the tiles they always had, list rows go
+  // beneath as one dense block. modalParams (below) stays built from the full
+  // `cards` set, so the history switcher offers a list-tier parameter too —
+  // demoting a value's LAYOUT never demotes its history.
+  const bigCards = useMemo(() => cards.filter((c) => c.layout !== 'list'), [cards])
+  const listCards = useMemo(() => cards.filter((c) => c.layout === 'list'), [cards])
 
 
   if (!transformer) {
@@ -694,10 +712,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           {/* One card per parameter the device actually reports — schema slots
               (with thresholds and status colour) first, then everything else.
               No fixed six, and nothing drawn for a slot this unit never
-              sends. */}
-          {cards.map((c) => (
+              sends. A parameter the admin demoted to a compact row (below)
+              never gets a card here — the split is what Configure sets. */}
+          {bigCards.map((c) => (
             <SensorCard key={c.key} label={c.label} icon={c.icon} sensor={c.reading} onOpen={() => setOpenParam(c.key)} />
           ))}
+          {/* The list-tier: same click-for-history behaviour as a card, at a
+              fraction of the space — where the twenty-odd secondary values on
+              a merged transformer actually belong. */}
+          <SensorListSection
+            items={listCards.map((c) => ({ key: c.key, label: c.label, value: c.reading.value, unit: c.reading.unit, status: c.reading.status }))}
+            onOpen={setOpenParam} />
           {cards.length === 0 && (
             <p className="text-[11px] text-slate-600 py-4">
               {live ? 'This device has not reported any readings yet.' : 'No parameters selected for display.'}

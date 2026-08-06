@@ -2,7 +2,8 @@
 
 import { useMemo, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { api, useIsLive } from '@/lib/api'
+import { api, useIsLive, type ParamLayout } from '@/lib/api'
+import SensorListSection from '@/components/device/SensorList'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { ALARM_SCHEMA, LEGACY_WIRE_KEYS, paramStatus } from '@/lib/alarmParams'
 import { fmtHM } from '@/lib/displayTime'
@@ -285,6 +286,11 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
   // Admin-chosen subset. Empty = unconfigured = show everything, so an org that
   // has never touched this keeps exactly the dashboard it had.
   const [showKeys, setShowKeys] = useState<string[] | null>(null)
+  // card = a full tile; list = a dense row (migrate-v37) — same split
+  // TransformerDetailView uses, so an admin sets it up once per parameter and
+  // both pages honour it, rather than one of the two dashboards ignoring the
+  // choice.
+  const [paramLayout, setParamLayout] = useState<Record<string, ParamLayout>>({})
   const [picking, setPicking] = useState(false)
   const role = useSessionRole()
   const canConfigure = role === 'admin' || role === 'superadmin'
@@ -292,7 +298,9 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     if (!live || !device.domain) return
     let cancelled = false
     api.displayParams(device.orgId, device.domain, device.id).then((r) => {
-      if (!cancelled && r) setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+      if (cancelled || !r) return
+      setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+      setParamLayout(r.layout ?? {})
     })
     return () => { cancelled = true }
   }, [device.orgId, device.domain, device.id, live])
@@ -302,6 +310,11 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
     const order = new Map(showKeys.map((k, i) => [k, i]))
     return allTiles.filter((t) => order.has(t.key)).sort((a, b) => order.get(a.key)! - order.get(b.key)!)
   }, [allTiles, showKeys])
+  // Split for rendering only — modalParams (below) stays built from `tiles`
+  // in full, so a list-tier parameter still opens the same history modal a
+  // card does; demoting its LAYOUT never demotes its history.
+  const cardTiles = useMemo(() => tiles.filter((t) => (paramLayout[t.key] ?? 'card') !== 'list'), [tiles, paramLayout])
+  const listTiles = useMemo(() => tiles.filter((t) => (paramLayout[t.key] ?? 'card') === 'list'), [tiles, paramLayout])
   // Every tile on screen is selectable inside the modal, so a user who opened
   // the wrong metric can switch without closing and hunting for the right card.
   const modalParams: ModalParam[] = useMemo(
@@ -415,7 +428,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
             </button>
           )}
         </div>
-        {tiles.map((tile) => {
+        {cardTiles.map((tile) => {
           const sc = statusColor[tile.status]
           return (
             // Clicking a card opens its full history + threshold editor. It is a
@@ -441,6 +454,12 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
             </button>
           )
         })}
+        {/* List-tier parameters (migrate-v37): same click-for-history as a
+            card, one dense row instead of a whole tile — where the secondary
+            values on a merged device belong. */}
+        <SensorListSection
+          items={listTiles.map((t) => ({ key: t.key, label: t.label, value: t.value, unit: t.unit, status: t.status }))}
+          onOpen={setOpenParam} />
       </div>
 
       {/* Center: the device photos (admin-uploaded) + trend. The generic twin

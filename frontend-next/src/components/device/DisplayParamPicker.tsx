@@ -32,8 +32,8 @@ import { useEffect, useState } from 'react'
 import { api, isLive } from '@/lib/api'
 import { useParamLabels, schemaLabel } from '@/lib/useParamLabels'
 import type { SensorDomain } from '@/types/fleet'
-import type { DisplayParamScope } from '@/lib/api'
-import { X, SlidersHorizontal, Save } from 'lucide-react'
+import type { DisplayParamScope, ParamLayout } from '@/lib/api'
+import { X, SlidersHorizontal, Save, LayoutGrid, Rows3 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -53,6 +53,12 @@ export default function DisplayParamPicker({
 }) {
   const [selected, setSelected] = useState<string[]>([])
   const [scope, setScope] = useState<DisplayParamScope>('none')
+  // Card vs list per key (migrate-v37). A key with no entry renders as a card
+  // — the layout every selection had before this existed, so an untouched
+  // save changes nothing.
+  const [layout, setLayout] = useState<Record<string, ParamLayout>>({})
+  const layoutOf = (k: string): ParamLayout => layout[k] ?? 'card'
+  const setKeyLayout = (k: string, v: ParamLayout) => setLayout((l) => ({ ...l, [k]: v }))
   // Custom display names. `labels` is what the device currently renders with
   // (org default + this device's overrides); `draft` is what the inputs hold.
   // Only keys the admin actually changed are sent, so a save never rewrites a
@@ -87,6 +93,7 @@ export default function DisplayParamPicker({
       if (cancelled || !r) return
       setSelected(r.paramKeys ?? [])
       setScope(r.scope ?? 'none')
+      setLayout(r.layout ?? {})
       // Deliberately NOT re-derived from the loaded scope. It used to be
       // `!scope.startsWith('node')`, so a device merely INHERITING the
       // org-wide list came up with "apply to every device" pre-ticked, and
@@ -127,9 +134,13 @@ export default function DisplayParamPicker({
       const normalised = next === schemaLabel(domain, k) ? '' : next
       if (normalised !== now) changed[k] = normalised
     }
+    // Only for the keys actually being saved — a layout choice made for a key
+    // that gets deselected here has nothing to attach to.
+    const layoutOut: Record<string, ParamLayout> = {}
+    for (const k of selected) layoutOut[k] = layoutOf(k)
     const [dp, pl] = await Promise.all([
       api.setDisplayParams(orgId, {
-        domain, nodeId: applyToAll ? null : nodeId, departmentId: deptId || null, paramKeys: selected,
+        domain, nodeId: applyToAll ? null : nodeId, departmentId: deptId || null, paramKeys: selected, layout: layoutOut,
       }),
       Object.keys(changed).length
         ? api.setParamLabels(orgId, { domain, nodeId: applyToAll ? null : nodeId, labels: changed })
@@ -195,13 +206,14 @@ export default function DisplayParamPicker({
             <p className="col-span-2 text-xs text-slate-600">This device has not reported any readings yet.</p>
           )}
           {/* Each box: tick on the left, the EDITABLE display name next to it,
-              and the device's raw MQTT key pinned right. The key is what the
-              firmware actually sends and is never renamed — it stays visible
-              so an admin can always tell which wire value a name belongs to,
-              which matters most on exactly the keys worth renaming (RHamb,
-              Tbox, THD_VoltCA…). */}
+              a card/list toggle, and the device's raw MQTT key pinned right.
+              The key is what the firmware actually sends and is never renamed
+              — it stays visible so an admin can always tell which wire value
+              a name belongs to, which matters most on exactly the keys worth
+              renaming (RHamb, Tbox, THD_VoltCA…). */}
           {available.map((k) => {
             const on = selected.includes(k)
+            const isList = layoutOf(k) === 'list'
             return (
               <div key={k}
                 className="flex items-center gap-2 px-2.5 py-2 rounded-lg transition-all"
@@ -217,7 +229,17 @@ export default function DisplayParamPicker({
                   title="Display name — edit to rename this parameter on the dashboard"
                   className={`flex-1 min-w-0 bg-transparent text-xs text-left outline-none focus:underline decoration-indigo-400 ${on ? 'text-white' : 'text-slate-400'}`}
                 />
-                <span className="text-[9px] text-slate-600 font-mono text-right shrink-0 max-w-[45%] truncate" title={`MQTT key: ${k}`}>{k}</span>
+                {/* Card = a full sensor card with a sparkline; list = one
+                    dense row. Only matters once the key is shown, but stays
+                    clickable either way so an admin can set it up in advance. */}
+                <button
+                  onClick={() => setKeyLayout(k, isList ? 'card' : 'list')}
+                  title={isList ? 'Compact row — click to show as a full card' : 'Full card — click to show as a compact row'}
+                  className="p-1 rounded flex-shrink-0"
+                  style={{ color: on ? (isList ? '#94a3b8' : '#818cf8') : '#475569' }}>
+                  {isList ? <Rows3 size={12} /> : <LayoutGrid size={12} />}
+                </button>
+                <span className="text-[9px] text-slate-600 font-mono text-right shrink-0 max-w-[35%] truncate" title={`MQTT key: ${k}`}>{k}</span>
               </div>
             )
           })}
