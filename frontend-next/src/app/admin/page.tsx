@@ -318,6 +318,14 @@ export default function AdminDashboardPage() {
       {tab === 'overview' && <OverviewTab />}
       {tab === 'location' && (
         <>
+          {/* Setting a device's position (no Floor Plans feature here to do it
+              another way) needs room the panel takes — the full /admin/map
+              page has it; this tab stays a quick glance. */}
+          <div className="flex justify-end">
+            <Link href="/admin/map" className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300">
+              <MapIcon size={12} /> Set device positions →
+            </Link>
+          </div>
           <LiveSensorMap nodes={nodes} height="62vh" photoCovers={covers} onOpenPhotos={setPreviewId} />
           {previewId && (
             <NodePhotoPreview nodeId={previewId} canEdit onClose={() => setPreviewId(null)} />

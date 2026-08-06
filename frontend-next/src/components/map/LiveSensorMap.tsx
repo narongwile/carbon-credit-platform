@@ -15,7 +15,7 @@ export type PhotoCovers = Record<string, { photoId: string; v: string }>
 // "refreshing every second". Now data updates only re-sync markers; the user's
 // pan/zoom and any open popup are preserved.
 export default function LiveSensorMap({
-  nodes, height = '70vh', photoCovers, onOpenPhotos,
+  nodes, height = '70vh', photoCovers, onOpenPhotos, editable, onReposition, pickActive, onPick,
 }: {
   nodes: GeoNode[]
   height?: string
@@ -23,6 +23,13 @@ export default function LiveSensorMap({
   photoCovers?: PhotoCovers
   /** Fired when the popup thumbnail is clicked — the caller owns the lightbox. */
   onOpenPhotos?: (nodeId: string) => void
+  /** Adds a "Reposition" button to every popup — ETERNITY has no Floor Plans feature, so this map IS how a device's position gets set. */
+  editable?: boolean
+  /** Fired when "Reposition" is clicked — the caller owns what "pick a new point" means (see DevicePlacementPanel). */
+  onReposition?: (nodeId: string) => void
+  /** While true, clicking open ground (not a marker) reports a coordinate instead of doing nothing. */
+  pickActive?: boolean
+  onPick?: (lat: number, lng: number) => void
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -36,6 +43,12 @@ export default function LiveSensorMap({
   coversRef.current = photoCovers
   const onOpenPhotosRef = useRef(onOpenPhotos)
   onOpenPhotosRef.current = onOpenPhotos
+  const editableRef = useRef(editable)
+  editableRef.current = editable
+  const onRepositionRef = useRef(onReposition)
+  onRepositionRef.current = onReposition
+  const onPickRef = useRef(onPick)
+  onPickRef.current = onPick
 
   // A responder walking up to the wrong grey box at 2am is the whole reason the
   // device photo exists (see DevicePhotoGallery) — the map popup is exactly
@@ -51,6 +64,21 @@ export default function LiveSensorMap({
              style="width:100%;height:100%;object-fit:cover;display:block" />
          </button>`
       : ''
+    // "Set this device's position on its floor plan" is wrong advice for an
+    // org with no Floor Plans feature — ETERNITY's sites are real GPS
+    // coordinates, not indoor layouts. editable orgs get a working button
+    // instead of a dead-end sentence.
+    const approxLine = n.approx
+      ? editableRef.current
+        ? `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location.</div>`
+        : `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on its floor plan.</div>`
+      : ''
+    const repositionBtn = editableRef.current
+      ? `<button type="button" class="gsm-reposition-btn" data-node-id="${n.id}"
+           style="display:flex;align-items:center;gap:5px;width:100%;margin-top:8px;padding:6px 8px;border-radius:6px;border:1px solid #6366f155;background:rgba(99,102,241,0.12);color:#a5b4fc;font-size:11px;font-weight:600;cursor:pointer">
+           📍 ${n.approx ? 'Set position' : 'Reposition'}
+         </button>`
+      : ''
     return `<div style="min-width:180px">
        ${photo}
        <div style="font-weight:700;font-size:14px;margin-bottom:6px">${n.name}</div>
@@ -59,7 +87,8 @@ export default function LiveSensorMap({
          <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${n.accent}">${n.platform}</div></div>
        </div>
        <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
-       ${n.approx ? `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on its floor plan.</div>` : ''}
+       ${approxLine}
+       ${repositionBtn}
      </div>`
   }
 
@@ -121,9 +150,27 @@ export default function LiveSensorMap({
       // of the popup opening. A listener on the container never goes stale
       // because it never lived on the node that gets replaced.
       elRef.current.addEventListener('click', (e: MouseEvent) => {
-        const btn = (e.target as HTMLElement).closest<HTMLElement>('.gsm-photo-btn')
-        const nodeId = btn?.getAttribute('data-node-id')
-        if (nodeId) onOpenPhotosRef.current?.(nodeId)
+        const target = e.target as HTMLElement
+        const photoBtn = target.closest<HTMLElement>('.gsm-photo-btn')
+        if (photoBtn) { const id = photoBtn.getAttribute('data-node-id'); if (id) onOpenPhotosRef.current?.(id); return }
+        const repoBtn = target.closest<HTMLElement>('.gsm-reposition-btn')
+        if (repoBtn) {
+          const id = repoBtn.getAttribute('data-node-id')
+          if (id) { map.closePopup(); onRepositionRef.current?.(id) }
+        }
+      })
+      // Pick mode: a click on open ground (Leaflet does not fire 'click' on the
+      // map when a marker or popup consumed it) reports the coordinate. This is
+      // the whole placement mechanism — ETERNITY has no Floor Plans feature, so
+      // there is no OTHER way for an admin to give a device a real position.
+      map.on('click', (e: any) => {
+        if (!onPickRef.current) return
+        // circleMarker click events bubble to the map's own 'click' by default
+        // (Leaflet's bubblingMouseEvents), so a click ON an existing marker
+        // would otherwise ALSO report that marker's own coordinate as a new
+        // pick — redundant at best, a wrong placement at worst. Only ground.
+        if ((e.originalEvent?.target as HTMLElement | undefined)?.closest?.('.leaflet-interactive')) return
+        onPickRef.current(e.latlng.lat, e.latlng.lng)
       })
       syncMarkers()
     })()
@@ -141,7 +188,14 @@ export default function LiveSensorMap({
   // what lets a photo just uploaded on the device page appear here without a
   // reload.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { syncMarkers() }, [nodes, photoCovers])
+  useEffect(() => { syncMarkers() }, [nodes, photoCovers, editable])
+
+  // The one visible sign a click will do something other than pan: a crosshair
+  // instead of the open hand, and a border that says "you are placing a pin".
+  useEffect(() => {
+    if (!elRef.current) return
+    elRef.current.style.cursor = pickActive ? 'crosshair' : ''
+  }, [pickActive])
 
   return (
     <div className="relative">
@@ -153,7 +207,7 @@ export default function LiveSensorMap({
           </span>
         ))}
       </div>
-      <div ref={elRef} style={{ height, width: '100%', background: '#0a0e1a' }} className="rounded-xl overflow-hidden" />
+      <div ref={elRef} style={{ height, width: '100%', background: '#0a0e1a', outline: pickActive ? '2px solid #6366f1' : 'none', outlineOffset: '-2px' }} className="rounded-xl overflow-hidden" />
     </div>
   )
 }
