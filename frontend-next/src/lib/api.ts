@@ -113,6 +113,51 @@ export type DocKind =
   | 'service_report' | 'certificate' | 'test_result' | 'invoice' | 'manual' | 'other'
   | (string & {})
 
+/** One database's migration state — see migrationsGetFunc. */
+export interface MigrationDbState {
+  orgId: string
+  name: string
+  db: string
+  /** org-1/2/3 share the control database; they have no tenant DB of their own. */
+  onControlDb: boolean
+  applied: number
+  pending: string[]
+  error: string | null
+}
+export interface MigrationStatus {
+  tenantMode: boolean
+  expected: number
+  newest: string | null
+  control: { db: string; applied: number; pending: string[] }
+  orgs: MigrationDbState[]
+  /** Tenant databases behind the code — what the header badge counts. */
+  orgsBehind: number
+  /** Control database files not yet applied. Fixed by a deploy, not by the button. */
+  controlBehind: number
+  /** false when MIGRATE_URL is unset — there is no migrate service to call. */
+  canRun: boolean
+}
+export interface MigrationRunResult {
+  ok: boolean
+  httpStatus: number
+  migrated: { orgId: string; db: string; applied: number }[]
+  failed: { orgId: string; error: string }[]
+  skipped: string[]
+  error: string | null
+}
+
+/** Real platform counters for the superadmin header. */
+export interface PlatformStats {
+  orgs: number
+  devices: number
+  online: number
+  alarms: number
+  critical: number
+  /** Organizations whose database could not be read — why status can say DEGRADED. */
+  degraded: string[]
+  status: 'OPERATIONAL' | 'ALARMS' | 'DEGRADED'
+}
+
 /** Which picker a catalog entry belongs to. */
 export type KindScope = 'photo' | 'document'
 
@@ -636,6 +681,21 @@ export const api = {
 
   // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
   orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number; lng?: number; show_3d_fallback?: number }[]>(`/api/orgs`),
+
+  // Schema migrations (superadmin). Which databases are behind the .sql files
+  // in the image running right now, and the button that brings tenants up.
+  migrationStatus: () =>
+    req<MigrationStatus>(`/api/platform/migrations`),
+  /**
+   * Runs every TENANT database up to date via the migrate service. Not the
+   * control database — that is applied by the deploy-time Job, so a control
+   * database behind the code needs a deploy, not this button.
+   */
+  runMigrations: () =>
+    req<MigrationRunResult>(`/api/platform/migrations/run`, { method: 'POST' }),
+  /** The superadmin header's numbers, queried rather than invented. */
+  platformStats: () =>
+    req<PlatformStats>(`/api/platform/stats`),
   // provisioned: the tenant database this org needs under TENANT_DB_MODE.
   // admin.setPasswordUrl: returned only when SMTP is unconfigured, because the
   // admin row carries no password and that link is then the only way to sign in.
