@@ -887,7 +887,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       {/* Alarm event log + transport/connectivity timeline (same component the
           generic node page uses, so both routes stay in step). */}
       <div className="p-4 space-y-4">
-        <NodeDocuments nodeId={transformer.id} />
+        <NodeDocuments nodeId={transformer.id} deviceName={transformer.name} />
         <NodeEventLog
           nodeId={transformer.id}
           domain="transformer"

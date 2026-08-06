@@ -94,7 +94,25 @@ export interface NodeReport {
   events: { id: string; param_key: string; param_label: string; severity: string; kind: string; value: number; threshold: number; unit: string; raised_at: string; acknowledged_at: string | null; acknowledged_by: string | null; event_problem_id: string | null }[]
   transport: { from_transport: string; to_transport: string; reason: string | null; rssi: number | null; ts: string }[]
   offlineSync?: { records_count: number; oldest_ts: string | null; newest_ts: string | null; sync_at: string }[]
+  /** Maintenance documents uploaded within [from, to] — the report's own window, not the device's whole history. */
+  documents?: { name: string; kind: DocKind; size: string | null; uploaded_by: string | null; created_at: string }[]
 }
+
+/**
+ * What a maintenance document is (migrate-v38) — the same fixed-vocabulary
+ * idea as NodePhotoKind, so "service report" and "certificate" sort apart
+ * instead of one undifferentiated pile distinguishable only by filename.
+ */
+export type DocKind = 'service_report' | 'certificate' | 'test_result' | 'invoice' | 'manual' | 'other'
+
+export const DOC_KINDS: { key: DocKind; label: string }[] = [
+  { key: 'service_report', label: 'Service report' },
+  { key: 'certificate', label: 'Certificate' },
+  { key: 'test_result', label: 'Test result' },
+  { key: 'invoice', label: 'Invoice' },
+  { key: 'manual', label: 'Manual' },
+  { key: 'other', label: 'Other' },
+]
 
 // NEXT_PUBLIC_API_URL="relative" = same-origin build (nginx reverse-proxies /api
 // and /ws to Node-RED), so BASE is empty for relative fetches — but the backend
@@ -328,9 +346,9 @@ export const api = {
   // Per-device maintenance documents (service reports). View-level: a viewer can
   // upload and download a device's docs, scoped to their department.
   getNodeDocuments: (id: string, departmentId: string) =>
-    req<{ id: string; name: string; size: string | null; uploaded_by: string | null; created_at: string }[]>(
+    req<{ id: string; name: string; size: string | null; uploaded_by: string | null; content_type?: string | null; kind: DocKind; department_id?: string | null; created_at: string }[]>(
       `/api/nodes/${id}/documents?departmentId=${encodeURIComponent(departmentId)}`),
-  uploadNodeDocument: (id: string, doc: { departmentId: string; name: string; size?: string; uploadedBy?: string; contentType?: string; dataBase64: string }) =>
+  uploadNodeDocument: (id: string, doc: { departmentId: string; name: string; size?: string; uploadedBy?: string; contentType?: string; dataBase64: string; kind?: DocKind }) =>
     req<{ ok: boolean; id: string }>(`/api/nodes/${id}/documents`, { method: 'POST', body: JSON.stringify(doc) }),
   // Fetch the document bytes with auth (an <a download> can't send a Bearer header)
   // and save via a temporary object URL.

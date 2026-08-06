@@ -7,8 +7,11 @@
 // ---------------------------------------------------------------------------
 
 import type { NodeReport } from './api'
+import { DOC_KINDS } from './api'
 import { ALARM_SCHEMA } from './alarmParams'
 import type { SensorDomain } from '@/types/fleet'
+
+const docKindLabel = (k: string) => DOC_KINDS.find((x) => x.key === k)?.label ?? k
 
 export type Cell = string | number | null
 export interface ReportSection {
@@ -150,6 +153,21 @@ export function buildDeviceReport(
       ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime()).map((x) => x.row),
     },
   ]
+
+  // Only added when there is something to show — an empty section here would
+  // read as "nothing was ever filed", rather than "nothing in THIS window",
+  // which is what an absent section-with-no-rows actually means once autoTable
+  // prints its own "No data in this period" placeholder for an empty array.
+  // Kept anyway, deliberately: an admin scanning a printed report for "was
+  // this serviced this quarter?" should see the section exists even on a
+  // quiet period, not wonder whether documents are tracked here at all.
+  if (rep.documents !== undefined) {
+    sections.push({
+      title: 'Maintenance Documents',
+      headers: ['Uploaded', 'Document', 'Type', 'Size', 'Uploaded by'],
+      rows: rep.documents.map((d) => [fmt(d.created_at), d.name, docKindLabel(d.kind), d.size ?? '—', d.uploaded_by ?? '—']),
+    })
+  }
 
   const stamp = (v: string) => fmt(v)
   const meta = [
