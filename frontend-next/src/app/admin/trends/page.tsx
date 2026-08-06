@@ -48,7 +48,11 @@ const MAX_POINTS = 240
 interface Row { param_key: string; value: number; taken_at: string; n?: number }
 interface Loaded { id: string; name: string; rows: Row[] }
 
-const toUTC = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
+// A real instant (ISO with 'Z') — see the identical fix + explanation in
+// ParamHistoryModal.tsx. Chopping the zone off here compared a UTC-labelled
+// window against readings.taken_at (written in +07:00 wall-clock), silently
+// dropping the most recent ~7 hours of every chart ending "now".
+const toUTC = (ms: number) => new Date(ms).toISOString()
 
 export default function TrendsPage() {
   const live = useIsLive()

@@ -43,8 +43,12 @@ const FORMATS: { id: Format; label: string; hint: string; icon: React.ReactNode 
 const dayInput = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
-/** The API takes UTC 'YYYY-MM-DD HH:MM:SS' — the same contract as the event log. */
-const toUTC = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ')
+// A real instant (ISO with 'Z') — see the identical fix in ParamHistoryModal.tsx.
+// Every reportFunc window (readings, alarm_events, transport_events,
+// offline_sync_log) is written in the DB's own +07:00 wall-clock, not UTC;
+// sending a zone-stripped string here silently truncated every report to data
+// no more recent than roughly (now - 7h), including the "last 7 days" default.
+const toUTC = (d: Date) => d.toISOString()
 
 export default function NodeReportButton({
   nodeId, deviceName, domain,

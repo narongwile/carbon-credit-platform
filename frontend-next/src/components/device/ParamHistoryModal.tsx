@@ -48,8 +48,16 @@ const MAX_POINTS = 300
 
 interface Row { param_key: string; value: number; taken_at: string; v_min?: number; v_max?: number; n?: number }
 
-/** UTC 'YYYY-MM-DD HH:MM:SS' — the contract the readings endpoint expects. */
-const toUTC = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
+// A real instant (ISO, with 'Z') — the contract the readings endpoint expects.
+// This used to chop the 'Z' off ("UTC 'YYYY-MM-DD HH:MM:SS'"), which sounds
+// harmless but is not: readings.taken_at is written in the DB's OWN wall-clock
+// (+07:00 by default, not UTC — see dbWallClock() in the backend), so a window
+// boundary that LOOKED like a timestamp but carried no zone was being compared
+// literally against Bangkok-time rows. A "last 24h" window silently excluded
+// roughly the most recent 7 hours of real data — confirmed against a live
+// server: a reading taken 2 minutes earlier returned zero rows. Sending the
+// full zoned instant lets the backend do that conversion correctly instead.
+const toUTC = (ms: number) => new Date(ms).toISOString()
 // A datetime-local input is the BROWSER's wall clock, but every label on this
 // chart is pinned to DISPLAY_TZ. Leaving the picker on browser time meant an
 // operator on a UTC laptop asked for 08:00 and got rows labelled 15:00 — the
