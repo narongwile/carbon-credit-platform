@@ -49,16 +49,28 @@ interface DocRow {
   kind: DocKind
   department_id?: string | null
   created_at: string
+  doc_date?: string | null
 }
 
 /** One row of the merged table — a real uploaded document, or a photo standing in for one. */
 type Row =
-  | { type: 'doc'; id: string; name: string; size: string | null; uploadedBy: string | null; kind: DocKind; createdAt: string }
-  | { type: 'photo'; id: string; name: string; uploadedBy: string | null; kind: string; createdAt: string; photoId: string }
+  | { type: 'doc'; id: string; name: string; size: string | null; uploadedBy: string | null; kind: DocKind; createdAt: string; docDate: string | null }
+  | { type: 'photo'; id: string; name: string; uploadedBy: string | null; kind: string; createdAt: string; docDate: string | null; photoId: string }
 
 const humanSize = (bytes: number) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
     : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} B`
+
+/** Local wall-clock today as YYYY-MM-DD — what <input type="date"> expects. */
+const todayInput = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+/** A bare YYYY-MM-DD rendered without dragging it through a timezone. */
+const fmtDay = (v: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v))
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString() : String(v)
+}
 
 const docKindLabel = (k: DocKind) => DOC_KINDS.find((x) => x.key === k)?.label ?? k
 const photoKindLabel = (k: string) => PHOTO_KINDS.find((x) => x.key === k)?.label ?? k
@@ -77,6 +89,10 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
   const [uploadKind, setUploadKind] = useState<DocKind>('service_report')
+  // The date the document itself carries. Defaults to today because that is
+  // right for a report filed the day the work happened, and is one click to
+  // change for the far commoner case of scanning something older.
+  const [docDate, setDocDate] = useState(todayInput)
   const [lightboxId, setLightboxId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -108,7 +124,8 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
 
   const rows: Row[] = useMemo(() => {
     const docRows: Row[] = docs.map((d) => ({
-      type: 'doc', id: d.id, name: d.name, size: d.size, uploadedBy: d.uploaded_by, kind: d.kind, createdAt: d.created_at,
+      type: 'doc', id: d.id, name: d.name, size: d.size, uploadedBy: d.uploaded_by, kind: d.kind,
+      createdAt: d.created_at, docDate: d.doc_date ?? null,
     }))
     const photoRows: Row[] = photos.map((p) => ({
       type: 'photo',
@@ -116,10 +133,14 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
       name: p.caption || `${photoKindLabel(p.kind)} photo`,
       uploadedBy: p.updatedBy ?? null,
       kind: p.kind,
-      createdAt: p.takenAt || p.updatedAt,
+      createdAt: p.updatedAt,
+      // A photo's EXIF capture date is its document date — the same "when was
+      // this actually taken, not filed" distinction doc_date draws for files.
+      docDate: p.takenAt ? String(p.takenAt).slice(0, 10) : null,
       photoId: p.id,
     }))
-    return [...docRows, ...photoRows].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    const when = (r: Row) => new Date(r.docDate ?? r.createdAt).getTime()
+    return [...docRows, ...photoRows].sort((a, b) => when(b) - when(a))
   }, [docs, photos])
 
   const onPick = async (file: File) => {
@@ -143,6 +164,7 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
         contentType: file.type || 'application/octet-stream',
         dataBase64,
         kind: uploadKind,
+        docDate: docDate || null,
       })
       if (res?.ok) { toast.success(`Uploaded ${file.name}`); load() }
       else toast.error('Upload failed')
@@ -162,6 +184,15 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
         </h3>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-500 hidden lg:inline">Service reports, certificates — any file type. Photos come from the gallery.</span>
+          {/* Both roles set this, not just an admin: whoever files a service
+              report is the person who knows when the work actually happened. */}
+          <label className="flex items-center gap-1.5 text-[10px] text-slate-500">
+            Doc date
+            <input type="date" value={docDate} max={todayInput()} onChange={(e) => setDocDate(e.target.value)}
+              disabled={!live} title="The date this document carries — the upload time is recorded separately"
+              className="text-[11px] rounded-md px-2 py-1.5 text-slate-300 outline-none disabled:opacity-50"
+              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
+          </label>
           <select value={uploadKind} onChange={(e) => setUploadKind(e.target.value as DocKind)}
             disabled={!live} title="What kind of document this upload is"
             className="text-[11px] rounded-md px-2 py-1.5 text-slate-300 outline-none disabled:opacity-50"
@@ -193,17 +224,17 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
           <table className="w-full text-sm">
             <thead className="sticky top-0 z-10">
               <tr style={{ background: '#0a0e1a' }}>
-                {['Document', 'Type', 'Size', 'Uploaded by', 'Date', ''].map((h) => (
+                {['Document', 'Type', 'Size', 'Uploaded by', 'Doc date', 'Uploaded', ''].map((h) => (
                   <th key={h} className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading && rows.length === 0 && (
-                <tr><td colSpan={6} className="py-6 text-center text-slate-600 text-xs">Loading…</td></tr>
+                <tr><td colSpan={7} className="py-6 text-center text-slate-600 text-xs">Loading…</td></tr>
               )}
               {!loading && rows.length === 0 && (
-                <tr><td colSpan={6} className="py-6 text-center text-slate-600 text-xs">
+                <tr><td colSpan={7} className="py-6 text-center text-slate-600 text-xs">
                   No maintenance documents yet — upload the first service report for this device.
                 </td></tr>
               )}
@@ -227,6 +258,12 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
                   </td>
                   <td className="py-2.5 px-3 text-xs text-slate-500">{r.type === 'doc' ? (r.size ?? '—') : '—'}</td>
                   <td className="py-2.5 px-3 text-xs text-slate-400">{r.uploadedBy ?? '—'}</td>
+                  {/* What the document IS dated, then when it was filed. They
+                      are routinely months apart on a scanned service report,
+                      and only the first answers "was this serviced in Q1?". */}
+                  <td className="py-2.5 px-3 text-xs text-slate-300">
+                    {r.docDate ? fmtDay(r.docDate) : <span className="text-slate-600">—</span>}
+                  </td>
                   <td className="py-2.5 px-3 text-xs text-slate-500">
                     {r.createdAt ? fmtDateTime(r.createdAt) : '—'}
                   </td>

@@ -95,7 +95,7 @@ export interface NodeReport {
   transport: { from_transport: string; to_transport: string; reason: string | null; rssi: number | null; ts: string }[]
   offlineSync?: { records_count: number; oldest_ts: string | null; newest_ts: string | null; sync_at: string }[]
   /** Maintenance documents uploaded within [from, to] — the report's own window, not the device's whole history. */
-  documents?: { name: string; kind: DocKind; size: string | null; uploaded_by: string | null; created_at: string }[]
+  documents?: { name: string; kind: DocKind; size: string | null; uploaded_by: string | null; created_at: string; doc_date?: string | null }[]
 }
 
 /**
@@ -346,9 +346,10 @@ export const api = {
   // Per-device maintenance documents (service reports). View-level: a viewer can
   // upload and download a device's docs, scoped to their department.
   getNodeDocuments: (id: string, departmentId: string) =>
-    req<{ id: string; name: string; size: string | null; uploaded_by: string | null; content_type?: string | null; kind: DocKind; department_id?: string | null; created_at: string }[]>(
+    req<{ id: string; name: string; size: string | null; uploaded_by: string | null; content_type?: string | null; kind: DocKind; department_id?: string | null; created_at: string; doc_date?: string | null }[]>(
       `/api/nodes/${id}/documents?departmentId=${encodeURIComponent(departmentId)}`),
-  uploadNodeDocument: (id: string, doc: { departmentId: string; name: string; size?: string; uploadedBy?: string; contentType?: string; dataBase64: string; kind?: DocKind }) =>
+  /** `docDate` is the date the DOCUMENT carries (YYYY-MM-DD), distinct from the upload timestamp. */
+  uploadNodeDocument: (id: string, doc: { departmentId: string; name: string; size?: string; uploadedBy?: string; contentType?: string; dataBase64: string; kind?: DocKind; docDate?: string | null }) =>
     req<{ ok: boolean; id: string }>(`/api/nodes/${id}/documents`, { method: 'POST', body: JSON.stringify(doc) }),
   // Fetch the document bytes with auth (an <a download> can't send a Bearer header)
   // and save via a temporary object URL.

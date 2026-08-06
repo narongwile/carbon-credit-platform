@@ -164,8 +164,18 @@ export function buildDeviceReport(
   if (rep.documents !== undefined) {
     sections.push({
       title: 'Maintenance Documents',
-      headers: ['Uploaded', 'Document', 'Type', 'Size', 'Uploaded by'],
-      rows: rep.documents.map((d) => [fmt(d.created_at), d.name, docKindLabel(d.kind), d.size ?? '—', d.uploaded_by ?? '—']),
+      // Document date first — it is what the period is about. The upload time
+      // is kept beside it because the two routinely differ by months and the
+      // gap itself is worth seeing on an audit trail.
+      headers: ['Document date', 'Document', 'Type', 'Size', 'Uploaded by', 'Uploaded'],
+      rows: rep.documents.map((d) => [
+        d.doc_date ? String(d.doc_date).slice(0, 10) : '—',
+        d.name,
+        docKindLabel(d.kind),
+        d.size ?? '—',
+        d.uploaded_by ?? '—',
+        fmt(d.created_at),
+      ]),
     })
   }
 
