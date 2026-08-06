@@ -15,7 +15,8 @@
 // ---------------------------------------------------------------------------
 
 import { useRef, useState } from 'react'
-import { api, PHOTO_KINDS, useIsLive, type NodePhotoKind } from '@/lib/api'
+import { api, useIsLive, type NodePhotoKind } from '@/lib/api'
+import { useKindCatalog } from '@/lib/useKindCatalog'
 import { useNodePhotos } from '@/lib/useNodePhotos'
 import { uploadNodePhotos, savedLine } from '@/lib/uploadNodePhotos'
 import PhotoLightbox from '@/components/device/PhotoLightbox'
@@ -23,9 +24,11 @@ import { Camera, Loader2, Plus } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 export default function PhotoStrip({
-  nodeId, deviceName, canEdit = false, emptyHint = 'No photo of this unit yet',
+  nodeId, orgId, deviceName, canEdit = false, emptyHint = 'No photo of this unit yet',
 }: {
   nodeId: string
+  /** The device's org — drives the photo-type picker (migrate-v40). */
+  orgId?: string
   deviceName?: string
   canEdit?: boolean
   emptyHint?: string
@@ -35,6 +38,7 @@ export default function PhotoStrip({
   const [lightbox, setLightbox] = useState<number | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [kind, setKind] = useState<NodePhotoKind>('overview')
+  const { options: kindOptions, labelOf: kindLabel } = useKindCatalog(orgId, 'photo')
   const fileRef = useRef<HTMLInputElement>(null)
 
   const onPick = async (files: FileList) => {
@@ -52,7 +56,7 @@ export default function PhotoStrip({
       <Camera size={12} className="text-slate-600 flex-shrink-0" />
       {photos.map((p, i) => (
         <button key={p.id} type="button" onClick={() => setLightbox(i)}
-          title={`${PHOTO_KINDS.find((k) => k.key === p.kind)?.label ?? p.kind}${p.caption ? ` — ${p.caption}` : ''}`}
+          title={`${kindLabel(p.kind)}${p.caption ? ` — ${p.caption}` : ''}`}
           className="w-11 h-9 rounded-md overflow-hidden flex-shrink-0 hover:ring-2 hover:ring-indigo-500"
           style={{ border: '1px solid #1e2433' }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -72,7 +76,7 @@ export default function PhotoStrip({
           <select value={kind} onChange={(e) => setKind(e.target.value as NodePhotoKind)} title="What this photo shows"
             className="text-[10px] rounded-md px-1.5 py-1 text-slate-400 outline-none"
             style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-            {PHOTO_KINDS.map((k) => <option key={k.key} value={k.key} className="bg-[#0d1117]">{k.label}</option>)}
+            {kindOptions.map((k) => <option key={k.key} value={k.key} className="bg-[#0d1117]">{k.label}</option>)}
           </select>
           <button type="button" onClick={() => fileRef.current?.click()} disabled={!!busy}
             className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md text-slate-300 disabled:opacity-50"
@@ -83,7 +87,7 @@ export default function PhotoStrip({
       )}
 
       {lightbox !== null && photos[lightbox] && (
-        <PhotoLightbox nodeId={nodeId} deviceName={deviceName} photos={photos} index={lightbox}
+        <PhotoLightbox nodeId={nodeId} orgId={orgId} deviceName={deviceName} photos={photos} index={lightbox}
           canEdit={canEdit} onIndex={setLightbox} onClose={() => setLightbox(null)} onChanged={reload} />
       )}
     </div>

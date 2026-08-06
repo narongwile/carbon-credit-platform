@@ -741,7 +741,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               the FIX theme. */}
           <div className="flex-1 relative" style={{ minHeight: '320px' }}>
             <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, #0a0e1a 0%, #0d1117 50%, #0a0e1a 100%)' }}>
-              <DevicePhotoGallery nodeId={id} deviceName={transformer.name}
+              <DevicePhotoGallery nodeId={id} orgId={transformer.orgId} deviceName={transformer.name}
                 fallback={show3d ? <Transformer3D transformer={transformer} /> : <NoPhotoPlaceholder />} />
             </div>
           </div>
@@ -887,7 +887,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       {/* Alarm event log + transport/connectivity timeline (same component the
           generic node page uses, so both routes stay in step). */}
       <div className="p-4 space-y-4">
-        <NodeDocuments nodeId={transformer.id} deviceName={transformer.name} />
+        <NodeDocuments nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name} />
         <NodeEventLog
           nodeId={transformer.id}
           domain="transformer"

@@ -291,7 +291,7 @@ export default function PendingDevicesPage() {
                     change, so one added here is already on the device page the
                     moment it is approved. */}
                 <div className="mb-3">
-                  <PhotoStrip nodeId={n.id} deviceName={f.name} canEdit
+                  <PhotoStrip nodeId={n.id} orgId={isSuper ? (f.orgId || n.org_id) : orgId} deviceName={f.name} canEdit
                     emptyHint="No site photo — ask whoever installed it, or approve without one" />
                 </div>
 

@@ -25,7 +25,13 @@ export interface DevicePresence {
  * wanted at a different moment, which is why the gallery groups by this rather
  * than showing one undifferentiated pile.
  */
-export type NodePhotoKind = 'overview' | 'nameplate' | 'tapchanger' | 'thermal' | 'condition' | 'other'
+// Since migrate-v40 an org can add its own kinds, so this is no longer a
+// closed set. The `& {}` keeps editor autocomplete for the built-ins while
+// still accepting a custom key — modelling it as a closed union would now be
+// a lie that forces a cast at every call site handling real data.
+export type NodePhotoKind =
+  | 'overview' | 'nameplate' | 'tapchanger' | 'thermal' | 'condition' | 'other'
+  | (string & {})
 
 export const PHOTO_KINDS: { key: NodePhotoKind; label: string; hint: string }[] = [
   { key: 'overview',   label: 'Overview',    hint: 'The whole unit — what you are walking up to' },
@@ -103,7 +109,26 @@ export interface NodeReport {
  * idea as NodePhotoKind, so "service report" and "certificate" sort apart
  * instead of one undifferentiated pile distinguishable only by filename.
  */
-export type DocKind = 'service_report' | 'certificate' | 'test_result' | 'invoice' | 'manual' | 'other'
+export type DocKind =
+  | 'service_report' | 'certificate' | 'test_result' | 'invoice' | 'manual' | 'other'
+  | (string & {})
+
+/** Which picker a catalog entry belongs to. */
+export type KindScope = 'photo' | 'document'
+
+/** One entry of the merged (built-in + org-customised) kind list. */
+export interface CatalogKind {
+  key: string
+  label: string
+  hint?: string
+  position: number
+  /** 0 = hidden: not offered for NEW uploads. Never affects what is already stored. */
+  active: 0 | 1
+  /** Ships in code — relabelable and hideable, never deletable. */
+  builtin: boolean
+  /** A built-in other features join on by key (overview/thermal/condition). Hiding it degrades those. */
+  protected: boolean
+}
 
 export const DOC_KINDS: { key: DocKind; label: string }[] = [
   { key: 'service_report', label: 'Service report' },
@@ -484,6 +509,18 @@ export const api = {
    */
   orgPhotoCovers: (orgId: string) =>
     req<Record<string, { photoId: string; v: string }>>(`/api/orgs/${orgId}/photo-covers`),
+
+  // Kind catalog (migrate-v40) — the admin-owned list behind the photo-kind
+  // and document-kind pickers. Built-ins are merged in server-side, so this
+  // always returns a usable list even for an org that has customised nothing.
+  orgKinds: (orgId: string, scope: KindScope) =>
+    req<{ scope: KindScope; kinds: CatalogKind[] }>(`/api/orgs/${orgId}/kinds?scope=${scope}`),
+  /** Upsert: an existing key edits it (including relabelling a built-in), a new key adds one. */
+  saveOrgKind: (orgId: string, body: { scope: KindScope; key: string; label: string; hint?: string | null; position?: number; active?: boolean }) =>
+    req<{ ok: boolean; scope: KindScope; key: string; label: string }>(`/api/orgs/${orgId}/kinds`, { method: 'POST', body: JSON.stringify(body) }),
+  /** Custom kinds only — a built-in is hidden, never deleted, and the backend refuses (409) while anything still carries it. */
+  deleteOrgKind: (orgId: string, scope: KindScope, key: string) =>
+    req<{ ok: boolean }>(`/api/orgs/${orgId}/kinds/${scope}/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // Transformer nameplate — real per-device spec (kVA, voltage, manufacturer…),
   // replacing the fabricated Asset Info that used to show the same fake unit

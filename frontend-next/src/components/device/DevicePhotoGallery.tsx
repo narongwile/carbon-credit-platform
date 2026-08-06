@@ -25,7 +25,9 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, PHOTO_KINDS, useIsLive, type NodePhoto, type NodePhotoKind } from '@/lib/api'
+import { api, useIsLive, type NodePhoto, type NodePhotoKind } from '@/lib/api'
+import { useKindCatalog } from '@/lib/useKindCatalog'
+import KindCatalogEditor from '@/components/device/KindCatalogEditor'
 import { useSessionRole } from '@/lib/auth'
 import { useNodePhotos } from '@/lib/useNodePhotos'
 import { uploadNodePhotos, savedLine } from '@/lib/uploadNodePhotos'
@@ -35,23 +37,25 @@ import PhotoAnnotationOverlay, { aspectBox } from '@/components/device/PhotoAnno
 import { Camera, Upload, Loader2, MapPin, X, Expand } from 'lucide-react'
 import toast from 'react-hot-toast'
 
-const kindLabel = (k: NodePhotoKind) => PHOTO_KINDS.find((x) => x.key === k)?.label ?? k
-
 /**
  * What the next photo probably is. Someone documenting a unit works through the
  * set in roughly this order, so defaulting to the first kind they have not
  * uploaded yet saves the dropdown most of the time.
  */
-function suggestKind(photos: NodePhoto[]): NodePhotoKind {
+function suggestKind(photos: NodePhoto[], options: { key: string }[]): NodePhotoKind {
   const have = new Set(photos.map((p) => p.kind))
-  for (const k of ['overview', 'nameplate', 'tapchanger', 'thermal'] as NodePhotoKind[]) if (!have.has(k)) return k
-  return 'condition'
+  // Walk the org's OWN order, not a frozen one — an admin who put their own
+  // type first meant it to be the first thing offered.
+  for (const k of options) if (!have.has(k.key)) return k.key as NodePhotoKind
+  return (options[0]?.key ?? 'other') as NodePhotoKind
 }
 
 export default function DevicePhotoGallery({
-  nodeId, deviceName, fallback,
+  nodeId, orgId, deviceName, fallback,
 }: {
   nodeId: string
+  /** The DEVICE's org, so a superadmin viewing a tenant's unit gets that tenant's photo types. */
+  orgId?: string
   deviceName?: string
   /** Shown until a photo exists — the generic twin. */
   fallback: React.ReactNode
@@ -69,11 +73,18 @@ export default function DevicePhotoGallery({
   // Dimensions for photos carried over from node_images, which have none
   // stored — read off the decoded <img> so the overlay still lines up.
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  const [managing, setManaging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // The org's own photo types (migrate-v40), falling back to the built-ins
+  // while loading or offline so every picker here works regardless.
+  const { all: allKinds, options: kindOptions, labelOf: kindLabel, reload: reloadKinds } = useKindCatalog(orgId, 'photo')
 
+  // Filter chips follow what this device HAS, in the org's own order — a
+  // hidden type still gets a chip when photos already carry it, because
+  // hiding a type must not hide the photos filed under it.
   const kindsPresent = useMemo(
-    () => PHOTO_KINDS.filter((k) => photos.some((p) => p.kind === k.key)),
-    [photos])
+    () => allKinds.filter((k) => photos.some((p) => p.kind === k.key)),
+    [allKinds, photos])
 
   const shown = useMemo(
     () => (kindFilter === 'all' ? photos : photos.filter((p) => p.kind === kindFilter)),
@@ -85,7 +96,7 @@ export default function DevicePhotoGallery({
   // stored dimensions never inherits the previous one's shape and skews its
   // markers until the new <img> finishes decoding.
   useEffect(() => { setNatural(null) }, [current?.id])
-  const nextKind = uploadKind ?? suggestKind(photos)
+  const nextKind = uploadKind ?? suggestKind(photos, kindOptions)
 
   const onPick = async (files: FileList) => {
     const r = await uploadNodePhotos(nodeId, files, nextKind, setBusy, (m) => toast.error(m))
@@ -215,8 +226,15 @@ export default function DevicePhotoGallery({
             title="What the next upload is a photo of"
             className="text-[10px] rounded-md px-1.5 py-1.5 text-slate-300 outline-none"
             style={{ background: 'rgba(10,14,26,0.9)', border: '1px solid #1e2433' }}>
-            {PHOTO_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+            {kindOptions.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
           </select>
+          {orgId && (
+            <button onClick={() => setManaging(true)} title="Add, rename or hide photo types for this organization"
+              className="text-[10px] px-1.5 py-1.5 rounded-md text-slate-400 hover:text-white"
+              style={{ background: 'rgba(10,14,26,0.9)', border: '1px solid #1e2433' }}>
+              Manage…
+            </button>
+          )}
           <button onClick={() => fileRef.current?.click()} disabled={!!busy}
             className="flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-md text-white disabled:opacity-50"
             style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
@@ -254,9 +272,14 @@ export default function DevicePhotoGallery({
 
       {lightbox !== null && photos[lightbox] && (
         <PhotoLightbox
-          nodeId={nodeId} deviceName={deviceName} photos={photos} index={lightbox}
+          nodeId={nodeId} orgId={orgId} deviceName={deviceName} photos={photos} index={lightbox}
           canEdit={canEdit} onIndex={setLightbox} onClose={() => setLightbox(null)}
           onChanged={reload} />
+      )}
+
+      {managing && orgId && (
+        <KindCatalogEditor orgId={orgId} scope="photo"
+          onClose={() => setManaging(false)} onChanged={reloadKinds} />
       )}
     </div>
   )

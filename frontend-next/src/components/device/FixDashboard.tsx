@@ -467,7 +467,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
           DevicePhotoGallery. */}
       <div className="lg:col-span-5 space-y-4">
         <div className="rounded-xl overflow-hidden h-[340px]" style={{ ...surface, backgroundImage: 'radial-gradient(circle at 50% 0%, rgba(99,102,241,0.12), transparent 70%)' }}>
-          <DevicePhotoGallery nodeId={device.id} deviceName={device.name}
+          <DevicePhotoGallery nodeId={device.id} orgId={device.orgId} deviceName={device.name}
             fallback={<DeviceTwin device={device} values={live ? values : null} show3d={show3d} />} />
         </div>
         {/* Transformer pair charts — the two the /admin/transformers/detail page

@@ -147,7 +147,7 @@ export default function DeviceDetailClient() {
       {view === 'fix' ? <FixDashboard device={device} /> : <FreestyleDashboard device={device} />}
 
       {/* Maintenance documents — scoped to the viewer's department by the API. */}
-      <NodeDocuments nodeId={id} deviceName={device.name} />
+      <NodeDocuments nodeId={id} orgId={orgId} deviceName={device.name} />
 
       {/* Alarm log + Transport & Connectivity, acknowledgement with the
           department problem catalogue, CSV/PDF export — the admin component. */}

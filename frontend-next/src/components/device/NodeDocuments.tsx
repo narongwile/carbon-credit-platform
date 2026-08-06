@@ -26,7 +26,8 @@ import { useAppStore } from '@/lib/store'
 import { useMyAccess } from '@/lib/useMyAccess'
 import { getViewerUser } from '@/lib/viewer'
 import { useNodePhotos } from '@/lib/useNodePhotos'
-import { PHOTO_KINDS } from '@/lib/api'
+import { useKindCatalog } from '@/lib/useKindCatalog'
+import KindCatalogEditor from '@/components/device/KindCatalogEditor'
 import PhotoLightbox from '@/components/device/PhotoLightbox'
 import { useSessionRole } from '@/lib/auth'
 import { fmtDateTime } from '@/lib/displayTime'
@@ -72,10 +73,7 @@ const fmtDay = (v: string) => {
   return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString() : String(v)
 }
 
-const docKindLabel = (k: DocKind) => DOC_KINDS.find((x) => x.key === k)?.label ?? k
-const photoKindLabel = (k: string) => PHOTO_KINDS.find((x) => x.key === k)?.label ?? k
-
-export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; deviceName?: string }) {
+export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: string; orgId?: string; deviceName?: string }) {
   const live = useIsLive()
   const viewerUserId = useAppStore((s) => s.viewerUserId)
   // The real signed-in user's own department(s) — see useMyAccess for why this
@@ -94,7 +92,12 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
   // change for the far commoner case of scanning something older.
   const [docDate, setDocDate] = useState(todayInput)
   const [lightboxId, setLightboxId] = useState<string | null>(null)
+  const [managing, setManaging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // Both catalogs (migrate-v40): documents for the upload picker, photos so a
+  // merged-in photo row shows the same label the gallery gives it.
+  const { options: docKindOptions, labelOf: docKindLabel, reload: reloadDocKinds } = useKindCatalog(orgId, 'document')
+  const { labelOf: photoKindLabel } = useKindCatalog(orgId, 'photo')
 
   // A viewer is scoped to their department; an admin passes none and the API
   // returns every department's documents for this node.
@@ -197,8 +200,15 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
             disabled={!live} title="What kind of document this upload is"
             className="text-[11px] rounded-md px-2 py-1.5 text-slate-300 outline-none disabled:opacity-50"
             style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-            {DOC_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+            {docKindOptions.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
           </select>
+          {orgId && canEditPhotos && (
+            <button onClick={() => setManaging(true)} title="Add, rename or hide document types for this organization"
+              className="text-[10px] px-2 py-1.5 rounded-md text-slate-400 hover:text-white"
+              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+              Manage…
+            </button>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -299,6 +309,7 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
         return (
           <PhotoLightbox
             nodeId={nodeId} deviceName={deviceName} photos={photos} index={idx}
+            orgId={orgId}
             canEdit={canEditPhotos}
             onIndex={(i) => setLightboxId(photos[i]?.id ?? null)}
             onClose={() => setLightboxId(null)}
@@ -306,6 +317,11 @@ export default function NodeDocuments({ nodeId, deviceName }: { nodeId: string; 
           />
         )
       })()}
+
+      {managing && orgId && (
+        <KindCatalogEditor orgId={orgId} scope="document"
+          onClose={() => setManaging(false)} onChanged={reloadDocKinds} />
+      )}
     </div>
   )
 }

@@ -4,11 +4,14 @@ import { useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useAppStore } from '@/lib/store'
 import { organizations } from '@/lib/mockData'
-import { Save, Upload, Trash2, Building2, MapPin } from 'lucide-react'
+import { Save, Upload, Trash2, Building2, MapPin, Camera, Paperclip, Settings2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, isLive, apiImageUrl } from '@/lib/api'
 import { getSession } from '@/lib/auth'
 import { defaultNodeRule } from '@/lib/alarmParams'
+import KindCatalogEditor from '@/components/device/KindCatalogEditor'
+import { useKindCatalog } from '@/lib/useKindCatalog'
+import type { KindScope } from '@/lib/api'
 
 const LocationPicker = dynamic(() => import('@/components/map/LocationPicker'), { ssr: false })
 
@@ -18,6 +21,12 @@ export default function SettingsPage() {
   const [selectedId, setSelectedId] = useState(transformers[0]?.id || '')
   const logoRef = useRef<HTMLInputElement>(null)
   const orgName = organizations.find((o) => o.id === selectedOrgId)?.name ?? 'Organization'
+  // Photo/document type catalogs (migrate-v40) — org-wide configuration, so
+  // this page is their home; the pickers themselves also link straight here
+  // via their own "Manage…" button for whoever is standing at the upload.
+  const [managingScope, setManagingScope] = useState<KindScope | null>(null)
+  const photoKinds = useKindCatalog(selectedOrgId, 'photo')
+  const docKinds = useKindCatalog(selectedOrgId, 'document')
   // Editable display name — what the sidebar shows beside the logo instead of
   // "ONEOPS". Seeded from the organizations table (live) or the mock org name.
   const [brandName, setBrandName] = useState('')
@@ -170,6 +179,46 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-xl font-bold text-white">Settings</h1>
         <p className="text-sm text-slate-500 mt-0.5">Organization branding, thresholds and system preferences</p>
+      </div>
+
+      {/* Photo & document types — the two upload dropdowns, per organization */}
+      <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+        <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+          <Settings2 size={14} className="text-indigo-400" /> Photo &amp; document types
+        </h3>
+        <p className="text-[11px] text-slate-500 mb-4">
+          The lists offered when someone uploads a photo of a unit or a maintenance document. Built-in types can be
+          renamed or hidden; add your own for anything this organization files that is not covered.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {([
+            { scope: 'photo' as const, icon: <Camera size={13} />, title: 'Photo types', cat: photoKinds },
+            { scope: 'document' as const, icon: <Paperclip size={13} />, title: 'Document types', cat: docKinds },
+          ]).map(({ scope, icon, title, cat }) => {
+            const hidden = cat.all.length - cat.options.length
+            return (
+              <button key={scope} onClick={() => setManagingScope(scope)}
+                className="text-left rounded-lg p-3.5 transition-colors hover:border-indigo-500/40"
+                style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-indigo-400">{icon}</span>
+                  <span className="text-xs font-medium text-white">{title}</span>
+                  <span className="ml-auto text-[10px] text-slate-500">
+                    {cat.options.length} offered{hidden > 0 ? ` · ${hidden} hidden` : ''}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {cat.options.slice(0, 8).map((k) => (
+                    <span key={k.key} className="text-[10px] px-1.5 py-0.5 rounded-full"
+                      style={{ color: '#94a3b8', background: 'rgba(148,163,184,0.1)' }}>{k.label}</span>
+                  ))}
+                  {cat.options.length > 8 && <span className="text-[10px] text-slate-600">+{cat.options.length - 8}</span>}
+                </div>
+                <div className="text-[10px] text-indigo-400 mt-2">Manage&hellip;</div>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* Organization branding */}
@@ -395,6 +444,12 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {managingScope && (
+        <KindCatalogEditor orgId={selectedOrgId} scope={managingScope}
+          onClose={() => setManagingScope(null)}
+          onChanged={() => { photoKinds.reload(); docKinds.reload() }} />
+      )}
     </div>
   )
 }

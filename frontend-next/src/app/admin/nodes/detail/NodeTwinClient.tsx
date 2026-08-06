@@ -68,7 +68,7 @@ export default function NodeTwinClient() {
           device page has to answer that without a detour through Sites. */}
       <NodeSitePanel nodeId={device.id} orgId={device.orgId} currentSiteId={device.siteId} />
 
-      <NodeDocuments nodeId={device.id} deviceName={device.name} />
+      <NodeDocuments nodeId={device.id} orgId={device.orgId} deviceName={device.name} />
 
       <NodeEventLog nodeId={device.id} domain={device.domain} baseValue={parseFloat(device.lastValue ?? '') || 4} />
 

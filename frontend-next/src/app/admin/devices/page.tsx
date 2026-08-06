@@ -253,7 +253,7 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
           </div>
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Photos</label>
-            <PhotoStrip nodeId={device.id} deviceName={device.name} canEdit
+            <PhotoStrip nodeId={device.id} orgId={device.orgId} deviceName={device.name} canEdit
               emptyHint="No photo yet — add the overview and the nameplate" />
           </div>
           <div>

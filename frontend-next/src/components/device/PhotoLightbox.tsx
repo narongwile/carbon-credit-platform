@@ -26,7 +26,8 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, PHOTO_KINDS, type NodePhoto, type NodePhotoKind, type PhotoAnnotation } from '@/lib/api'
+import { api, type NodePhoto, type NodePhotoKind, type PhotoAnnotation } from '@/lib/api'
+import { useKindCatalog } from '@/lib/useKindCatalog'
 import { humanSize } from '@/lib/imagePipeline'
 import { fmtDateTime } from '@/lib/displayTime'
 import PhotoAnnotationOverlay, { aspectBox } from '@/components/device/PhotoAnnotationOverlay'
@@ -42,12 +43,12 @@ const MARKER_COLOR = '#f43f5e'
 const DOT_THRESHOLD = 0.02
 const MAX_ZOOM = 6
 
-const kindLabel = (k: NodePhotoKind) => PHOTO_KINDS.find((x) => x.key === k)?.label ?? k
-
 export default function PhotoLightbox({
-  nodeId, deviceName, photos, index, canEdit, onIndex, onClose, onChanged,
+  nodeId, orgId, deviceName, photos, index, canEdit, onIndex, onClose, onChanged,
 }: {
   nodeId: string
+  /** The device's org — its photo types (migrate-v40) drive the type picker below. */
+  orgId?: string
   deviceName?: string
   photos: NodePhoto[]
   index: number
@@ -71,6 +72,7 @@ export default function PhotoLightbox({
   const [compare, setCompare] = useState(false)
   const [blend, setBlend] = useState(0.6)
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  const { options: kindOptions, labelOf: kindLabel } = useKindCatalog(orgId, 'photo')
   const stageRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
 
@@ -352,7 +354,7 @@ export default function PhotoLightbox({
           <div className="flex flex-wrap items-center gap-2">
             <select value={draftKind} onChange={(e) => setDraftKind(e.target.value as NodePhotoKind)}
               className="text-[11px] rounded-md px-2 py-1.5 text-white outline-none" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-              {PHOTO_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+              {kindOptions.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
             </select>
             <input autoFocus value={draftCaption} onChange={(e) => setDraftCaption(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') saveMeta(); if (e.key === 'Escape') setEditingMeta(false) }}
