@@ -10,6 +10,7 @@ import type { NodeReport } from './api'
 import { DOC_KINDS } from './api'
 import { ALARM_SCHEMA } from './alarmParams'
 import type { SensorDomain } from '@/types/fleet'
+import { fmtDateTime } from '@/lib/displayTime'
 
 const docKindLabel = (k: string) => DOC_KINDS.find((x) => x.key === k)?.label ?? k
 
@@ -41,7 +42,7 @@ const fmt = (v: unknown): string => {
   let s = String(v)
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s = `${s.replace(' ', 'T')}Z`
   const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString()
+  return Number.isNaN(d.getTime()) ? String(v) : fmtDateTime(d)
 }
 
 const round = (v: number, dp = 2) => (Number.isFinite(v) ? Number(v.toFixed(dp)) : null)

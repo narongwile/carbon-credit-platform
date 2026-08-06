@@ -8,6 +8,7 @@ import { getSession } from '@/lib/auth'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
+import { fmtDateTime } from '@/lib/displayTime'
 
 // Only id/label are ever read (the ack picker); department_id/domain came
 // along in the API response but nothing here scopes by them — this page is
@@ -63,7 +64,7 @@ function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string
       <td className="py-3 px-4">
         <div className="flex items-center gap-1 text-xs text-slate-500">
           <Clock size={10} />
-          {new Date(alarm.timestamp).toLocaleString()}
+          {fmtDateTime(alarm.timestamp)}
           {alarm.source === 'edge' && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-300 font-medium">EDGE</span>}
         </div>
       </td>
@@ -176,7 +177,7 @@ export default function AlarmsPage() {
   const EXPORT_HEADERS = ['Severity', 'Transformer', 'Message', 'Sensor', 'Value', 'Unit', 'Timestamp', 'Status', 'Acknowledged By']
   const exportRows = () => filtered.map((a) => [
     a.severity, a.transformerName, a.message, a.sensor, a.value, a.unit,
-    new Date(a.timestamp).toLocaleString(), a.acknowledged ? 'Acknowledged' : 'Open', a.acknowledgedBy ?? '',
+    fmtDateTime(a.timestamp), a.acknowledged ? 'Acknowledged' : 'Open', a.acknowledgedBy ?? '',
   ])
 
   const critCount = orgAlarms.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length

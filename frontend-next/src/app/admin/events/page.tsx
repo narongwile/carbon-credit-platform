@@ -5,6 +5,7 @@ import { Clock, AlertTriangle } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import { useOrgAlarms } from '@/lib/useOrgAlarms'
 import { api, useIsLive } from '@/lib/api'
+import { fmtDateTime } from '@/lib/displayTime'
 
 export default function EventsPage() {
   const live = useIsLive()
@@ -53,10 +54,10 @@ export default function EventsPage() {
                 </div>
                 <div className="flex items-center gap-1 text-xs text-slate-500 flex-shrink-0 ml-4">
                   <Clock size={11} />
-                  {new Date(event.raisedAt).toLocaleString()}
+                  {fmtDateTime(event.raisedAt)}
                 </div>
               </div>
-              {event.clearedAt && <div className="text-xs text-slate-400 mt-2">Cleared: {new Date(event.clearedAt).toLocaleString()}</div>}
+              {event.clearedAt && <div className="text-xs text-slate-400 mt-2">Cleared: {fmtDateTime(event.clearedAt)}</div>}
               {event.eventProblemId && <div className="text-xs text-slate-400 mt-1">Root Cause: <span className="text-white">{problems[event.eventProblemId] || event.eventProblemId}</span></div>}
             </div>
           </div>

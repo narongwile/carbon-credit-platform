@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import SensorDetailsModal from '@/components/SensorDetailsModal'
+import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -168,7 +169,7 @@ export default function FleetPage() {
                         <div className="w-8 h-8 rounded flex items-center justify-center bg-black/20" style={{ color: r.color }}>{r.icon}</div>
                         <div>
                           <div className="text-sm font-medium text-white">{d.release_id.slice(0, 8)}</div>
-                          <div className="text-[10px] text-slate-500">{new Date(d.updated_at).toLocaleString()}</div>
+                          <div className="text-[10px] text-slate-500">{fmtDateTime(d.updated_at)}</div>
                         </div>
                       </div>
                       <div className="text-right">

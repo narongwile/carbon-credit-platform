@@ -5,6 +5,7 @@ import { Database, Play, Copy, Download, Sparkles, Terminal, Table, CheckCircle2
 import { api } from '@/lib/api'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import { fmtHM } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -113,7 +114,7 @@ export default function SqlGenPage() {
                 {history.length ? history.map((h, i) => (
                   <button key={i} onClick={() => { setQuery(h.query); setSql(h.sql); setTab('new') }} className="w-full text-left p-2.5 rounded-lg text-xs" style={inset}>
                     <div className="text-slate-300">{h.query}</div>
-                    <div className="text-slate-600 mt-0.5">{h.ts.toLocaleTimeString()}</div>
+                    <div className="text-slate-600 mt-0.5">{fmtHM(h.ts)}</div>
                   </button>
                 )) : <p className="text-xs text-slate-600">No history yet.</p>}
               </div>

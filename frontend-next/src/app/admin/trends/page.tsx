@@ -21,6 +21,7 @@ import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { downloadCSV } from '@/lib/exportFile'
+import { fmtHM, fmtDayMonth, fmtDateTime, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
@@ -149,18 +150,16 @@ export default function TrendsPage() {
   }), [loaded])
 
   const spanMs = win.to - win.from
-  const fmtTick = (ts: number) => {
-    const d = new Date(ts)
-    return spanMs > 36 * 3600_000
-      ? d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
-      : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-  }
+  // Pinned to DISPLAY_TZ, not the browser — identical fix to ParamHistoryModal.
+  // Readings are +07:00 events; a laptop set to UTC read every axis on this
+  // page seven hours off.
+  const fmtTick = (ts: number) => (spanMs > 36 * 3600_000 ? fmtDayMonth(ts) : fmtHM(ts))
 
   const exportCsv = () => {
     downloadCSV(
       `compare_${paramKey}_${toUTC(win.from).slice(0, 10)}_${toUTC(win.to).slice(0, 10)}.csv`,
       ['Time', ...picked.map((id) => devices.find((d) => d.id === id)?.name ?? id)],
-      data.map((row) => [new Date(row.ts).toLocaleString(), ...picked.map((id) => (row as Record<string, number>)[id] ?? '')]),
+      data.map((row) => [fmtDateTime(row.ts), ...picked.map((id) => (row as Record<string, number>)[id] ?? '')]),
     )
   }
 
@@ -220,6 +219,10 @@ export default function TrendsPage() {
           </select>
           <span className="text-[11px] text-slate-600">
             {picked.length}/{MAX_DEVICES} devices
+          </span>
+          {/* Which zone the axis is in — the readings are Thai-time events. */}
+          <span className="text-[10px] text-slate-600" title={`All times shown in ${DISPLAY_TZ_LABEL}`}>
+            times in {DISPLAY_TZ_LABEL}
           </span>
         </div>
 
@@ -284,7 +287,7 @@ export default function TrendsPage() {
                 tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={40} />
               <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
               <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
-                labelFormatter={(v) => new Date(Number(v)).toLocaleString()}
+                labelFormatter={(v) => fmtDateTime(Number(v))}
                 formatter={(v: number | string, name: string) => [`${v}${param?.unit ? ` ${param.unit}` : ''}`, name]} />
               <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
               {/* Shared thresholds: the point of one axis is seeing which device

@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react'
 import { api, isLive } from '@/lib/api'
 import { Search, Clock, User, Building2, ScrollText } from 'lucide-react'
+import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -117,7 +118,7 @@ export default function LogsPage() {
                   <td className="py-3.5 px-4">
                     <div className="flex items-center gap-1 text-slate-500 text-xs">
                       <Clock size={10} />
-                      {new Date(log.at).toLocaleString()}
+                      {fmtDateTime(log.at)}
                     </div>
                   </td>
                 </tr>

@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react'
 import { api, useIsLive, type DevicePresence } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { Wifi, WifiOff, RefreshCw } from 'lucide-react'
+import { fmtDateTime } from '@/lib/displayTime'
 
 /** Presence is authoritative, but the sweep only runs every 10s — a frame that
  *  just arrived means the device is up regardless of what the row still says. */
@@ -28,7 +29,7 @@ const ago = (iso: string | null | undefined): string => {
   if (s < 60) return `${s}s ago`
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
-  return new Date(iso).toLocaleString()
+  return fmtDateTime(iso)
 }
 
 export default function DeviceLiveStatus({ nodeId }: { nodeId: string }) {

@@ -17,6 +17,7 @@ import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry, subscribeConnection } from '@/lib/telemetryBus'
 import { Radio, RefreshCw, Wifi, WifiOff, Database } from 'lucide-react'
+import { fmtHM } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -204,7 +205,7 @@ export default function LiveRawTelemetryPage() {
                     </div>
                   )}
                   <div className="text-[10px] text-slate-600 mt-3">
-                    {r.ts ? `updated ${new Date(r.ts).toLocaleTimeString()}` : 'no timestamp'}
+                    {r.ts ? `updated ${fmtHM(r.ts)}` : 'no timestamp'}
                   </div>
                 </div>
               )

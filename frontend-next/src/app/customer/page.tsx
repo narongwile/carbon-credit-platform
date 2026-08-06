@@ -9,6 +9,7 @@ import { useIsLive } from '@/lib/api'
 import { viewerDomains } from '@/lib/viewer'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight } from 'lucide-react'
+import { fmtHM } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet }
@@ -128,7 +129,7 @@ export default function CustomerPage() {
                   <div className="text-sm text-slate-200 leading-snug">{a.message}</div>
                   <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-500">
                     <span>{a.transformerName}</span>
-                    <span className="flex items-center gap-1"><Clock size={9} />{new Date(a.timestamp).toLocaleTimeString()}</span>
+                    <span className="flex items-center gap-1"><Clock size={9} />{fmtHM(a.timestamp)}</span>
                     {a.acknowledged && <span className="text-green-400">· ACK</span>}
                   </div>
                 </div>

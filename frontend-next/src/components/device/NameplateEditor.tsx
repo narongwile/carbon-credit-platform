@@ -30,6 +30,7 @@ import { useTransformerModels } from '@/lib/useNodeNameplate'
 import type { Nameplate } from '@/lib/useNodeNameplate'
 import { X, Save, Loader2, Link2, Unlink } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -209,7 +210,7 @@ export default function NameplateEditor({
 
           {current?.updatedAt && (
             <p className="text-[10px] text-slate-600">
-              Last saved{current.updatedBy ? ` by ${current.updatedBy}` : ''} · {new Date(current.updatedAt).toLocaleString()}
+              Last saved{current.updatedBy ? ` by ${current.updatedBy}` : ''} · {fmtDateTime(current.updatedAt)}
             </p>
           )}
         </div>

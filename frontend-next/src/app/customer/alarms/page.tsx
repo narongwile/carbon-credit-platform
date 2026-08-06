@@ -5,6 +5,7 @@ import { useManagedDevices } from '@/lib/useManagedDevices'
 import { api, useIsLive } from '@/lib/api'
 import { AlertTriangle, XCircle, Info, Clock, Check } from 'lucide-react'
 import { useSessionOrgId } from '@/lib/auth'
+import { fmtDateTime } from '@/lib/displayTime'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
@@ -128,7 +129,7 @@ export default function CustomerAlarmsPage() {
               </div>
               <div className="flex items-center gap-1 text-xs text-slate-500">
                 <Clock size={10} />
-                {new Date(alarm.raised_at).toLocaleString()}
+                {fmtDateTime(alarm.raised_at)}
               </div>
               <span className="text-xs font-bold uppercase" style={{ color: c.color }}>{alarm.severity}</span>
               {acked ? (

@@ -6,6 +6,7 @@ import { platformStats, auditLogs, organizations } from '@/lib/mockData'
 import { api, useIsLive } from '@/lib/api'
 import type { MapOrg } from '@/components/map/OrgDistributionMap'
 import { Building2, Zap, Database, Activity, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { fmtHM } from '@/lib/displayTime'
 
 const OrgDistributionMap = dynamic(() => import('@/components/map/OrgDistributionMap'), { ssr: false })
 
@@ -146,7 +147,7 @@ export default function SuperAdminPage() {
                   <td className="py-3 px-2">
                     <div className="flex items-center gap-1 text-slate-500 text-xs">
                       <Clock size={10} />
-                      {new Date(log.timestamp).toLocaleTimeString()}
+                      {fmtHM(log.timestamp)}
                     </div>
                   </td>
                   <td className="py-3 px-2">

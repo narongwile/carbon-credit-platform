@@ -67,7 +67,13 @@ const todayInput = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-/** A bare YYYY-MM-DD rendered without dragging it through a timezone. */
+/**
+ * A bare YYYY-MM-DD rendered without dragging it through a timezone.
+ * Deliberately NOT displayTime.ts: doc_date is a calendar date with no instant
+ * attached, so it is built from local Y/M/D components and formatted locally —
+ * which cannot shift a day in either direction. Passing it through a zone-aware
+ * formatter is what WOULD shift it. (timezone-sweep-ok: date-only)
+ */
 const fmtDay = (v: string) => {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v))
   return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString() : String(v)

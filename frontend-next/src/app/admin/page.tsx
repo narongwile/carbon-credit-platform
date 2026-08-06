@@ -13,6 +13,7 @@ import Link from 'next/link'
 import clsx from 'clsx'
 import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock } from 'lucide-react'
 import type { Transformer } from '@/types'
+import { fmtHM } from '@/lib/displayTime'
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
@@ -270,7 +271,7 @@ function AlarmTab() {
               <div className="text-sm text-slate-200 truncate">{a.message}</div>
               <div className="text-xs text-slate-600">{a.transformerName}</div>
             </div>
-            <span className="flex items-center gap-1 text-xs text-slate-500"><Clock size={10} />{new Date(a.timestamp).toLocaleTimeString()}</span>
+            <span className="flex items-center gap-1 text-xs text-slate-500"><Clock size={10} />{fmtHM(a.timestamp)}</span>
             <span className="text-xs font-bold" style={{ color: c }}>{a.severity}</span>
             {a.acknowledged
               ? <span className="text-[10px] text-green-400 bg-green-400/10 px-2 py-1 rounded-full">ACK</span>
