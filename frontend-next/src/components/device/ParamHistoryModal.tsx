@@ -20,7 +20,9 @@ import { api, useIsLive } from '@/lib/api'
 import { ALARM_SCHEMA, defaultNodeRule, paramStatus, type AlarmParam } from '@/lib/alarmParams'
 import { useAlarmDB } from '@/server/alarmStore'
 import { downloadCSV } from '@/lib/exportFile'
+import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import type { SensorDomain } from '@/types/fleet'
+import type { NodeAlarmRule } from '@/server/alarmEngine'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts'
@@ -48,11 +50,11 @@ interface Row { param_key: string; value: number; taken_at: string; v_min?: numb
 
 /** UTC 'YYYY-MM-DD HH:MM:SS' — the contract the readings endpoint expects. */
 const toUTC = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
-/** Value for <input type="datetime-local">, which is always LOCAL wall time. */
-const toLocalInput = (ms: number) => {
-  const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000)
-  return d.toISOString().slice(0, 16)
-}
+// A datetime-local input is the BROWSER's wall clock, but every label on this
+// chart is pinned to DISPLAY_TZ. Leaving the picker on browser time meant an
+// operator on a UTC laptop asked for 08:00 and got rows labelled 15:00 — the
+// range and the axis disagreeing about the same number. Both ends now speak
+// DISPLAY_TZ. See src/lib/displayTime.ts.
 
 export default function ParamHistoryModal({
   nodeId, deviceName, orgId, domain, params, initialKey, canEditThresholds = true, onClose,
@@ -76,7 +78,12 @@ export default function ParamHistoryModal({
   const [rows, setRows] = useState<Row[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [win, setWin] = useState<{ from: number; to: number }>(() => ({ from: Date.now() - 1440 * 60_000, to: Date.now() }))
-  const [thresh, setThresh] = useState<{ warn: number; critical: number } | null>(null)
+  // direction/enabled live here too, because a parameter that is NOT in the
+  // product's alarm schema has nowhere else to get them from — and on a real
+  // ETERNITY transformer (Oiltemp, H2, RHamb, Tbox…) that is most of them.
+  const [thresh, setThresh] = useState<{ warn: number; critical: number; direction: 'high' | 'low'; enabled: boolean } | null>(null)
+  /** The device's saved rule, server-first. Held so saving can extend it rather than rebuild it. */
+  const [rule, setRuleState] = useState<NodeAlarmRule | null>(null)
   const [savingRule, setSavingRule] = useState(false)
 
   // A caller may open a key that is not in `params`: the device decides what it
@@ -105,18 +112,37 @@ export default function ParamHistoryModal({
     return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
   }, [onClose])
 
-  // Seed the threshold editor from the saved rule, falling back to the schema.
+  // Seed the threshold editor. The SERVER's rule is the truth — the local
+  // zustand copy is one browser's cache of it, so seeding from localStorage
+  // alone showed two admins different "current" limits for the same device.
   useEffect(() => {
-    if (!schemaParam) { setThresh(null); return }
-    const saved = hasHydrated ? useAlarmDB.getState().rules[nodeId] : undefined
-    const p = saved?.params.find((x) => x.key === paramKey)
-    setThresh({ warn: p?.warn ?? schemaParam.warn, critical: p?.critical ?? schemaParam.critical })
-  }, [nodeId, paramKey, schemaParam, hasHydrated])
+    let cancelled = false
+    ;(async () => {
+      const remote = live ? await api.getRule(nodeId) : null
+      if (cancelled) return
+      const local = hasHydrated ? useAlarmDB.getState().rules[nodeId] : undefined
+      const r = remote ?? local ?? null
+      setRuleState(r)
+      const saved = r?.params.find((x) => x.key === paramKey)
+      if (saved) {
+        setThresh({ warn: saved.warn, critical: saved.critical, direction: saved.direction, enabled: true })
+      } else if (schemaParam) {
+        setThresh({ warn: schemaParam.warn, critical: schemaParam.critical, direction: schemaParam.direction, enabled: true })
+      } else {
+        // Never configured and not in the schema: blank rather than a guessed
+        // number. The observed min/avg/max above is what an admin should pick
+        // from — inventing a limit here would look authoritative and be
+        // arbitrary.
+        setThresh({ warn: NaN, critical: NaN, direction: 'high', enabled: false })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [nodeId, paramKey, schemaParam, hasHydrated, live])
 
   const range = useMemo(() => {
     if (custom) {
-      const from = new Date(custom.from).getTime()
-      const to = new Date(custom.to).getTime()
+      const from = fromDisplayInput(custom.from)
+      const to = fromDisplayInput(custom.to)
       if (!Number.isNaN(from) && !Number.isNaN(to) && to > from) return { from, to }
     }
     const minutes = QUICK.find((q) => q.id === quick)?.minutes ?? 1440
@@ -164,26 +190,46 @@ export default function ParamHistoryModal({
   }, [rows, schemaParam, thresh])
 
   const spanMs = win.to - win.from
-  const fmtTick = (ts: number) => {
-    const d = new Date(ts)
-    return spanMs > 36 * 3600_000
-      ? d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' })
-      : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
-  }
+  // Pinned to DISPLAY_TZ, not the browser: these readings are physically
+  // Thai-time events (MySQL runs at +07:00 and the pool opens with that zone),
+  // so a laptop set to UTC read every chart seven hours off.
+  const fmtTick = (ts: number) => (spanMs > 36 * 3600_000 ? fmtDayMonth(ts) : fmtHM(ts))
 
   const saveThreshold = async () => {
-    if (!domain || !thresh || !schemaParam) return
+    if (!thresh) return
     setSavingRule(true)
     try {
       // Start from the saved rule so editing one parameter cannot reset the
-      // limits somebody set on the other five.
-      const base = (hasHydrated && useAlarmDB.getState().rules[nodeId]) || defaultNodeRule(domain)
-      const next = {
-        ...base,
-        params: base.params.map((p) => (p.key === paramKey ? { ...p, warn: thresh.warn, critical: thresh.critical } : p)),
+      // limits somebody set on the others. defaultNodeRule only when this
+      // device has no rule at all yet.
+      const base: NodeAlarmRule = rule
+        ?? (hasHydrated ? useAlarmDB.getState().rules[nodeId] : undefined)
+        ?? (domain ? defaultNodeRule(domain) : { domain: '', params: [], dwellMin: 5, hysteresis: 2 })
+      const exists = base.params.some((p) => p.key === paramKey)
+      let params
+      if (!thresh.enabled) {
+        // Turning a parameter off means the engine should stop evaluating it.
+        // A schema param reverts to schema defaults on re-enable; a custom one
+        // simply leaves the rule.
+        params = base.params.filter((p) => p.key !== paramKey)
+      } else if (exists) {
+        params = base.params.map((p) => (p.key === paramKey
+          ? { ...p, warn: thresh.warn, critical: thresh.critical, direction: thresh.direction } : p))
+      } else {
+        // The case that did not exist before: a parameter with no schema entry
+        // gets a real rule of its own. The engine matches purely on key (see
+        // evaluate() in the generator), so nothing else has to know about it.
+        params = [...base.params, {
+          key: paramKey, label: param?.label ?? paramKey, unit,
+          direction: thresh.direction, warn: thresh.warn, critical: thresh.critical,
+        }]
       }
+      const next: NodeAlarmRule = { ...base, domain: base.domain || domain || '', params }
       setRule(nodeId, next, orgId)
-      toast.success(`${param?.label} thresholds saved`)
+      setRuleState(next)
+      toast.success(thresh.enabled
+        ? `${param?.label ?? paramKey} thresholds saved`
+        : `${param?.label ?? paramKey} will no longer raise alarms`)
     } finally {
       setSavingRule(false)
     }
@@ -193,12 +239,13 @@ export default function ParamHistoryModal({
     downloadCSV(
       `${nodeId}_${paramKey}_${toUTC(win.from).slice(0, 10)}_${toUTC(win.to).slice(0, 10)}.csv`,
       ['Time', `${param?.label ?? paramKey}${unit ? ` (${unit})` : ''}`, 'Min', 'Max', 'Samples'],
-      (rows ?? []).map((r) => [new Date(r.taken_at).toLocaleString(), r.value, r.v_min ?? '', r.v_max ?? '', r.n ?? '']),
+      (rows ?? []).map((r) => [fmtDateTime(r.taken_at), r.value, r.v_min ?? '', r.v_max ?? '', r.n ?? '']),
     )
   }
 
-  const invalid = !!thresh && !!schemaParam &&
-    (schemaParam.direction === 'high' ? thresh.critical <= thresh.warn : thresh.critical >= thresh.warn)
+  const blank = !!thresh && thresh.enabled && (!Number.isFinite(thresh.warn) || !Number.isFinite(thresh.critical))
+  const invalid = !!thresh && thresh.enabled && !blank &&
+    (thresh.direction === 'high' ? thresh.critical <= thresh.warn : thresh.critical >= thresh.warn)
 
   return (
     <div
@@ -259,20 +306,26 @@ export default function ParamHistoryModal({
           </div>
           <input
             type="datetime-local"
-            value={custom?.from ?? toLocalInput(range.from)}
-            onChange={(e) => setCustom((c) => ({ from: e.target.value, to: c?.to ?? toLocalInput(range.to) }))}
+            value={custom?.from ?? toDisplayInput(range.from)}
+            onChange={(e) => setCustom((c) => ({ from: e.target.value, to: c?.to ?? toDisplayInput(range.to) }))}
             className="text-[11px] rounded-md px-2 py-1.5 text-slate-200" style={inset}
           />
           <span className="text-slate-600 text-[11px]">→</span>
           <input
             type="datetime-local"
-            value={custom?.to ?? toLocalInput(range.to)}
-            onChange={(e) => setCustom((c) => ({ from: c?.from ?? toLocalInput(range.from), to: e.target.value }))}
+            value={custom?.to ?? toDisplayInput(range.to)}
+            onChange={(e) => setCustom((c) => ({ from: c?.from ?? toDisplayInput(range.from), to: e.target.value }))}
             className="text-[11px] rounded-md px-2 py-1.5 text-slate-200" style={inset}
           />
           {custom && (
             <button onClick={() => setCustom(null)} className="text-[11px] text-slate-500 hover:text-white underline">reset</button>
           )}
+          {/* Which zone every time on this screen is in. The readings are
+              Thai-time events; saying so beats an operator discovering the
+              answer by adding seven hours in their head. */}
+          <span className="text-[10px] text-slate-600" title={`All times shown in ${DISPLAY_TZ_LABEL}`}>
+            times in {DISPLAY_TZ_LABEL}
+          </span>
           <div className="ml-auto flex items-center gap-2">
             {loading && <Loader2 size={13} className="animate-spin text-indigo-400" />}
             <button onClick={exportCsv} disabled={!rows?.length}
@@ -301,7 +354,7 @@ export default function ParamHistoryModal({
                   tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={40} />
                 <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
                 <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
-                  labelFormatter={(v) => new Date(Number(v)).toLocaleString()}
+                  labelFormatter={(v) => fmtDateTime(Number(v))}
                   formatter={(v: unknown, name: string) => {
                     if (Array.isArray(v)) return [`${v[0]} – ${v[1]}${unit ? ` ${unit}` : ''}`, 'Min–Max']
                     return [`${v}${unit ? ` ${unit}` : ''}`, name]
@@ -334,36 +387,68 @@ export default function ParamHistoryModal({
           </div>
         )}
 
-        {/* Thresholds */}
+        {/* Thresholds. Available for EVERY parameter now, not only the six in
+            the product's alarm schema — a real ETERNITY transformer reports
+            Oiltemp/H2/RHamb/Tbox and none of those are schema keys, so this
+            panel used to tell the operator their actual measurements could not
+            be alarmed on at all. The engine matches on key alone, so a rule for
+            any key works the moment it is saved. */}
         <div className="p-5 pt-4">
-          {!schemaParam ? (
-            <p className="text-[11px] text-slate-600">
-              This parameter is not in the product’s alarm schema, so it has no thresholds to configure.
-            </p>
-          ) : (
+          {(
             <div className="rounded-xl p-4" style={inset}>
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
                   <TrendingUp size={13} className="text-indigo-400" /> Alarm &amp; notify thresholds
+                  {!schemaParam && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full font-normal"
+                      style={{ color: '#a5b4fc', background: 'rgba(99,102,241,0.15)' }}>custom parameter</span>
+                  )}
                 </h3>
-                <span className="text-[10px] text-slate-600">
-                  alarms when the value goes {schemaParam.direction === 'high' ? 'above' : 'below'} these limits
-                </span>
+                {/* A parameter with no schema entry has no built-in direction,
+                    so the admin picks it — "is a HIGH reading the problem, or a
+                    LOW one" is the one thing the data cannot tell us. */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-slate-600">alarms when the value goes</span>
+                  <select value={thresh?.direction ?? 'high'} disabled={!canEditThresholds || !!schemaParam}
+                    onChange={(e) => setThresh((t) => (t ? { ...t, direction: e.target.value as 'high' | 'low' } : t))}
+                    className="text-[10px] rounded px-1.5 py-1 text-slate-200 outline-none disabled:opacity-60"
+                    style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+                    title={schemaParam ? 'Fixed by the product alarm schema for this parameter' : 'Which way is the fault'}>
+                    <option value="high">above</option>
+                    <option value="low">below</option>
+                  </select>
+                  <span className="text-[10px] text-slate-600">these limits</span>
+                </div>
               </div>
+
+              {/* Off by default for a parameter nobody has configured — a
+                  device must not start raising alarms on a value the moment
+                  someone opens its chart. */}
+              <label className="flex items-center gap-2 mb-3 text-[11px] cursor-pointer"
+                style={{ color: thresh?.enabled ? '#e2e8f0' : '#64748b' }}>
+                <input type="checkbox" checked={!!thresh?.enabled} disabled={!canEditThresholds}
+                  onChange={(e) => setThresh((t) => (t ? { ...t, enabled: e.target.checked } : t))} />
+                Raise alarms for {param?.label ?? paramKey}
+                {!thresh?.enabled && <span className="text-slate-600">— currently not monitored</span>}
+              </label>
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="block text-[10px] text-amber-400 mb-1 uppercase tracking-wider">Warning</span>
-                  <input type="number" step="any" value={thresh?.warn ?? ''}
-                    disabled={!canEditThresholds}
-                    onChange={(e) => setThresh((t) => (t ? { ...t, warn: Number(e.target.value) } : t))}
+                  <input type="number" step="any"
+                    value={Number.isFinite(thresh?.warn as number) ? thresh!.warn : ''}
+                    disabled={!canEditThresholds || !thresh?.enabled}
+                    placeholder={stats ? `observed ${stats.min.toFixed(1)}–${stats.max.toFixed(1)}` : ''}
+                    onChange={(e) => setThresh((t) => (t ? { ...t, warn: e.target.value === '' ? NaN : Number(e.target.value) } : t))}
                     className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
                     style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
                 </label>
                 <label className="block">
                   <span className="block text-[10px] text-red-400 mb-1 uppercase tracking-wider">Critical</span>
-                  <input type="number" step="any" value={thresh?.critical ?? ''}
-                    disabled={!canEditThresholds}
-                    onChange={(e) => setThresh((t) => (t ? { ...t, critical: Number(e.target.value) } : t))}
+                  <input type="number" step="any"
+                    value={Number.isFinite(thresh?.critical as number) ? thresh!.critical : ''}
+                    disabled={!canEditThresholds || !thresh?.enabled}
+                    placeholder={stats ? `observed ${stats.min.toFixed(1)}–${stats.max.toFixed(1)}` : ''}
+                    onChange={(e) => setThresh((t) => (t ? { ...t, critical: e.target.value === '' ? NaN : Number(e.target.value) } : t))}
                     className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
                     style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
                 </label>
@@ -371,12 +456,18 @@ export default function ParamHistoryModal({
               {invalid && (
                 <p className="text-[11px] text-amber-400 flex items-center gap-1.5 mt-2">
                   <AlertTriangle size={12} />
-                  Critical must be {schemaParam.direction === 'high' ? 'higher' : 'lower'} than warning, or it can never fire.
+                  Critical must be {thresh?.direction === 'high' ? 'higher' : 'lower'} than warning, or it can never fire.
+                </p>
+              )}
+              {blank && (
+                <p className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-2">
+                  <AlertTriangle size={12} />
+                  Enter both limits. The range this parameter has actually reported is shown above.
                 </p>
               )}
               <button
                 onClick={saveThreshold}
-                disabled={!canEditThresholds || invalid || savingRule}
+                disabled={!canEditThresholds || invalid || blank || savingRule}
                 className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
                 style={gradient}
               >
@@ -384,6 +475,7 @@ export default function ParamHistoryModal({
               </button>
               <p className="text-[10px] text-slate-600 mt-2">
                 Applies to this device. Notifications follow the same limits — the channels are chosen in My Alert Settings.
+                {!schemaParam && ' This parameter is not part of the product schema, so these limits exist only for this device.'}
               </p>
             </div>
           )}

@@ -37,3 +37,52 @@ export function fmtDateTime(v: string | number | Date): string {
   const d = asDate(v)
   return d ? full.format(d) : '—'
 }
+
+/** "06/08" in the display zone — the axis tick once a window spans days. */
+const dayMonth = new Intl.DateTimeFormat('en-GB', {
+  timeZone: DISPLAY_TZ, day: '2-digit', month: '2-digit',
+})
+export function fmtDayMonth(v: string | number | Date): string {
+  const d = asDate(v)
+  return d ? dayMonth.format(d) : '—'
+}
+
+// --- <input type="datetime-local"> in the DISPLAY zone -----------------------
+// A datetime-local input is always the BROWSER's wall clock. Every label on a
+// chart is pinned to DISPLAY_TZ, so leaving the picker on browser time means an
+// operator on a UTC laptop asks for 08:00 and gets back rows labelled 15:00 —
+// the range and the axis disagreeing about what the same number means. These
+// two convert both ways against DISPLAY_TZ instead, so "08:00" in the picker is
+// the same 08:00 the axis prints.
+
+/** How far DISPLAY_TZ's wall clock is ahead of UTC at a given instant, in ms. */
+const partsFmt = new Intl.DateTimeFormat('en-US', {
+  timeZone: DISPLAY_TZ, hourCycle: 'h23',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+})
+function tzOffsetMs(utcMs: number): number {
+  const p = partsFmt.formatToParts(new Date(utcMs))
+  const n = (t: string) => Number(p.find((x) => x.type === t)?.value)
+  return Date.UTC(n('year'), n('month') - 1, n('day'), n('hour'), n('minute'), n('second')) - utcMs
+}
+
+/** Instant → "YYYY-MM-DDTHH:mm" as DISPLAY_TZ wall time, for an input's value. */
+export function toDisplayInput(ms: number): string {
+  return new Date(ms + tzOffsetMs(ms)).toISOString().slice(0, 16)
+}
+
+/** "YYYY-MM-DDTHH:mm" read as DISPLAY_TZ wall time → instant (ms). */
+export function fromDisplayInput(s: string): number {
+  const wall = Date.parse(`${s}${s.length === 16 ? ':00' : ''}Z`)
+  if (Number.isNaN(wall)) return NaN
+  // The offset depends on the instant, which is what we are solving for — one
+  // correction is exact for a fixed-offset zone, and a second settles the hour
+  // either side of a DST change if DISPLAY_TZ is ever set to a zone with one.
+  let guess = wall - tzOffsetMs(wall)
+  guess = wall - tzOffsetMs(guess)
+  return guess
+}
+
+/** e.g. "Asia/Bangkok" — shown next to a time so nobody has to guess the zone. */
+export const DISPLAY_TZ_LABEL = DISPLAY_TZ.split('/').pop()?.replace(/_/g, ' ') ?? DISPLAY_TZ

@@ -312,9 +312,17 @@ export const api = {
       // Only an admin may name a department; for anyone else the backend uses
       // their own, so a viewer cannot read another team's selection.
       + (departmentId !== undefined ? `&departmentId=${encodeURIComponent(departmentId ?? '')}` : '')),
-  /** `layout` is per-key; an omitted key defaults to 'card' server-side. */
-  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; departmentId?: string | null; paramKeys: string[]; layout?: Record<string, ParamLayout> }) =>
-    req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * `layout` is per-key; an omitted key defaults to 'card' server-side.
+   *
+   * Targets: `nodeIds` applies the same selection to several devices at once —
+   * an ETERNITY fleet has transformers of different specs publishing different
+   * MQTT payloads, so "these four, which are the same model" is the useful
+   * scope. `nodeId` (one device) and neither key (the org-wide default) both
+   * still work.
+   */
+  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; nodeIds?: string[]; departmentId?: string | null; paramKeys: string[]; layout?: Record<string, ParamLayout> }) =>
+    req<{ ok: boolean; count: number; devices?: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
   /**
    * Admin-editable display names for MQTT parameter keys (migrate-v34).
    * `labels` is the resolved map to render from (org-wide default with this
@@ -327,8 +335,9 @@ export const api = {
       `/api/orgs/${orgId}/param-labels?domain=${encodeURIComponent(domain)}`
       + (nodeId ? `&nodeId=${encodeURIComponent(nodeId)}` : '')),
   /** Per-key upsert; a blank value deletes that row (reverts to the built-in name). */
-  setParamLabels: (orgId: string, body: { domain: string; nodeId?: string | null; labels: Record<string, string> }) =>
-    req<{ ok: boolean; set: number; cleared: number }>(`/api/orgs/${orgId}/param-labels`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Same target shape as setDisplayParams: `nodeIds` (several), `nodeId` (one), or neither (org-wide). */
+  setParamLabels: (orgId: string, body: { domain: string; nodeId?: string | null; nodeIds?: string[]; labels: Record<string, string> }) =>
+    req<{ ok: boolean; set: number; cleared: number; devices?: number }>(`/api/orgs/${orgId}/param-labels`, { method: 'PUT', body: JSON.stringify(body) }),
   /** The org's theme entitlement. Superadmin writes it; an admin allocates from it. */
   themeGrants: (orgId: string) => req<{ orgId: string; themeIds: string[] }>(`/api/orgs/${orgId}/theme-grants`),
   setThemeGrants: (orgId: string, themeIds: string[]) =>
