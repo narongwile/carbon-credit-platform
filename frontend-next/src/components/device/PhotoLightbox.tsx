@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, PHOTO_KINDS, type NodePhoto, type NodePhotoKind, type PhotoAnnotation } from '@/lib/api'
 import { humanSize } from '@/lib/imagePipeline'
 import { fmtDateTime } from '@/lib/displayTime'
+import PhotoAnnotationOverlay, { aspectBox } from '@/components/device/PhotoAnnotationOverlay'
 import {
   X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Trash2, Pencil, Check, Star,
   MapPin, Layers, MousePointer2, Loader2, AlertTriangle, Undo2,
@@ -227,8 +228,6 @@ export default function PhotoLightbox({
     else toast.error('Could not set the device location')
   }
 
-  const arrowLen = 0.03   // head size, in image fractions
-
   return (
     <div className="fixed inset-0 z-[120] flex flex-col" style={{ background: 'rgba(5,8,16,0.97)' }}>
       {/* Header */}
@@ -277,7 +276,7 @@ export default function PhotoLightbox({
         <div
           className="relative"
           style={{
-            aspectRatio: `${w} / ${h}`, height: '100%', width: 'auto', maxWidth: '100%', maxHeight: '100%',
+            ...aspectBox(w, h),
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: 'center',
             cursor: drawing ? 'crosshair' : zoom > 1 ? 'grab' : 'zoom-in',
@@ -300,41 +299,8 @@ export default function PhotoLightbox({
             className="absolute inset-0 w-full h-full object-contain" draggable={false}
             style={compare ? { opacity: blend } : undefined} />
 
-          {(marks.length > 0 || pendingMark) && (
-            <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none">
-              {[...marks, ...(pendingMark ? [pendingMark] : [])].map((m, i) => {
-                const c = m.color || MARKER_COLOR
-                // Stroke widths are divided by zoom so a marker stays the same
-                // on-screen thickness as the image is magnified.
-                const sw = 0.006 / zoom
-                if (m.type === 'dot') {
-                  return (
-                    <g key={i}>
-                      <circle cx={m.x} cy={m.y} r={0.018 / zoom} fill="none" stroke={c} strokeWidth={sw} />
-                      <circle cx={m.x} cy={m.y} r={0.004 / zoom} fill={c} />
-                      {m.label && <text x={m.x + 0.026 / zoom} y={m.y + 0.008 / zoom} fill={c} fontSize={0.028 / zoom} style={{ paintOrder: 'stroke' }} stroke="#000" strokeWidth={0.006 / zoom}>{m.label}</text>}
-                    </g>
-                  )
-                }
-                if (m.type === 'box') {
-                  const x = Math.min(m.x, m.x2 ?? m.x), y = Math.min(m.y, m.y2 ?? m.y)
-                  return <rect key={i} x={x} y={y} width={Math.abs((m.x2 ?? m.x) - m.x)} height={Math.abs((m.y2 ?? m.y) - m.y)} fill="none" stroke={c} strokeWidth={sw} />
-                }
-                const x2 = m.x2 ?? m.x, y2 = m.y2 ?? m.y
-                const a = Math.atan2(y2 - m.y, x2 - m.x)
-                const hl = arrowLen / zoom
-                return (
-                  <g key={i}>
-                    <line x1={m.x} y1={m.y} x2={x2} y2={y2} stroke={c} strokeWidth={sw} />
-                    <polygon
-                      points={`${x2},${y2} ${x2 - hl * Math.cos(a - 0.4)},${y2 - hl * Math.sin(a - 0.4)} ${x2 - hl * Math.cos(a + 0.4)},${y2 - hl * Math.sin(a + 0.4)}`}
-                      fill={c} />
-                    {m.label && <text x={m.x} y={m.y - 0.012 / zoom} fill={c} fontSize={0.028 / zoom} style={{ paintOrder: 'stroke' }} stroke="#000" strokeWidth={0.006 / zoom}>{m.label}</text>}
-                  </g>
-                )
-              })}
-            </svg>
-          )}
+          <PhotoAnnotationOverlay annotations={[...marks, ...(pendingMark ? [pendingMark] : [])]}
+            width={w} height={h} zoom={zoom} />
         </div>
 
         {compare && pair && (

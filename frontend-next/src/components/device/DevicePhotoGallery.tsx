@@ -24,13 +24,14 @@
 // every table thumbnail can exist at all.
 // ---------------------------------------------------------------------------
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, PHOTO_KINDS, useIsLive, type NodePhoto, type NodePhotoKind } from '@/lib/api'
 import { useSessionRole } from '@/lib/auth'
 import { useNodePhotos } from '@/lib/useNodePhotos'
 import { uploadNodePhotos, savedLine } from '@/lib/uploadNodePhotos'
 import { fmtDateTime } from '@/lib/displayTime'
 import PhotoLightbox from '@/components/device/PhotoLightbox'
+import PhotoAnnotationOverlay, { aspectBox } from '@/components/device/PhotoAnnotationOverlay'
 import { Camera, Upload, Loader2, MapPin, X, Expand } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -65,6 +66,9 @@ export default function DevicePhotoGallery({
   const [busy, setBusy] = useState<string | null>(null)
   const [uploadKind, setUploadKind] = useState<NodePhotoKind | null>(null)
   const [geoOffer, setGeoOffer] = useState<{ lat: number; lng: number } | null>(null)
+  // Dimensions for photos carried over from node_images, which have none
+  // stored — read off the decoded <img> so the overlay still lines up.
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const kindsPresent = useMemo(
@@ -76,6 +80,11 @@ export default function DevicePhotoGallery({
     [photos, kindFilter])
 
   const current = shown[Math.min(selected, Math.max(0, shown.length - 1))] ?? null
+
+  // Drop the measured size when the photo changes, so a legacy photo without
+  // stored dimensions never inherits the previous one's shape and skews its
+  // markers until the new <img> finishes decoding.
+  useEffect(() => { setNatural(null) }, [current?.id])
   const nextKind = uploadKind ?? suggestKind(photos)
 
   const onPick = async (files: FileList) => {
@@ -112,35 +121,27 @@ export default function DevicePhotoGallery({
     <div className="relative w-full h-full group overflow-hidden">
       {src && current ? (
         <button type="button" onClick={() => setLightbox(photos.findIndex((p) => p.id === current.id))}
-          className="absolute inset-0 w-full h-full cursor-zoom-in" title="Open full size">
-          {/* object-contain, never cover: a transformer photo cropped to fill
-              the box loses the bushings or the nameplate, which is the part
-              someone came here to read. */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={current.caption || `${deviceName ?? nodeId} — ${kindLabel(current.kind)}`}
-            className="w-full h-full object-contain" />
-          {/* Markers ride along at panel size so a flagged hotspot is visible
-              without opening anything. */}
-          {current.annotations.length > 0 && (
-            <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="absolute inset-0 w-full h-full pointer-events-none opacity-90">
-              {current.annotations.map((m, i) => {
-                const c = m.color || '#f43f5e'
-                if (m.type === 'dot') return <circle key={i} cx={m.x} cy={m.y} r={0.016} fill="none" stroke={c} strokeWidth={0.006} />
-                if (m.type === 'box') {
-                  const x = Math.min(m.x, m.x2 ?? m.x), y = Math.min(m.y, m.y2 ?? m.y)
-                  return <rect key={i} x={x} y={y} width={Math.abs((m.x2 ?? m.x) - m.x)} height={Math.abs((m.y2 ?? m.y) - m.y)} fill="none" stroke={c} strokeWidth={0.006} />
-                }
-                const x2 = m.x2 ?? m.x, y2 = m.y2 ?? m.y
-                const a = Math.atan2(y2 - m.y, x2 - m.x)
-                return (
-                  <g key={i}>
-                    <line x1={m.x} y1={m.y} x2={x2} y2={y2} stroke={c} strokeWidth={0.006} />
-                    <polygon points={`${x2},${y2} ${x2 - 0.03 * Math.cos(a - 0.4)},${y2 - 0.03 * Math.sin(a - 0.4)} ${x2 - 0.03 * Math.cos(a + 0.4)},${y2 - 0.03 * Math.sin(a + 0.4)}`} fill={c} />
-                  </g>
-                )
-              })}
-            </svg>
-          )}
+          className="absolute inset-0 w-full h-full cursor-zoom-in flex items-center justify-center" title="Open full size">
+          {/* The wrapper carries the image's own aspect ratio so the marker
+              overlay lands on the PIXELS. Sizing the overlay to this button
+              instead put every marker somewhere in the letterbox bars that
+              object-contain leaves around a photo whose shape differs from the
+              panel's — which is why they only looked right in the lightbox,
+              where this wrapper already existed. */}
+          <span className="relative block" style={aspectBox(current.width ?? natural?.w, current.height ?? natural?.h)}>
+            {/* object-contain, never cover: a transformer photo cropped to fill
+                the box loses the bushings or the nameplate, which is the part
+                someone came here to read. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt={current.caption || `${deviceName ?? nodeId} — ${kindLabel(current.kind)}`}
+              onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+              className="absolute inset-0 w-full h-full object-contain" />
+            {/* Markers ride along at panel size so a flagged hotspot is visible
+                without opening anything. */}
+            <PhotoAnnotationOverlay annotations={current.annotations}
+              width={current.width ?? natural?.w} height={current.height ?? natural?.h}
+              showLabels={false} className="opacity-90" />
+          </span>
           <span className="absolute top-2 right-2 p-1.5 rounded-md text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
             style={{ background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433' }}>
             <Expand size={12} />
