@@ -58,9 +58,12 @@ export default function DeviceManagementPage() {
       return
     }
     // Two writes: the profile (name + owning department) and the visibility
-    // grants. visibleTo is null only while the modal was still loading them,
-    // in which case there is nothing to write — never send an empty set that
-    // was never read, which would silently clear the device's grants.
+    // grants. visibleTo is null when there is nothing to write — either the
+    // modal was still loading the grants, or the admin never touched that
+    // control. Both cases must skip the write: sending a set that was never
+    // read (or never edited) would turn an inherited-from-owner device into
+    // one with explicit grants pinned to its PREVIOUS owner. See grantsChanged
+    // in DeviceModal for the bug that caused.
     const [prof, grants] = await Promise.all([
       api.updateNodeProfile(d.id, {
         name: patch.name,
@@ -220,10 +223,19 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
   }, [device.id])
 
   const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
+  // Did the admin actually touch the visibility control? The list is PRE-FILLED
+  // with `effective`, which falls back to the OWNING department when a device
+  // has no grants of its own — so an untouched control still holds a non-empty
+  // set. Writing that back would turn "no grants, inherits its owner" into an
+  // explicit grant to whoever the owner USED TO BE, and grants outrank the
+  // owner in deptVisible. Changing only the owning department then had no
+  // effect at all: the device stayed visible to the old department and
+  // invisible to the new one. Reproduced against a live DB before fixing.
+  const grantsChanged = visibleTo !== null && loadedGrants !== null && !sameSet(visibleTo, loadedGrants)
   const dirty = name.trim() !== device.name
     || deptId !== (device.departmentIds[0] ?? null)
     || mergeInto !== undefined
-    || (visibleTo !== null && loadedGrants !== null && !sameSet(visibleTo, loadedGrants))
+    || grantsChanged
 
   const toggleVisible = (id: string) =>
     setVisibleTo((v) => (v === null ? v : v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
@@ -379,7 +391,7 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
           </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
-          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId, visibleTo, ...(mergeInto !== undefined ? { mergeInto } : {}) })} disabled={!dirty || !name.trim()}
+          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId, visibleTo: grantsChanged ? visibleTo : null, ...(mergeInto !== undefined ? { mergeInto } : {}) })} disabled={!dirty || !name.trim()}
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-40" style={gradient}>
             Save Changes
           </button>
