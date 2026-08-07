@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { login, loginRemote, saveSession, getDashboardRoute, authApiEnabled } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
+import { apiImageUrl } from '@/lib/api'
 import { Boxes, Eye, EyeOff } from 'lucide-react'
 
 // The role selector tabs and demo-credential hints that used to live here were
@@ -18,6 +19,26 @@ export default function LoginPage() {
   const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+
+  // Per-customer branded login: /?org=acme-factory shows that org's logo in
+  // place of the ONEOPS mark. There is no session yet at this point — nothing
+  // downstream of login can tell the page which customer is arriving — so the
+  // org id has to travel as a query param on the link each customer is given,
+  // and the logo has to come from a route that needs no token
+  // (GET /api/public/orgs/:orgId/logo; see orgLogoPublicFunc on the backend).
+  //
+  // window.location.search rather than next/navigation's useSearchParams:
+  // that hook opts a component out of static rendering unless wrapped in a
+  // Suspense boundary (see admin/nodes/detail/page.tsx for the same
+  // constraint on a genuinely dynamic route) — worth it there because the id
+  // drives the whole page, not worth splitting this page into two files for
+  // one read that never needs to be reactive to an in-page navigation.
+  const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null)
+  const [orgLogoFailed, setOrgLogoFailed] = useState(false)
+  useEffect(() => {
+    const org = new URLSearchParams(window.location.search).get('org')
+    if (org) setOrgLogoUrl(apiImageUrl(`/api/public/orgs/${encodeURIComponent(org)}/logo`))
+  }, [])
 
   const handleLogin = async () => {
     setError('')
@@ -78,16 +99,27 @@ export default function LoginPage() {
       <div className="absolute bottom-1/4 right-1/4 w-64 h-64 rounded-full opacity-5 blur-3xl" style={{ background: '#06b6d4' }} />
 
       <div className="relative z-10 w-full max-w-md px-4">
-        {/* Logo */}
+        {/* Logo — the org's own, when ?org= names one with a logo set;
+            ONEOPS default otherwise (no ?org=, org has no logo, or the
+            fetch 404s/errors — orgLogoFailed covers all three the same way
+            an <img onError> naturally would). */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-              <Boxes size={24} className="text-white" />
-            </div>
-            <div className="text-left">
-              <div className="text-2xl font-bold tracking-widest text-white">ONEOPS</div>
-              <div className="text-xs tracking-[0.3em] text-indigo-400 uppercase">Operations Platform</div>
-            </div>
+            {orgLogoUrl && !orgLogoFailed ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={orgLogoUrl} alt="" onError={() => setOrgLogoFailed(true)}
+                className="h-12 max-w-[220px] object-contain" />
+            ) : (
+              <>
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                  <Boxes size={24} className="text-white" />
+                </div>
+                <div className="text-left">
+                  <div className="text-2xl font-bold tracking-widest text-white">ONEOPS</div>
+                  <div className="text-xs tracking-[0.3em] text-indigo-400 uppercase">Operations Platform</div>
+                </div>
+              </>
+            )}
           </div>
           <p className="text-slate-500 text-sm">Unified multi-sensor operations — Sign in to continue</p>
         </div>
