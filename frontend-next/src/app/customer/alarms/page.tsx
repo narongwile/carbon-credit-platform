@@ -5,7 +5,7 @@ import { useManagedDevices } from '@/lib/useManagedDevices'
 import { api, useIsLive } from '@/lib/api'
 import { AlertTriangle, XCircle, Info, Clock, Check } from 'lucide-react'
 import { useSessionOrgId } from '@/lib/auth'
-import { fmtDateTime } from '@/lib/displayTime'
+import { fmtDateTime, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
@@ -72,8 +72,13 @@ export default function CustomerAlarmsPage() {
       const pId = a.event_problem_id || evClass[a.id]
       if (pId !== filterEvent) return false
     }
-    if (from && new Date(a.raised_at).getTime() < new Date(from).getTime()) return false
-    if (to && new Date(a.raised_at).getTime() > new Date(to).getTime()) return false
+    // fromDisplayInput, not new Date(): the pickers below are datetime-local,
+    // i.e. the BROWSER's wall clock, while every raised_at shown in this list
+    // is rendered in DISPLAY_TZ by fmtDateTime. Comparing the two directly made
+    // the filter and the visible timestamps disagree for anyone outside that
+    // zone. Same conversion admin/alarms and ParamHistoryModal use.
+    if (from && new Date(a.raised_at).getTime() < fromDisplayInput(from)) return false
+    if (to && new Date(a.raised_at).getTime() > fromDisplayInput(to)) return false
     return true
   })
 
@@ -96,17 +101,20 @@ export default function CustomerAlarmsPage() {
         </div>
         <div>
           <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">From</label>
-          {/* type="datetime" per explicit request — this HTML5 type has no
-              browser support (removed from the spec), so it renders as a plain
-              text box; the placeholder is the only hint at the expected shape. */}
-          <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={from} onChange={(e) => setFrom(e.target.value)}
+          {/* datetime-local, not datetime: `datetime` was dropped from the HTML
+              spec and no browser implements it, so it rendered as a bare text
+              box the viewer had to type a timestamp into by hand.
+              datetime-local is the only type in this family with a real
+              calendar/clock picker. Read as DISPLAY_TZ — see filteredEvents. */}
+          <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)}
             className="rounded-lg px-3 py-2 text-sm text-white outline-none" style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
         </div>
         <div>
           <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">To</label>
-          <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={to} onChange={(e) => setTo(e.target.value)}
+          <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)}
             className="rounded-lg px-3 py-2 text-sm text-white outline-none" style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
         </div>
+        <p className="text-[10px] text-slate-600 self-end pb-2.5">times in {DISPLAY_TZ_LABEL}</p>
       </div>
 
       <div className="space-y-2">

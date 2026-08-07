@@ -8,7 +8,7 @@ import { getSession } from '@/lib/auth'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
-import { fmtDateTime } from '@/lib/displayTime'
+import { fmtDateTime, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 
 // Only id/label are ever read (the ack picker); department_id/domain came
 // along in the API response but nothing here scopes by them — this page is
@@ -137,7 +137,13 @@ export default function AlarmsPage() {
 
   const range = useMemo(() => {
     if (from || to) {
-      return { start: from ? new Date(from).getTime() : 0, end: to ? new Date(to).getTime() : Infinity, label: `${from || '…'} → ${to || 'now'}` }
+      // fromDisplayInput, not new Date(): a datetime-local value is the
+      // BROWSER's wall clock, but every timestamp on this page is rendered in
+      // DISPLAY_TZ by fmtDateTime. Reading it as browser time meant an operator
+      // outside that zone picked 08:00 and got back rows this same page labels
+      // 15:00 — the filter and the column disagreeing about what one number
+      // means. Same conversion ParamHistoryModal's custom range already uses.
+      return { start: from ? fromDisplayInput(from) : 0, end: to ? fromDisplayInput(to) : Infinity, label: `${from || '…'} → ${to || 'now'}` }
     }
     const hrs = QUICK_RANGES.find((q) => q.label === quick)?.hours ?? null
     return hrs === null
@@ -224,15 +230,18 @@ export default function AlarmsPage() {
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Absolute range</div>
                   <label className="block text-[10px] text-slate-500 mb-1">From</label>
-                  {/* type="datetime" per explicit request — this HTML5 type has no
-                      browser support (removed from the spec), so it renders as a
-                      plain text box; the placeholder is the only hint at the
-                      expected shape. */}
-                  <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={from} onChange={(e) => setFrom(e.target.value)}
+                  {/* datetime-local, not datetime: `datetime` was dropped from
+                      the HTML spec and no browser implements it, so it rendered
+                      as a bare text box the operator had to type a timestamp
+                      into by hand. datetime-local is the only type in this
+                      family with a real calendar/clock picker. Its value is
+                      read as DISPLAY_TZ wall time — see `range` above. */}
+                  <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)}
                     className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200 mb-2" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
                   <label className="block text-[10px] text-slate-500 mb-1">To</label>
-                  <input type="datetime" placeholder="YYYY-MM-DDTHH:MM" value={to} onChange={(e) => setTo(e.target.value)}
+                  <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)}
                     className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }} />
+                  <p className="mt-1.5 text-[10px] text-slate-600">times in {DISPLAY_TZ_LABEL}</p>
                   <button onClick={() => setPickerOpen(false)}
                     className="mt-3 w-full text-xs font-medium text-white px-3 py-1.5 rounded-lg" style={{ background: '#6366f1' }}>
                     Apply range
