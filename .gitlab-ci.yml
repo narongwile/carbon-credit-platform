@@ -117,6 +117,8 @@ build_frontend_next:
     # Allow building from the integration branch too (so the first image exists).
     - if: $CI_COMMIT_BRANCH == "claude/frontend-next-deploy"
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+      changes:
+        - frontend-next/**/*
 
 build_ingest_worker:
   stage: build
@@ -155,6 +157,8 @@ build_ingest_worker:
       changes:
         - worker/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+      changes:
+        - worker/**/*
 
 # DB-per-tenant migration service — node dist/migrate.js --serve. Built from the
 # legacy Express backend/ tree because dist/migrate.js and backend/sql/*.sql
@@ -198,6 +202,8 @@ build_migrate_service:
       changes:
         - backend/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+      changes:
+        - backend/**/*
 
 # ── GitOps write-back: pin the freshly-built image tags into the manifests ────
 # ArgoCD reconciles the git MANIFEST against the cluster. A floating `:latest` tag
@@ -309,3 +315,7 @@ deploy_images:
         - worker/**/*
         - backend/**/*
     - if: $CI_COMMIT_BRANCH == "feature/deploy-ingest-worker"
+      changes:
+        - frontend-next/**/*
+        - worker/**/*
+        - backend/**/*
