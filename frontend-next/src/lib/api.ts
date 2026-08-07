@@ -673,8 +673,12 @@ export const api = {
     req<{ applied: number }>(`/api/ota/deploy-fleet`, { method: 'POST', body: JSON.stringify(body) }),
 
   // Scheduled reports (cron-generated CSV emailed to recipients)
-  listSchedules: (orgId: string) => req<ReportSchedule[]>(`/api/reports/schedules?orgId=${encodeURIComponent(orgId)}`),
-  saveSchedule: (body: Partial<ReportSchedule> & { orgId: string; name: string }) =>
+  listSchedules: (orgId: string) => req<ReportScheduleRow[]>(`/api/reports/schedules?orgId=${encodeURIComponent(orgId)}`),
+  // scopeId, NOT scope_id: rptPostFunc reads b.scopeId. The page used to post
+  // scope_id, which arrived as undefined and stored a NULL target — so a
+  // "Line 3 daily" schedule silently reported on the whole organization. The
+  // backend now accepts both spellings; this sends the one it always wanted.
+  saveSchedule: (body: SaveSchedule) =>
     req<{ id: string }>(`/api/reports/schedules`, { method: 'POST', body: JSON.stringify(body) }),
   deleteSchedule: (id: string) => req(`/api/reports/schedules/${id}`, { method: 'DELETE' }),
 
@@ -910,7 +914,11 @@ export interface FleetNode {
   approx?: 0 | 1
 }
 
-export interface ReportSchedule {
+/** How a schedule decides who receives it. See migrate-v41. */
+export type RecipientMode = 'manual' | 'department' | 'users'
+
+/** A report_schedules row as the API returns it (snake_case, straight from MySQL). */
+export interface ReportScheduleRow {
   id: string
   org_id: string
   name: string
@@ -923,6 +931,41 @@ export interface ReportSchedule {
   enabled: 0 | 1
   last_run_at: string | null
   next_run_at: string | null
+  // migrate-v41. Times are wall clock in the deployment timezone (DB_TZ),
+  // not UTC — see the migration for why.
+  send_hour: number
+  send_minute: number
+  day_of_week: number | null      // 1=Mon .. 7=Sun, weekly only
+  day_of_month: number | null     // 1..28, monthly only
+  window_days: number | null      // null = derive from sequence
+  recipient_mode: RecipientMode
+  recipient_dept_ids: string | null   // comma-separated
+  recipient_user_ids: string | null   // comma-separated
 }
+
+/** What the page POSTs. camelCase — this is what rptPostFunc reads. */
+export interface SaveSchedule {
+  id?: string
+  orgId: string
+  name: string
+  scope?: 'device' | 'department' | 'org'
+  scopeId?: string
+  sequence?: 'daily' | 'weekly' | 'monthly'
+  format?: 'PDF' | 'XLSX' | 'CSV'
+  channel?: 'email' | 'telegram'
+  recipients?: string
+  enabled?: 0 | 1
+  sendHour?: number
+  sendMinute?: number
+  dayOfWeek?: number | null
+  dayOfMonth?: number | null
+  windowDays?: number | null
+  recipientMode?: RecipientMode
+  recipientDeptIds?: string[]
+  recipientUserIds?: string[]
+}
+
+/** @deprecated kept so older imports keep compiling; use ReportScheduleRow. */
+export type ReportSchedule = ReportScheduleRow
 
 export default api

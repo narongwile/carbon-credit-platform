@@ -5,8 +5,9 @@ import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { getDepartmentsByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
-import type { ReportSchedule, ReportSequence } from '@/types/org'
-import { FileBarChart, Download, Clock, CheckCircle, CalendarClock, Plus, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
+import type { ReportSequence } from '@/types/org'
+import type { RecipientMode } from '@/lib/api'
+import { FileBarChart, Download, Clock, CheckCircle, CalendarClock, Plus, Trash2, ToggleLeft, ToggleRight, Users, Building2, Mail, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -22,6 +23,20 @@ const REPORT_TYPES = [
 ]
 
 const SEQUENCES: ReportSequence[] = ['daily', 'weekly', 'monthly']
+
+// 1=Mon .. 7=Sun, matching the day_of_week column (MySQL WEEKDAY()+1).
+const WEEKDAYS = [
+  { v: 1, label: 'Mon' }, { v: 2, label: 'Tue' }, { v: 3, label: 'Wed' }, { v: 4, label: 'Thu' },
+  { v: 5, label: 'Fri' }, { v: 6, label: 'Sat' }, { v: 7, label: 'Sun' },
+]
+// The scheduler tick runs every 15 minutes, so these are the only minutes it
+// can actually honour. Offering :07 would promise precision the cron cannot
+// deliver — the backend snaps to these anyway.
+const MINUTES = [0, 15, 30, 45]
+// Capped at 28 so the date exists in February; the backend clamps to match.
+const MONTH_DAYS = Array.from({ length: 28 }, (_, i) => i + 1)
+
+type OrgUser = { id: string; name?: string | null; email?: string | null; department_ids?: string[]; department_id?: string | null }
 
 export default function ReportsPage() {
   const live = useIsLive()
@@ -109,43 +124,152 @@ export default function ReportsPage() {
 
   // Scheduling. Local row carries channel/recipients + the 'org' (all-devices) scope
   // that the shared ReportSchedule type doesn't model.
-  type SchedRow = { id: string; name: string; scope: 'org' | 'department' | 'device'; scopeId: string; sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'; recipients: string; enabled: boolean }
-  const seedRows: SchedRow[] = seedSchedules.map((r) => ({ id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, sequence: r.sequence, format: r.format, channel: 'email', recipients: '', enabled: r.enabled }))
+  type SchedRow = {
+    id: string; name: string; scope: 'org' | 'department' | 'device'; scopeId: string
+    sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'
+    recipients: string; enabled: boolean
+    sendHour: number; sendMinute: number; dayOfWeek: number | null; dayOfMonth: number | null
+    windowDays: number | null
+    recipientMode: RecipientMode; recipientDeptIds: string[]; recipientUserIds: string[]
+  }
+  const blankSchedule = {
+    sendHour: 7, sendMinute: 0, dayOfWeek: 1, dayOfMonth: 1, windowDays: null as number | null,
+    recipientMode: 'manual' as RecipientMode, recipientDeptIds: [] as string[], recipientUserIds: [] as string[],
+  }
+  const seedRows: SchedRow[] = seedSchedules.map((r) => ({
+    id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, sequence: r.sequence,
+    format: r.format, channel: 'email', recipients: '', enabled: r.enabled, ...blankSchedule,
+  }))
   const [schedules, setSchedules] = useState<SchedRow[]>(seedRows)
-  const [draft, setDraft] = useState<{ name: string; scope: 'org' | 'department' | 'device'; scopeId: string; sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'; recipients: string }>({
-    name: '', scope: 'department', scopeId: departments[0]?.id ?? '', sequence: 'daily', format: 'PDF', channel: 'email', recipients: '',
+  // format defaulted to 'PDF' here while the cron only ever produces CSV, so a
+  // new schedule promised a PDF out of the box and delivered comma-separated
+  // text. CSV is what is actually generated, so CSV is the default.
+  const [draft, setDraft] = useState<Omit<SchedRow, 'id' | 'enabled'>>({
+    name: '', scope: 'department', scopeId: departments[0]?.id ?? '', sequence: 'daily',
+    format: 'CSV', channel: 'email', recipients: '', ...blankSchedule,
   })
+
+  // The org's users, for per-user recipient targeting. department_ids comes
+  // back already resolved by the backend (user_departments, falling back to the
+  // legacy users.department_id), so the department chips below can show a count
+  // that matches what the scheduler will actually resolve at send time.
+  const [users, setUsers] = useState<OrgUser[]>([])
+  useEffect(() => {
+    if (!live) { setUsers([]); return }
+    let cancelled = false
+    api.users(orgId).then((r) => { if (!cancelled && r) setUsers(r as OrgUser[]) })
+    return () => { cancelled = true }
+  }, [live, orgId])
+
+  const deptsOf = (u: OrgUser) => u.department_ids?.length ? u.department_ids : (u.department_id ? [u.department_id] : [])
+  const mailableInDepts = (deptIds: string[]) =>
+    users.filter((u) => (u.email || '').trim() && deptsOf(u).some((d) => deptIds.includes(d)))
 
   // Load schedules from the backend when reachable (else keep the seed mock).
   useEffect(() => {
     let cancelled = false
     api.listSchedules(orgId).then((rows) => {
       if (cancelled || !rows) return
-      setSchedules(rows.map((r) => ({ id: r.id, name: r.name, scope: r.scope, scopeId: r.scope_id ?? '', sequence: r.sequence as ReportSequence, format: r.format, channel: r.channel ?? 'email', recipients: r.recipients ?? '', enabled: !!r.enabled })))
+      const csv = (v: string | null) => (v ? v.split(',').map((x) => x.trim()).filter(Boolean) : [])
+      setSchedules(rows.map((r) => ({
+        id: r.id, name: r.name, scope: r.scope, scopeId: r.scope_id ?? '',
+        sequence: r.sequence as ReportSequence, format: r.format, channel: r.channel ?? 'email',
+        recipients: r.recipients ?? '', enabled: !!r.enabled,
+        sendHour: r.send_hour ?? 7, sendMinute: r.send_minute ?? 0,
+        dayOfWeek: r.day_of_week ?? 1, dayOfMonth: r.day_of_month ?? 1,
+        windowDays: r.window_days ?? null,
+        recipientMode: (r.recipient_mode ?? 'manual') as RecipientMode,
+        recipientDeptIds: csv(r.recipient_dept_ids), recipientUserIds: csv(r.recipient_user_ids),
+      })))
     })
     return () => { cancelled = true }
   }, [orgId])
 
   // 'org' = every device in the org; no per-item selector needed.
   const scopeOptions = draft.scope === 'department' ? departments.map((d) => ({ id: d.id, name: d.name })) : draft.scope === 'device' ? devices.map((d) => ({ id: d.id, name: d.name })) : []
-  const persist = (r: SchedRow) => api.saveSchedule({ id: r.id, orgId, name: r.name, scope: r.scope, scope_id: r.scopeId || undefined, sequence: r.sequence, format: r.format, channel: r.channel, recipients: r.recipients || undefined, enabled: r.enabled ? 1 : 0 })
-  const addSchedule = () => {
-    if (!draft.name.trim()) return
+  // scopeId (camel), not scope_id: rptPostFunc reads b.scopeId, so the old
+  // snake_case key arrived undefined and every department- or device-scoped
+  // schedule was stored with a NULL target — which the cron widens to the whole
+  // organization. A "Line 3 daily" schedule was quietly reporting on everything.
+  const persist = (r: SchedRow) => api.saveSchedule({
+    id: r.id, orgId, name: r.name, scope: r.scope, scopeId: r.scopeId || undefined,
+    sequence: r.sequence, format: r.format, channel: r.channel,
+    recipients: r.recipients || undefined, enabled: r.enabled ? 1 : 0,
+    sendHour: r.sendHour, sendMinute: r.sendMinute,
+    dayOfWeek: r.sequence === 'weekly' ? r.dayOfWeek : null,
+    dayOfMonth: r.sequence === 'monthly' ? r.dayOfMonth : null,
+    windowDays: r.windowDays,
+    recipientMode: r.recipientMode,
+    recipientDeptIds: r.recipientDeptIds, recipientUserIds: r.recipientUserIds,
+  })
+
+  // What this draft would actually deliver to, so an empty selection is caught
+  // here rather than discovered as a report nobody received.
+  const draftRecipientCount = draft.channel === 'telegram'
+    ? (draft.recipients.trim() ? 1 : 0)
+    : draft.recipientMode === 'department' ? mailableInDepts(draft.recipientDeptIds).length
+    : draft.recipientMode === 'users' ? users.filter((u) => draft.recipientUserIds.includes(u.id) && (u.email || '').trim()).length
+    : draft.recipients.split(',').map((x) => x.trim()).filter(Boolean).length
+
+  const addSchedule = async () => {
+    if (!draft.name.trim()) { toast.error('Give the schedule a name'); return }
+    if (draftRecipientCount === 0) {
+      toast.error(draft.recipientMode === 'manual' || draft.channel === 'telegram'
+        ? 'Add at least one recipient'
+        : `The selected ${draft.recipientMode === 'department' ? 'departments have' : 'users have'} no email address`)
+      return
+    }
     const id = `rs-${Date.now()}`
     const scopeId = draft.scope === 'org' ? '' : (draft.scopeId || scopeOptions[0]?.id || '')
-    const row: SchedRow = { id, name: draft.name, scope: draft.scope, scopeId, sequence: draft.sequence, format: draft.format, channel: draft.channel, recipients: draft.recipients, enabled: true }
+    const row: SchedRow = { ...draft, id, scopeId, enabled: true }
     setSchedules((s) => [...s, row])
+    if (live) {
+      const r = await persist(row)
+      // The save result was ignored, so a rejected schedule stayed on screen
+      // looking saved until a reload removed it.
+      if (!r) { setSchedules((s) => s.filter((x) => x.id !== id)); toast.error('Could not save the schedule'); return }
+    }
     setDraft((d) => ({ ...d, name: '', recipients: '' }))
-    persist(row)
+    toast.success('Schedule added')
   }
-  const toggleSchedule = (id: string) => setSchedules((s) => s.map((x) => {
-    if (x.id !== id) return x
-    const next = { ...x, enabled: !x.enabled }
-    persist(next)
-    return next
-  }))
-  const removeSchedule = (id: string) => { setSchedules((s) => s.filter((x) => x.id !== id)); api.deleteSchedule(id) }
+  const toggleSchedule = async (id: string) => {
+    const prev = schedules.find((x) => x.id === id)
+    if (!prev) return
+    const next = { ...prev, enabled: !prev.enabled }
+    setSchedules((s) => s.map((x) => (x.id === id ? next : x)))
+    if (live && !(await persist(next))) {
+      setSchedules((s) => s.map((x) => (x.id === id ? prev : x)))
+      toast.error('Could not change the schedule')
+    }
+  }
+  const removeSchedule = async (id: string) => {
+    const prev = schedules
+    setSchedules((s) => s.filter((x) => x.id !== id))
+    if (live && !(await api.deleteSchedule(id))) { setSchedules(prev); toast.error('Could not delete the schedule') }
+  }
   const scopeName = (s: SchedRow) => s.scope === 'org' ? 'All devices' : (s.scope === 'department' ? departments.find((d) => d.id === s.scopeId)?.name : devices.find((d) => d.id === s.scopeId)?.name) ?? s.scopeId
+
+  // How a saved row will actually behave, in words — the table showed
+  // "daily" and nothing about when or to whom.
+  const whenText = (s: SchedRow) => {
+    const t = `${String(s.sendHour).padStart(2, '0')}:${String(s.sendMinute).padStart(2, '0')}`
+    if (s.sequence === 'weekly') return `${WEEKDAYS.find((w) => w.v === s.dayOfWeek)?.label ?? 'Mon'} ${t}`
+    if (s.sequence === 'monthly') return `day ${s.dayOfMonth ?? 1} · ${t}`
+    return `daily ${t}`
+  }
+  const toText = (s: SchedRow) => {
+    if (s.channel === 'telegram') return s.recipients || null
+    if (s.recipientMode === 'department') {
+      const names = s.recipientDeptIds.map((id) => departments.find((d) => d.id === id)?.name ?? id)
+      const n = mailableInDepts(s.recipientDeptIds).length
+      return names.length ? `${names.join(', ')} (${n} recipient${n === 1 ? '' : 's'})` : null
+    }
+    if (s.recipientMode === 'users') {
+      const names = s.recipientUserIds.map((id) => users.find((u) => u.id === id)?.name ?? id)
+      return names.length ? names.join(', ') : null
+    }
+    return s.recipients || null
+  }
 
   return (
     <div className="p-6 space-y-6">
@@ -202,20 +326,155 @@ export default function ReportsPage() {
               {scopeOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           )}
-          <div className="flex gap-2">
-            {SEQUENCES.map((s) => (
-              <button key={s} onClick={() => setDraft((d) => ({ ...d, sequence: s }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize', draft.sequence === s ? 'text-white' : 'text-slate-500')} style={draft.sequence === s ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{s}</button>
-            ))}
+          {/* --- WHEN ------------------------------------------------------ */}
+          <div className="pt-1" style={{ borderTop: '1px solid #1e2433' }}>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 mt-2">Frequency</label>
+            <div className="flex gap-2">
+              {SEQUENCES.map((s) => (
+                <button key={s} onClick={() => setDraft((d) => ({ ...d, sequence: s }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize', draft.sequence === s ? 'text-white' : 'text-slate-500')} style={draft.sequence === s ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{s}</button>
+              ))}
+            </div>
           </div>
-          {/* Delivery channel + destination */}
-          <div className="flex gap-2">
-            {([['email', 'Email'], ['telegram', 'Telegram']] as const).map(([ch, label]) => (
-              <button key={ch} onClick={() => setDraft((d) => ({ ...d, channel: ch }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold', draft.channel === ch ? 'text-white' : 'text-slate-500')} style={draft.channel === ch ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{label}</button>
-            ))}
+
+          {draft.sequence === 'weekly' && (
+            <div>
+              <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">On</label>
+              <div className="flex gap-1">
+                {WEEKDAYS.map((w) => (
+                  <button key={w.v} onClick={() => setDraft((d) => ({ ...d, dayOfWeek: w.v }))}
+                    className={clsx('flex-1 py-1.5 rounded-lg text-[10px] font-semibold', draft.dayOfWeek === w.v ? 'text-white' : 'text-slate-500')}
+                    style={draft.dayOfWeek === w.v ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{w.label}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {draft.sequence === 'monthly' && (
+            <div>
+              <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Day of month</label>
+              <select value={draft.dayOfMonth ?? 1} onChange={(e) => setDraft((d) => ({ ...d, dayOfMonth: Number(e.target.value) }))}
+                className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+                {MONTH_DAYS.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <p className="text-[10px] text-slate-600 mt-1">Capped at 28 so it exists in every month.</p>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Send at</label>
+            <div className="flex gap-2 items-center">
+              <select value={draft.sendHour} onChange={(e) => setDraft((d) => ({ ...d, sendHour: Number(e.target.value) }))}
+                className="flex-1 rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}</option>)}
+              </select>
+              <span className="text-slate-600">:</span>
+              <select value={draft.sendMinute} onChange={(e) => setDraft((d) => ({ ...d, sendMinute: Number(e.target.value) }))}
+                className="flex-1 rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+                {MINUTES.map((m) => <option key={m} value={m}>{String(m).padStart(2, '0')}</option>)}
+              </select>
+            </div>
+            <p className="text-[10px] text-slate-600 mt-1">
+              Local time. The scheduler checks every 15 minutes, so delivery lands within a quarter hour of this.
+            </p>
           </div>
-          <input value={draft.recipients} onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-            placeholder={draft.channel === 'telegram' ? 'Telegram chat id' : 'Email(s), comma-separated'}
-            className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+
+          <div>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Data window</label>
+            <select value={draft.windowDays ?? ''} onChange={(e) => setDraft((d) => ({ ...d, windowDays: e.target.value === '' ? null : Number(e.target.value) }))}
+              className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+              <option value="">Match frequency ({draft.sequence === 'weekly' ? '7' : draft.sequence === 'monthly' ? '30' : '1'} day{draft.sequence === 'daily' ? '' : 's'})</option>
+              {[1, 3, 7, 14, 30, 90].map((n) => <option key={n} value={n}>Last {n} day{n === 1 ? '' : 's'}</option>)}
+            </select>
+            <p className="text-[10px] text-slate-600 mt-1">How much history each report covers, independent of how often it arrives.</p>
+          </div>
+
+          {/* --- WHO ------------------------------------------------------- */}
+          <div className="pt-3" style={{ borderTop: '1px solid #1e2433' }}>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Deliver by</label>
+            <div className="flex gap-2">
+              {([['email', 'Email'], ['telegram', 'Telegram']] as const).map(([ch, label]) => (
+                <button key={ch} onClick={() => setDraft((d) => ({ ...d, channel: ch }))} className={clsx('flex-1 py-1.5 rounded-lg text-xs font-semibold', draft.channel === ch ? 'text-white' : 'text-slate-500')} style={draft.channel === ch ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          {draft.channel === 'telegram' ? (
+            // A telegram destination is a chat id, not a directory entry — the
+            // department/user modes below have nothing to resolve to.
+            <input value={draft.recipients} onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+              placeholder="Telegram chat id"
+              className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+          ) : (
+            <>
+              <div className="flex gap-2">
+                {([['manual', 'Addresses', Mail], ['department', 'Department', Building2], ['users', 'People', Users]] as const).map(([m, label, Icon]) => (
+                  <button key={m} onClick={() => setDraft((d) => ({ ...d, recipientMode: m }))}
+                    className={clsx('flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[11px] font-semibold', draft.recipientMode === m ? 'text-white' : 'text-slate-500')}
+                    style={draft.recipientMode === m ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>
+                    <Icon size={11} /> {label}
+                  </button>
+                ))}
+              </div>
+
+              {draft.recipientMode === 'manual' && (
+                <input value={draft.recipients} onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+                  placeholder="Email(s), comma-separated"
+                  className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+              )}
+
+              {draft.recipientMode === 'department' && (
+                <div className="space-y-1.5 max-h-44 overflow-y-auto rounded-lg p-2" style={inset}>
+                  {departments.length === 0 ? <p className="text-xs text-slate-600">No departments yet.</p> : departments.map((dep) => {
+                    const on = draft.recipientDeptIds.includes(dep.id)
+                    const n = mailableInDepts([dep.id]).length
+                    return (
+                      <button key={dep.id} onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: on ? d.recipientDeptIds.filter((x) => x !== dep.id) : [...d.recipientDeptIds, dep.id] }))}
+                        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs hover:bg-white/5">
+                        <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white' : 'text-slate-400')}>
+                          <span className="w-3 h-3 rounded-sm flex-shrink-0" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }} />
+                          {dep.name}
+                        </span>
+                        <span className={clsx('flex-shrink-0', n === 0 ? 'text-amber-500/80' : 'text-slate-600')}>{n} with email</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {draft.recipientMode === 'users' && (
+                <div className="space-y-1.5 max-h-44 overflow-y-auto rounded-lg p-2" style={inset}>
+                  {users.length === 0 ? <p className="text-xs text-slate-600">{live ? 'No users in this organization.' : 'Live mode required to list users.'}</p> : users.map((u) => {
+                    const on = draft.recipientUserIds.includes(u.id)
+                    const mailable = !!(u.email || '').trim()
+                    return (
+                      <button key={u.id} disabled={!mailable}
+                        onClick={() => setDraft((d) => ({ ...d, recipientUserIds: on ? d.recipientUserIds.filter((x) => x !== u.id) : [...d.recipientUserIds, u.id] }))}
+                        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-md text-xs hover:bg-white/5 disabled:opacity-40 disabled:hover:bg-transparent">
+                        <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white' : 'text-slate-400')}>
+                          <span className="w-3 h-3 rounded-sm flex-shrink-0" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }} />
+                          {u.name || u.id}
+                        </span>
+                        <span className="text-slate-600 truncate flex-shrink-0">{mailable ? u.email : 'no email'}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {draft.recipientMode !== 'manual' && (
+                <p className="text-[10px] text-slate-600">
+                  Resolved each time the report runs, so people who join or leave are picked up without editing this schedule.
+                </p>
+              )}
+            </>
+          )}
+
+          <div className="flex items-center gap-2 text-[11px]">
+            {draftRecipientCount === 0
+              ? <span className="flex items-center gap-1 text-amber-400"><AlertTriangle size={11} /> No one would receive this</span>
+              : <span className="text-slate-500">{draftRecipientCount} recipient{draftRecipientCount === 1 ? '' : 's'}</span>}
+          </div>
+
           <button onClick={addSchedule} className="w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}><Plus size={15} /> Add Schedule</button>
         </div>
       </div>
@@ -226,19 +485,44 @@ export default function ReportsPage() {
           <h3 className="text-sm font-semibold text-white">Scheduled Reports</h3>
         </div>
         <table className="w-full text-sm" style={{ background: '#0d1117' }}>
-          <thead><tr style={{ borderBottom: '1px solid #1e2433' }}>{['Name', 'Scope', 'Sequence', 'Format', 'Delivery', 'Enabled', ''].map((h) => <th key={h} className="py-2.5 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>)}</tr></thead>
+          <thead><tr style={{ borderBottom: '1px solid #1e2433' }}>{['Name', 'Scope', 'When', 'Covers', 'Delivery', 'Enabled', ''].map((h) => <th key={h} className="py-2.5 px-4 text-left text-xs text-slate-500 font-medium">{h}</th>)}</tr></thead>
           <tbody>
-            {schedules.map((s) => (
+            {schedules.length === 0 && (
+              <tr><td colSpan={7} className="py-6 px-4 text-center text-sm text-slate-600">No schedules yet.</td></tr>
+            )}
+            {schedules.map((s) => {
+              const to = toText(s)
+              return (
               <tr key={s.id} style={{ borderBottom: '1px solid #1e2433' }}>
-                <td className="py-3 px-4 text-white font-medium">{s.name}</td>
+                <td className="py-3 px-4 text-white font-medium">
+                  {s.name}
+                  {/* Only CSV is ever generated by the scheduler (there is no
+                      PDF/XLSX writer in the backend), so a row still carrying
+                      an older format is flagged rather than displayed as if it
+                      were honoured. */}
+                  {s.format !== 'CSV' && (
+                    <span className="ml-2 text-[10px] text-amber-500/80" title={`Stored as ${s.format}, but scheduled reports are delivered as CSV`}>
+                      sent as CSV
+                    </span>
+                  )}
+                </td>
                 <td className="py-3 px-4 text-slate-400"><span className="capitalize text-slate-500">{s.scope}:</span> {scopeName(s)}</td>
-                <td className="py-3 px-4"><span className="text-xs px-2 py-0.5 rounded-full capitalize" style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}>{s.sequence}</span></td>
-                <td className="py-3 px-4 text-slate-400">{s.format}</td>
-                <td className="py-3 px-4 text-slate-400"><span className="capitalize">{s.channel}</span>{s.recipients ? <span className="text-slate-600"> · {s.recipients}</span> : <span className="text-amber-500/70"> · not set</span>}</td>
+                <td className="py-3 px-4"><span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}>{whenText(s)}</span></td>
+                <td className="py-3 px-4 text-slate-400 text-xs">
+                  last {s.windowDays ?? (s.sequence === 'weekly' ? 7 : s.sequence === 'monthly' ? 30 : 1)}d
+                </td>
+                <td className="py-3 px-4 text-slate-400">
+                  <span className="capitalize">{s.channel}</span>
+                  {s.channel === 'email' && s.recipientMode !== 'manual' && (
+                    <span className="text-slate-600"> · {s.recipientMode === 'department' ? 'dept' : 'people'}</span>
+                  )}
+                  {to ? <span className="text-slate-600"> · {to}</span> : <span className="text-amber-500/70"> · nobody</span>}
+                </td>
                 <td className="py-3 px-4"><button onClick={() => toggleSchedule(s.id)}>{s.enabled ? <ToggleRight size={22} className="text-indigo-400" /> : <ToggleLeft size={22} className="text-slate-600" />}</button></td>
                 <td className="py-3 px-4 text-right"><button onClick={() => removeSchedule(s.id)} className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/5"><Trash2 size={13} /></button></td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
