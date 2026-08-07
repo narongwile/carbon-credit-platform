@@ -9,7 +9,15 @@ const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
-interface Release { id: string; version: string; domain: string; artefact_uri: string; released_at: string; release_notes: string }
+// otaRelListFunc SELECTs `product` (the DB column) and `created_at` — this used
+// to declare `domain`/`released_at`, fields that have never existed on the
+// response. `{r.domain}` rendered blank for every release in every
+// organization; the deploy button silently sent `hw: undefined` too (only
+// worked because otaFleetFunc happens to fall back to the release's own
+// stored product when the request omits one). created_at is genuinely
+// unused below, same as ota_deployments' updated_at elsewhere on this page,
+// so it is left off rather than pointed at a real column nothing needs.
+interface Release { id: string; version: string; product: string; artefact_uri: string; release_notes: string }
 // updated_at was never a real column on ota_deployments (started_at /
 // completed_at are) and was never actually rendered below — only d.status
 // is. Dropped rather than fixed to a real column, since nothing here needs it.
@@ -111,10 +119,10 @@ export default function OTAManagementPage() {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-bold text-white bg-indigo-500/20 px-2 py-1 rounded text-indigo-300">{r.version}</span>
-                    <span className="text-xs text-slate-400">{r.domain}</span>
+                    <span className="text-xs text-slate-400">{r.product}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setDeployConfirm({ id: r.id, hw: r.domain })} className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 px-3 py-1.5 rounded-md transition-colors"><ArrowRightCircle size={14}/> Deploy to Fleet</button>
+                    <button onClick={() => setDeployConfirm({ id: r.id, hw: r.product })} className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 px-3 py-1.5 rounded-md transition-colors"><ArrowRightCircle size={14}/> Deploy to Fleet</button>
                     <button onClick={() => setDeleteConfirm(r.id)} className="text-red-400 hover:text-red-300 p-1.5 rounded-md hover:bg-red-400/10 transition-colors"><Trash2 size={14} /></button>
                   </div>
                 </div>

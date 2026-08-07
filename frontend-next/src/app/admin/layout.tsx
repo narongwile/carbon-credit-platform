@@ -16,7 +16,7 @@ import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package
+  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package, Server
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -42,6 +42,10 @@ const NAV: NavItem[] = [
   { href: '/admin/pending', label: 'Pending Devices', icon: PlugZap, badge: 'pending' },
   { href: '/admin/transformer-models', label: 'Transformer Models', icon: Package, requires: { platform: 'eternityTransformers' } },
   { href: '/admin/live-raw', label: 'Live Raw Telemetry', icon: Radio },
+  // Was reachable only via a "Manage OTA" link on the Fleet page (itself only
+  // added this session) — not one other admin page linked here, and it never
+  // appeared in this sidebar at all, unlike literally every other admin page.
+  { href: '/admin/ota', label: 'Firmware (OTA)', icon: Server },
 
   // No platform gate any more: the page compares whichever product the org
   // actually has, so gating it on transformers hid it from fridge-only orgs.

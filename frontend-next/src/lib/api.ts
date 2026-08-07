@@ -652,7 +652,10 @@ export const api = {
   },
 
   // Fleet OTA Management
-  otaReleases: () => req<{id:string; version:string; domain:string; artefact_uri:string; released_at:string; release_notes:string}[]>(`/api/ota/releases`),
+  // otaRelListFunc SELECTs `product` (the ota_releases column) — this declared
+  // `domain`/`released_at`, fields the response has never actually carried,
+  // so admin/ota's release cards always rendered a blank product-line label.
+  otaReleases: () => req<{id:string; version:string; product:string; artefact_uri:string; release_notes:string}[]>(`/api/ota/releases`),
   saveOtaRelease: (body: { version: string; domain: string; artefact_uri: string; release_notes?: string }) =>
     req<{ id: string }>(`/api/ota/releases`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOtaRelease: (id: string) => req(`/api/ota/releases/${id}`, { method: 'DELETE' }),
