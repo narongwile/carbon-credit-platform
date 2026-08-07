@@ -7,6 +7,7 @@ import { api, isLive } from '@/lib/api'
 import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
 import { getOrgThemeGrants, fetchOrgThemeGrants, saveOrgThemeGrants } from '@/lib/orgThemes'
 import { PLATFORM_TEMPLATES } from '@/lib/platforms'
+import OrgLogoEditor from '@/components/OrgLogoEditor'
 import type { Organization } from '@/types'
 import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -210,6 +211,19 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
         </div>
 
         <div className="p-6 space-y-5">
+          {/* Customer logo. The org's own admin can already set this under
+              Settings → Organization branding; this is the same write
+              (PUT /orgs/:id/branding), reachable for ANY customer without
+              having to sign in as them — which is the only way to do it for a
+              factory that has no admin of their own yet. */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Customer Logo</label>
+            <p className="text-[11px] text-slate-600 mb-3">
+              Shown beside this organization&apos;s name in their sidebar, in place of the ONEOPS mark.
+            </p>
+            <OrgLogoEditor orgId={org.id} />
+          </div>
+
           {/* Entry platform */}
           <div>
             <label className="block text-xs text-slate-400 mb-2 uppercase tracking-wider">Default Entry Platform</label>
