@@ -13,6 +13,7 @@ import MyAlertSettings from '@/components/device/MyAlertSettings'
 import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHistoryModal'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import NameplateEditor from '@/components/device/NameplateEditor'
+import DepartmentAccessEditor from '@/components/device/DepartmentAccessEditor'
 import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
 import SensorListSection from '@/components/device/SensorList'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
@@ -32,7 +33,7 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera
+  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users
 } from 'lucide-react'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
@@ -518,6 +519,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // so a rename made on this very page changed nothing on it.
   const { labelOf: paramLabel, refetch: refetchParamLabels } = useParamLabels(orgId, 'transformer', id)
   const [editingNameplate, setEditingNameplate] = useState(false)
+  const [editingDeptAccess, setEditingDeptAccess] = useState(false)
   // transformer.orgId, not the page-level orgId — a superadmin viewing
   // another org's device needs THAT org's toggle, not their own selected one.
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
@@ -806,6 +808,12 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   </span>
                 )}
                 {canConfigure && live && (
+                  <button onClick={() => setEditingDeptAccess(true)} title="Configure department access"
+                    className="text-slate-500 hover:text-indigo-400 flex-shrink-0">
+                    <Users size={11} />
+                  </button>
+                )}
+                {canConfigure && live && (
                   <button onClick={() => setEditingNameplate(true)} title="Edit nameplate"
                     className="text-slate-500 hover:text-indigo-400 flex-shrink-0">
                     <Pencil size={11} />
@@ -859,6 +867,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       {editingNameplate && (
         <NameplateEditor nodeId={id} orgId={transformer.orgId} current={nameplate}
           onClose={() => setEditingNameplate(false)} onSaved={refetchNameplate} />
+      )}
+
+      {editingDeptAccess && (
+        <DepartmentAccessEditor nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name}
+          onClose={() => setEditingDeptAccess(false)} />
       )}
 
       {picking && (
