@@ -14,16 +14,20 @@
 // can be real — browse the actual schema, run an actual query.
 //
 // Everything that makes "read-only" true is enforced server-side (see
-// sqlConsoleFunc): SELECT/WITH only, single statement, secret tables refused,
-// execution wrapped in a derived table so the row cap and the SELECT-ness are
-// structural, and a query timeout. The notes in this UI describe those rules;
-// they do not implement them.
+// sqlConsoleFunc): SELECT/WITH only, single statement, no comments, secret
+// tables refused, no database-qualified names, execution wrapped in a derived
+// table so the row cap and the SELECT-ness are structural, and a query timeout.
+// The notes in this UI describe those rules; they do not implement them.
+//
+// Isolation is by CONNECTION, also server-side: an org admin is handed their
+// own iothub_<org> pool and an org with no tenant database of its own is
+// refused rather than quietly given the shared one. Which database answered is
+// echoed back and shown in the header, so it is never a guess.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react'
 import { Database, Play, Copy, Download, Table, CheckCircle2, ChevronRight, ChevronDown, Loader2, ShieldAlert, AlertTriangle } from 'lucide-react'
 import { api, useIsLive } from '@/lib/api'
-import { useSessionRole } from '@/lib/auth'
 import { fmtHM } from '@/lib/displayTime'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -39,10 +43,10 @@ interface HistoryItem { sql: string; ts: Date; rowCount: number }
 
 export default function SqlConsolePage() {
   const live = useIsLive()
-  const role = useSessionRole()
-  const isSuper = role === 'superadmin'
 
   const [schema, setSchema] = useState<SchemaTable[] | null>(null)
+  const [schemaError, setSchemaError] = useState('')
+  const [database, setDatabase] = useState('')
   const [blocked, setBlocked] = useState<string[]>([])
   const [openTable, setOpenTable] = useState<string | null>(null)
   const [sql, setSql] = useState('')
@@ -56,15 +60,18 @@ export default function SqlConsolePage() {
   const [tab, setTab] = useState<'query' | 'history'>('query')
 
   useEffect(() => {
-    if (!live || !isSuper) return
+    if (!live) return
     let cancelled = false
     api.sqlSchema().then((r) => {
-      if (cancelled || !r) return
+      if (cancelled) return
+      if (!r.ok) { setSchemaError(r.error); setSchema([]); return }
+      setSchemaError('')
       setSchema(r.tables ?? [])
       setBlocked(r.blocked ?? [])
+      setDatabase(r.database ?? '')
     })
     return () => { cancelled = true }
-  }, [live, isSuper])
+  }, [live])
 
   const insert = (text: string) => setSql((p) => p + (p && !/\s$/.test(p) ? ' ' : '') + text)
 
@@ -80,6 +87,7 @@ export default function SqlConsolePage() {
     setColumns(res.columns ?? [])
     setRows(res.rows ?? [])
     setMeta({ rowCount: res.rowCount, truncated: res.truncated, elapsedMs: res.elapsedMs })
+    if (res.database) setDatabase(res.database)
     setHistory((h) => [{ sql: sql.trim(), ts: new Date(), rowCount: res.rowCount }, ...h].slice(0, 25))
   }
 
@@ -98,17 +106,21 @@ export default function SqlConsolePage() {
     toast.success('CSV exported')
   }
 
-  if (!isSuper) {
+  // The server refuses an org whose data still lives in the shared control
+  // database — there is no way to confine a query to their rows there, so the
+  // honest answer is "not yet", with what has to change to make it available.
+  if (schemaError && /own database/i.test(schemaError)) {
     return (
       <div className="p-6">
         <div className="rounded-xl p-5 flex items-start gap-3 max-w-2xl" style={surface}>
           <ShieldAlert size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
           <div>
-            <h1 className="text-base font-bold text-white">SQL console — superadmin only</h1>
+            <h1 className="text-base font-bold text-white">SQL console not available for this organization</h1>
             <p className="text-sm text-slate-400 mt-1">
-              An arbitrary query cannot be reliably confined to a single organization&apos;s rows, so this console is
-              restricted to platform superadmins. Your organization&apos;s own data is available throughout the rest of
-              the product, and as a CSV from Reports.
+              This console gives you your organization&apos;s own database and nothing else. Your data currently lives in
+              the shared platform database, where a query could reach other customers&apos; rows — so it is refused
+              rather than opened up. A platform administrator can migrate this organization onto its own database to
+              enable it.
             </p>
           </div>
         </div>
@@ -123,6 +135,11 @@ export default function SqlConsolePage() {
         <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs text-slate-300" style={inset}>
           <Database size={13} className="text-indigo-400" /> read-only
         </span>
+        {database && (
+          <span className="px-2.5 py-1 rounded-lg text-xs font-mono text-slate-400" style={inset} title="Every query on this page runs against this database only">
+            {database === 'control' ? 'platform database' : database}
+          </span>
+        )}
       </div>
 
       {!live && (
@@ -139,6 +156,8 @@ export default function SqlConsolePage() {
           </h3>
           {schema === null ? (
             <p className="text-xs text-slate-600">{live ? 'Loading schema…' : 'Live mode required.'}</p>
+          ) : schemaError ? (
+            <p className="text-xs text-red-400">{schemaError}</p>
           ) : schema.length === 0 ? (
             <p className="text-xs text-slate-600">No tables found.</p>
           ) : (
@@ -220,8 +239,8 @@ export default function SqlConsolePage() {
                   </label>
                 </div>
                 <p className="mt-2.5 text-[10px] text-slate-600">
-                  SELECT or WITH only, one statement at a time, capped at the row limit above and 8s of runtime.
-                  Enforced on the server — ⌘/Ctrl + Enter runs.
+                  SELECT or WITH only, one statement at a time, no comments, no database-qualified names, capped at the
+                  row limit above and 8s of runtime. Enforced on the server — ⌘/Ctrl + Enter runs.
                 </p>
               </>
             ) : (

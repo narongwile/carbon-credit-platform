@@ -721,9 +721,26 @@ export const api = {
   // rejected query rather than null, because "Unknown column 'foo'" is the
   // whole point of a console — req() collapses every failure to null, so this
   // one call reads the response itself.
-  sqlSchema: () =>
-    req<{ tables: { name: string; columns: { name: string; type: string }[] }[]; blocked: string[] }>(
-      `/api/platform/sql/schema`),
+  // Like runSql, this resolves to the error BODY rather than null: the one
+  // failure that matters here ("your organization does not have its own
+  // database") is a sentence the admin needs to read, and req() collapses every
+  // failure to null.
+  sqlSchema: async (): Promise<
+    { ok: true; tables: { name: string; columns: { name: string; type: string }[] }[]; blocked: string[]; database: string }
+    | { ok: false; error: string }
+  > => {
+    if (!isLive()) return { ok: false, error: 'Live mode required — demo mode has no database.' }
+    try {
+      const r = await fetch(`${BASE}/api/platform/sql/schema`, {
+        headers: { ...(getToken() ? { authorization: `Bearer ${getToken()}` } : {}) },
+      })
+      const body = await r.json().catch(() => null)
+      if (!r.ok) return { ok: false, error: body?.error || `request failed (${r.status})` }
+      return { ok: true, ...body }
+    } catch {
+      return { ok: false, error: 'Could not reach the server.' }
+    }
+  },
   /**
    * Real ingest quality for one org: readings.quality for data inside the
    * retention window, plus readings_rollup.n/bad_n for everything already
@@ -741,7 +758,7 @@ export const api = {
       sources: string[]
     }>(`/api/orgs/${orgId}/data-quality?days=${days}`),
   runSql: async (sql: string, limit = 200): Promise<
-    { ok: true; columns: string[]; rows: Record<string, unknown>[]; rowCount: number; truncated: boolean; elapsedMs: number }
+    { ok: true; columns: string[]; rows: Record<string, unknown>[]; rowCount: number; truncated: boolean; elapsedMs: number; database: string }
     | { ok: false; error: string }
   > => {
     if (!isLive()) return { ok: false, error: 'Live mode required — demo mode has no database.' }

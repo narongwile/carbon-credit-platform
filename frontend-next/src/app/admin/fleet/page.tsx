@@ -31,13 +31,26 @@ import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive, type DevicePresence } from '@/lib/api'
 import {
-  Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2,
+  Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2, Plug, Construction,
 } from 'lucide-react'
 import SensorDetailsModal from '@/components/SensorDetailsModal'
 import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
+
+// Interfaces (per-channel hardware wiring) is kept as a declared placeholder
+// for future work. Nothing in this schema records it today — there is no
+// device_interfaces table and the ingest payload carries no channel inventory —
+// so it deliberately renders as an empty, clearly-labelled section rather than
+// the seeded CAN/RS485/I2C/GPIO/CT rows it used to show. Those rows came from
+// fleetData.ts and were identical for every customer, which read as "your
+// gateway has an RS485-A port that is up" when nothing had ever checked.
+//
+// To make it real: a device_interfaces table (node_id, kind, label, status),
+// populated either from a provisioning record or from a channel inventory in
+// the device's announce payload, then listed here per node.
+const PLANNED_INTERFACE_KINDS = ['CAN', 'RS485', 'I2C', 'GPIO', 'CT'] as const
 
 const fwResult: Record<string, { color: string; icon: React.ReactNode }> = {
   success:      { color: '#4ade80', icon: <CheckCircle size={12} /> },
@@ -172,6 +185,27 @@ export default function FleetPage() {
                     <div className="text-[10px] text-slate-500 uppercase tracking-wider">{k}</div>
                     <div className="text-sm text-white font-medium truncate">{v}</div>
                   </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Interfaces — declared placeholder, see PLANNED_INTERFACE_KINDS */}
+            <div className="rounded-xl p-5" style={surface}>
+              <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+                <Plug size={14} className="text-indigo-400" /> Interfaces
+                <span className="ml-auto flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium uppercase tracking-wider" style={{ background: 'rgba(148,163,184,0.12)', color: '#94a3b8' }}>
+                  <Construction size={10} /> planned
+                </span>
+              </h3>
+              <p className="text-xs text-slate-500 mb-3">
+                Per-channel wiring inventory for this gateway. Not collected yet — devices do not report a channel
+                inventory, so there is nothing to show rather than something to guess.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {PLANNED_INTERFACE_KINDS.map((k) => (
+                  <span key={k} className="px-2.5 py-1 rounded-lg text-xs font-mono text-slate-600" style={{ ...inset, borderStyle: 'dashed' }}>
+                    {k}
+                  </span>
                 ))}
               </div>
             </div>
