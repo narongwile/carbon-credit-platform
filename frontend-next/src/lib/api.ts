@@ -656,7 +656,19 @@ export const api = {
   saveOtaRelease: (body: { version: string; domain: string; artefact_uri: string; release_notes?: string }) =>
     req<{ id: string }>(`/api/ota/releases`, { method: 'POST', body: JSON.stringify(body) }),
   deleteOtaRelease: (id: string) => req(`/api/ota/releases/${id}`, { method: 'DELETE' }),
-  otaDeployments: () => req<{node_id:string; release_id:string; status:string; updated_at:string}[]>(`/api/ota/deployments`),
+  // otaDepListFunc already supports ?nodeId= and joins ota_releases for
+  // product/version server-side — pass it instead of fetching the whole org's
+  // OTA history to filter one device out of it client-side.
+  // ota_deployments has no updated_at column — the page that used to read
+  // d.updated_at was reading a field that has never existed on this table
+  // (started_at / completed_at are the real ones), so a naive real-data
+  // migration would have produced "Invalid Date" instead of a fabricated one.
+  otaDeployments: (opts?: { nodeId?: string; status?: string }) =>
+    req<{ node_id: string; release_id: string; product: string | null; version: string | null; status: string; progress_pct: number | null; error_msg: string | null; started_at: string; completed_at: string | null }[]>(
+      `/api/ota/deployments${opts?.nodeId || opts?.status ? '?' : ''}${[
+        opts?.nodeId ? `nodeId=${encodeURIComponent(opts.nodeId)}` : '',
+        opts?.status ? `status=${encodeURIComponent(opts.status)}` : '',
+      ].filter(Boolean).join('&')}`),
   deployFleetOta: (body: { release_id: string; domain: string; org_id?: string }) =>
     req<{ applied: number }>(`/api/ota/deploy-fleet`, { method: 'POST', body: JSON.stringify(body) }),
 
@@ -705,6 +717,47 @@ export const api = {
   /** The superadmin header's numbers, queried rather than invented. */
   platformStats: () =>
     req<PlatformStats>(`/api/platform/stats`),
+  // Read-only SQL console (superadmin). runSql resolves to the error BODY on a
+  // rejected query rather than null, because "Unknown column 'foo'" is the
+  // whole point of a console — req() collapses every failure to null, so this
+  // one call reads the response itself.
+  sqlSchema: () =>
+    req<{ tables: { name: string; columns: { name: string; type: string }[] }[]; blocked: string[] }>(
+      `/api/platform/sql/schema`),
+  /**
+   * Real ingest quality for one org: readings.quality for data inside the
+   * retention window, plus readings_rollup.n/bad_n for everything already
+   * rolled up, summed so the trend does not step down at the retention edge.
+   */
+  dataQuality: (orgId: string, days = 7) =>
+    req<{
+      days: number
+      devices: number
+      totals: { samples: number; bad: number; good: number; goodPct: number | null }
+      byQuality: Record<string, number>
+      trend: { day: string; samples: number; bad: number; goodPct: number | null }[]
+      worst: { nodeId: string; name: string; samples: number; bad: number; badPct: number }[]
+      presence: { online: number; offline: number; never: number }
+      sources: string[]
+    }>(`/api/orgs/${orgId}/data-quality?days=${days}`),
+  runSql: async (sql: string, limit = 200): Promise<
+    { ok: true; columns: string[]; rows: Record<string, unknown>[]; rowCount: number; truncated: boolean; elapsedMs: number }
+    | { ok: false; error: string }
+  > => {
+    if (!isLive()) return { ok: false, error: 'Live mode required — demo mode has no database.' }
+    try {
+      const r = await fetch(`${BASE}/api/platform/sql`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(getToken() ? { authorization: `Bearer ${getToken()}` } : {}) },
+        body: JSON.stringify({ sql, limit }),
+      })
+      const body = await r.json().catch(() => null)
+      if (!r.ok) return { ok: false, error: body?.error || `request failed (${r.status})` }
+      return { ok: true, ...body }
+    } catch {
+      return { ok: false, error: 'Could not reach the server.' }
+    }
+  },
   // provisioned: the tenant database this org needs under TENANT_DB_MODE.
   // admin.setPasswordUrl: returned only when SMTP is unconfigured, because the
   // admin row carries no password and that link is then the only way to sign in.

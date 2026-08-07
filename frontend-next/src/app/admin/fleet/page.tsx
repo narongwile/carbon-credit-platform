@@ -1,82 +1,142 @@
 'use client'
 
+// ---------------------------------------------------------------------------
+// Fleet — real devices, real presence, real firmware history, real
+// connectivity log.
+//
+// This page used to be entirely fake: the device list came from fleetData.ts
+// (a static seed keyed to the three demo org ids, so a real organization saw
+// zero devices, always), and "Interfaces" (CAN/RS485/I2C/GPIO/CT) and "LoRa
+// Peers" (DevAddr/spreading factor) described a per-channel hardware wiring
+// inventory that no table in this schema captures — not a bug where the data
+// exists but isn't wired, data the ingest pipeline has never collected.
+// Cellular detail (IMEI/ICCID/APN/SIM status) is the same story.
+//
+// What IS real and is used instead:
+//   • useFleetHosts(orgId) — the same live roster admin/devices and the map use.
+//   • GET /api/fleet/:id/latest — device_presence (online/last_seen/rssi/batt/
+//     fw/transport) plus this device's current values, per parameter.
+//   • GET /api/nodes/:id/transport — transport_events (wifi/4G/LoRa switches,
+//     with rssi and reason) merged with offline_sync_log backlog flushes. This
+//     replaces the fabricated "Cellular Link" panel with the real equivalent:
+//     which transport it's on now, and its actual recent switches — without
+//     inventing IMEI/ICCID/SIM fields nothing tracks.
+//   • GET /api/ota/deployments?nodeId= — real OTA history, server-scoped and
+//     already joined to product/version, instead of fetching every device's
+//     deployments and filtering client-side.
+// ---------------------------------------------------------------------------
+
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
-import { api } from '@/lib/api'
-import { fleetDevices, deviceInterfaces, sites } from '@/lib/fleetData'
-import { deviceFirmwareHistory, cellularLinks, loraPeers, getFirmwareByDevice, getCellularByDevice } from '@/lib/fleetExtra'
+import { useFleetHosts } from '@/lib/useManagedDevices'
+import { api, useIsLive, type DevicePresence } from '@/lib/api'
 import {
-  Cpu, Wifi, WifiOff, Battery, Plug, Radio, Signal, History, ChevronRight, CheckCircle, RotateCcw, XCircle, Stethoscope,
+  Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2,
 } from 'lucide-react'
-import clsx from 'clsx'
 import SensorDetailsModal from '@/components/SensorDetailsModal'
 import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
-const kindColor: Record<string, string> = {
-  can: '#6366f1', rs485: '#06b6d4', i2c: '#22c55e', gpio_di: '#a78bfa',
-  gpio_do: '#a78bfa', ct: '#fbbf24', lora: '#f59e0b', cellular: '#ef4444',
-  gnss: '#22c55e', wifi: '#6366f1',
+const fwResult: Record<string, { color: string; icon: React.ReactNode }> = {
+  success:      { color: '#4ade80', icon: <CheckCircle size={12} /> },
+  rolled_back:  { color: '#fbbf24', icon: <RotateCcw size={12} /> },
+  failed:       { color: '#ef4444', icon: <XCircle size={12} /> },
+  flashing:     { color: '#818cf8', icon: <Loader2 size={12} className="animate-spin" /> },
+  downloading:  { color: '#818cf8', icon: <Loader2 size={12} className="animate-spin" /> },
+  verifying:    { color: '#818cf8', icon: <Loader2 size={12} className="animate-spin" /> },
+  accepted:     { color: '#818cf8', icon: <Loader2 size={12} className="animate-spin" /> },
+  pending:      { color: '#6b7280', icon: <History size={12} /> },
 }
 
-const fwResult: Record<string, { color: string; icon: React.ReactNode }> = {
-  success: { color: '#4ade80', icon: <CheckCircle size={12} /> },
-  rolled_back: { color: '#fbbf24', icon: <RotateCcw size={12} /> },
-  failed: { color: '#ef4444', icon: <XCircle size={12} /> },
-  abandoned: { color: '#6b7280', icon: <XCircle size={12} /> },
-}
+type OtaDeployment = NonNullable<Awaited<ReturnType<typeof api.otaDeployments>>>[number]
+type TransportEvent = NonNullable<Awaited<ReturnType<typeof api.transportEvents>>>[number]
 
 export default function FleetPage() {
+  const live = useIsLive()
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
-  const devices = fleetDevices.filter((d) => d.orgId === orgId)
-  const [activeId, setActiveId] = useState(devices[0]?.id ?? '')
-  const active = devices.find((d) => d.id === activeId)
+  const { hosts, loaded: fleetLoaded } = useFleetHosts(orgId)
+
+  const [activeId, setActiveId] = useState('')
+  useEffect(() => { if (hosts.length && !hosts.some((h) => h.id === activeId)) setActiveId(hosts[0]?.id ?? '') }, [hosts, activeId])
+  const active = hosts.find((h) => h.id === activeId)
+
+  const [sites, setSites] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!live) { setSites({}); return }
+    let cancelled = false
+    api.sites(orgId).then((r) => { if (!cancelled && r) setSites(Object.fromEntries(r.sites.map((s) => [s.id, s.name]))) })
+    return () => { cancelled = true }
+  }, [live, orgId])
+  const siteName = (id: string) => sites[id] ?? id
+
+  const [presence, setPresence] = useState<DevicePresence | null>(null)
+  const [values, setValues] = useState<Record<string, number>>({})
+  const [lastReadingAt, setLastReadingAt] = useState<string | null>(null)
+  const [transport, setTransport] = useState<TransportEvent[]>([])
+  const [deployments, setDeployments] = useState<OtaDeployment[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
   const [showDiag, setShowDiag] = useState(false)
 
-  const ifaces = active ? deviceInterfaces.filter((i) => i.deviceId === active.id) : []
-  const fw = active ? getFirmwareByDevice(active.id) : []
-  const cell = active ? getCellularByDevice(active.id) : undefined
-  const siteName = (id: string) => sites.find((s) => s.id === id)?.name ?? id
-
-  const [deployments, setDeployments] = useState<{release_id:string, status:string, updated_at:string}[]>([])
   useEffect(() => {
-    let cancel = false
-    if (activeId) {
-      api.otaDeployments().then(deps => {
-        if (!cancel && deps) setDeployments(deps.filter(d => d.node_id === activeId))
-      })
-    }
-    return () => { cancel = true }
-  }, [activeId])
+    if (!activeId || !live) { setPresence(null); setValues({}); setTransport([]); setDeployments([]); return }
+    let cancelled = false
+    setDetailLoading(true)
+    Promise.all([
+      api.latest(activeId),
+      api.transportEvents(activeId),
+      api.otaDeployments({ nodeId: activeId }),
+    ]).then(([lat, tr, dep]) => {
+      if (cancelled) return
+      setPresence(lat?.presence ?? null)
+      setValues(lat?.values ?? {})
+      setLastReadingAt(lat?.lastReadingAt ?? null)
+      setTransport(tr ?? [])
+      setDeployments(dep ?? [])
+      setDetailLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [activeId, live])
+
+  const online = presence?.online === 1
 
   return (
     <div className="p-6 space-y-5">
       <div>
-        <h1 className="text-xl font-bold text-white">Fleet — Devices &amp; Interfaces</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Physical edge gateways, their interfaces (CAN/RS485/LoRa/cellular), firmware OTA history and links</p>
+        <h1 className="text-xl font-bold text-white">Fleet — Devices &amp; Connectivity</h1>
+        <p className="text-sm text-slate-500 mt-0.5">Live device presence, firmware OTA history and connectivity for every device in this organization</p>
       </div>
+
+      {!live && (
+        <div className="rounded-xl p-3 text-xs text-amber-300" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
+          Demo mode shows sample devices — switch to Live for this organization&apos;s real fleet.
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Device list */}
         <div className="space-y-2">
-          {devices.map((d) => (
-            <button key={d.id} onClick={() => setActiveId(d.id)} className="w-full text-left p-4 rounded-xl transition-all" style={{ ...surface, borderColor: activeId === d.id ? '#6366f1' : '#1e2433' }}>
+          {!fleetLoaded ? (
+            <p className="text-sm text-slate-500 p-4">Loading fleet…</p>
+          ) : hosts.length === 0 ? (
+            <p className="text-sm text-slate-500 p-4">No devices in this organization yet.</p>
+          ) : hosts.map((h) => (
+            <button key={h.id} onClick={() => setActiveId(h.id)} className="w-full text-left p-4 rounded-xl transition-all" style={{ ...surface, borderColor: activeId === h.id ? '#6366f1' : '#1e2433' }}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(99,102,241,0.12)' }}><Cpu size={15} className="text-indigo-400" /></span>
-                  <div>
-                    <div className="text-sm font-semibold text-white">{d.hardwareModel}</div>
-                    <div className="text-[11px] text-slate-500 font-mono">{d.mac}</div>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(99,102,241,0.12)' }}><Cpu size={15} className="text-indigo-400" /></span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-white truncate">{h.name}</div>
+                    <div className="text-[11px] text-slate-500 font-mono truncate">{h.id}</div>
                   </div>
                 </div>
-                {d.status === 'online' ? <Wifi size={15} className="text-green-400" /> : <WifiOff size={15} className="text-slate-600" />}
+                {h.status === 'OFFLINE' ? <WifiOff size={15} className="text-slate-600 flex-shrink-0" /> : <Wifi size={15} className="text-green-400 flex-shrink-0" />}
               </div>
               <div className="flex items-center justify-between mt-2 text-[11px] text-slate-500">
-                <span>{siteName(d.siteId)}</span>
-                <span className="flex items-center gap-1"><Battery size={11} /> {d.batteryPct}%</span>
+                <span className="truncate">{siteName(h.siteId)}</span>
+                <span className="capitalize flex-shrink-0 ml-2">{h.domain}</span>
               </div>
             </button>
           ))}
@@ -85,27 +145,29 @@ export default function FleetPage() {
         {/* Device detail */}
         {active && (
           <div className="lg:col-span-2 space-y-4">
-            {/* Header / provisioning */}
+            {/* Header / presence */}
             <div className="rounded-xl p-5" style={surface}>
               <div className="flex items-center justify-between mb-3">
-                <div>
-                  <div className="text-base font-bold text-white">{active.hardwareModel}</div>
-                  <div className="text-xs text-slate-500 font-mono">chip {active.chipId} · {active.mac}</div>
-                  {ifaces.some((i) => i.kind === 'wifi') && ifaces.some((i) => i.kind === 'cellular') && (
-                    <span className="inline-flex items-center gap-1.5 mt-1.5 text-[10px] px-2 py-0.5 rounded-full" style={{ background: 'rgba(99,102,241,0.12)', color: '#a5b4fc' }}>
-                      <Wifi size={10} /> WiFi primary → <Signal size={10} /> 4G fallback
-                    </span>
-                  )}
+                <div className="min-w-0">
+                  <div className="text-base font-bold text-white truncate">{active.name}</div>
+                  <div className="text-xs text-slate-500 font-mono truncate">{active.id}</div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   <button onClick={() => setShowDiag(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
                     <Stethoscope size={13} /> Diagnostics
                   </button>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase" style={{ color: '#4ade80', background: 'rgba(74,222,128,0.12)' }}>{active.provisioningState}</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase" style={online ? { color: '#4ade80', background: 'rgba(74,222,128,0.12)' } : { color: '#94a3b8', background: 'rgba(148,163,184,0.12)' }}>
+                    {detailLoading ? '…' : online ? 'online' : 'offline'}
+                  </span>
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[['Firmware', active.firmwareVersion], ['Battery', `${active.batteryPct}%`], ['Status', active.status], ['Site', siteName(active.siteId)]].map(([k, v]) => (
+                {[
+                  ['Firmware', presence?.fw || '—'],
+                  ['Battery', presence?.batt != null ? `${presence.batt}%` : '—'],
+                  ['Signal', presence?.rssi != null ? `${presence.rssi} dBm` : '—'],
+                  ['Last seen', presence?.last_seen ? fmtDateTime(presence.last_seen) : 'never'],
+                ].map(([k, v]) => (
                   <div key={k} className="rounded-lg p-2.5" style={inset}>
                     <div className="text-[10px] text-slate-500 uppercase tracking-wider">{k}</div>
                     <div className="text-sm text-white font-medium truncate">{v}</div>
@@ -114,94 +176,80 @@ export default function FleetPage() {
               </div>
             </div>
 
-            {/* Interfaces */}
+            {/* Connectivity — current transport + real switch history */}
             <div className="rounded-xl p-5" style={surface}>
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Plug size={14} className="text-indigo-400" /> Interfaces</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {ifaces.map((i) => (
-                  <div key={i.id} className="p-3 rounded-lg" style={inset}>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase" style={{ color: kindColor[i.kind] ?? '#94a3b8' }}>{i.kind}</span>
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: i.status === 'up' ? '#4ade80' : '#6b7280' }} />
+              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+                <Signal size={14} className="text-red-400" /> Connectivity
+                {presence?.transport && (
+                  <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full font-medium uppercase" style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc' }}>
+                    {presence.transport}
+                  </span>
+                )}
+              </h3>
+              {detailLoading ? (
+                <p className="text-xs text-slate-600">Loading…</p>
+              ) : transport.length === 0 ? (
+                <p className="text-xs text-slate-600">No transport switches recorded for this device.</p>
+              ) : (
+                <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                  {transport.slice(0, 15).map((t) => (
+                    <div key={t.id} className="flex items-center gap-2 text-xs py-1.5" style={{ borderTop: '1px solid #1e2433' }}>
+                      <ArrowRightLeft size={11} className={t.isOfflineSync ? 'text-amber-400' : 'text-indigo-400'} />
+                      <span className="text-slate-300 flex-1 truncate">{t.desc}</span>
+                      <span className="text-slate-600 flex-shrink-0">{fmtDateTime(t.ts)}</span>
                     </div>
-                    <div className="text-sm text-white mt-1">{i.label}</div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Connectivity: cellular + lora */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-xl p-5" style={surface}>
-                <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Signal size={14} className="text-red-400" /> Cellular Link</h3>
-                {cell ? (
-                  <div className="space-y-1.5 text-sm">
-                    {[['IMEI', cell.imei], ['ICCID', cell.iccid], ['APN', cell.apn], ['Operator', cell.operatorMccMnc], ['Signal', `${cell.lastRssiDbm} dBm · ${cell.lastBand}`], ['Data used', `${cell.dataUsedMb} MB`], ['SIM', cell.simStatus]].map(([k, v]) => (
-                      <div key={k} className="flex justify-between"><span className="text-slate-500">{k}</span><span className="text-white font-mono text-xs">{v}</span></div>
-                    ))}
-                  </div>
-                ) : <p className="text-xs text-slate-600">No cellular link on this device.</p>}
-              </div>
-              <div className="rounded-xl p-5" style={surface}>
-                <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Radio size={14} className="text-amber-400" /> LoRa Peers</h3>
-                {loraPeers.filter((p) => ifaces.some((i) => i.id === p.interfaceId)).length ? loraPeers.filter((p) => ifaces.some((i) => i.id === p.interfaceId)).map((p) => (
-                  <div key={p.id} className="space-y-1.5 text-sm">
-                    {[['DevAddr', p.devaddr], ['SF', p.spreadingFactor], ['Band', p.freqBand], ['Signal', `${p.lastRssiDbm} dBm`]].map(([k, v]) => (
-                      <div key={k} className="flex justify-between"><span className="text-slate-500">{k}</span><span className="text-white font-mono text-xs">{v}</span></div>
-                    ))}
-                  </div>
-                )) : <p className="text-xs text-slate-600">No LoRa peers on this device.</p>}
-              </div>
-            </div>
-
-            {/* Firmware OTA history */}
+            {/* Firmware OTA history — real, server-scoped */}
             <div className="rounded-xl p-5" style={surface}>
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-white flex items-center gap-2"><History size={14} className="text-indigo-400" /> Firmware OTA History</h3>
                 <a href="/admin/ota" className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">Manage OTA</a>
               </div>
               <div className="space-y-2">
-                {deployments.length ? deployments.map((d) => {
-                  const r = d.status === 'success' ? fwResult['success'] : d.status === 'failed' ? fwResult['failed'] : fwResult['abandoned']
+                {detailLoading ? (
+                  <p className="text-xs text-slate-600">Loading…</p>
+                ) : deployments.length === 0 ? (
+                  <p className="text-xs text-slate-600">No OTA deployments recorded for this device.</p>
+                ) : deployments.map((d) => {
+                  const r = fwResult[d.status] ?? fwResult.pending
                   return (
-                    <div key={d.release_id + d.updated_at} className="flex items-center justify-between p-3 rounded-lg" style={inset}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded flex items-center justify-center bg-black/20" style={{ color: r.color }}>{r.icon}</div>
-                        <div>
-                          <div className="text-sm font-medium text-white">{d.release_id.slice(0, 8)}</div>
-                          <div className="text-[10px] text-slate-500">{fmtDateTime(d.updated_at)}</div>
+                    <div key={d.release_id + d.started_at} className="flex items-center justify-between p-3 rounded-lg" style={inset}>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded flex items-center justify-center bg-black/20 flex-shrink-0" style={{ color: r.color }}>{r.icon}</div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-white truncate">{d.product ? `${d.product} ${d.version}` : d.release_id.slice(0, 8)}</div>
+                          <div className="text-[10px] text-slate-500">{fmtDateTime(d.completed_at || d.started_at)}</div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-xs font-bold" style={{ color: r.color }}>{d.status.toUpperCase()}</div>
+                      <div className="text-right flex-shrink-0 ml-2">
+                        <div className="text-xs font-bold" style={{ color: r.color }}>{d.status.replace('_', ' ').toUpperCase()}</div>
+                        {d.status !== 'success' && d.progress_pct != null && d.progress_pct > 0 && d.progress_pct < 100 && (
+                          <div className="text-[10px] text-slate-600">{d.progress_pct}%</div>
+                        )}
+                        {d.error_msg && <div className="text-[10px] text-red-400 max-w-[160px] truncate" title={d.error_msg}>{d.error_msg}</div>}
                       </div>
                     </div>
                   )
-                }) : fw.length ? fw.map((f) => {
-                  // Fallback to mock data if no real deployments
-                  const r = fwResult[f.result]
-                  return (
-                    <div key={f.id} className="flex items-center justify-between p-3 rounded-lg" style={inset}>
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded flex items-center justify-center bg-black/20" style={{ color: r.color }}>{r.icon}</div>
-                        <div>
-                          <div className="text-sm font-medium text-white">{f.toVersion}</div>
-                          <div className="text-[10px] text-slate-500">{new Date().toLocaleString()}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs font-bold" style={{ color: r.color }}>{f.result.replace('_', ' ').toUpperCase()}</div>
-                      </div>
-                    </div>
-                  )
-                }) : <p className="text-xs text-slate-600">No OTA history available.</p>}
+                })}
               </div>
             </div>
           </div>
         )}
       </div>
 
-      <SensorDetailsModal isOpen={showDiag} onClose={() => setShowDiag(false)} device={active ?? null} signalDbm={cell?.lastRssiDbm ?? -65} />
+      <SensorDetailsModal
+        isOpen={showDiag}
+        onClose={() => setShowDiag(false)}
+        nodeId={active?.id ?? null}
+        deviceName={active?.name}
+        presence={presence}
+        values={values}
+        lastReadingAt={lastReadingAt}
+      />
     </div>
   )
 }

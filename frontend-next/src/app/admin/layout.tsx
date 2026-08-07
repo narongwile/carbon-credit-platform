@@ -52,7 +52,7 @@ const NAV: NavItem[] = [
   { href: '/admin/events', label: 'Events', icon: Calendar },
 
   { href: '/admin/ai-search', label: 'AI Search', icon: Search, section: 'Insights', requires: { feature: 'AI Predictive Diagnostics' } },
-  { href: '/admin/sql', label: 'SQL AI', icon: Database, requires: { feature: 'Historical Analytics' } },
+  { href: '/admin/sql', label: 'SQL Console', icon: Database, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/reports', label: 'Reports', icon: FileBarChart },
 

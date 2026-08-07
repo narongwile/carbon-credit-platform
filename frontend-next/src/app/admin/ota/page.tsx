@@ -10,7 +10,10 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
 interface Release { id: string; version: string; domain: string; artefact_uri: string; released_at: string; release_notes: string }
-interface Deployment { node_id: string; release_id: string; status: string; updated_at: string }
+// updated_at was never a real column on ota_deployments (started_at /
+// completed_at are) and was never actually rendered below — only d.status
+// is. Dropped rather than fixed to a real column, since nothing here needs it.
+interface Deployment { node_id: string; release_id: string; status: string }
 
 export default function OTAManagementPage() {
   const [releases, setReleases] = useState<Release[]>([])
