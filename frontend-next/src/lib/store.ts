@@ -17,6 +17,17 @@ interface AppState {
   orgLogos: Record<string, string>
   /** Per-organization display name shown beside the sidebar logo (replaces "ONEOPS"). */
   orgNames: Record<string, string>
+  /**
+   * Real per-org platform licenses (org_entitlements, via GET /orgs/:id/entitlements),
+   * keyed by orgId — PLATFORM_TEMPLATES ids the org is actually licensed for.
+   * Absent key = not loaded yet for this org (falls back to mock). See
+   * entitlements.ts: isPlatformLicensed/isFeatureEnabled/isEntitled/licensedDomains
+   * used to read ONLY mockData.ts's 3 seed orgs, so a real org licensed via the
+   * superadmin Organizations page still had every gated nav item and every
+   * EntitlementGuard-wrapped page (Transformer Models, Refrigeration, BloodBOX)
+   * render as if nothing were licensed.
+   */
+  orgEntitlements: Record<string, string[]>
   /** Node documents, scoped/visible per department. */
   documents: NodeDocument[]
 
@@ -24,6 +35,7 @@ interface AppState {
   setViewerUserId: (id: string) => void
   setOrgLogo: (orgId: string, dataUrl: string) => void
   setOrgName: (orgId: string, name: string) => void
+  setOrgEntitlements: (orgId: string, platforms: string[]) => void
   addDocument: (doc: NodeDocument) => void
   removeDocument: (id: string) => void
   setSelectedOrgId: (orgId: string) => void
@@ -52,12 +64,14 @@ export const useAppStore = create<AppState>()(
       viewerUserId: 'u-cc',
       orgLogos: {},
       orgNames: {},
+      orgEntitlements: {},
       documents: [],
 
       setUser: (user) => set({ user }),
       setViewerUserId: (id) => set({ viewerUserId: id }),
       setOrgLogo: (orgId, dataUrl) => set((s) => ({ orgLogos: { ...s.orgLogos, [orgId]: dataUrl } })),
       setOrgName: (orgId, name) => set((s) => ({ orgNames: { ...s.orgNames, [orgId]: name } })),
+      setOrgEntitlements: (orgId, platforms) => set((s) => ({ orgEntitlements: { ...s.orgEntitlements, [orgId]: platforms } })),
       addDocument: (doc) => set((s) => ({ documents: [doc, ...s.documents] })),
       removeDocument: (id) => set((s) => ({ documents: s.documents.filter((d) => d.id !== id) })),
       setSelectedOrgId: (orgId) => set({ selectedOrgId: orgId }),

@@ -75,7 +75,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter()
   const pathname = usePathname()
   const live = useIsLive()
-  const { alarms, selectedOrgId, setSelectedOrgId, setOrgLogo, isLiveMode, toggleLiveMode } = useAppStore()
+  const { alarms, selectedOrgId, setSelectedOrgId, setOrgLogo, setOrgEntitlements, isLiveMode, toggleLiveMode } = useAppStore()
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
   const [pendingCount, setPendingCount] = useState(0)
   // Real org list for the tenant switcher — the seed `organizations` array is
@@ -116,6 +116,25 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
     })
   }, [setOrgLogo])
+
+  // Real platform licenses for the ACTIVE org — entitlements.ts's checks
+  // (isPlatformLicensed / isFeatureEnabled / isEntitled, used by visibleNav
+  // below and by EntitlementGuard on every platform-gated page) used to read
+  // ONLY the 3-org mock seed, so any real org — every one a superadmin
+  // actually provisions — saw every gated nav item and every EntitlementGuard
+  // page (Transformer Models, Refrigeration, BloodBOX) as unlicensed, however
+  // the superadmin had actually configured them. Re-fetched on org switch,
+  // not just once: a superadmin moving between tenants must see EACH one's
+  // own licenses, not whichever org's happened to load first.
+  useEffect(() => {
+    if (!isLive() || !selectedOrgId) return
+    let cancelled = false
+    api.entitlements(selectedOrgId).then((platforms) => {
+      if (cancelled || !platforms) return
+      setOrgEntitlements(selectedOrgId, platforms)
+    })
+    return () => { cancelled = true }
+  }, [selectedOrgId, setOrgEntitlements])
 
   // Live count of devices awaiting approval → nav badge. Superadmin counts every
   // org (incl. orphans); a tenant admin is scoped by the backend.

@@ -10,6 +10,15 @@ import { Lock } from 'lucide-react'
 // "not licensed" notice directing them to the super admin.
 export default function EntitlementGuard({ platform, name, children }: { platform: PlatformType; name: string; children: React.ReactNode }) {
   const { selectedOrgId } = useAppStore()
+  // isPlatformLicensed reads the store via getState() (a snapshot, not a
+  // subscription — see entitlements.ts), so this component needs its own
+  // subscription to the real entitlements admin/layout.tsx fetches; otherwise
+  // a page reached directly (a bookmark, a refresh) rendered its FIRST paint
+  // before that fetch resolved, decided "not licensed" from the still-empty
+  // store, and never re-rendered once the real answer arrived — the org
+  // stayed locked out of a platform it was actually licensed for until a
+  // second navigation.
+  useAppStore((s) => s.orgEntitlements[selectedOrgId])
   if (isPlatformLicensed(selectedOrgId, platform)) return <>{children}</>
 
   const org = getOrg(selectedOrgId)

@@ -252,7 +252,7 @@ function OverviewTab() {
   )
 }
 
-import { AlarmsManagementView } from './alarms/page'
+import AlarmsManagementView from '@/components/AlarmsManagementView'
 
 // --- Dashboard (Overall) with tabs ------------------------------------------
 const DASH_TABS = [

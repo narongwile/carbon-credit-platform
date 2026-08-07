@@ -1,9 +1,18 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { api } from '@/lib/api'
+import { useEffect, useState } from 'react'
+import { api, useIsLive } from '@/lib/api'
+import { useAppStore } from '@/lib/store'
+import { licensedDomains } from '@/lib/entitlements'
 import { Server, Download, Trash2, ArrowRightCircle, Plus, Terminal } from 'lucide-react'
 import toast from 'react-hot-toast'
+import type { SensorDomain } from '@/types/fleet'
+
+const DOMAIN_LABEL: Record<SensorDomain, string> = {
+  transformer: 'Transformer',
+  carbonNode: 'Refrigeration (carbonNode)',
+  bloodBox: 'BloodBOX',
+}
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -24,11 +33,37 @@ interface Release { id: string; version: string; product: string; artefact_uri: 
 interface Deployment { node_id: string; release_id: string; status: string }
 
 export default function OTAManagementPage() {
+  const live = useIsLive()
+  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
+  // Subscribed, not a bare licensedDomains() call: licensedDomains() reads the
+  // store via getState(), a snapshot rather than a subscription, so this
+  // component would not re-render when admin/layout.tsx's entitlements fetch
+  // resolves after this page's first paint — the dropdown would keep showing
+  // whatever it computed on that still-empty first render. Subscribing here
+  // forces a re-render when this org's entry arrives; deliberately NOT
+  // memoized on it, since licensedDomains() itself does the getState() read —
+  // memoizing on this value would require re-deriving that same coupling in
+  // the dependency array for no benefit (the computation is a cheap filter).
+  useAppStore((s) => s.orgEntitlements[selectedOrgId])
+  // Was hardcoded to all three product lines regardless of what the org is
+  // actually licensed for, so an org licensed for Transformer only (e.g.
+  // Eternity) could still "create" a Refrigeration or BloodBOX release —
+  // which otaFleetFunc would then deploy to zero devices, since none of that
+  // org's nodes match a domain it was never licensed to have.
+  const licensedProducts = live ? licensedDomains(selectedOrgId) : (['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[])
+
   const [releases, setReleases] = useState<Release[]>([])
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ version: '', domain: 'transformer', artefact_uri: '', release_notes: '' })
+  const [form, setForm] = useState({ version: '', domain: '', artefact_uri: '', release_notes: '' })
+  // The effective domain: whatever the operator picked, as long as it is
+  // still licensed, else the first licensed product line. Derived rather than
+  // synced via an effect — licensedProducts is a fresh array every render (a
+  // filter over live store data, not its own piece of state), so an effect
+  // keyed on it would refire every render instead of only when the licensed
+  // set genuinely changes.
+  const effectiveDomain = form.domain && licensedProducts.includes(form.domain as SensorDomain) ? form.domain : (licensedProducts[0] ?? '')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deployConfirm, setDeployConfirm] = useState<{ id: string, hw: string } | null>(null)
 
@@ -43,12 +78,12 @@ export default function OTAManagementPage() {
   useEffect(() => { load() }, [])
 
   const handleCreate = async () => {
-    if (!form.version || !form.domain || !form.artefact_uri) return toast.error('Fill all required fields')
-    const res = await api.saveOtaRelease(form)
+    if (!form.version || !effectiveDomain || !form.artefact_uri) return toast.error(effectiveDomain ? 'Fill all required fields' : 'This organization has no licensed product line to release firmware for')
+    const res = await api.saveOtaRelease({ ...form, domain: effectiveDomain })
     if (res?.id) {
       toast.success('Release created')
       setShowForm(false)
-      setForm({ version: '', domain: 'transformer', artefact_uri: '', release_notes: '' })
+      setForm({ version: '', domain: '', artefact_uri: '', release_notes: '' })
       load()
     } else toast.error('Failed to create')
   }
@@ -91,11 +126,15 @@ export default function OTAManagementPage() {
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1">Product Line (Domain)</label>
-              <select value={form.domain} onChange={e => setForm({...form, domain: e.target.value})} className="w-full bg-transparent border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500">
-                <option value="transformer" className="bg-[#0d1117]">Transformer</option>
-                <option value="carbonNode" className="bg-[#0d1117]">Refrigeration (carbonNode)</option>
-                <option value="bloodBox" className="bg-[#0d1117]">BloodBOX</option>
+              {licensedProducts.length === 0 ? (
+                <p className="text-xs text-amber-400 py-1.5">This organization has no licensed product lines yet.</p>
+              ) : (
+              <select value={effectiveDomain} onChange={e => setForm({...form, domain: e.target.value})} className="w-full bg-transparent border border-slate-700 rounded-md px-3 py-1.5 text-sm text-white outline-none focus:border-indigo-500">
+                {licensedProducts.map((d) => (
+                  <option key={d} value={d} className="bg-[#0d1117]">{DOMAIN_LABEL[d]}</option>
+                ))}
               </select>
+              )}
             </div>
             <div className="col-span-2">
               <label className="block text-xs text-slate-400 mb-1">Artefact URI</label>
@@ -106,7 +145,7 @@ export default function OTAManagementPage() {
             <label className="block text-xs text-slate-400 mb-1">Release Notes</label>
             <textarea value={form.release_notes} onChange={e => setForm({...form, release_notes: e.target.value})} className="w-full bg-transparent border border-slate-700 rounded-md px-3 py-2 text-sm text-white outline-none focus:border-indigo-500" rows={2} />
           </div>
-          <button onClick={handleCreate} className="px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90" style={gradient}>Save Release</button>
+          <button onClick={handleCreate} disabled={licensedProducts.length === 0} className="px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed" style={gradient}>Save Release</button>
         </div>
       )}
 
