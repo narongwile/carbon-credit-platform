@@ -57,17 +57,55 @@ export default function AlarmNotificationPage() {
   const [product, setProduct] = useState<SensorDomain>('transformer')
   useEffect(() => { if (orgDomains.length && !orgDomains.includes(product)) setProduct(orgDomains[0]) }, [orgDomains, product])
   const setRuleDB = useAlarmDB((s) => s.setRule)
-  const applyRuleToOrg = (rule: NodeAlarmRule) => {
+  // The org-wide rule write was fire-and-forget (`void api.putOrgRule(...)`)
+  // with the success toast fired unconditionally on the next line, so a
+  // rejected save — a 403, a 500, the request never leaving the browser —
+  // still told the admin their thresholds were applied to every node in the
+  // organization. Await it and report what actually happened.
+  const applyRuleToOrg = async (rule: NodeAlarmRule) => {
     const targets = hosts.filter((h) => h.domain === product)
     targets.forEach((h) => setRuleDB(h.id, rule, orgId))
-    void api.putOrgRule(orgId, { rule })
+    if (isLive()) {
+      const r = await api.putOrgRule(orgId, { rule })
+      if (!r) { toast.error('Could not apply the rule across your organization'); return }
+    }
     toast.success(`Applied to ${targets.length} ${DOMAIN_META[product].platform} node(s) across your org`)
   }
   const [scope, setScope] = useState<'all' | string>('all')
   const [deptScope, setDeptScope] = useState<'all' | string>('all')
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
-  const [events, setEvents] = useState<string[]>(['ev-temp-high', 'ev-door-open', 'ev-offline'])
+  // Which events this user wants to be notified about. Loaded from their
+  // stored prefs below — it used to be seeded with three HARDCODED MOCK ids
+  // ('ev-temp-high', 'ev-door-open', 'ev-offline') that exist only in
+  // orgData.ts, never in a real event_problems table, and was never read back
+  // from the server at all. So every visit reset the selection to three ids
+  // that match nothing, and pressing Save wrote those ids over whatever the
+  // user had actually chosen last time.
+  const [events, setEvents] = useState<string[]>([])
+  // The rest of this user's prefs blob, kept so Save can write it back
+  // untouched — see the comment on save().
+  const [otherPrefs, setOtherPrefs] = useState<Record<string, unknown>>({})
+  const [prefsLoaded, setPrefsLoaded] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    const s = getSession()
+    // Demo mode has no stored prefs to read; these three ids are real entries
+    // in orgData's mock catalogue, so they still make a sensible pre-selection
+    // there. They are NOT seeded in live mode, where they match nothing.
+    if (!live) { setEvents(['ev-temp-high', 'ev-door-open', 'ev-offline']); setPrefsLoaded(true); return }
+    if (!s) { setPrefsLoaded(true); return }
+    let cancelled = false
+    api.getMyConfig(s.id).then((r) => {
+      if (cancelled) return
+      const prefs = (r?.prefs ?? {}) as Record<string, unknown>
+      const { notificationEvents, ...rest } = prefs
+      setEvents(Array.isArray(notificationEvents) ? (notificationEvents as string[]) : [])
+      setOtherPrefs(rest)
+      setPrefsLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [live])
 
   useEffect(() => {
     let cancelled = false
@@ -114,19 +152,31 @@ export default function AlarmNotificationPage() {
     api.eventProblems(orgId).then((rows) => {
       if (cancelled || !rows) return
       const grouped: Record<string, EventProblem[]> = {}
+      const orgWide: EventProblem[] = []
       for (const r of rows) {
-        if (!r.department_id) continue
+        // A NULL department_id means org-wide, not malformed. These used to be
+        // `continue`d away, so a problem defined for the whole organization
+        // was invisible in Event Selection below and could never be subscribed
+        // to — even though the backend deliberately returns them (epListFunc
+        // matches "department_id=? OR department_id IS NULL") and the viewer's
+        // own alarm pages already honour them.
+        if (!r.department_id) { orgWide.push({ id: r.id, label: r.label }); continue }
         ;(grouped[r.department_id] ??= []).push({ id: r.id, label: r.label, departmentId: r.department_id })
       }
       setDeptEvents(grouped)
+      setOrgWideEvents(orgWide)
     })
     return () => { cancelled = true }
   }, [live, orgId])
+  // Org-wide problems are kept apart from deptEvents: that map is keyed by
+  // department for the per-department editor, and an org-wide row belongs to
+  // no department — but it still has to appear in the selection list.
+  const [orgWideEvents, setOrgWideEvents] = useState<EventProblem[]>([])
   const [newEvent, setNewEvent] = useState('')
   const deptList = deptEvents[deptId] ?? []
   // Event Selection & Edit (below) reuses the same real, per-department fetch
   // — flattened — instead of the separate hardcoded mock list it read before.
-  const eventProblems = live ? Object.values(deptEvents).flat() : mockEventProblems
+  const eventProblems = live ? [...orgWideEvents, ...Object.values(deptEvents).flat()] : mockEventProblems
   const addDeptEvent = async () => {
     if (!newEvent.trim() || !deptId) return
     const label = newEvent.trim()
@@ -139,9 +189,20 @@ export default function AlarmNotificationPage() {
     }
     setNewEvent(''); toast.success('Event added to department')
   }
-  const removeDeptEvent = (id: string) => {
-    setDeptEvents((c) => ({ ...c, [deptId]: (c[deptId] ?? []).filter((e) => e.id !== id) }))
-    if (isLive()) api.deleteEventProblem(id)
+  // Removed optimistically and never verified: the row vanished from the list
+  // whether or not the DELETE succeeded, so a failed delete looked identical
+  // to a successful one until the next reload brought the event back.
+  const removeDeptEvent = async (id: string) => {
+    const prev = deptEvents[deptId] ?? []
+    setDeptEvents((c) => ({ ...c, [deptId]: prev.filter((e) => e.id !== id) }))
+    if (isLive()) {
+      const r = await api.deleteEventProblem(id)
+      if (!r) {
+        setDeptEvents((c) => ({ ...c, [deptId]: prev }))
+        toast.error('Could not remove the event')
+        return
+      }
+    }
     toast.success('Event removed')
   }
 
@@ -150,18 +211,32 @@ export default function AlarmNotificationPage() {
   const toggleEvent = (id: string) => setEvents((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]))
 
   const save = async () => {
-    try {
-      const user = getSession()
-      if (!user) throw new Error('Not logged in')
-      await api.putMyConfig(user.id, { notificationEvents: events })
-      const res = await api.putOrgChannels(orgId, channels)
-      if (!res) throw new Error('API request failed')
-      setSaved(true)
-      toast.success('Notification preferences saved')
-      setTimeout(() => setSaved(false), 2000)
-    } catch (e: any) {
-      toast.error('Failed to save preferences')
+    const user = getSession()
+    if (!user) { toast.error('Not signed in'); return }
+    if (!isLive()) {
+      // Demo mode persists nothing. Say so rather than reporting a save that
+      // did not happen, or an error for a backend that was never meant to be
+      // there — both of which this page did before, depending on the call.
+      setSaved(true); setTimeout(() => setSaved(false), 2000)
+      toast.success('Notification preferences saved (demo — not persisted)')
+      return
     }
+    if (!prefsLoaded) { toast.error('Still loading your preferences — try again in a moment'); return }
+    // putMyConfig REPLACES the whole prefs blob (mePutFunc does
+    // prefs=VALUES(prefs), not a merge), so posting a bare
+    // { notificationEvents } silently deleted every other preference this user
+    // had: their phone and name from the Profile panel, emailAlerts from
+    // Settings, and every per-device alert channel from MyAlertSettings.
+    // Spread the rest back in, the same way ProfilePanel and MyAlertSettings
+    // already do. The result was ALSO not checked, so a rejected write still
+    // reported success.
+    const prefsRes = await api.putMyConfig(user.id, { ...otherPrefs, notificationEvents: events })
+    if (!prefsRes) { toast.error('Failed to save your event selection'); return }
+    const res = await api.putOrgChannels(orgId, channels)
+    if (!res) { toast.error('Event selection saved, but the delivery channels were not'); return }
+    setSaved(true)
+    toast.success('Notification preferences saved')
+    setTimeout(() => setSaved(false), 2000)
   }
 
   return (
