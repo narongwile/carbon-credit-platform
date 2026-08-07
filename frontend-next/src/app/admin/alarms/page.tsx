@@ -115,7 +115,7 @@ const toAlarm = (a: OrgAlarmRow, orgId: string): Alarm => ({
   acknowledged: !!a.acknowledgedAt, acknowledgedBy: a.acknowledgedBy ?? undefined, acknowledgedAt: a.acknowledgedAt ?? undefined,
 })
 
-export default function AlarmsPage() {
+export function AlarmsManagementView({ embedded = false }: { embedded?: boolean }) {
   // useAppStore().alarms is seeded ONCE from mockData.ts at store creation and
   // nothing ever refreshes it from a real endpoint — this page's list, its
   // Critical/Warning counters and every filter below used to run entirely on
@@ -190,27 +190,51 @@ export default function AlarmsPage() {
   const warnCount = orgAlarms.filter((a) => a.severity === 'WARNING' && !a.acknowledged).length
 
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">Alarm Management</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Monitor and acknowledge system alarms</p>
+    <div className={embedded ? "space-y-4" : "p-6 space-y-5"}>
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-white">Alarm Management</h1>
+            <p className="text-sm text-slate-500 mt-0.5">Monitor and acknowledge system alarms</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {critCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                <XCircle size={14} className="text-red-400" />
+                <span className="text-red-400 text-sm font-semibold">{critCount} Critical</span>
+              </div>
+            )}
+            {warnCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)' }}>
+                <AlertTriangle size={14} className="text-amber-400" />
+                <span className="text-amber-400 text-sm font-semibold">{warnCount} Warning</span>
+              </div>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          {critCount > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
-              <XCircle size={14} className="text-red-400" />
-              <span className="text-red-400 text-sm font-semibold">{critCount} Critical</span>
-            </div>
-          )}
-          {warnCount > 0 && (
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)' }}>
-              <AlertTriangle size={14} className="text-amber-400" />
-              <span className="text-amber-400 text-sm font-semibold">{warnCount} Warning</span>
-            </div>
-          )}
+      )}
+      {embedded && (
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-bold text-white">All-device Alarms</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Monitor and acknowledge system alarms across all devices</p>
+          </div>
+          <div className="flex items-center gap-3">
+            {critCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+                <XCircle size={14} className="text-red-400" />
+                <span className="text-red-400 text-xs font-semibold">{critCount} Critical</span>
+              </div>
+            )}
+            {warnCount > 0 && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.2)' }}>
+                <AlertTriangle size={14} className="text-amber-400" />
+                <span className="text-amber-400 text-xs font-semibold">{warnCount} Warning</span>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Time range + export */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -350,4 +374,8 @@ export default function AlarmsPage() {
       </div>
     </div>
   )
+}
+
+export default function AlarmsPage() {
+  return <AlarmsManagementView />
 }

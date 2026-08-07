@@ -252,36 +252,7 @@ function OverviewTab() {
   )
 }
 
-// --- Alarm tab ---------------------------------------------------------------
-function AlarmTab() {
-  const { alarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
-  const orgAlarms = alarms.filter((a) => a.orgId === selectedOrgId)
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-white">All-device Alarms</h2>
-        <span className="text-xs text-slate-500">{orgAlarms.filter((a) => !a.acknowledged).length} open</span>
-      </div>
-      {orgAlarms.length ? orgAlarms.map((a) => {
-        const c = a.severity === 'CRITICAL' ? '#ef4444' : a.severity === 'WARNING' ? '#fbbf24' : '#60a5fa'
-        return (
-          <div key={a.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: `${c}14`, border: `1px solid ${c}33`, opacity: a.acknowledged ? 0.6 : 1 }}>
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c }} />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm text-slate-200 truncate">{a.message}</div>
-              <div className="text-xs text-slate-600">{a.transformerName}</div>
-            </div>
-            <span className="flex items-center gap-1 text-xs text-slate-500"><Clock size={10} />{fmtHM(a.timestamp)}</span>
-            <span className="text-xs font-bold" style={{ color: c }}>{a.severity}</span>
-            {a.acknowledged
-              ? <span className="text-[10px] text-green-400 bg-green-400/10 px-2 py-1 rounded-full">ACK</span>
-              : <button onClick={() => acknowledgeAlarm(a.id, 'admin')} className="text-xs font-medium text-white px-3 py-1.5 rounded-lg" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>Acknowledge</button>}
-          </div>
-        )
-      }) : <div className="rounded-xl p-6 text-center text-slate-600 text-sm" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>No alarms.</div>}
-    </div>
-  )
-}
+import { AlarmsManagementView } from './alarms/page'
 
 // --- Dashboard (Overall) with tabs ------------------------------------------
 const DASH_TABS = [
@@ -304,7 +275,7 @@ export default function AdminDashboardPage() {
     <div className="p-5 space-y-5">
       <div>
         <h1 className="text-xl font-bold text-white">Dashboard</h1>
-        <p className="text-sm text-slate-500">Overall view across all devices · เห็นทั้งหมด ทุก devices</p>
+        <p className="text-sm text-slate-500">Overall view across all devices</p>
       </div>
       <div className="flex gap-1 p-1 rounded-lg w-fit" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
         {DASH_TABS.map((t) => (
@@ -333,7 +304,11 @@ export default function AdminDashboardPage() {
           )}
         </>
       )}
-      {tab === 'alarm' && <AlarmTab />}
+      {tab === 'alarm' && (
+        <div className="space-y-4">
+          <AlarmsManagementView embedded />
+        </div>
+      )}
     </div>
   )
 }
