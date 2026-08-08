@@ -480,11 +480,47 @@ export const api = {
   // Per-device maintenance documents (service reports). View-level: a viewer can
   // upload and download a device's docs, scoped to their department.
   getNodeDocuments: (id: string, departmentId: string) =>
-    req<{ id: string; name: string; size: string | null; uploaded_by: string | null; content_type?: string | null; kind: DocKind; department_id?: string | null; created_at: string; doc_date?: string | null }[]>(
+    req<{ id: string; name: string; size: string | null; uploaded_by: string | null; content_type?: string | null; kind: DocKind; department_id?: string | null; created_at: string; doc_date?: string | null; note?: string | null; has_file?: number }[]>(
       `/api/nodes/${id}/documents?departmentId=${encodeURIComponent(departmentId)}`),
-  /** `docDate` is the date the DOCUMENT carries (YYYY-MM-DD), distinct from the upload timestamp. */
-  uploadNodeDocument: (id: string, doc: { departmentId: string; name: string; size?: string; uploadedBy?: string; contentType?: string; dataBase64: string; kind?: DocKind; docDate?: string | null }) =>
+  /**
+   * `docDate` is the date the DOCUMENT carries (YYYY-MM-DD), distinct from the
+   * upload timestamp. `dataBase64` is now OPTIONAL: an entry may be a file, a
+   * NOTE with no file (migrate-v44), or both — a lot of maintenance history
+   * has no document behind it and used to go unrecorded or get typed into a
+   * filename. The server rejects an entry with neither.
+   */
+  uploadNodeDocument: (id: string, doc: { departmentId: string; name: string; size?: string; uploadedBy?: string; contentType?: string; dataBase64?: string; kind?: DocKind; docDate?: string | null; note?: string }) =>
     req<{ ok: boolean; id: string }>(`/api/nodes/${id}/documents`, { method: 'POST', body: JSON.stringify(doc) }),
+  /**
+   * Send this device's exported data over a configured channel with the files
+   * attached. Reachable by anyone who can OPEN the device (guard's 'node'
+   * policy), not admins only. Attachments are built in the browser — there is
+   * no PDF generator in the backend, and this way the emailed file is byte-for
+   * -byte the one the user would have downloaded.
+   * LINE Notify and the Google Chat webhook cannot carry attachments; the
+   * server returns a 400 saying so rather than sending a message without them.
+   */
+  sendNodeExport: async (id: string, body: {
+    channel: 'email' | 'telegram' | 'line' | 'googlechat'
+    to?: string
+    subject?: string
+    body?: string
+    attachments: { filename: string; contentType?: string; dataBase64: string }[]
+  }): Promise<{ ok: true; sent: number } | { ok: false; error: string }> => {
+    if (!isLive()) return { ok: false, error: 'Live mode required to send.' }
+    try {
+      const r = await fetch(`${BASE}/api/nodes/${id}/send-export`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(getToken() ? { authorization: `Bearer ${getToken()}` } : {}) },
+        body: JSON.stringify(body),
+      })
+      const j = await r.json().catch(() => null)
+      if (!r.ok) return { ok: false, error: j?.error || `send failed (${r.status})` }
+      return { ok: true, sent: j?.sent ?? body.attachments.length }
+    } catch {
+      return { ok: false, error: 'Could not reach the server.' }
+    }
+  },
   // Fetch the document bytes with auth (an <a download> can't send a Bearer header)
   // and save via a temporary object URL.
   downloadNodeDocument: async (id: string, docId: string, filename: string) => {

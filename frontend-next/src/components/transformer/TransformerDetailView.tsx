@@ -14,6 +14,7 @@ import ParamHistoryModal, { type ModalParam } from '@/components/device/ParamHis
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import NameplateEditor from '@/components/device/NameplateEditor'
 import DepartmentAccessEditor from '@/components/device/DepartmentAccessEditor'
+import DeviceExportDialog from '@/components/device/DeviceExportDialog'
 import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
 import SensorListSection from '@/components/device/SensorList'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
@@ -33,7 +34,7 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users
+  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2
 } from 'lucide-react'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
@@ -533,6 +534,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const { labelOf: paramLabel, refetch: refetchParamLabels } = useParamLabels(orgId, 'transformer', id)
   const [editingNameplate, setEditingNameplate] = useState(false)
   const [editingDeptAccess, setEditingDeptAccess] = useState(false)
+  // Export is NOT gated on canConfigure: the backend's 'node' policy already
+  // proves this caller may read this device, and the person who needs to send
+  // its data on is usually the viewer who was called out to it.
+  const [exporting, setExporting] = useState(false)
   // transformer.orgId, not the page-level orgId — a superadmin viewing
   // another org's device needs THAT org's toggle, not their own selected one.
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
@@ -716,6 +721,14 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           {/* Was a permanently spinning "Live" — it said nothing about the device. */}
           <DeviceLiveStatus nodeId={transformer.id} />
           <NodeReportButton nodeId={transformer.id} deviceName={transformer.name} domain="transformer" />
+          {/* No role gate: the backend's 'node' policy has already proved this
+              caller may read this device, so anyone who can see the page may
+              export what is on it. */}
+          <button onClick={() => setExporting(true)} title="Export this device's data for a date range"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-300 hover:text-white transition-colors"
+            style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+            <Share2 size={12} /> Export
+          </button>
           <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-colors">
             <Maximize2 size={14} />
           </button>
@@ -896,6 +909,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       {editingDeptAccess && (
         <DepartmentAccessEditor nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name} domain="transformer"
           onClose={() => setEditingDeptAccess(false)} />
+      )}
+
+      {exporting && (
+        <DeviceExportDialog nodeId={transformer.id} deviceName={transformer.name} onClose={() => setExporting(false)} />
       )}
 
       {picking && (

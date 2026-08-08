@@ -31,7 +31,7 @@ import KindCatalogEditor from '@/components/device/KindCatalogEditor'
 import PhotoLightbox from '@/components/device/PhotoLightbox'
 import { useSessionRole } from '@/lib/auth'
 import { fmtDateTime } from '@/lib/displayTime'
-import { FileText, Upload, Download, Loader2, Paperclip, Image as ImageIcon } from 'lucide-react'
+import { FileText, Upload, Download, Loader2, Paperclip, Image as ImageIcon, StickyNote } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -51,12 +51,15 @@ interface DocRow {
   department_id?: string | null
   created_at: string
   doc_date?: string | null
+  note?: string | null
+  /** 0 when the entry is a note with no file — the row then has nothing to download. */
+  has_file?: number
 }
 
 /** One row of the merged table — a real uploaded document, or a photo standing in for one. */
 type Row =
-  | { type: 'doc'; id: string; name: string; size: string | null; uploadedBy: string | null; kind: DocKind; createdAt: string; docDate: string | null }
-  | { type: 'photo'; id: string; name: string; uploadedBy: string | null; kind: string; createdAt: string; docDate: string | null; photoId: string }
+  | { type: 'doc'; id: string; name: string; size: string | null; uploadedBy: string | null; kind: DocKind; createdAt: string; docDate: string | null; note: string | null; hasFile: boolean }
+  | { type: 'photo'; id: string; name: string; uploadedBy: string | null; kind: string; createdAt: string; docDate: string | null; photoId: string; note?: null; hasFile?: false }
 
 const humanSize = (bytes: number) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -97,6 +100,12 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
   // right for a report filed the day the work happened, and is one click to
   // change for the far commoner case of scanning something older.
   const [docDate, setDocDate] = useState(todayInput)
+  // A maintenance entry does not always come with a file (migrate-v44):
+  // "topped up oil, no report issued" is real history that previously either
+  // went unrecorded or got typed into a filename. Written alongside an upload,
+  // or on its own via "Add note".
+  const [note, setNote] = useState('')
+  const [noteOpen, setNoteOpen] = useState(false)
   const [lightboxId, setLightboxId] = useState<string | null>(null)
   const [managing, setManaging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -135,6 +144,7 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
     const docRows: Row[] = docs.map((d) => ({
       type: 'doc', id: d.id, name: d.name, size: d.size, uploadedBy: d.uploaded_by, kind: d.kind,
       createdAt: d.created_at, docDate: d.doc_date ?? null,
+      note: d.note ?? null, hasFile: d.has_file !== 0,
     }))
     const photoRows: Row[] = photos.map((p) => ({
       type: 'photo',
@@ -174,14 +184,39 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
         dataBase64,
         kind: uploadKind,
         docDate: docDate || null,
+        note: note.trim() || undefined,
       })
-      if (res?.ok) { toast.success(`Uploaded ${file.name}`); load() }
+      if (res?.ok) { toast.success(`Uploaded ${file.name}`); setNote(''); setNoteOpen(false); load() }
       else toast.error('Upload failed')
     } catch (e) {
       toast.error(`Upload failed: ${(e as Error).message}`)
     } finally {
       setBusy(false)
       if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  // A note with no file. Same row, same date/kind/department rules — the only
+  // difference is that `data` stays NULL, so the list shows no Download.
+  const saveNote = async () => {
+    const text = note.trim()
+    if (!text) { toast.error('Write something first'); return }
+    setBusy(true)
+    try {
+      const res = await api.uploadNodeDocument(nodeId, {
+        departmentId,
+        // The name is what the list shows; derive a readable one from the note
+        // rather than asking for a filename that has no file behind it.
+        name: text.length > 60 ? `${text.slice(0, 57)}…` : text,
+        uploadedBy: getSession()?.name ?? 'user',
+        kind: uploadKind,
+        docDate: docDate || null,
+        note: text,
+      })
+      if (res?.ok) { toast.success('Note added'); setNote(''); setNoteOpen(false); load() }
+      else toast.error('Could not add the note')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -222,6 +257,15 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f) }}
           />
           <button
+            onClick={() => setNoteOpen((o) => !o)}
+            disabled={!live || busy}
+            title="Record maintenance with no document to attach"
+            className="flex items-center gap-1.5 text-[11px] font-medium text-slate-300 px-3 py-1.5 rounded-md disabled:opacity-50"
+            style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+          >
+            <StickyNote size={12} /> {noteOpen ? 'Cancel note' : 'Add note'}
+          </button>
+          <button
             onClick={() => fileRef.current?.click()}
             disabled={!live || busy}
             className="flex items-center gap-1.5 text-[11px] font-medium text-white px-3 py-1.5 rounded-md disabled:opacity-50"
@@ -232,6 +276,26 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
           </button>
         </div>
       </div>
+
+      {/* Note editor. Open on its own it saves a note-only entry; open while
+          an upload is picked, the note is attached to that file instead. */}
+      {live && noteOpen && (
+        <div className="mb-3 rounded-lg p-3" style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} autoFocus
+            placeholder="What was done, or what was found — e.g. topped up oil 2L, no report issued"
+            className="w-full rounded-md px-3 py-2 text-sm text-white placeholder-slate-700 outline-none focus:ring-1 focus:ring-indigo-500 resize-y"
+            style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
+          <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+            <span className="text-[10px] text-slate-600">
+              Saved against the doc date and type above. Upload a file too and this note is attached to it.
+            </span>
+            <button onClick={saveNote} disabled={busy || !note.trim()}
+              className="flex items-center gap-1.5 text-[11px] font-medium text-white px-3 py-1.5 rounded-md disabled:opacity-50" style={gradient}>
+              {busy ? <Loader2 size={12} className="animate-spin" /> : <StickyNote size={12} />} Save note
+            </button>
+          </div>
+        </div>
+      )}
 
       {!live ? (
         <p className="text-xs text-slate-600 py-4 text-center">Switch to Live mode to upload and view maintenance documents.</p>
@@ -251,7 +315,7 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
               )}
               {!loading && rows.length === 0 && (
                 <tr><td colSpan={7} className="py-6 text-center text-slate-600 text-xs">
-                  No maintenance documents yet — upload the first service report for this device.
+                  Nothing recorded yet — upload a service report, or add a note if there is no document.
                 </td></tr>
               )}
               {rows.map((r) => (
@@ -260,9 +324,17 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
                     <span className="flex items-center gap-2 text-xs text-slate-200">
                       {r.type === 'photo'
                         ? <ImageIcon size={12} className="text-slate-500 shrink-0" />
-                        : <FileText size={12} className="text-slate-500 shrink-0" />}
+                        : r.hasFile
+                          ? <FileText size={12} className="text-slate-500 shrink-0" />
+                          : <StickyNote size={12} className="text-amber-500/70 shrink-0" />}
                       <span className="truncate max-w-[220px]" title={r.name}>{r.name}</span>
                     </span>
+                    {/* The full note under the row: the name is a truncated
+                        derivation of it for a note-only entry, and for a file
+                        it is the explanation of what that file is. */}
+                    {r.type === 'doc' && r.note && (
+                      <p className="text-[11px] text-slate-500 mt-1 whitespace-pre-wrap max-w-[420px]">{r.note}</p>
+                    )}
                   </td>
                   <td className="py-2.5 px-3">
                     <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
@@ -292,7 +364,7 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
                       >
                         <ImageIcon size={11} /> View
                       </button>
-                    ) : (
+                    ) : r.hasFile ? (
                       <button
                         onClick={() => api.downloadNodeDocument(nodeId, r.id, r.name)}
                         className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-slate-300 hover:text-white"
@@ -300,6 +372,11 @@ export default function NodeDocuments({ nodeId, orgId, deviceName }: { nodeId: s
                       >
                         <Download size={11} /> Download
                       </button>
+                    ) : (
+                      // A note-only entry has no bytes to fetch — offering
+                      // Download would 404 against docsDownloadFunc's own
+                      // "not found when data IS NULL" check.
+                      <span className="text-[10px] text-slate-600">note only</span>
                     )}
                   </td>
                 </tr>
