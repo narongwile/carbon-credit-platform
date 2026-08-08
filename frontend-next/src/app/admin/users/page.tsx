@@ -12,23 +12,28 @@ import {
 } from '@/lib/orgData'
 import { getOrgThemeGrants, fetchOrgThemeGrants } from '@/lib/orgThemes'
 import { licensedDomains, DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
   Users, Building2, Palette, Plus, Trash2, X, Check, Boxes,
-  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet, MapPin,
+  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet, MapPin, HardDrive,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { generatePassword } from '@/lib/password'
 
-type Tab = 'departments' | 'users' | 'permissions' | 'products' | 'events'
+type Tab = 'departments' | 'users' | 'permissions' | 'products' | 'devices' | 'events'
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'departments', label: 'Departments', icon: Building2 },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'permissions', label: 'Dashboard View Permission', icon: Palette },
   { id: 'products', label: 'Product Access', icon: Boxes },
+  // Per-USER device restriction (migrate-v42). Sits next to Product Access
+  // because they are the two per-person narrowings — that one by product
+  // line, this one by individual device.
+  { id: 'devices', label: 'Device Access', icon: HardDrive },
   { id: 'events', label: 'Event Catalog', icon: ListChecks },
 ]
 
@@ -389,6 +394,11 @@ export default function UserManagementPage() {
         <ProductAccess orgId={orgId} departments={departments} setDepartments={setDepartments} users={users} setUsers={setUsers} />
       )}
 
+      {/* PER-USER DEVICE ACCESS */}
+      {tab === 'devices' && (
+        <DeviceAccess orgId={orgId} users={users} />
+      )}
+
       {/* EVENT CATALOG */}
       {tab === 'events' && (
         <EventCatalog orgId={orgId} departments={departments} />
@@ -592,6 +602,129 @@ function DashboardPermissions({ orgId, departments, setDepartments, users }: {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// ---- Per-user device access (migrate-v42) -----------------------------------
+//
+// The per-PERSON view of node_user_visibility; the device page
+// (DepartmentAccessEditor) is the per-DEVICE view onto the same table. This
+// one is the primary editor because the thing an admin actually decides is
+// "which devices may this contractor see", and only here can they see that
+// whole list at once.
+//
+// RESTRICT-ONLY, and the copy has to keep saying so: a device ticked here is
+// still hidden unless the person's department could see it anyway. Ticking
+// nothing is not "sees nothing" — it is "no restriction".
+function DeviceAccess({ orgId, users }: { orgId: string; users: ManagedUser[] }) {
+  const { devices } = useManagedDevices(orgId)
+  const [byUser, setByUser] = useState<Record<string, string[]> | null>(null)
+  const [pending, setPending] = useState<string | null>(null)
+  const [selectedUser, setSelectedUser] = useState<string>('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!isLive()) { setByUser({}); return }
+    let cancelled = false
+    api.nodeVisibility(orgId).then((r) => {
+      if (cancelled) return
+      setByUser(r?.byUser ?? {})
+      setPending(r?.pending ?? null)
+    })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  // Admins are never restricted by this table (accessFor skips it for them),
+  // so offering the control for them would be a switch that does nothing.
+  const scopable = users.filter((u) => u.role !== 'admin')
+  useEffect(() => {
+    if (scopable.length && !scopable.some((u) => u.id === selectedUser)) setSelectedUser(scopable[0]?.id ?? '')
+  }, [scopable, selectedUser])
+
+  const current = byUser?.[selectedUser] ?? []
+  const restricted = current.length > 0
+
+  const save = async (nodeIds: string[]) => {
+    if (!selectedUser) return
+    setSaving(true)
+    const r = await api.setUserVisibleNodes(selectedUser, nodeIds)
+    setSaving(false)
+    if (!r?.ok) { toast.error('Could not save device access'); return }
+    setByUser((m) => ({ ...(m ?? {}), [selectedUser]: nodeIds }))
+    toast.success(nodeIds.length === 0 ? 'Restriction cleared — sees everything their department allows' : `Limited to ${nodeIds.length} device${nodeIds.length === 1 ? '' : 's'}`)
+  }
+  const toggle = (nodeId: string) => save(current.includes(nodeId) ? current.filter((x) => x !== nodeId) : [...current, nodeId])
+
+  return (
+    <div className="rounded-xl p-5 space-y-4" style={surface}>
+      <div>
+        <h3 className="text-sm font-semibold text-white">Device Access</h3>
+        <p className="text-xs text-slate-500 mt-0.5">
+          Limit one person to specific devices. This only <span className="text-slate-300">narrows</span> what their
+          department already allows — it can never grant a device their department cannot see.
+        </p>
+      </div>
+
+      {pending && (
+        <p className="text-[11px] text-amber-400">Needs {pending} — run the migration before using this.</p>
+      )}
+
+      {scopable.length === 0 ? (
+        <p className="text-xs text-slate-600">No non-admin users yet. Admins always see every device in the organization.</p>
+      ) : (
+        <>
+          <div>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Person</label>
+            <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)}
+              className="w-full max-w-sm rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+              {scopable.map((u) => {
+                const n = byUser?.[u.id]?.length ?? 0
+                return <option key={u.id} value={u.id}>{u.name || u.email || u.id}{n > 0 ? ` — limited to ${n}` : ' — not restricted'}</option>
+              })}
+            </select>
+          </div>
+
+          <div className="rounded-lg p-3" style={inset}>
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <span className="text-xs text-slate-400">
+                {restricted
+                  ? `Limited to ${current.length} of ${devices.length} device${devices.length === 1 ? '' : 's'}`
+                  : `Not restricted — sees all ${devices.length} device${devices.length === 1 ? '' : 's'} their department allows`}
+              </span>
+              {restricted && (
+                <button onClick={() => save([])} disabled={saving}
+                  className="text-[11px] text-slate-400 hover:text-white disabled:opacity-50">
+                  Clear restriction
+                </button>
+              )}
+            </div>
+            {devices.length === 0 ? (
+              <p className="text-xs text-slate-600">No devices in this organization yet.</p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-72 overflow-y-auto">
+                {devices.map((d) => {
+                  const on = current.includes(d.id)
+                  return (
+                    <button key={d.id} onClick={() => toggle(d.id)} disabled={saving}
+                      className={clsx('flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-left transition-all disabled:opacity-50', on ? 'text-white' : 'text-slate-400')}
+                      style={on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : { background: '#0d1117', border: '1px solid #1e2433' }}>
+                      <span className="w-3 h-3 rounded-sm flex-shrink-0" style={on ? { background: '#22c55e' } : { border: '1px solid #334155' }} />
+                      <span className="truncate">{d.name}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {!restricted && (
+              <p className="text-[11px] text-amber-400/80 mt-2">
+                Selecting the first device turns this person from unrestricted into restricted — from then on they see only
+                what is ticked here.
+              </p>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -70,6 +70,42 @@ export default function DepartmentAccessEditor({
     return () => { cancelled = true }
   }, [nodeId, orgId])
 
+  // Per-user device restrictions (migrate-v42) for this org, plus the org's
+  // users, so this device can show WHO is limited and whether it is in their
+  // list. Restrict-only: a user listed here still cannot see the device unless
+  // their department could anyway — the warning text below says so, because
+  // "I ticked the box and they still cannot see it" is otherwise the obvious
+  // wrong conclusion.
+  const [users, setUsers] = useState<{ id: string; name?: string | null; email?: string | null; role?: string | null }[]>([])
+  const [visByUser, setVisByUser] = useState<Record<string, string[]> | null>(null)
+  const [savingUser, setSavingUser] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    api.users(orgId).then((r) => { if (!cancelled && r) setUsers(r as { id: string; name?: string; email?: string; role?: string }[]) })
+    api.nodeVisibility(orgId).then((r) => { if (!cancelled) setVisByUser(r?.byUser ?? {}) })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  // Toggling from HERE writes that user's whole list, because the API is
+  // keyed by user (one row set per person) — this screen is a per-device view
+  // onto it. Saved immediately rather than batched into the Save button below:
+  // that button writes the department settings, and silently bundling a
+  // different subject's access into it would make one confirmation stand for
+  // two unrelated changes.
+  const toggleUserVisible = async (userId: string) => {
+    if (!visByUser) return
+    const cur = visByUser[userId] ?? []
+    const next = cur.includes(nodeId) ? cur.filter((x) => x !== nodeId) : [...cur, nodeId]
+    setSavingUser(userId)
+    const r = await api.setUserVisibleNodes(userId, next)
+    setSavingUser(null)
+    if (!r?.ok) { toast.error('Could not update that person\'s device access'); return }
+    setVisByUser((m) => ({ ...(m ?? {}), [userId]: next }))
+    toast.success(next.length === 0
+      ? 'No longer restricted — they see every device their department allows'
+      : cur.includes(nodeId) ? 'Removed from their allowed devices' : 'Added to their allowed devices')
+  }
+
   // Same check as admin/devices/page.tsx's DeviceModal — see its comment.
   // A department with no product_access rows is never blocked (fail-open);
   // one with rows blocks this domain only if none of them cover it, or the
@@ -179,6 +215,58 @@ export default function DepartmentAccessEditor({
                     device until that is fixed under User Management → Product Access.
                   </p>
                 )}
+              </div>
+
+              {/* Per-user restriction (migrate-v42). Deliberately separated
+                  from the department control above and worded as a NARROWING,
+                  because that is what it is: a person listed here still needs
+                  their department to allow the device. */}
+              <div style={{ borderTop: '1px solid #1e2433', paddingTop: '1rem' }}>
+                <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Limit to specific people</label>
+                <p className="text-[11px] text-slate-600 mb-2">
+                  Optional, and only ever <span className="text-slate-400">narrows</span> the departments above — someone listed
+                  here still needs their department to allow this device. Anyone left unrestricted keeps seeing every device
+                  their department allows.
+                </p>
+                {visByUser === null ? (
+                  <p className="text-[11px] text-slate-600">Loading…</p>
+                ) : users.filter((u) => u.role !== 'admin' && u.role !== 'superadmin').length === 0 ? (
+                  <p className="text-[11px] text-slate-600">No non-admin users in this organization — admins always see every device.</p>
+                ) : (
+                  <div className="space-y-1 max-h-44 overflow-y-auto rounded-lg p-2" style={inset}>
+                    {users.filter((u) => u.role !== 'admin' && u.role !== 'superadmin').map((u) => {
+                      const list = visByUser[u.id]
+                      const restricted = Array.isArray(list) && list.length > 0
+                      const on = restricted && list.includes(nodeId)
+                      return (
+                        <div key={u.id} className="flex items-center justify-between gap-2 px-1.5 py-1">
+                          <div className="min-w-0">
+                            <div className="text-xs text-slate-300 truncate">{u.name || u.email || u.id}</div>
+                            <div className="text-[10px] text-slate-600 truncate">
+                              {restricted
+                                ? on ? `limited to ${list.length} device${list.length === 1 ? '' : 's'}, including this one`
+                                     : `limited to ${list.length} device${list.length === 1 ? '' : 's'} — not this one`
+                                : 'not restricted — sees all their department allows'}
+                            </div>
+                          </div>
+                          <button onClick={() => toggleUserVisible(u.id)} disabled={savingUser === u.id}
+                            className={clsx('px-2.5 py-1 rounded-lg text-[11px] font-medium flex-shrink-0 disabled:opacity-50',
+                              on ? 'text-white' : 'text-slate-400')}
+                            style={on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : { background: '#0d1117', border: '1px solid #1e2433' }}>
+                            {savingUser === u.id ? '…' : on ? '✓ allowed' : restricted ? 'add' : 'limit to this'}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {/* The one genuinely surprising transition: an unrestricted
+                    person becomes restricted the moment they get a first
+                    device, which REMOVES everything else they could see. */}
+                <p className="text-[11px] text-amber-400/80 mt-1.5">
+                  &ldquo;limit to this&rdquo; turns an unrestricted person into a restricted one — from then on they see only the
+                  devices listed for them, not everything their department allows.
+                </p>
               </div>
             </>
           )}

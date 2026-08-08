@@ -508,6 +508,25 @@ export const api = {
     req<{ ok: boolean; id: string; departmentIds: string[]; count: number }>(
       `/api/nodes/${id}/departments`, { method: 'PUT', body: JSON.stringify({ departmentIds }) }),
 
+  /**
+   * This org's per-user device restrictions (migrate-v42), as {userId: nodeIds}.
+   * A user ABSENT from the map has no restriction and sees everything their
+   * department allows; a user PRESENT is limited to exactly those devices.
+   * That difference is the whole point of the feature, so never normalise an
+   * absent user into an empty array — the two mean opposite things.
+   */
+  nodeVisibility: (orgId: string) =>
+    req<{ byUser: Record<string, string[]>; pending?: string }>(`/api/orgs/${orgId}/node-visibility`),
+  /**
+   * Limit one user to specific devices. RESTRICT-ONLY: a device listed here is
+   * still hidden unless the user's department could see it anyway. An empty
+   * array CLEARS the restriction (back to unrestricted) — it never hides
+   * everything.
+   */
+  setUserVisibleNodes: (userId: string, nodeIds: string[]) =>
+    req<{ ok: boolean; userId: string; nodeIds: string[]; count: number; scoped: boolean }>(
+      `/api/users/${userId}/visible-nodes`, { method: 'PUT', body: JSON.stringify({ nodeIds }) }),
+
   // Device photo — the real unit, uploaded by an admin, shown to every role in
   // place of the generic 3D twin.
   /** Is there a photo, and who put it there? One request, no bytes. */
