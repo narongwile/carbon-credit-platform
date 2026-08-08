@@ -49,8 +49,11 @@ export default function DeviceManagementPage() {
 
   const deptName = (id: string) => depts.find((d) => d.id === id)?.name ?? id
 
-  const save = async (d: ManagedDevice, patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null }) => {
-    const next: ManagedDevice = { ...d, name: patch.name, departmentIds: patch.departmentId ? [patch.departmentId] : [] }
+  const save = async (d: ManagedDevice, patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null; grafanaUrl?: string | null }) => {
+    const next: ManagedDevice = {
+      ...d, name: patch.name, departmentIds: patch.departmentId ? [patch.departmentId] : [],
+      ...(patch.grafanaUrl !== undefined ? { grafanaUrl: patch.grafanaUrl } : {}),
+    }
     if (!isLive() || !fromBackend) {
       toast.success(`Saved ${patch.name} (demo)`)
       setOverride((o) => ({ ...o, [d.id]: next }))
@@ -72,6 +75,7 @@ export default function DeviceManagementPage() {
         // leaves the linkage alone, same partial-update rule as every other
         // field here.
         ...(patch.mergeInto !== undefined ? { mergeInto: patch.mergeInto } : {}),
+        ...(patch.grafanaUrl !== undefined ? { grafanaUrl: patch.grafanaUrl } : {}),
       }),
       patch.visibleTo === null ? Promise.resolve({ ok: true }) : api.setNodeDepartments(d.id, patch.visibleTo),
     ])
@@ -176,10 +180,14 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
   /** The other devices in this org — merge targets. */
   others: ManagedDevice[]
   onClose: () => void
-  onSave: (patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null }) => void
+  onSave: (patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null; grafanaUrl?: string | null }) => void
 }) {
   const [name, setName] = useState(device.name)
   const [deptId, setDeptId] = useState<string | null>(device.departmentIds[0] ?? null)
+  // The Free-Style dashboard's real, persisted link (migrate-v45) — set here
+  // regardless of the device's current theme, since a viewer can switch to
+  // the Free Style tab on ANY device, not only ones defaulted to it.
+  const [grafanaUrl, setGrafanaUrl] = useState(device.grafanaUrl ?? '')
   // Which departments may SEE this device (node_departments, migrate-v35) —
   // a SET, and a different question from the owning department above (which
   // is where its alarms are routed). null while the grants are still loading,
@@ -259,10 +267,12 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
   // effect at all: the device stayed visible to the old department and
   // invisible to the new one. Reproduced against a live DB before fixing.
   const grantsChanged = visibleTo !== null && loadedGrants !== null && !sameSet(visibleTo, loadedGrants)
+  const grafanaChanged = grafanaUrl.trim() !== (device.grafanaUrl ?? '')
   const dirty = name.trim() !== device.name
     || deptId !== (device.departmentIds[0] ?? null)
     || mergeInto !== undefined
     || grantsChanged
+    || grafanaChanged
 
   const toggleVisible = (id: string) =>
     setVisibleTo((v) => (v === null ? v : v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
@@ -437,9 +447,23 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
             </span>
             <span>Dashboard theme has no effect on the admin view (always shows FIX) and only sets the viewer&apos;s default, which they can switch per visit. Not editable here.</span>
           </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Grafana dashboard (Free Style)</label>
+            <p className="text-[11px] text-slate-600 mb-1.5">
+              What the Free Style tab links to and, if it allows embedding, shows inline. A department manager with
+              &quot;manage&quot; access to this product can also set this from the device&apos;s own page.
+            </p>
+            <input value={grafanaUrl} onChange={(e) => setGrafanaUrl(e.target.value)}
+              placeholder="https://grafana.example.com/d/abc123/this-device"
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+          </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
-          <button onClick={() => onSave({ name: name.trim(), departmentId: deptId, visibleTo: grantsChanged ? visibleTo : null, ...(mergeInto !== undefined ? { mergeInto } : {}) })} disabled={!dirty || !name.trim()}
+          <button onClick={() => onSave({
+            name: name.trim(), departmentId: deptId, visibleTo: grantsChanged ? visibleTo : null,
+            ...(mergeInto !== undefined ? { mergeInto } : {}),
+            ...(grafanaChanged ? { grafanaUrl: grafanaUrl.trim() || null } : {}),
+          })} disabled={!dirty || !name.trim()}
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-40" style={gradient}>
             Save Changes
           </button>

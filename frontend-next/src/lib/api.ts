@@ -577,8 +577,8 @@ export const api = {
    * ones, and readings already stored under this id are re-pointed so the
    * history is whole too. Pass null to unlink.
    */
-  updateNodeProfile: (id: string, body: { name?: string; departmentId?: string | null; mergeInto?: string | null }) =>
-    req<{ ok: boolean; id: string; name?: string; departmentId?: string | null; mergeInto?: string | null; readingsMoved?: number }>(
+  updateNodeProfile: (id: string, body: { name?: string; departmentId?: string | null; mergeInto?: string | null; grafanaUrl?: string | null }) =>
+    req<{ ok: boolean; id: string; name?: string; departmentId?: string | null; mergeInto?: string | null; readingsMoved?: number; grafanaUrl?: string | null }>(
       `/api/nodes/${id}/profile`, { method: 'PUT', body: JSON.stringify(body) }),
   /** Devices linked as SECOND FEEDS of this one — what makes a merge undoable. */
   nodeFeeds: (id: string) =>
@@ -1025,6 +1025,8 @@ export interface FleetNode {
   alarm: 'WARNING' | 'CRITICAL' | null
   /** 1 = no coordinate of its own; this is the org's factory pin, nudged apart. */
   approx?: 0 | 1
+  /** Admin-set Free-Style dashboard link (migrate-v45). Null = not configured. */
+  grafana_url?: string | null
 }
 
 /** How a schedule decides who receives it. See migrate-v41. */

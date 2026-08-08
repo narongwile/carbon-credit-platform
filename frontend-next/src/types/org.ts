@@ -73,6 +73,8 @@ export interface ManagedDevice {
   status: 'online' | 'offline'
   picture?: string
   lastValue?: string
+  /** Admin-set Free-Style dashboard link (migrate-v45). Null/undefined = not configured. */
+  grafanaUrl?: string | null
 }
 
 export interface DashboardTheme {

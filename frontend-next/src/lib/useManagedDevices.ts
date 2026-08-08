@@ -75,6 +75,9 @@ export function fleetNodeToDevice(
     status: n.online === 0 ? 'offline' : 'online',
     picture: mock?.picture,
     lastValue: mock?.lastValue,
+    // Real, admin-set (migrate-v45) — no mock fallback: an unset value means
+    // "no Grafana dashboard configured", not "show fabricated demo charts".
+    grafanaUrl: n.grafana_url ?? null,
   }
 }
 
