@@ -496,13 +496,26 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // Fall back to the live fleet host, projected through the same makeTransformer
   // the seed uses, so the asset frame exists and useLiveTransformer can fill it
   // with real readings.
-  const { hosts, loaded: fleetLoaded } = useFleetHosts(orgId)
+  const { hosts, loaded: fleetLoaded, fromBackend } = useFleetHosts(orgId)
   const base = useMemo(() => {
-    const seeded = transformers.find((t) => t.id === id)
-    if (seeded) return seeded
+    // The live roster FIRST, and in live mode it is the only source that may
+    // resolve a device. GET /api/fleet has already applied this caller's real
+    // access (org, product level, node_departments grants, site scope), so a
+    // hit here is an access-checked hit.
+    //
+    // The seeded `transformers` array is checked only when there is no backend
+    // (demo/offline). It used to be checked FIRST and unconditionally, and it
+    // is a static client-side list bundled into the app — so any signed-in
+    // viewer could type ?id=tr-001 (or any other seed id, including ones
+    // belonging to another organization entirely) and get a fully rendered
+    // transformer dashboard that /api/fleet had correctly excluded from their
+    // roster. Same class of hole DeviceDetailClient already closed with its
+    // `verified` flag; this page never got the equivalent.
     const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
-    return host ? makeTransformer(host as TransformerHost) : undefined
-  }, [transformers, hosts, id])
+    if (host) return makeTransformer(host as TransformerHost)
+    if (fromBackend) return undefined
+    return transformers.find((t) => t.id === id)
+  }, [transformers, hosts, id, fromBackend])
   const { transformer, live, online, lastReadingAt, values, series } = useLiveTransformer(base)
   const [openParam, setOpenParam] = useState<string | null>(null)
   const [showKeys, setShowKeys] = useState<string[] | null>(null)
@@ -625,9 +638,20 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
 
   if (!transformer) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-slate-500">
-          {fleetLoaded ? 'Transformer not found' : 'Loading transformer…'}
+      <div className="flex items-center justify-center h-full p-6">
+        <div className="max-w-md text-center">
+          <div className="text-slate-500">
+            {fleetLoaded ? 'Transformer not found' : 'Loading transformer…'}
+          </div>
+          {/* Deliberately the same wording whether the id does not exist or
+              exists but is not granted to this viewer's department — telling
+              them apart would confirm the existence of devices they may not
+              see. */}
+          {fleetLoaded && (
+            <p className="text-sm text-slate-600 mt-2">
+              No transformer with id “{id}” is available to you.
+            </p>
+          )}
         </div>
       </div>
     )
