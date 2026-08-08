@@ -131,10 +131,12 @@ export default function ReportsPage() {
     sendHour: number; sendMinute: number; dayOfWeek: number | null; dayOfMonth: number | null
     windowDays: number | null
     recipientMode: RecipientMode; recipientDeptIds: string[]; recipientUserIds: string[]
+    subjectTemplate: string; bodyTemplate: string
   }
   const blankSchedule = {
     sendHour: 7, sendMinute: 0, dayOfWeek: 1, dayOfMonth: 1, windowDays: null as number | null,
     recipientMode: 'manual' as RecipientMode, recipientDeptIds: [] as string[], recipientUserIds: [] as string[],
+    subjectTemplate: '', bodyTemplate: '',
   }
   const seedRows: SchedRow[] = seedSchedules.map((r) => ({
     id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, sequence: r.sequence,
@@ -180,6 +182,7 @@ export default function ReportsPage() {
         windowDays: r.window_days ?? null,
         recipientMode: (r.recipient_mode ?? 'manual') as RecipientMode,
         recipientDeptIds: csv(r.recipient_dept_ids), recipientUserIds: csv(r.recipient_user_ids),
+        subjectTemplate: r.subject_template ?? '', bodyTemplate: r.body_template ?? '',
       })))
     })
     return () => { cancelled = true }
@@ -201,6 +204,7 @@ export default function ReportsPage() {
     windowDays: r.windowDays,
     recipientMode: r.recipientMode,
     recipientDeptIds: r.recipientDeptIds, recipientUserIds: r.recipientUserIds,
+    subjectTemplate: r.subjectTemplate, bodyTemplate: r.bodyTemplate,
   })
 
   // What this draft would actually deliver to, so an empty selection is caught
@@ -468,6 +472,34 @@ export default function ReportsPage() {
               )}
             </>
           )}
+
+          {/* --- MESSAGE ---------------------------------------------------
+              The subject and body were hardcoded ("ONEOPS Report: <name>" /
+              "Automated daily org report."), so every customer's every report
+              arrived with our product name in the subject and a sentence of
+              English boilerplate — unusable for a Thai team forwarding it on,
+              and unchangeable. Blank keeps that original wording, so existing
+              schedules are untouched. */}
+          <div className="pt-3" style={{ borderTop: '1px solid #1e2433' }}>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">
+              {draft.channel === 'telegram' ? 'Message' : 'Email subject'}
+            </label>
+            <input value={draft.subjectTemplate} onChange={(e) => setDraft((d) => ({ ...d, subjectTemplate: e.target.value }))}
+              placeholder={`ONEOPS Report: ${draft.name || '<name>'}`}
+              className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-700 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">
+              {draft.channel === 'telegram' ? 'Caption (second line)' : 'Email body'}
+            </label>
+            <textarea value={draft.bodyTemplate} onChange={(e) => setDraft((d) => ({ ...d, bodyTemplate: e.target.value }))}
+              rows={2} placeholder={`Automated ${draft.sequence} ${draft.scope} report.`}
+              className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 resize-y" style={inset} />
+            <p className="text-[10px] text-slate-600 mt-1">
+              Leave blank for the default. Placeholders:{' '}
+              <span className="font-mono text-slate-500">{'{name} {sequence} {scope} {org} {date} {devices} {rows}'}</span>
+            </p>
+          </div>
 
           <div className="flex items-center gap-2 text-[11px]">
             {draftRecipientCount === 0

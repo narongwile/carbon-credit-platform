@@ -92,6 +92,14 @@ export interface NotificationChannelConfig {
   enabled: boolean
   /** Address / token / webhook target. */
   target: string
+  /**
+   * Lowest severity that reaches this channel. notify() enforces it —
+   * "if (c.min_severity === 'CRITICAL' && e.severity !== 'CRITICAL') continue"
+   * — and the column has always been stored and read; it just had no UI, so
+   * every channel sat at the WARNING default and a separate, entirely fake
+   * "severity routing" panel pretended to offer the same thing.
+   */
+  minSeverity?: 'WARNING' | 'CRITICAL'
 }
 
 export type ReportSequence = 'daily' | 'weekly' | 'monthly'

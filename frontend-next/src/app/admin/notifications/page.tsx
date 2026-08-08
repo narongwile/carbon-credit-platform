@@ -124,7 +124,7 @@ export default function AlarmNotificationPage() {
       if (!cancelled && rows && rows.length > 0) {
         const mapped = defaultNotificationChannels.map(dc => {
           const row = rows.find(r => r.channel === dc.id)
-          if (row) return { ...dc, enabled: !!row.enabled, target: row.target || '' }
+          if (row) return { ...dc, enabled: !!row.enabled, target: row.target || '', minSeverity: (row.min_severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING') as 'WARNING' | 'CRITICAL' }
           return dc
         })
         setChannels(mapped)
@@ -219,6 +219,12 @@ export default function AlarmNotificationPage() {
 
   const toggleChannel = (id: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
   const setTarget = (id: string, target: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, target } : x)))
+  // Real, and enforced by notify(): a CRITICAL-only channel is skipped for a
+  // WARNING alarm. The column was always stored and read but had no control,
+  // so every channel sat at WARNING while a separate fake panel claimed to
+  // offer severity routing.
+  const setMinSeverity = (id: string, minSeverity: 'WARNING' | 'CRITICAL') =>
+    setChannels((c) => c.map((x) => (x.id === id ? { ...x, minSeverity } : x)))
   const toggleEvent = (id: string) => setEvents((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]))
 
   const save = async () => {
@@ -305,7 +311,7 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          <AlarmParamConfig domain={product} advanced orgId={orgId} onApplyAll={applyRuleToOrg} />
+          <AlarmParamConfig domain={product} orgId={orgId} onApplyAll={applyRuleToOrg} />
         </div>
 
         {/* Event selection & edit */}
@@ -364,6 +370,23 @@ export default function AlarmNotificationPage() {
                     placeholder={`${ch.name} target…`}
                     className={clsx('w-full rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
                     style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
+                  {/* Real severity routing: notify() skips a CRITICAL-only
+                      channel for a WARNING alarm. Replaces the fake
+                      "Severity Routing" panel that used to sit in the alarm
+                      form and persisted nothing. */}
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider">Send on</span>
+                    {(['WARNING', 'CRITICAL'] as const).map((sev) => (
+                      <button key={sev} onClick={() => setMinSeverity(ch.id, sev)} disabled={!ch.enabled}
+                        className={clsx('px-2 py-0.5 rounded-md text-[10px] font-semibold disabled:opacity-40',
+                          (ch.minSeverity ?? 'WARNING') === sev ? 'text-white' : 'text-slate-500')}
+                        style={(ch.minSeverity ?? 'WARNING') === sev
+                          ? { background: sev === 'CRITICAL' ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.2)', border: `1px solid ${sev === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }
+                          : { background: '#0d1117', border: '1px solid #1e2433' }}>
+                        {sev === 'WARNING' ? 'Warning +' : 'Critical only'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )
             })}

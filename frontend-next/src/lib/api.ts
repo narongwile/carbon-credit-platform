@@ -291,6 +291,50 @@ export const api = {
     req(`/api/nodes/${nodeId}/rule`, { method: 'PUT', body: JSON.stringify(body) }),
   putOrgRule: (orgId: string, body: { rule: NodeAlarmRule; updatedBy?: string }) =>
     req<{ applied: number }>(`/api/orgs/${orgId}/rule`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * The org+domain default that putOrgRule stores (org_domain_rules).
+   * `rule: null` means never configured — the caller should then show the
+   * built-in schema defaults. There was no way to read this back, so the
+   * admin Alarm & Notify editor always rendered those defaults even when real
+   * thresholds were saved and live on every node.
+   */
+  getOrgRule: (orgId: string, domain: string) =>
+    req<{ rule: NodeAlarmRule | null; updatedBy?: string | null; updatedAt?: string | null }>(
+      `/api/orgs/${orgId}/rule?domain=${encodeURIComponent(domain)}`),
+
+  /**
+   * The SAME readings summary downloadReport() streams as a CSV, parsed into
+   * rows — so a PDF and a CSV of the same range contain the same numbers
+   * rather than two different reports. Server-side scoping is identical
+   * (it is the one endpoint), including the per-viewer narrowing.
+   * Returns null when unreachable; [] when there is genuinely no data.
+   */
+  reportSummary: async (opts?: { days?: number; scope?: string; scopeId?: string; domain?: string; orgId?: string }):
+    Promise<{ node_id: string; param_key: string; samples: string; avg: string; min: string; max: string }[] | null> => {
+    if (!isLive()) return null
+    const qs = new URLSearchParams()
+    if (opts?.days) qs.set('days', String(opts.days))
+    if (opts?.scope) qs.set('scope', opts.scope)
+    if (opts?.scopeId) qs.set('scopeId', opts.scopeId)
+    if (opts?.domain) qs.set('domain', opts.domain)
+    if (opts?.orgId) qs.set('orgId', opts.orgId)
+    try {
+      const token = getToken()
+      const r = await fetch(`${BASE}/api/reports/download?${qs.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!r.ok) return null
+      const text = await r.text()
+      // node_id,param_key,samples,avg,min,max — header row, then data.
+      const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+      return lines.slice(1).map((l) => {
+        const [node_id, param_key, samples, avg, min, max] = l.split(',')
+        return { node_id, param_key, samples, avg, min, max }
+      })
+    } catch {
+      return null
+    }
+  },
   /** Org-wide alert routing (notification_channels). notify() reads these. */
   /**
    * Notification destinations. Omit departmentId for the ORG-level set (the
@@ -974,6 +1018,10 @@ export interface ReportScheduleRow {
   recipient_mode: RecipientMode
   recipient_dept_ids: string | null   // comma-separated
   recipient_user_ids: string | null   // comma-separated
+  // migrate-v43. NULL = use the built-in wording, so an untouched schedule
+  // keeps sending exactly what it sent before.
+  subject_template: string | null
+  body_template: string | null
 }
 
 /** What the page POSTs. camelCase — this is what rptPostFunc reads. */
@@ -996,6 +1044,9 @@ export interface SaveSchedule {
   recipientMode?: RecipientMode
   recipientDeptIds?: string[]
   recipientUserIds?: string[]
+  /** Empty string clears back to the built-in default. */
+  subjectTemplate?: string
+  bodyTemplate?: string
 }
 
 /** @deprecated kept so older imports keep compiling; use ReportScheduleRow. */

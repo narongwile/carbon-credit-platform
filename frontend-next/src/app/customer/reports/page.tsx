@@ -50,7 +50,13 @@ export default function CustomerReportsPage() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
   }
 
+  // The PDF used to table the device ROSTER (name/site/status/last value) while
+  // the CSV returned the readings SUMMARY — two different reports behind one
+  // "Range: last N days" control, and the roster ignored the range entirely.
+  // Both now render the same readings summary the backend computes, so the
+  // format picker changes the file type and nothing else.
   const downloadPDF = async () => {
+    const summary = await api.reportSummary({ days })
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
     const doc = new jsPDF()
@@ -59,13 +65,21 @@ export default function CustomerReportsPage() {
     doc.setFontSize(10); doc.setTextColor(90, 90, 90)
     doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 30)
     doc.text(`Range: last ${days} days`, 14, 36)
-    autoTable(doc, {
-      startY: 44,
-      head: [['Device', 'Domain', 'Site', 'Status', 'Last Value']],
-      body: devices.map((d) => [d.name, String(d.domain ?? d.deviceType), d.location, d.status, d.lastValue ?? '—']),
-      theme: 'striped',
-      headStyles: { fillColor: [99, 102, 241] },
-    })
+
+    const nameOf = (id: string) => devices.find((d) => d.id === id)?.name ?? id
+    if (summary && summary.length) {
+      autoTable(doc, {
+        startY: 44,
+        head: [['Device', 'Parameter', 'Samples', 'Avg', 'Min', 'Max']],
+        body: summary.map((r) => [nameOf(r.node_id), r.param_key, r.samples, r.avg, r.min, r.max]),
+        theme: 'striped',
+        headStyles: { fillColor: [99, 102, 241] },
+      })
+    } else {
+      // Explicit, rather than an empty table that reads as a broken export.
+      doc.setFontSize(11); doc.setTextColor(140, 140, 140)
+      doc.text(`No readings recorded in the last ${days} days for your ${devices.length} device(s).`, 14, 50)
+    }
     doc.save(`report_${orgId}_${Date.now()}.pdf`)
   }
 
