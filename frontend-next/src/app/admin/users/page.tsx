@@ -139,6 +139,12 @@ export default function UserManagementPage() {
     toast.success('Department deleted')
   }
 
+  // Dashboard View Permission, opened per-department right from its card — it
+  // is a department policy (department_themes), so it belongs next to the
+  // department it governs, not buried in the New/Edit User form or requiring
+  // a trip to a whole separate tab.
+  const [permDeptId, setPermDeptId] = useState<string | null>(null)
+
   // ----- Users -----
   const [editingUser, setEditingUser] = useState<ManagedUser | null>(null)
   const [showNewUser, setShowNewUser] = useState(false)
@@ -273,6 +279,9 @@ export default function UserManagementPage() {
                     </div>
                     {editingDeptId !== d.id && (
                       <div className="flex items-center flex-shrink-0">
+                        <button onClick={() => setPermDeptId(d.id)} title="Dashboard View Permission" className="p-1.5 rounded-lg text-slate-600 hover:text-violet-400 hover:bg-white/5">
+                          <Palette size={13} />
+                        </button>
                         <button onClick={() => { setEditingDeptId(d.id); setEditingDeptName(d.name) }} className="p-1.5 rounded-lg text-slate-600 hover:text-indigo-400 hover:bg-white/5">
                           <Pencil size={13} />
                         </button>
@@ -413,10 +422,18 @@ export default function UserManagementPage() {
         <UserModal
           user={editingUser}
           departments={departments}
-          setDepartments={setDepartments}
           orgId={orgId}
           onClose={() => { setEditingUser(null); setShowNewUser(false) }}
           onSave={(u) => { upsertUser(u); setEditingUser(null); setShowNewUser(false) }}
+        />
+      )}
+
+      {permDeptId && (
+        <DepartmentThemeModal
+          department={departments.find((d) => d.id === permDeptId) ?? null}
+          orgId={orgId}
+          setDepartments={setDepartments}
+          onClose={() => setPermDeptId(null)}
         />
       )}
     </div>
@@ -1057,10 +1074,9 @@ function EventCatalog({ orgId, departments }: { orgId: string; departments: Depa
 }
 
 // ---- User create/edit modal ------------------------------------------------
-function UserModal({ user, departments, setDepartments, orgId, onClose, onSave }: {
+function UserModal({ user, departments, orgId, onClose, onSave }: {
   user: ManagedUser | null
   departments: Department[]
-  setDepartments: React.Dispatch<React.SetStateAction<Department[]>>
   orgId: string
   onClose: () => void
   onSave: (u: ManagedUser) => void
@@ -1078,49 +1094,6 @@ function UserModal({ user, departments, setDepartments, orgId, onClose, onSave }
   const valid = !!form.name.trim() && !!form.username.trim() && EMAIL_RE.test(form.email.trim()) && pwOk
   const toggleDept = (id: string) =>
     setForm((f) => ({ ...f, departmentIds: f.departmentIds.includes(id) ? f.departmentIds.filter((d) => d !== id) : [...f.departmentIds, id] }))
-
-  // Dashboard View Permission is a per-DEPARTMENT policy (department_themes),
-  // set on its own tab elsewhere on this page — but the outer `departments`
-  // list only carries real themeIds once that other tab has actually been
-  // opened (its useEffect is what fetches them). Opening New/Edit User first
-  // showed every department as having zero themes, whether or not that was
-  // true. Fetched here too so an admin assigning a department can see and
-  // edit what dashboards that department gets without leaving this modal.
-  const [grantedThemeIds, setGrantedThemeIds] = useState<string[]>(() => getOrgThemeGrants(orgId))
-  const [themesLoaded, setThemesLoaded] = useState(false)
-  useEffect(() => {
-    let cancelled = false
-    fetchOrgThemeGrants(orgId).then((ids) => { if (!cancelled) setGrantedThemeIds(ids) })
-    if (!isLive()) { setThemesLoaded(true); return () => { cancelled = true } }
-    api.departmentThemes(orgId).then((byDept) => {
-      if (cancelled || !byDept) { setThemesLoaded(true); return }
-      setDepartments((ds) => ds.map((d) => (byDept[d.id] ? { ...d, themeIds: byDept[d.id] } : d)))
-      setThemesLoaded(true)
-    })
-    return () => { cancelled = true }
-  }, [orgId, setDepartments])
-  const availableThemes = dashboardThemes.filter((t) => grantedThemeIds.includes(t.id))
-
-  // Saves the DEPARTMENT's theme set immediately (same write the Dashboard
-  // View Permission tab makes) — this toggle does not belong to the user
-  // record being edited here, it belongs to whichever department(s) that
-  // user is in, same as it does on the other tab.
-  const [savingTheme, setSavingTheme] = useState<string | null>(null)
-  const toggleDeptTheme = async (deptId: string, themeId: string) => {
-    const dept = departments.find((d) => d.id === deptId)
-    if (!dept || !grantedThemeIds.includes(themeId)) return
-    const next = dept.themeIds.includes(themeId) ? dept.themeIds.filter((t) => t !== themeId) : [...dept.themeIds, themeId]
-    const prev = dept.themeIds
-    setDepartments((ds) => ds.map((d) => (d.id !== deptId ? d : { ...d, themeIds: next })))
-    if (!isLive()) return
-    setSavingTheme(deptId)
-    const r = await api.setDepartmentThemes(orgId, deptId, next)
-    setSavingTheme(null)
-    if (!r) {
-      setDepartments((ds) => ds.map((d) => (d.id !== deptId ? d : { ...d, themeIds: prev })))
-      toast.error('Could not save the dashboard permission')
-    }
-  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
@@ -1198,51 +1171,6 @@ function UserModal({ user, departments, setDepartments, orgId, onClose, onSave }
               })}
             </div>
           </div>
-
-          {/* Dashboard View Permission — connected here instead of only on its
-              own tab, so an admin setting up (or moving) a user does not have
-              to leave this modal to check or change what dashboards their
-              department(s) can see. Editing it here writes the same
-              department_themes policy the separate tab does, immediately. */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider flex items-center gap-1.5">
-              <Palette size={12} className="text-violet-400" /> Dashboard View Permission
-            </label>
-            {form.departmentIds.length === 0 ? (
-              <p className="text-[11px] text-slate-600">Assign a department above to set which dashboards it can see.</p>
-            ) : !themesLoaded ? (
-              <p className="text-[11px] text-slate-600">Loading…</p>
-            ) : availableThemes.length === 0 ? (
-              <p className="text-[11px] text-slate-600">No dashboard themes have been granted to this organization yet — ask Super Admin.</p>
-            ) : (
-              <div className="space-y-2">
-                {form.departmentIds.map((deptId) => {
-                  const dept = departments.find((d) => d.id === deptId)
-                  if (!dept) return null
-                  return (
-                    <div key={deptId} className="p-2.5 rounded-lg" style={inset}>
-                      <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
-                        {dept.name}
-                        {savingTheme === deptId && <span className="normal-case text-slate-600">saving…</span>}
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {availableThemes.map((th) => {
-                          const on = dept.themeIds.includes(th.id)
-                          return (
-                            <button key={th.id} onClick={() => toggleDeptTheme(deptId, th.id)}
-                              className={clsx('px-2.5 py-1 rounded-md text-[11px] transition-all', on ? 'text-white' : 'text-slate-400')}
-                              style={on ? { background: `${th.accent}26`, border: `1px solid ${th.accent}` } : { background: '#0d1117', border: '1px solid #1e2433' }}>
-                              {th.name}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
           <button
@@ -1250,6 +1178,103 @@ function UserModal({ user, departments, setDepartments, orgId, onClose, onSave }
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
             style={gradient}>Save</button>
           <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- Dashboard View Permission modal (per department) ----------------------
+// Opened from a department's own card on the Departments tab — this policy
+// (department_themes) belongs to the department, not to whichever user
+// happens to be getting created or edited at the time, so it lives here
+// rather than folded into UserModal.
+function DepartmentThemeModal({ department, orgId, setDepartments, onClose }: {
+  department: Department | null
+  orgId: string
+  setDepartments: React.Dispatch<React.SetStateAction<Department[]>>
+  onClose: () => void
+}) {
+  const [grantedThemeIds, setGrantedThemeIds] = useState<string[]>(() => getOrgThemeGrants(orgId))
+  const [loaded, setLoaded] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchOrgThemeGrants(orgId).then((ids) => { if (!cancelled) setGrantedThemeIds(ids) })
+    if (!isLive() || !department) { setLoaded(true); return () => { cancelled = true } }
+    // Only THIS department's themes are missing until its card is opened —
+    // the department list itself never carries them (see the Departments-tab
+    // fetch comment above), so read them fresh rather than trust whatever the
+    // card happened to already have.
+    api.departmentThemes(orgId).then((byDept) => {
+      if (cancelled) return
+      const ids = byDept?.[department.id] ?? department.themeIds
+      setDepartments((ds) => ds.map((d) => (d.id === department.id ? { ...d, themeIds: ids } : d)))
+      setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [orgId, department, setDepartments])
+
+  const availableThemes = dashboardThemes.filter((t) => grantedThemeIds.includes(t.id))
+
+  const toggleTheme = async (themeId: string) => {
+    if (!department || !grantedThemeIds.includes(themeId)) return
+    const next = department.themeIds.includes(themeId)
+      ? department.themeIds.filter((t) => t !== themeId)
+      : [...department.themeIds, themeId]
+    const prev = department.themeIds
+    setDepartments((ds) => ds.map((d) => (d.id !== department.id ? d : { ...d, themeIds: next })))
+    if (!isLive()) return
+    setSaving(true)
+    const r = await api.setDepartmentThemes(orgId, department.id, next)
+    setSaving(false)
+    if (!r) {
+      setDepartments((ds) => ds.map((d) => (d.id !== department.id ? d : { ...d, themeIds: prev })))
+      toast.error('Could not save the dashboard permission')
+    }
+  }
+
+  if (!department) return null
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
+      <div className="w-full max-w-md rounded-2xl" style={surface}>
+        <div className="flex items-center justify-between p-5" style={{ borderBottom: '1px solid #1e2433' }}>
+          <div>
+            <h2 className="text-base font-bold text-white flex items-center gap-2"><Palette size={15} className="text-violet-400" /> Dashboard View Permission</h2>
+            <p className="text-xs text-slate-500 mt-0.5">{department.name}</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-white/5"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-xs text-slate-500">Themes enabled here become visible to every user in {department.name}.{saving && ' Saving…'}</p>
+          {!loaded ? (
+            <p className="text-[11px] text-slate-600">Loading…</p>
+          ) : availableThemes.length === 0 ? (
+            <div className="p-4 rounded-lg text-xs text-slate-500" style={inset}>
+              No dashboard themes have been granted to your organization yet. Contact your Super Admin to enable themes.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {availableThemes.map((th) => {
+                const on = department.themeIds.includes(th.id)
+                return (
+                  <button key={th.id} onClick={() => toggleTheme(th.id)} className="flex items-center justify-between p-3 rounded-lg text-left transition-all"
+                    style={{ background: '#0a0e1a', border: `1px solid ${on ? th.accent : '#1e2433'}` }}>
+                    <div className="min-w-0">
+                      <div className="text-sm text-slate-200">{th.name}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{th.description}</div>
+                    </div>
+                    {on ? <ToggleRight size={22} style={{ color: th.accent }} /> : <ToggleLeft size={22} className="text-slate-600" />}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+        <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white" style={gradient}>Done</button>
         </div>
       </div>
     </div>
