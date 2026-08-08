@@ -292,12 +292,23 @@ export const api = {
   putOrgRule: (orgId: string, body: { rule: NodeAlarmRule; updatedBy?: string }) =>
     req<{ applied: number }>(`/api/orgs/${orgId}/rule`, { method: 'PUT', body: JSON.stringify(body) }),
   /** Org-wide alert routing (notification_channels). notify() reads these. */
-  orgChannels: (orgId: string) =>
-    req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number }[]>(`/api/orgs/${orgId}/channels`),
+  /**
+   * Notification destinations. Omit departmentId for the ORG-level set (the
+   * fallback every alarm uses); pass one to read that department's own set.
+   * notify() routes an alarm to "org-level OR the owning department's" rows,
+   * so a department set here is what makes nodes.department_id actually
+   * change where an alarm is delivered.
+   */
+  orgChannels: (orgId: string, departmentId?: string) =>
+    req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number }[]>(
+      `/api/orgs/${orgId}/channels${departmentId ? `?departmentId=${encodeURIComponent(departmentId)}` : ''}`),
   // Accepts either shape: the UI models a channel as { id }, the table as
   // { channel }. The backend reads channel||id, so both are valid here.
-  putOrgChannels: (orgId: string, channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[]) =>
-    req<{ ok: boolean; count: number }>(`/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels }) }),
+  // The org-level and each department's rows are independent — saving one
+  // never wipes another.
+  putOrgChannels: (orgId: string, channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[], departmentId?: string) =>
+    req<{ ok: boolean; count: number; departmentId: string | null }>(
+      `/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels, departmentId: departmentId ?? null }) }),
   /**
    * Which parameters SENSOR READINGS shows. Resolved per department, most
    * specific first: device+department -> device -> organization+department ->

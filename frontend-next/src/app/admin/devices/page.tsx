@@ -352,6 +352,19 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
                 Nothing granted — falls back to {deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'the owning department') : 'everyone in this organization'}.
               </p>
             )}
+            {/* Grants REPLACE the owning department, they do not add to it
+                (deptVisible: `granted.length ? granted : [owner]`). So an
+                owner left out of a non-empty grant list stops being able to
+                open the device it owns — while still receiving its alarms,
+                since notify() routes on nodes.department_id and never reads
+                these grants. Silent and genuinely confusing without this. */}
+            {visibleTo !== null && visibleTo.length > 0 && deptId && !visibleTo.includes(deptId) && (
+              <p className="text-[11px] text-amber-400 mt-1.5">
+                ⚠ {departments.find((d) => d.id === deptId)?.name ?? 'The owning department'} owns this device but is not in
+                the list above — grants replace the owner rather than adding to it, so they will no longer be able to open it,
+                even though its alarms still route to them.
+              </p>
+            )}
             {visibleTo !== null && visibleTo.some((id) => blockedDepts.has(id)) && (
               <p className="text-[11px] text-amber-400 mt-1.5">
                 ⚠ {visibleTo.filter((id) => blockedDepts.has(id)).map((id) => departments.find((d) => d.id === id)?.name ?? id).join(', ')} — granted here, but their Product Access

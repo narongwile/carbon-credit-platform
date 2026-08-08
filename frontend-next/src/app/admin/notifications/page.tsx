@@ -107,9 +107,20 @@ export default function AlarmNotificationPage() {
     return () => { cancelled = true }
   }, [live])
 
+  // Which channel set is being edited: '' = the ORG-level fallback, or a
+  // department id for that department's own destinations. notify() delivers an
+  // alarm to the org-level rows OR the rows of the department that OWNS the
+  // device (nodes.department_id) — so this selector is what finally makes the
+  // owning department decide where an alarm actually goes. The routing query
+  // has always supported it; nothing could create a department row until now.
+  const [channelDept, setChannelDept] = useState('')
   useEffect(() => {
     let cancelled = false
-    api.orgChannels(orgId).then((rows) => {
+    // Always reset to the defaults first: a department with no rows of its own
+    // must show an EMPTY set (it falls back to org-level at delivery time),
+    // not whichever set happened to be loaded before it was selected.
+    setChannels(defaultNotificationChannels)
+    api.orgChannels(orgId, channelDept || undefined).then((rows) => {
       if (!cancelled && rows && rows.length > 0) {
         const mapped = defaultNotificationChannels.map(dc => {
           const row = rows.find(r => r.channel === dc.id)
@@ -120,7 +131,7 @@ export default function AlarmNotificationPage() {
       }
     })
     return () => { cancelled = true }
-  }, [orgId])
+  }, [orgId, channelDept])
 
   // Real departments (matches Pending Devices' load() pattern), mock as the
   // demo/offline fallback.
@@ -232,10 +243,14 @@ export default function AlarmNotificationPage() {
     // reported success.
     const prefsRes = await api.putMyConfig(user.id, { ...otherPrefs, notificationEvents: events })
     if (!prefsRes) { toast.error('Failed to save your event selection'); return }
-    const res = await api.putOrgChannels(orgId, channels)
+    // channelDept, so a department's destinations save to that department's
+    // own rows instead of overwriting the org-level fallback.
+    const res = await api.putOrgChannels(orgId, channels, channelDept || undefined)
     if (!res) { toast.error('Event selection saved, but the delivery channels were not'); return }
     setSaved(true)
-    toast.success('Notification preferences saved')
+    toast.success(channelDept
+      ? `Saved — destinations for ${orgDepts.find((d) => d.id === channelDept)?.name ?? 'this department'}`
+      : 'Notification preferences saved')
     setTimeout(() => setSaved(false), 2000)
   }
 
@@ -316,6 +331,21 @@ export default function AlarmNotificationPage() {
         <div className="rounded-xl p-5 space-y-3 lg:col-span-2" style={surface}>
           <h3 className="text-sm font-semibold text-white">Notification Setting</h3>
           <p className="text-[11px] text-slate-500">Choose how alarms are delivered. Enable a channel and provide its target.</p>
+
+          <div>
+            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Destinations for</label>
+            <select value={channelDept} onChange={(e) => setChannelDept(e.target.value)}
+              className="w-full max-w-sm rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+              <option value="">Whole organization (fallback for every alarm)</option>
+              {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name} — devices this department owns</option>)}
+            </select>
+            <p className="text-[11px] text-slate-600 mt-1.5">
+              {channelDept
+                ? 'An alarm on a device this department OWNS (its Owning department in Edit Device) is delivered here as well as to the organization-wide destinations below-none of them replace each other.'
+                : 'Used for every alarm, whichever department owns the device. Pick a department above to add destinations that only its own devices’ alarms reach.'}
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {channels.map((ch) => {
               const Icon = channelIcon[ch.id]

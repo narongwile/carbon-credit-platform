@@ -215,6 +215,17 @@ export default function DepartmentAccessEditor({
                     device until that is fixed under User Management → Product Access.
                   </p>
                 )}
+                {/* Grants REPLACE the owner rather than adding to it, so an
+                    owner left out of a non-empty list loses access to its own
+                    device while still receiving its alarms. See the identical
+                    warning in admin/devices/page.tsx. */}
+                {visibleTo !== null && visibleTo.length > 0 && ownerId && !visibleTo.includes(ownerId) && (
+                  <p className="text-[11px] text-amber-400 mt-1.5">
+                    ⚠ {departments?.find((d) => d.id === ownerId)?.name ?? 'The owning department'} owns this device but is not
+                    in the list above — grants replace the owner rather than adding to it, so they will no longer be able to
+                    open it, even though its alarms still route to them.
+                  </p>
+                )}
               </div>
 
               {/* Per-user restriction (migrate-v42). Deliberately separated
