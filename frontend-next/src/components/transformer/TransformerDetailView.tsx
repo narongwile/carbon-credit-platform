@@ -894,7 +894,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       )}
 
       {editingDeptAccess && (
-        <DepartmentAccessEditor nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name}
+        <DepartmentAccessEditor nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name} domain="transformer"
           onClose={() => setEditingDeptAccess(false)} />
       )}
 

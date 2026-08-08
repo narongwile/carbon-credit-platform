@@ -37,11 +37,16 @@ interface Dept { id: string; name: string }
 const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
 
 export default function DepartmentAccessEditor({
-  nodeId, orgId, deviceName, onClose, onSaved,
+  nodeId, orgId, deviceName, domain, onClose, onSaved,
 }: {
   nodeId: string
   orgId: string
   deviceName?: string
+  /** This device's domain (transformer/carbonNode/bloodBox) — used only to
+   *  check whether a department's Product Access policy would still hide it
+   *  after being granted visibility here. Omit to skip that check (the
+   *  warning simply never shows) rather than guess. */
+  domain?: string
   onClose: () => void
   onSaved?: () => void
 }) {
@@ -64,6 +69,27 @@ export default function DepartmentAccessEditor({
     })
     return () => { cancelled = true }
   }, [nodeId, orgId])
+
+  // Same check as admin/devices/page.tsx's DeviceModal — see its comment.
+  // A department with no product_access rows is never blocked (fail-open);
+  // one with rows blocks this domain only if none of them cover it, or the
+  // one that does is explicitly 'none'.
+  const [blockedDepts, setBlockedDepts] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    if (!domain || !departments || departments.length === 0) { setBlockedDepts(new Set()); return }
+    let cancelled = false
+    Promise.all(departments.map((d) => api.productAccess('department', d.id).then((rows) => ({ id: d.id, rows })))).then((results) => {
+      if (cancelled) return
+      const blocked = new Set<string>()
+      for (const { id, rows } of results) {
+        if (!rows || rows.length === 0) continue
+        const forDomain = rows.find((r) => r.domain === domain)
+        if (!forDomain || forDomain.level === 'none') blocked.add(id)
+      }
+      setBlockedDepts(blocked)
+    })
+    return () => { cancelled = true }
+  }, [domain, departments])
 
   const toggleVisible = (id: string) =>
     setVisibleTo((v) => (v === null ? v : v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
@@ -136,15 +162,22 @@ export default function DepartmentAccessEditor({
                   <div className="flex flex-wrap gap-2">
                     {departments?.map((d) => {
                       const on = (visibleTo ?? []).includes(d.id)
+                      const blocked = on && blockedDepts.has(d.id)
                       return (
-                        <button key={d.id} onClick={() => toggleVisible(d.id)}
+                        <button key={d.id} onClick={() => toggleVisible(d.id)} title={blocked ? `${d.name} has a Product Access policy that does not cover this device's product line — granting visibility here will not be enough on its own` : undefined}
                           className={clsx('px-3 py-1.5 rounded-lg text-xs transition-all', on ? 'text-white' : 'text-slate-400')}
-                          style={on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : inset}>
-                          {on ? '✓ ' : ''}{d.name}
+                          style={blocked ? { background: 'rgba(245,158,11,0.14)', border: '1px solid #f59e0b' } : on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : inset}>
+                          {blocked ? '⚠ ' : on ? '✓ ' : ''}{d.name}
                         </button>
                       )
                     })}
                   </div>
+                )}
+                {visibleTo !== null && visibleTo.some((id) => blockedDepts.has(id)) && (
+                  <p className="text-[11px] text-amber-400 mt-1.5">
+                    ⚠ Granted, but their Product Access policy does not cover this product line — they will still not see this
+                    device until that is fixed under User Management → Product Access.
+                  </p>
                 )}
               </div>
             </>

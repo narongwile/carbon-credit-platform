@@ -222,6 +222,33 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
     return () => { cancelled = true }
   }, [device.id])
 
+  // Which departments have a PRODUCT ACCESS policy that would still hide this
+  // device even after being granted it here. The two settings are on
+  // different screens (this one, and User Management -> Product Access) with
+  // nothing connecting them — an admin granting visibility here has no way to
+  // know a department's product policy silently overrides it, which is
+  // exactly the gap that made a correctly-saved grant look like it did
+  // nothing. A department with NO product_access rows at all is never
+  // blocked (fail-open, migrate-v29's rule, now applied consistently); one
+  // WITH rows blocks this device's domain only if none of those rows cover
+  // it, or the one that does is explicitly 'none'.
+  const [blockedDepts, setBlockedDepts] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    if (!isLive() || !device.domain || departments.length === 0) { setBlockedDepts(new Set()); return }
+    let cancelled = false
+    Promise.all(departments.map((d) => api.productAccess('department', d.id).then((rows) => ({ id: d.id, rows })))).then((results) => {
+      if (cancelled) return
+      const blocked = new Set<string>()
+      for (const { id, rows } of results) {
+        if (!rows || rows.length === 0) continue
+        const forDomain = rows.find((r) => r.domain === device.domain)
+        if (!forDomain || forDomain.level === 'none') blocked.add(id)
+      }
+      setBlockedDepts(blocked)
+    })
+    return () => { cancelled = true }
+  }, [device.domain, departments])
+
   const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
   // Did the admin actually touch the visibility control? The list is PRE-FILLED
   // with `effective`, which falls back to the OWNING department when a device
@@ -309,11 +336,12 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
               <div className="flex flex-wrap gap-2">
                 {departments.map((d) => {
                   const on = visibleTo.includes(d.id)
+                  const blocked = on && blockedDepts.has(d.id)
                   return (
-                    <button key={d.id} onClick={() => toggleVisible(d.id)}
+                    <button key={d.id} onClick={() => toggleVisible(d.id)} title={blocked ? `${d.name} has a product-access policy that does not cover ${domainMeta?.platform ?? device.deviceType} — granting visibility here will not be enough on its own` : undefined}
                       className={clsx('px-3 py-1.5 rounded-lg text-xs transition-all', on ? 'text-white' : 'text-slate-400')}
-                      style={on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : inset}>
-                      {on ? '✓ ' : ''}{d.name}
+                      style={blocked ? { background: 'rgba(245,158,11,0.14)', border: '1px solid #f59e0b' } : on ? { background: 'rgba(34,197,94,0.18)', border: '1px solid #22c55e' } : inset}>
+                      {blocked ? '⚠ ' : on ? '✓ ' : ''}{d.name}
                     </button>
                   )
                 })}
@@ -322,6 +350,13 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
             {visibleTo !== null && visibleTo.length === 0 && (
               <p className="text-[11px] text-amber-400 mt-1.5">
                 Nothing granted — falls back to {deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'the owning department') : 'everyone in this organization'}.
+              </p>
+            )}
+            {visibleTo !== null && visibleTo.some((id) => blockedDepts.has(id)) && (
+              <p className="text-[11px] text-amber-400 mt-1.5">
+                ⚠ {visibleTo.filter((id) => blockedDepts.has(id)).map((id) => departments.find((d) => d.id === id)?.name ?? id).join(', ')} — granted here, but their Product Access
+                policy does not cover {domainMeta?.platform ?? device.deviceType}. They will still not see this device until that is fixed
+                under User Management → Product Access.
               </p>
             )}
           </div>
