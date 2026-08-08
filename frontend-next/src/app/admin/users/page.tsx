@@ -37,7 +37,12 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: 'events', label: 'Event Catalog', icon: ListChecks },
 ]
 
-const ROLES: ManagedRole[] = ['admin', 'editor', 'viewer']
+// 'editor' is a real value in ManagedRole/roleLabels/roleColor (existing users
+// can already have it, so those stay renderable), but the backend's guard()
+// only ever distinguishes admin/superadmin from viewer-or-customer — an
+// 'editor' account is neither, so it fell through with no defined behaviour.
+// Not offered as an assignable role here.
+const ROLES: ManagedRole[] = ['admin', 'viewer']
 
 const roleColor: Record<ManagedRole, { color: string; bg: string }> = {
   admin: { color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
@@ -1083,12 +1088,16 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
           <div className="grid grid-cols-2 gap-3">
             <LabeledInput label="Full Name" required value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))}
               error={touched && !form.name.trim() ? 'Required' : undefined} />
-            {/* Required like Email: both are sign-in identifiers now, and a user
-                saved without either can never log in. */}
-            <LabeledInput label="Username" required value={form.username} onChange={(v) => setForm((f) => ({ ...f, username: v }))}
+            {/* Not independently editable — kept equal to Email so there is one
+                identifier to type and remember, not two that can drift apart.
+                Still required/sent as its own field: login can match on either. */}
+            <LabeledInput label="Username" required disabled value={form.username}
+              onChange={() => {}}
+              hint="Same as email"
               error={touched && !form.username.trim() ? 'Required' : undefined} />
           </div>
-          <LabeledInput label="Email" required value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))}
+          <LabeledInput label="Email" required value={form.email}
+            onChange={(v) => setForm((f) => ({ ...f, email: v, username: v }))}
             error={touched && !form.email.trim() ? 'Required' : touched && !EMAIL_RE.test(form.email.trim()) ? 'Enter a valid email address' : undefined} />
 
           {/* Without this the account is created with no password_hash, and login
@@ -1160,16 +1169,17 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 
-function LabeledInput({ label, value, onChange, required, error }: { label: string; value: string; onChange: (v: string) => void; required?: boolean; error?: string }) {
+function LabeledInput({ label, value, onChange, required, error, disabled, hint }: { label: string; value: string; onChange: (v: string) => void; required?: boolean; error?: string; disabled?: boolean; hint?: string }) {
   return (
     <div>
       <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">
         {label}{required && <span className="text-red-400 ml-0.5">*</span>}
       </label>
-      <input value={value} onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+      <input value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}
+        className="w-full rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed"
         style={{ ...inset, ...(error ? { border: '1px solid #ef4444' } : {}) }} />
       {error && <p className="text-[10px] text-red-400 mt-1">{error}</p>}
+      {hint && !error && <p className="text-[10px] text-slate-600 mt-1">{hint}</p>}
     </div>
   )
 }
