@@ -10,10 +10,48 @@ import { usePlacementSession } from '@/lib/usePlacementSession'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import DevicePlacementPanel from '@/components/map/DevicePlacementPanel'
-import { X, SkipForward, Crosshair } from 'lucide-react'
+import { X, SkipForward, Crosshair, Check } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
+const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
+
+// Typed lat/lng, alongside the existing click-to-pin flow — usePlacementSession's
+// pick() is the same commit path either way (api.setNodeLocation under the
+// hood), so this is purely an alternate way to FEED it a coordinate. Needed
+// for sites the operator already has surveyed/GPS coordinates for (a
+// nameplate, a handheld GPS reading, Google Maps "copy coordinates") rather
+// than eyeballing a click on the map.
+function ManualCoordEntry({ onSet, busy }: { onSet: (lat: number, lng: number) => void; busy: boolean }) {
+  const [lat, setLat] = useState('')
+  const [lng, setLng] = useState('')
+  const latNum = parseFloat(lat)
+  const lngNum = parseFloat(lng)
+  const valid = lat.trim() !== '' && lng.trim() !== '' && Number.isFinite(latNum) && Number.isFinite(lngNum)
+    && latNum >= -90 && latNum <= 90 && lngNum >= -180 && lngNum <= 180
+
+  const submit = () => {
+    if (!valid) { toast.error('Enter a valid latitude (-90 to 90) and longitude (-180 to 180).'); return }
+    onSet(latNum, lngNum)
+    setLat(''); setLng('')
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input type="number" step="any" placeholder="Lat" value={lat} onChange={(e) => setLat(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        className="w-20 text-xs rounded-md px-2 py-1 text-slate-200 outline-none" style={inset} />
+      <input type="number" step="any" placeholder="Lng" value={lng} onChange={(e) => setLng(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+        className="w-20 text-xs rounded-md px-2 py-1 text-slate-200 outline-none" style={inset} />
+      <button onClick={submit} disabled={!valid || busy} title="Set this coordinate"
+        className="p-1.5 rounded-md text-white disabled:opacity-40" style={{ background: '#6366f1' }}>
+        <Check size={13} />
+      </button>
+    </div>
+  )
+}
 
 export default function MapPage() {
   // Select only selectedOrgId — subscribing to the whole store re-rendered this
@@ -79,6 +117,8 @@ export default function MapPage() {
                 </>
               )}
             </div>
+            <div className="w-px h-5" style={{ background: '#1e2433' }} />
+            <ManualCoordEntry onSet={(lat, lng) => placement.pick(lat, lng)} busy={placement.busy} />
             {session.mode === 'sequential' && session.ids.length > 1 && (
               <button onClick={placement.skip} title="Skip this device, keep going"
                 className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-white/5">

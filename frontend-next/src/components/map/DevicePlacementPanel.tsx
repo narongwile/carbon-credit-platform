@@ -63,7 +63,7 @@ export default function DevicePlacementPanel({
 
       <p className="px-4 pt-3 text-[11px] text-slate-500">
         No Floor Plans on this organization — this is how a device gets a real position. Select devices, then click
-        the map to place them.
+        the map to place them, or type an exact coordinate once placement starts.
       </p>
 
       <div className="px-4 pt-2.5 flex items-center gap-2">
