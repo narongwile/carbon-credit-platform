@@ -77,6 +77,62 @@ const ONLINE_WITHIN_MS = 90_000
 /** Points kept per param — the charts read the last 48, the sparklines the last 12. */
 const HISTORY_POINTS = 48
 
+// ---------------------------------------------------------------------------
+// Which parameters the two trend charts draw
+// ---------------------------------------------------------------------------
+// Both charts used to be hardwired to the four canonical schema keys
+// (oilTemp / load / hydrogen / moisture). A real transformer very often
+// publishes none of them under those names — tr-222 reports CurrentAVG, H2,
+// Hz, kWh and OilMoisture — so every line was drawn from the SEEDED demo
+// series while the cards above showed the device's real values, and clicking
+// a chart opened the history modal on a key with no stored rows at all, which
+// is the "no real values" the charts were reported for.
+//
+// Each role now resolves against what the device ACTUALLY reports: the exact
+// canonical key when it is there, otherwise a loose name match, otherwise
+// whatever real parameter is still unclaimed. A device whose names match
+// nothing still gets four real lines rather than four fabricated ones.
+const CHART_ROLES: { exact: string; test: RegExp; color: string }[] = [
+  { exact: 'oilTemp', test: /temp/i, color: '#f97316' },
+  { exact: 'load', test: /load|current|power|kva|kwh|kw\b|amp/i, color: '#6366f1' },
+  { exact: 'hydrogen', test: /^h2|hydrogen|gas/i, color: '#22d3ee' },
+  { exact: 'moisture', test: /moist|humid|^rh/i, color: '#a78bfa' },
+]
+
+export interface ChartSlot {
+  key: string
+  label: string
+  unit?: string
+  color: string
+  history: TrendPoint[]
+}
+
+/** Fill the four chart roles from the parameters this device really has. */
+function resolveChartSlots(
+  available: { key: string; label: string; unit?: string; history: TrendPoint[] }[],
+): (ChartSlot | null)[] {
+  const used = new Set<string>()
+  const slots: (ChartSlot | null)[] = CHART_ROLES.map((role) => {
+    const hit =
+      available.find((c) => c.key === role.exact && !used.has(c.key)) ??
+      available.find((c) => role.test.test(c.key) && !used.has(c.key))
+    if (!hit) return null
+    used.add(hit.key)
+    return { ...hit, color: role.color }
+  })
+  // Anything still empty takes the next unclaimed parameter, so a device that
+  // matches no pattern charts its real values instead of an empty frame.
+  const rest = available.filter((c) => !used.has(c.key))
+  for (let i = 0; i < slots.length; i++) {
+    if (slots[i]) continue
+    const next = rest.shift()
+    if (!next) break
+    used.add(next.key)
+    slots[i] = { ...next, color: CHART_ROLES[i].color }
+  }
+  return slots
+}
+
 function historyByParam(rows: { param_key: string; value: number; taken_at: string }[]) {
   const out: Record<string, TrendPoint[]> = {}
   for (const r of rows) {
@@ -95,27 +151,54 @@ function useLiveTransformer(base: Transformer | undefined) {
 
   // Poll the stored readings, then let WS frames update the current values in
   // real time — the same pattern the generic device dashboard uses.
+  //
+  // The two reads are on deliberately different clocks. /latest is one row per
+  // param and is what every number and status colour on this page is drawn
+  // from, so it is the one worth polling briskly. /readings is a 12h window
+  // bucketed into 48 points of 15 MINUTES each — re-fetching that on the same
+  // fast tick cost a heavy query per tick and could not move a chart any
+  // sooner, because a 15-minute bucket does not change 12 times a minute.
+  // Both used to share a single 10s interval, which was simultaneously too
+  // slow for the live numbers and far too fast for the history.
+  const VALUES_POLL_MS = 4000
+  const SERIES_POLL_MS = 30000
   useEffect(() => {
     if (!live || !id) { setValues(null); setLastReadingAt(null); setSeries({}); return }
     let cancelled = false
-    const load = () => {
+    const loadLatest = () => {
       api.latest(id).then((r) => {
         if (cancelled || !r) return
         if (r.values) setValues(r.values)
         setLastReadingAt(r.lastReadingAt ?? null)
       })
-      // 48 buckets over 12h = one point per 15 minutes, which is exactly what the
-      // sparklines and both trend charts draw.
+    }
+    // 48 buckets over 12h = one point per 15 minutes, which is exactly what the
+    // sparklines and both trend charts draw.
+    const loadSeries = () => {
       api.readings(id, 720, (720 * 60) / HISTORY_POINTS).then((rows) => { if (!cancelled && rows) setSeries(historyByParam(rows)) })
     }
-    load()
-    const t = setInterval(load, 10000)
+    loadLatest()
+    loadSeries()
+    const tv = setInterval(loadLatest, VALUES_POLL_MS)
+    const ts = setInterval(loadSeries, SERIES_POLL_MS)
+    // The socket is the actual real-time path — the poll above is only the
+    // fallback for when it is down. A frame lands the moment the device
+    // publishes, with no interval in between.
     const off = subscribeTelemetry((f) => {
       if (f.id !== id || f.type === 'alarm' || !f.values) return
       setValues(f.values)
       setLastReadingAt(new Date().toISOString())
     })
-    return () => { cancelled = true; clearInterval(t); off() }
+    // A tab in the background has its timers throttled to ~1/min by the
+    // browser, so coming back to this page used to show a value minutes stale
+    // until the next tick happened to fire. Refresh the moment it is looked at.
+    const onVisible = () => { if (document.visibilityState === 'visible') { loadLatest(); loadSeries() } }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      cancelled = true
+      clearInterval(tv); clearInterval(ts); off()
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [live, id])
 
   const online = live
@@ -306,22 +389,26 @@ function SensorCard({ label, icon, sensor, onOpen }: { label: string; icon: Reac
   )
 }
 
-function TrendChart({ transformer, type }: { transformer: Transformer; type: 'load-temp' | 'h2-moisture' }) {
-  const history = transformer.sensors.oilTemperature.history.slice(-48)
-  const loadHistory = transformer.sensors.load.history.slice(-48)
-  const h2History = transformer.sensors.hydrogen.history.slice(-48)
-  const moistHistory = transformer.sensors.moisture.history.slice(-48)
-
-  const data = history.map((p, i) => {
-    return {
-      // Was t.getHours() — the browser's zone. Readings are +07:00 events.
-      time: fmtHM(p.time),
-      oilTemp: p.value,
-      load: loadHistory[i]?.value || 0,
-      hydrogen: h2History[i]?.value || 0,
-      moisture: moistHistory[i]?.value || 0,
+function TrendChart({ a, b }: { a: ChartSlot | null; b: ChartSlot | null }) {
+  // Keyed by timestamp rather than zipped by array index. The old version did
+  // `loadHistory[i]` against `history[i]`, which silently pairs the wrong
+  // samples the moment two parameters have different point counts — normal
+  // whenever one of them started reporting later than the other.
+  const data = useMemo(() => {
+    const byTime = new Map<string, { time: string; ts: number; a?: number; b?: number }>()
+    const add = (slot: ChartSlot | null, field: 'a' | 'b') => {
+      if (!slot) return
+      for (const p of slot.history.slice(-HISTORY_POINTS)) {
+        // fmtHM, not getHours(): readings are +07:00 events, not browser-local.
+        const row = byTime.get(p.time) ?? { time: fmtHM(p.time), ts: new Date(p.time).getTime() }
+        row[field] = p.value
+        byTime.set(p.time, row)
+      }
     }
-  })
+    add(a, 'a')
+    add(b, 'b')
+    return Array.from(byTime.values()).sort((x, y) => x.ts - y.ts)
+  }, [a, b])
 
   const tooltipStyle = {
     background: '#0d1117',
@@ -330,20 +417,13 @@ function TrendChart({ transformer, type }: { transformer: Transformer; type: 'lo
     fontSize: '11px',
   }
 
-  if (type === 'load-temp') {
+  const nameOf = (s: ChartSlot) => (s.unit ? `${s.label} (${s.unit})` : s.label)
+
+  if (!data.length) {
     return (
-      <ResponsiveContainer width="100%" height={140}>
-        <LineChart data={data} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-          <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} interval={7} />
-          <YAxis yAxisId="temp" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-          <YAxis yAxisId="load" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={[0, 100]} />
-          <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }} />
-          <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
-          <Line yAxisId="temp" type="monotone" dataKey="oilTemp" stroke="#f97316" strokeWidth={1.5} dot={false} name="Oil Temp (°C)" />
-          <Line yAxisId="load" type="monotone" dataKey="load" stroke="#6366f1" strokeWidth={1.5} dot={false} name="Load (%)" />
-        </LineChart>
-      </ResponsiveContainer>
+      <div className="h-[140px] flex items-center justify-center text-[11px] text-slate-600">
+        {a || b ? 'No stored readings in the last 12h' : 'This device reports no parameters yet'}
+      </div>
     )
   }
 
@@ -351,13 +431,16 @@ function TrendChart({ transformer, type }: { transformer: Transformer; type: 'lo
     <ResponsiveContainer width="100%" height={140}>
       <LineChart data={data} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-        <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} interval={7} />
-        <YAxis yAxisId="h2" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-        <YAxis yAxisId="moist" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+        <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false}
+          interval="preserveStartEnd" minTickGap={28} />
+        <YAxis yAxisId="a" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+        <YAxis yAxisId="b" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
         <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }} />
         <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
-        <Line yAxisId="h2" type="monotone" dataKey="hydrogen" stroke="#22d3ee" strokeWidth={1.5} dot={false} name="Hydrogen (ppm)" />
-        <Line yAxisId="moist" type="monotone" dataKey="moisture" stroke="#a78bfa" strokeWidth={1.5} dot={false} name="Moisture (ppm)" />
+        {a && <Line yAxisId="a" type="monotone" dataKey="a" stroke={a.color} strokeWidth={1.5} dot={false}
+          name={nameOf(a)} connectNulls isAnimationActive={false} />}
+        {b && <Line yAxisId="b" type="monotone" dataKey="b" stroke={b.color} strokeWidth={1.5} dot={false}
+          name={nameOf(b)} connectNulls isAnimationActive={false} />}
       </LineChart>
     </ResponsiveContainer>
   )
@@ -640,6 +723,18 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const bigCards = useMemo(() => cards.filter((c) => c.layout !== 'list'), [cards])
   const listCards = useMemo(() => cards.filter((c) => c.layout === 'list'), [cards])
 
+  // The two trend charts, resolved against this device's real parameters
+  // (see CHART_ROLES). Built from `cards` so it works identically in Live
+  // mode (history from the stored readings) and Demo mode (the seeded six),
+  // and so the charts can never offer a parameter the panel above does not
+  // have — including one an admin has hidden.
+  const chartSlots = useMemo(
+    () => resolveChartSlots(cards.map((c) => ({
+      key: c.key, label: c.label, unit: c.reading.unit || undefined, history: c.reading.history ?? [],
+    }))),
+    [cards],
+  )
+
 
   if (!transformer) {
     return (
@@ -786,23 +881,25 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           </div>
 
           {/* Charts */}
+          {/* Titles and the click target follow whatever these charts actually
+              drew, so the heading can no longer promise "Oil Temperature" on a
+              device that reports none, and clicking always opens a parameter
+              with real stored history behind it. */}
           <div className="flex-shrink-0 grid grid-cols-2 gap-0" style={{ borderTop: '1px solid #1e2433' }}>
-            <div className="p-3" style={{ borderRight: '1px solid #1e2433' }}>
-              <button type="button" onClick={() => setOpenParam('load')}
-                className="w-full flex items-center justify-between mb-2 group" title="Open history">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider group-hover:text-indigo-400">Load &amp; Oil Temperature</div>
-                <div className="text-[10px] text-slate-600 group-hover:text-indigo-400">Last 12h · click for history</div>
-              </button>
-              <TrendChart transformer={transformer} type="load-temp" />
-            </div>
-            <div className="p-3">
-              <button type="button" onClick={() => setOpenParam('hydrogen')}
-                className="w-full flex items-center justify-between mb-2 group" title="Open history">
-                <div className="text-[10px] text-slate-500 uppercase tracking-wider group-hover:text-indigo-400">Hydrogen &amp; Moisture</div>
-                <div className="text-[10px] text-slate-600 group-hover:text-indigo-400">Last 12h · click for history</div>
-              </button>
-              <TrendChart transformer={transformer} type="h2-moisture" />
-            </div>
+            {[[chartSlots[0], chartSlots[1]], [chartSlots[2], chartSlots[3]]].map(([a, b], i) => {
+              const title = [a?.label, b?.label].filter(Boolean).join(' & ') || 'No parameters'
+              const target = a?.key ?? b?.key ?? null
+              return (
+                <div key={i} className="p-3" style={i === 0 ? { borderRight: '1px solid #1e2433' } : undefined}>
+                  <button type="button" onClick={() => target && setOpenParam(target)} disabled={!target}
+                    className="w-full flex items-center justify-between mb-2 group disabled:cursor-default" title={target ? 'Open history' : undefined}>
+                    <div className="text-[10px] text-slate-500 uppercase tracking-wider group-enabled:group-hover:text-indigo-400 truncate">{title}</div>
+                    {target && <div className="text-[10px] text-slate-600 group-hover:text-indigo-400 flex-shrink-0 ml-2">Last 12h · click for history</div>}
+                  </button>
+                  <TrendChart a={a} b={b} />
+                </div>
+              )
+            })}
           </div>
         </div>
 
