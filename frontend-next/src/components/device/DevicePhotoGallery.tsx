@@ -75,6 +75,20 @@ export default function DevicePhotoGallery({
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   const [managing, setManaging] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // The upload controls were revealed on hover only. A device with no hover —
+  // the tablet or phone someone is holding while standing in front of the unit
+  // — can never fire that, so on exactly the hardware this feature exists for
+  // (walk up, photograph the nameplate, upload) the controls were unreachable.
+  // focus-within rescues the keyboard case but not touch. Pinned open there.
+  const [coarsePointer, setCoarsePointer] = useState(false)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return
+    const mq = window.matchMedia('(hover: none)')
+    const sync = () => setCoarsePointer(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
   // The org's own photo types (migrate-v40), falling back to the built-ins
   // while loading or offline so every picker here works regardless.
   const { all: allKinds, options: kindOptions, labelOf: kindLabel, reload: reloadKinds } = useKindCatalog(orgId, 'photo')
@@ -127,11 +141,16 @@ export default function DevicePhotoGallery({
   }
 
   const src = current ? api.nodePhotoUrl(nodeId, current.id, { v: current.updatedAt }) : null
+  const openLightbox = () => { if (current) setLightbox(photos.findIndex((p) => p.id === current.id)) }
+  /** Hover-revealed on a mouse, always visible on touch (see coarsePointer). */
+  const revealCls = coarsePointer
+    ? 'opacity-100'
+    : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
 
   return (
     <div className="relative w-full h-full group overflow-hidden">
       {src && current ? (
-        <button type="button" onClick={() => setLightbox(photos.findIndex((p) => p.id === current.id))}
+        <button type="button" onClick={openLightbox}
           className="absolute inset-0 w-full h-full cursor-zoom-in flex items-center justify-center" title="Open full size">
           {/* The wrapper carries the image's own aspect ratio so the marker
               overlay lands on the PIXELS. Sizing the overlay to this button
@@ -153,43 +172,92 @@ export default function DevicePhotoGallery({
               width={current.width ?? natural?.w} height={current.height ?? natural?.h}
               showLabels={false} className="opacity-90" />
           </span>
-          <span className="absolute top-2 right-2 p-1.5 rounded-md text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity"
-            style={{ background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433' }}>
-            <Expand size={12} />
-          </span>
         </button>
-      ) : (
-        <>
-          {fallback}
-          <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded-md pointer-events-none"
-            style={{ background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433', color: '#64748b' }}>
-            Generic model — not this unit
-          </div>
-        </>
-      )}
+      ) : fallback}
 
-      {/* Kind filter — only the kinds this device actually has, so a unit with
-          one photo gets no chrome it does not need. */}
-      {kindsPresent.length > 1 && (
-        <div className="absolute top-2 left-2 flex flex-wrap gap-1 max-w-[70%]">
-          <button onClick={() => { setKindFilter('all'); setSelected(0) }}
-            className="text-[9px] px-2 py-1 rounded-md"
-            style={kindFilter === 'all'
-              ? { background: 'rgba(99,102,241,0.9)', color: '#fff' }
-              : { background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433', color: '#94a3b8' }}>
-            All {photos.length}
-          </button>
-          {kindsPresent.map((k) => (
-            <button key={k.key} onClick={() => { setKindFilter(k.key); setSelected(0) }} title={k.hint}
-              className="text-[9px] px-2 py-1 rounded-md"
-              style={kindFilter === k.key
-                ? { background: 'rgba(99,102,241,0.9)', color: '#fff' }
-                : { background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433', color: '#94a3b8' }}>
-              {k.label}
-            </button>
-          ))}
+      {/* ---- One top bar, not three overlapping absolute blocks -------------
+          The kind chips (top-2 left-2, up to 70% wide), the expand badge and
+          the admin controls (both top-2 right-2) were positioned independently
+          and simply drew on top of each other. This column is flanked by two
+          224px panels, so its real width is ~395px on a 1280-wide window —
+          70% of that plus a ~220px control cluster does not fit, and the chip
+          row was clipped mid-word straight into the upload dropdown. Laying
+          them out as one row makes the collision impossible: the chips take
+          the space that is actually left and scroll within it, the controls
+          never shrink. pointer-events pass through the gaps so the image
+          underneath stays clickable. */}
+      <div className="absolute top-2 inset-x-2 flex items-start justify-between gap-2 pointer-events-none">
+        <div className="flex items-center gap-1 min-w-0 overflow-x-auto pointer-events-auto"
+          style={{ scrollbarWidth: 'none' }}>
+          {!src && (
+            <span className="flex-shrink-0 text-[10px] px-2 py-1 rounded-md whitespace-nowrap"
+              style={{ background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433', color: '#64748b' }}>
+              Generic model — not this unit
+            </span>
+          )}
+          {/* Only the kinds this device actually has, so a unit with one photo
+              gets no chrome it does not need. */}
+          {kindsPresent.length > 1 && (
+            <>
+              <button onClick={() => { setKindFilter('all'); setSelected(0) }}
+                className="flex-shrink-0 text-[9px] px-2 py-1 rounded-md whitespace-nowrap"
+                style={kindFilter === 'all'
+                  ? { background: 'rgba(99,102,241,0.9)', color: '#fff' }
+                  : { background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433', color: '#94a3b8' }}>
+                All {photos.length}
+              </button>
+              {kindsPresent.map((k) => (
+                <button key={k.key} onClick={() => { setKindFilter(k.key); setSelected(0) }} title={k.hint}
+                  className="flex-shrink-0 text-[9px] px-2 py-1 rounded-md whitespace-nowrap"
+                  style={kindFilter === k.key
+                    ? { background: 'rgba(99,102,241,0.9)', color: '#fff' }
+                    : { background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433', color: '#94a3b8' }}>
+                  {k.label}
+                </button>
+              ))}
+            </>
+          )}
         </div>
-      )}
+
+        <div className={`flex items-center gap-1.5 flex-shrink-0 pointer-events-auto transition-opacity ${revealCls}`}>
+          {/* A real sibling button rather than a <span> nested inside the
+              image button — nested interactive elements are invalid, and this
+              is also the only way the affordance is tappable on touch. */}
+          {src && (
+            <button type="button" onClick={openLightbox} title="Open full size"
+              className="p-1.5 rounded-md text-slate-300"
+              style={{ background: 'rgba(10,14,26,0.85)', border: '1px solid #1e2433' }}>
+              <Expand size={12} />
+            </button>
+          )}
+          {/* Admin controls. Hidden entirely from a viewer, who sees only the photos. */}
+          {canEdit && live && (
+            <>
+              <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
+                onChange={(e) => { const f = e.target.files; if (f?.length) onPick(f) }} />
+              <select value={nextKind} onChange={(e) => setUploadKind(e.target.value as NodePhotoKind)}
+                title="What the next upload is a photo of"
+                className="text-[10px] rounded-md px-1.5 py-1.5 text-slate-300 outline-none"
+                style={{ background: 'rgba(10,14,26,0.9)', border: '1px solid #1e2433' }}>
+                {kindOptions.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+              </select>
+              {orgId && (
+                <button onClick={() => setManaging(true)} title="Add, rename or hide photo types for this organization"
+                  className="text-[10px] px-1.5 py-1.5 rounded-md text-slate-400 hover:text-white"
+                  style={{ background: 'rgba(10,14,26,0.9)', border: '1px solid #1e2433' }}>
+                  Manage…
+                </button>
+              )}
+              <button onClick={() => fileRef.current?.click()} disabled={!!busy}
+                className="flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-md text-white disabled:opacity-50 whitespace-nowrap"
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                {busy ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                {busy || 'Add photo'}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Caption + provenance over the image, so the photo keeps the panel. */}
       {current && (current.caption || current.takenAt) && (
@@ -214,33 +282,6 @@ export default function DevicePhotoGallery({
               <img src={api.nodePhotoUrl(nodeId, p.id, { thumb: true, v: p.updatedAt })} alt="" className="w-full h-full object-cover" />
             </button>
           ))}
-        </div>
-      )}
-
-      {/* Admin controls. Hidden entirely from a viewer, who sees only the photos. */}
-      {canEdit && live && (
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden"
-            onChange={(e) => { const f = e.target.files; if (f?.length) onPick(f) }} />
-          <select value={nextKind} onChange={(e) => setUploadKind(e.target.value as NodePhotoKind)}
-            title="What the next upload is a photo of"
-            className="text-[10px] rounded-md px-1.5 py-1.5 text-slate-300 outline-none"
-            style={{ background: 'rgba(10,14,26,0.9)', border: '1px solid #1e2433' }}>
-            {kindOptions.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
-          </select>
-          {orgId && (
-            <button onClick={() => setManaging(true)} title="Add, rename or hide photo types for this organization"
-              className="text-[10px] px-1.5 py-1.5 rounded-md text-slate-400 hover:text-white"
-              style={{ background: 'rgba(10,14,26,0.9)', border: '1px solid #1e2433' }}>
-              Manage…
-            </button>
-          )}
-          <button onClick={() => fileRef.current?.click()} disabled={!!busy}
-            className="flex items-center gap-1.5 text-[10px] px-2.5 py-1.5 rounded-md text-white disabled:opacity-50"
-            style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-            {busy ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
-            {busy || 'Add photo'}
-          </button>
         </div>
       )}
 
