@@ -413,8 +413,8 @@ router.get('/nodes/:id/readings', requireNode(), async (req, res) => {
 router.post('/nodes/:id/readings', requireNode(), async (req, res) => {
   const { values, ts } = req.body
   if (!values) return res.status(400).json({ error: 'values required' })
-  const result = await ingest(req.params.id, values, ts)
-  res.json(result)
+  const { inserted } = await ingest(req.params.id, values, ts)
+  res.json({ inserted })
 })
 
 // ---- Documents (department-scoped) ----------------------------------------

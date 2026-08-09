@@ -126,7 +126,8 @@ export async function bridgeTransitTemp(
   // tempHigh + tempLow let the cold-chain rule alarm on both directions.
   const values: Record<string, number> = { tempHigh: tempC, tempLow: tempC }
   if (typeof battery === 'number') values.battery = battery
-  return ingest(boxId, values, ts)
+  const { inserted } = await ingest(boxId, values, ts)
+  return { inserted }
 }
 
 // ---- Router ----------------------------------------------------------------

@@ -16,26 +16,31 @@ function groupReadings(rows: RowDataPacket[]): Reading[] {
   return [...byTs.values()].sort((a, b) => a.ts - b.ts)
 }
 
+type NodeMeta = { org_id: string; domain: string; department_id: string | null }
+
 /**
  * Ingest one telemetry sample (from MQTT or HTTP), evaluate the node against its
- * saved rule, persist NEW events, and dispatch notifications for them.
+ * saved rule, persist NEW events, and dispatch notifications for them. Returns
+ * the node's meta (org/domain/department) whenever it resolved, so callers
+ * that also broadcast this sample over WebSocket (mqtt.ts) can scope that
+ * broadcast without a second lookup of the same row.
  */
-export async function ingest(nodeId: string, values: Record<string, number>, ts?: number): Promise<{ inserted: number }> {
+export async function ingest(nodeId: string, values: Record<string, number>, ts?: number): Promise<{ inserted: number; meta: NodeMeta | null }> {
   const taken = new Date(ts ?? Date.now())
   for (const [k, v] of Object.entries(values)) {
     if (typeof v === 'number' && !Number.isNaN(v)) await insertReading(nodeId, k, v, taken)
   }
 
   const [rule, meta] = await Promise.all([getRule(nodeId), nodeMeta(nodeId)])
-  if (!rule || !meta) return { inserted: 0 }
+  if (!rule || !meta) return { inserted: 0, meta: meta ?? null }
 
   const readings = groupReadings(await recentReadings(nodeId))
   const events = evaluate(nodeId, rule, readings)
-  if (!events.length) return { inserted: 0 }
+  if (!events.length) return { inserted: 0, meta }
 
   const existing = await existingEventIds(events.map((e) => e.id))
   const fresh: AlarmEvent[] = events.filter((e) => !existing.has(e.id))
-  if (!fresh.length) return { inserted: 0 }
+  if (!fresh.length) return { inserted: 0, meta }
 
   await insertEvents(meta.org_id, meta.department_id, fresh)
 
@@ -49,5 +54,5 @@ export async function ingest(nodeId: string, values: Record<string, number>, ts?
   const cfgs = channels.map((c) => ({ channel: c.channel as Channel, target: c.target as string, min_severity: c.min_severity as 'WARNING' | 'CRITICAL' }))
   if (cfgs.length) for (const e of fresh) await dispatch(e, cfgs)
 
-  return { inserted: fresh.length }
+  return { inserted: fresh.length, meta }
 }
