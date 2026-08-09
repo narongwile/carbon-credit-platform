@@ -89,9 +89,16 @@ function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string
                 {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             )}
+            {/* A root cause must be chosen before this is clickable. The one
+                exception is an organization with no root causes configured:
+                the select above is not rendered at all then, so there is
+                nothing to choose and blocking would leave a CRITICAL alarm
+                permanently un-acknowledgeable. */}
             <button
               onClick={() => onAck(alarm.id, problemId || undefined)}
-              className="text-xs px-3 py-1.5 rounded-lg text-white font-medium transition-all hover:opacity-90"
+              disabled={problems.length > 0 && !problemId}
+              title={problems.length > 0 && !problemId ? 'Select a root cause first' : undefined}
+              className="text-xs px-3 py-1.5 rounded-lg text-white font-medium transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:opacity-40"
               style={{ background: '#6366f1' }}
             >
               Acknowledge
@@ -176,6 +183,9 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   // root cause) and refetches the real list; falls back to the local mock
   // store in Demo.
   const onAck = async (id: string, problemId?: string) => {
+    // Guarded here as well as on the button: a disabled attribute is a UI
+    // affordance, not a rule — this is the one path that actually writes.
+    if (problems.length > 0 && !problemId) return
     if (live) { await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId }); refetchAlarms(); return }
     acknowledgeAlarm(id, 'admin')
   }

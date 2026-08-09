@@ -94,14 +94,29 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
   const critCount = alarms.filter((a) => a.severity === 'CRITICAL' && !a.acknowledgedAt).length
   const warnCount = alarms.filter((a) => a.severity === 'WARNING' && !a.acknowledgedAt).length
 
+  // A root cause must be CHOSEN before an alarm can be acknowledged — see the
+  // Acknowledge button below. The exception is an organization with no root
+  // causes configured at all: there is nothing to choose, and refusing every
+  // acknowledgement in that case would leave a CRITICAL alarm permanently
+  // un-acknowledgeable, which is worse than an unclassified ack.
+  const causeRequired = evProblems.length > 0
+  const ackReady = (id: string) => !causeRequired || !!evClass[id]
+
   const handleAck = async (a: OrgAlarmRow) => {
+    if (!ackReady(a.id)) return
     // The signed-in person, not the literal string 'viewer' — otherwise every
     // acknowledgement in the organization is attributed to the same word and
     // "who responded to this" is unanswerable after the fact.
     const me = getSession()
     const by = me?.name || me?.email || 'viewer'
     setAcking(a.id)
-    const r = await api.ackEvent(a.id, { by, eventProblemId: evClass[a.id] ?? evProblems[0]?.id })
+    // `evClass[a.id] ?? evProblems[0]?.id` — the fallback silently filed the
+    // FIRST root cause in the list on every acknowledgement nobody had touched
+    // the dropdown for, so the recorded cause was whatever happened to sort
+    // first rather than what the responder found. The picker below now starts
+    // empty and the button stays disabled until a real choice is made, so
+    // there is nothing left to fall back to.
+    const r = await api.ackEvent(a.id, { by, eventProblemId: evClass[a.id] || undefined })
     setAcking(null)
     // The result was ignored and local state updated regardless, so a rejected
     // ack still showed as acknowledged until the next reload.
@@ -278,14 +293,19 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
                 </div>
               ) : (
                 <div className="flex items-center gap-2 ml-4 flex-shrink-0">
-                  <select value={evClass[a.id] ?? evProblems[0]?.id ?? ''}
+                  {/* Starts empty, never pre-selected: a pre-filled picker
+                      records a cause the responder never actually chose. */}
+                  <select value={evClass[a.id] ?? ''}
                     onChange={(e) => setEvClass({ ...evClass, [a.id]: e.target.value })}
                     className="text-[11px] bg-[#0d1117] text-slate-300 border border-slate-700 rounded-md px-2 py-1 outline-none w-32">
-                    {evProblems.length === 0 && <option value="">No root causes</option>}
+                    {evProblems.length === 0
+                      ? <option value="">No root causes</option>
+                      : <option value="">Select cause…</option>}
                     {evProblems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                   </select>
-                  <button onClick={() => handleAck(a)} disabled={acking === a.id}
-                    className="text-[11px] font-medium text-white px-3 py-1.5 rounded-lg disabled:opacity-50" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                  <button onClick={() => handleAck(a)} disabled={acking === a.id || !ackReady(a.id)}
+                    title={!ackReady(a.id) ? 'Select a root cause first' : undefined}
+                    className="text-[11px] font-medium text-white px-3 py-1.5 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
                     {acking === a.id ? '…' : 'Acknowledge'}
                   </button>
                 </div>

@@ -517,7 +517,7 @@ function LiveActiveAlarms({ nodeId }: { nodeId: string }) {
 }
 
 function ActiveAlarms({ transformerId }: { transformerId: string }) {
-  const { alarms, acknowledgeAlarm } = useAppStore()
+  const { alarms } = useAppStore()
   const tAlarms = alarms.filter((a) => a.transformerId === transformerId && !a.acknowledged)
 
   if (tAlarms.length === 0) {
@@ -552,15 +552,15 @@ function ActiveAlarms({ transformerId }: { transformerId: string }) {
               {fmtHM(alarm.timestamp)}
             </div>
           </div>
-          <button
-            onClick={() => acknowledgeAlarm(alarm.id, 'admin')}
-            className="text-[10px] px-2 py-1 rounded text-slate-400 hover:text-white transition-colors flex-shrink-0"
-            style={{ background: '#1e2433' }}
-          >
-            ACK
-          </button>
         </div>
       ))}
+      {/* This compact widget has no root-cause picker, and acknowledging now
+          requires one to be chosen — so it can no longer offer a one-click ACK
+          that would file an event with no cause. Its Live counterpart
+          (LiveActiveAlarms) has always pointed at the Event Log for exactly
+          this reason; the demo panel now says the same thing rather than
+          behaving differently from the real one. */}
+      <div className="text-[10px] text-slate-600 pt-1">Acknowledge in the Event Log below.</div>
     </div>
   )
 }

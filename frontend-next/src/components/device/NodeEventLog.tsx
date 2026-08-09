@@ -116,10 +116,13 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   }, [loadLive, live, nodeId])
 
   // Acknowledge against the backend when live, else the local demo store.
+  // Guarded here as well as on the button: a disabled attribute is a UI
+  // affordance, not a rule — this is the one path that actually writes.
   const onAck = useCallback(async (eventId: string) => {
+    if (problems.length > 0 && !picked[eventId]) return
     if (live) { await api.ackEvent(eventId, { by, eventProblemId: picked[eventId] || undefined }); loadLive() }
     else ackEvent(eventId, by)
-  }, [live, by, ackEvent, loadLive, picked])
+  }, [live, by, ackEvent, loadLive, picked, problems])
 
   const rule = useMemo(() => (domain ? ((hasHydrated && dbRules[nodeId]) ? dbRules[nodeId] : defaultNodeRule(domain)) : null), [domain, nodeId, hasHydrated, dbRules])
 
@@ -210,7 +213,16 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                               {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                             </select>
                           )}
-                          <button onClick={() => onAck(ev.id)} className="text-[11px] font-medium text-white px-3 py-1 rounded-md w-full" style={gradient}>Acknowledge</button>
+                          {/* Blocked until a root cause is picked. When this
+                              device's departments have no root causes at all
+                              the select above is not rendered, so there is
+                              nothing to choose and the button stays live —
+                              otherwise a CRITICAL event could never be
+                              acknowledged from this page. */}
+                          <button onClick={() => onAck(ev.id)}
+                            disabled={problems.length > 0 && !picked[ev.id]}
+                            title={problems.length > 0 && !picked[ev.id] ? 'Select a root cause first' : undefined}
+                            className="text-[11px] font-medium text-white px-3 py-1 rounded-md w-full disabled:opacity-40 disabled:cursor-not-allowed" style={gradient}>Acknowledge</button>
                         </div>
                       )}
                   </td>
