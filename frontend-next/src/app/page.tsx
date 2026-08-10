@@ -33,11 +33,15 @@ export default function LoginPage() {
   // constraint on a genuinely dynamic route) — worth it there because the id
   // drives the whole page, not worth splitting this page into two files for
   // one read that never needs to be reactive to an in-page navigation.
+  const [orgId, setOrgId] = useState<string | null>(null)
   const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null)
   const [orgLogoFailed, setOrgLogoFailed] = useState(false)
   useEffect(() => {
     const org = new URLSearchParams(window.location.search).get('org')
-    if (org) setOrgLogoUrl(apiImageUrl(`/api/public/orgs/${encodeURIComponent(org)}/logo`))
+    if (org) {
+      setOrgId(org)
+      setOrgLogoUrl(apiImageUrl(`/api/public/orgs/${encodeURIComponent(org)}/logo`))
+    }
   }, [])
 
   const handleLogin = async () => {
@@ -104,13 +108,13 @@ export default function LoginPage() {
             fetch 404s/errors — orgLogoFailed covers all three the same way
             an <img onError> naturally would). */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-4">
+          <div className="flex flex-col items-center justify-center mb-4">
             {orgLogoUrl && !orgLogoFailed ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={orgLogoUrl} alt="" onError={() => setOrgLogoFailed(true)}
-                className="h-12 max-w-[220px] object-contain" />
+              <img src={orgLogoUrl} alt="Organization Logo" onError={() => setOrgLogoFailed(true)}
+                className="h-20 max-w-[280px] max-h-24 object-contain mx-auto drop-shadow-lg transition-all" />
             ) : (
-              <>
+              <div className="inline-flex items-center gap-3">
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
                   <Boxes size={24} className="text-white" />
                 </div>
@@ -118,7 +122,7 @@ export default function LoginPage() {
                   <div className="text-2xl font-bold tracking-widest text-white">ONEOPS</div>
                   <div className="text-xs tracking-[0.3em] text-indigo-400 uppercase">Operations Platform</div>
                 </div>
-              </>
+              </div>
             )}
           </div>
           <p className="text-slate-500 text-sm">Unified multi-sensor operations — Sign in to continue</p>
@@ -189,8 +193,8 @@ export default function LoginPage() {
 
           {/* Register / forgot password */}
           <div className="flex items-center justify-between mt-4 text-xs">
-            <a href="/forgot/" className="text-slate-500 hover:text-indigo-400 transition-colors">Forgot password?</a>
-            <a href="/register/" className="text-slate-400 hover:text-white transition-colors">Create an account →</a>
+            <a href={orgId ? `/forgot/?org=${encodeURIComponent(orgId)}` : '/forgot/'} className="text-slate-500 hover:text-indigo-400 transition-colors">Forgot password?</a>
+            <a href={orgId ? `/register/?org=${encodeURIComponent(orgId)}` : '/register/'} className="text-slate-400 hover:text-white transition-colors">Create an account →</a>
           </div>
         </div>
 

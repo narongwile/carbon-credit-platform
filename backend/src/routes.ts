@@ -50,7 +50,7 @@ router.post('/auth/login', loginRateLimit, async (req, res) => {
 })
 
 router.post('/auth/register', async (req, res) => {
-  const { name, email, password, phone, orgName } = req.body ?? {}
+  const { name, email, password, phone, orgName, orgId: explicitOrgId } = req.body ?? {}
   if (!name || !email || !password) return res.status(400).json({ error: 'missing fields' })
   if (String(password).length < 8) return res.status(400).json({ error: 'password too short (min 8)' })
   if (await userByEmail(email)) return res.status(409).json({ error: 'email already registered' })
@@ -66,7 +66,16 @@ router.post('/auth/register', async (req, res) => {
       departmentId: (match.department_id as string) || undefined,
       passwordHash: hash,
     })
-    return res.json({ ok: true, userId, orgId: match.org_id, matched: true, department: match.department_id || null })
+    return res.json({ ok: true, userId, orgId: match.org_id, role: 'viewer', matched: true, department: match.department_id || null })
+  }
+
+  // If explicit orgId was provided (from /register?org=org-1)
+  if (explicitOrgId) {
+    const org = await getOrg(explicitOrgId)
+    if (org) {
+      const userId = await upsertUser(explicitOrgId, { name, email, phone, role: 'viewer', passwordHash: hash })
+      return res.json({ ok: true, userId, orgId: explicitOrgId, role: 'viewer', matched: false })
+    }
   }
 
   // No match — self-service signup: create new org
@@ -74,7 +83,7 @@ router.post('/auth/register', async (req, res) => {
   await upsertOrg({ id: orgId, name: orgName || `${name}'s Organization` })
   await setEntitlements(orgId, ['refrigeration', 'bloodbox'])
   const userId = await upsertUser(orgId, { name, email, phone, role: 'admin', passwordHash: hash })
-  res.json({ ok: true, userId, orgId, matched: false })
+  res.json({ ok: true, userId, orgId, role: 'admin', matched: false })
 })
 
 router.post('/auth/forgot', async (req, res) => {

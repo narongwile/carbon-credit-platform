@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, UserPlus, ArrowLeft, CheckCircle2, Boxes } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { api } from '@/lib/api'
+import { api, apiImageUrl } from '@/lib/api'
 import { authApiEnabled } from '@/lib/auth'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -16,6 +16,18 @@ export default function RegisterPage() {
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
+  const [orgId, setOrgId] = useState<string | null>(null)
+  const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null)
+  const [orgLogoFailed, setOrgLogoFailed] = useState(false)
+
+  useEffect(() => {
+    const org = new URLSearchParams(window.location.search).get('org')
+    if (org) {
+      setOrgId(org)
+      setOrgLogoUrl(apiImageUrl(`/api/public/orgs/${encodeURIComponent(org)}/logo`))
+    }
+  }, [])
+
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }))
 
   const submit = async () => {
@@ -29,17 +41,25 @@ export default function RegisterPage() {
         toast.success('Account created (Demo Mode)')
         return
       }
-      const r = await api.register({ name: form.username, email: form.email, phone: form.phone, password: form.password })
+      const r = await api.register({
+        name: form.username,
+        email: form.email,
+        phone: form.phone,
+        password: form.password,
+        orgId: orgId || undefined,
+      })
       if (!r || (r as any).error) throw new Error((r as any)?.error || 'Registration failed')
-      const matched = (r as any).matched
+      const matched = (r as any).matched || !!(r as any).orgId
       setDone(true)
-      toast.success(matched ? 'Account created — assigned to your organization!' : 'Account created')
+      toast.success(matched ? `Account created — assigned to ${orgId || (r as any).orgId || 'organization'} as Viewer!` : 'Account created')
     } catch (err: any) {
       toast.error(err.message || 'Registration failed')
     } finally {
       setLoading(false)
     }
   }
+
+  const backUrl = orgId ? `/?org=${encodeURIComponent(orgId)}` : '/'
 
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: '#0a0e1a' }}>
@@ -48,14 +68,28 @@ export default function RegisterPage() {
 
       <div className="relative z-10 w-full max-w-md px-4">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-4">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={gradient}><Boxes size={24} className="text-white" /></div>
-            <div className="text-left">
-              <div className="text-2xl font-bold tracking-widest text-white">ONEOPS</div>
-              <div className="text-xs tracking-[0.3em] text-indigo-400 uppercase">Create Account</div>
-            </div>
+          <div className="flex flex-col items-center justify-center mb-4">
+            {orgLogoUrl && !orgLogoFailed ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={orgLogoUrl} alt="Organization Logo" onError={() => setOrgLogoFailed(true)}
+                className="h-20 max-w-[280px] max-h-24 object-contain mx-auto drop-shadow-lg transition-all" />
+            ) : (
+              <div className="inline-flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={gradient}><Boxes size={24} className="text-white" /></div>
+                <div className="text-left">
+                  <div className="text-2xl font-bold tracking-widest text-white">ONEOPS</div>
+                  <div className="text-xs tracking-[0.3em] text-indigo-400 uppercase">Create Account</div>
+                </div>
+              </div>
+            )}
           </div>
-          <p className="text-slate-500 text-sm">Register a new account to request access</p>
+          <p className="text-slate-500 text-sm">
+            {orgId ? (
+              <>Register to request <span className="text-indigo-400 font-medium">Viewer</span> access to <span className="text-white font-semibold">{orgId}</span></>
+            ) : (
+              'Register a new account to request access'
+            )}
+          </p>
         </div>
 
         <div className="rounded-2xl p-8 glass" style={{ border: '1px solid #1e2433' }}>
@@ -63,8 +97,12 @@ export default function RegisterPage() {
             <div className="text-center py-6">
               <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(74,222,128,0.12)' }}><CheckCircle2 size={34} className="text-green-400" /></div>
               <h3 className="text-lg font-bold text-white">Registration submitted</h3>
-              <p className="text-sm text-slate-500 mt-2">Your account request for <span className="text-white">{form.username}</span> has been created. An admin will activate it shortly.</p>
-              <button onClick={() => router.push('/')} className="mt-6 w-full py-3 rounded-lg font-semibold text-white text-sm" style={gradient}>Back to Sign In</button>
+              <p className="text-sm text-slate-500 mt-2">
+                Your account request for <span className="text-white">{form.username}</span> has been created
+                {orgId && <> for <span className="text-indigo-400 font-semibold">{orgId}</span></>}.
+                An admin will activate it shortly.
+              </p>
+              <button onClick={() => router.push(backUrl)} className="mt-6 w-full py-3 rounded-lg font-semibold text-white text-sm" style={gradient}>Back to Sign In</button>
             </div>
           ) : (
             <div className="space-y-4">
@@ -85,7 +123,7 @@ export default function RegisterPage() {
               <button onClick={submit} disabled={loading} className="w-full py-3 rounded-lg font-semibold text-white text-sm flex items-center justify-center gap-2 disabled:opacity-50" style={gradient}>
                 <UserPlus size={16} /> {loading ? 'Creating…' : 'Create Account'}
               </button>
-              <a href="/" className="flex items-center justify-center gap-1.5 text-xs text-slate-500 hover:text-white transition-colors pt-1"><ArrowLeft size={13} /> Back to Sign In</a>
+              <a href={backUrl} className="flex items-center justify-center gap-1.5 text-xs text-slate-500 hover:text-white transition-colors pt-1"><ArrowLeft size={13} /> Back to Sign In</a>
             </div>
           )}
         </div>
