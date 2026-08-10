@@ -7,11 +7,6 @@ import { useAppStore } from '@/lib/store'
 import { apiImageUrl } from '@/lib/api'
 import { Boxes, Eye, EyeOff } from 'lucide-react'
 
-// The role selector tabs and demo-credential hints that used to live here were
-// a demo affordance: the role came from the account's JWT, never from the tab,
-// so picking one changed nothing but implied the wrong sign-in had to be chosen.
-// Both are gone for production — sign in with an email and password.
-
 export default function LoginPage() {
   const router = useRouter()
   const [username, setUsername] = useState('')
@@ -20,19 +15,6 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // Per-customer branded login: /?org=acme-factory shows that org's logo in
-  // place of the ONEOPS mark. There is no session yet at this point — nothing
-  // downstream of login can tell the page which customer is arriving — so the
-  // org id has to travel as a query param on the link each customer is given,
-  // and the logo has to come from a route that needs no token
-  // (GET /api/public/orgs/:orgId/logo; see orgLogoPublicFunc on the backend).
-  //
-  // window.location.search rather than next/navigation's useSearchParams:
-  // that hook opts a component out of static rendering unless wrapped in a
-  // Suspense boundary (see admin/nodes/detail/page.tsx for the same
-  // constraint on a genuinely dynamic route) — worth it there because the id
-  // drives the whole page, not worth splitting this page into two files for
-  // one read that never needs to be reactive to an in-page navigation.
   const [orgId, setOrgId] = useState<string | null>(null)
   const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null)
   const [orgLogoFailed, setOrgLogoFailed] = useState(false)
@@ -51,17 +33,10 @@ export default function LoginPage() {
       return
     }
     setLoading(true)
-    // Real backend (JWT) when configured; the username field carries the email.
     if (authApiEnabled) {
       const r = await loginRemote(username, password)
       setLoading(false)
       if (!r.ok) {
-        // The backend already distinguishes these (loginFunc); show what it
-        // actually said instead of a single generic message that reads
-        // identically whether the password was wrong, the account is
-        // rate-limited, the organization is suspended, or the server itself
-        // is having a bad moment — each needs a different next step from
-        // whoever is looking at this screen.
         setError(
           r.status === 429 ? r.error || 'Too many attempts — please wait and try again.'
           : r.status === 403 ? r.error || 'This organization is suspended.'
@@ -83,14 +58,12 @@ export default function LoginPage() {
       return
     }
     saveSession(user)
-    // Sync the active org + user so the app shows this tenant's data.
     if (user.orgId) useAppStore.getState().setSelectedOrgId(user.orgId)
     router.push(getDashboardRoute(user))
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: '#0a0e1a' }}>
-      {/* Background grid */}
       <div
         className="absolute inset-0 opacity-5"
         style={{
@@ -98,15 +71,10 @@ export default function LoginPage() {
           backgroundSize: '50px 50px',
         }}
       />
-      {/* Glow orbs */}
       <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-10 blur-3xl" style={{ background: '#6366f1' }} />
       <div className="absolute bottom-1/4 right-1/4 w-64 h-64 rounded-full opacity-5 blur-3xl" style={{ background: '#06b6d4' }} />
 
       <div className="relative z-10 w-full max-w-md px-4">
-        {/* Logo — the org's own, when ?org= names one with a logo set;
-            ONEOPS default otherwise (no ?org=, org has no logo, or the
-            fetch 404s/errors — orgLogoFailed covers all three the same way
-            an <img onError> naturally would). */}
         <div className="text-center mb-8">
           <div className="flex flex-col items-center justify-center mb-4">
             {orgLogoUrl && !orgLogoFailed ? (
@@ -128,9 +96,7 @@ export default function LoginPage() {
           <p className="text-slate-500 text-sm">Unified multi-sensor operations — Sign in to continue</p>
         </div>
 
-        {/* Card */}
         <div className="rounded-2xl p-8 glass" style={{ border: '1px solid #1e2433' }}>
-          {/* Form */}
           <div className="space-y-4">
             <div>
               <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Username</label>
@@ -193,8 +159,30 @@ export default function LoginPage() {
 
           {/* Register / forgot password */}
           <div className="flex items-center justify-between mt-4 text-xs">
-            <a href={orgId ? `/forgot/?org=${encodeURIComponent(orgId)}` : '/forgot/'} className="text-slate-500 hover:text-indigo-400 transition-colors">Forgot password?</a>
-            <a href={orgId ? `/register/?org=${encodeURIComponent(orgId)}` : '/register/'} className="text-slate-400 hover:text-white transition-colors">Create an account →</a>
+            <a
+              href={orgId ? `/forgot/?org=${encodeURIComponent(orgId)}` : '/forgot/'}
+              onClick={(e) => {
+                if (orgId) {
+                  e.preventDefault()
+                  router.push(`/forgot/?org=${encodeURIComponent(orgId)}`)
+                }
+              }}
+              className="text-slate-500 hover:text-indigo-400 transition-colors"
+            >
+              Forgot password?
+            </a>
+            <a
+              href={orgId ? `/register/?org=${encodeURIComponent(orgId)}` : '/register/'}
+              onClick={(e) => {
+                if (orgId) {
+                  e.preventDefault()
+                  router.push(`/register/?org=${encodeURIComponent(orgId)}`)
+                }
+              }}
+              className="text-slate-400 hover:text-white transition-colors"
+            >
+              Create an account →
+            </a>
           </div>
         </div>
 
