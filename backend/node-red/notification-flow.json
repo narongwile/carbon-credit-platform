@@ -1,0 +1,99 @@
+[
+    {
+        "id": "notification_trigger",
+        "type": "link in",
+        "z": "be",
+        "name": "Trigger Notifications",
+        "links": [],
+        "x": 100,
+        "y": 100,
+        "wires": [
+            [
+                "notification_dispatcher"
+            ]
+        ]
+    },
+    {
+        "id": "notification_dispatcher",
+        "type": "function",
+        "z": "be",
+        "name": "Dispatch to Channels",
+        "func": "const pool = global.get('pool');\nif (!pool) return node.error(\"Database pool not found\");\n\nconst alarm = msg.payload || {};\nconst severity = alarm.severity || 'CRITICAL';\nconst message = alarm.message || 'Unknown Alarm';\nconst nodeId = alarm.node_id || 'Unknown Node';\n\nconst outTelegram = [];\nconst outGoogleChat = [];\nconst outEmail = [];\n\n(async () => {\n    // ดึงค่าการตั้งค่า Notification ของทุก User ในระบบ\n    const [prefsRows] = await pool.query(\"SELECT prefs FROM user_prefs\");\n    \n    for (const row of prefsRows) {\n        if (!row.prefs) continue;\n        const prefs = typeof row.prefs === 'string' ? JSON.parse(row.prefs) : row.prefs;\n        const channels = prefs.notificationChannels || [];\n        \n        for (const ch of channels) {\n            if (!ch.enabled || !ch.target) continue;\n            \n            const text = `🚨 [${severity}] Alarm from ${nodeId}:\\n${message}`;\n            \n            if (ch.id === 'telegram') {\n                // สำหรับ Telegram (ต้องมี Bot Token)\n                outTelegram.push({ \n                    payload: { \n                        chat_id: ch.target, \n                        text: text \n                    } \n                });\n            } else if (ch.id === 'googlechat') {\n                // สำหรับ Google Chat Webhook\n                outGoogleChat.push({ \n                    url: ch.target, \n                    method: 'POST', \n                    payload: { text: text } \n                });\n            } else if (ch.id === 'email') {\n                // สำหรับ Email\n                outEmail.push({ \n                    payload: text, \n                    topic: `⚠️ [${severity}] CCP Alarm: ${nodeId}`, \n                    to: ch.target \n                });\n            }\n        }\n    }\n    \n    // ส่งต่อออกไป 3 Outputs (Telegram, GoogleChat, Email)\n    node.send([ outTelegram, outGoogleChat, outEmail ]);\n})().catch(e => {\n    node.error(\"Notification Error: \" + e.message);\n});\nreturn null;",
+        "outputs": 3,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 280,
+        "y": 100,
+        "wires": [
+            [
+                "http_telegram"
+            ],
+            [
+                "http_googlechat"
+            ],
+            [
+                "email_out"
+            ]
+        ]
+    },
+    {
+        "id": "http_telegram",
+        "type": "http request",
+        "z": "be",
+        "name": "Send Telegram",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/sendMessage",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 520,
+        "y": 60,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "http_googlechat",
+        "type": "http request",
+        "z": "be",
+        "name": "Send Google Chat",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 530,
+        "y": 100,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "email_out",
+        "type": "e-mail",
+        "z": "be",
+        "name": "Send Email",
+        "server": "smtp.gmail.com",
+        "port": "465",
+        "secure": true,
+        "tls": true,
+        "dname": "",
+        "x": 510,
+        "y": 140,
+        "wires": []
+    }
+]
