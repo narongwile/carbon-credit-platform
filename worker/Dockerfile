@@ -10,5 +10,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /worker /worker
+EXPOSE 8080
 USER 65532:65532
 ENTRYPOINT ["/worker"]

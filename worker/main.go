@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -98,6 +99,10 @@ var (
 	statDropped  atomic.Int64
 	statErrors   atomic.Int64
 	statDevices  sync.Map // nodeId -> struct{}, distinct devices seen this window
+
+	startTime         = time.Now()
+	lastTelemetryUnix atomic.Int64
+	mqttConnected     atomic.Bool
 )
 
 var (
@@ -188,9 +193,11 @@ func main() {
 
 	// 3. Connect MQTT broker.
 	// Client id must be UNIQUE per instance — a duplicate id makes the broker kick
-	// the other connection, so replicas would flap. Default appends the hostname.
+	// the other connection, so replicas would flap. Append a random nonce to ensure uniqueness.
 	hostname, _ := os.Hostname()
-	clientID := getEnv("MQTT_CLIENT_ID", "oneops-ingest-worker-"+hostname)
+	baseClientID := getEnv("MQTT_CLIENT_ID", "oneops-ingest-worker-"+hostname)
+	clientID := fmt.Sprintf("%s-%04x", baseClientID, time.Now().UnixNano()&0xffff)
+
 	// Subscription topic is configurable so the same binary works on any broker:
 	//   • prod (EMQX, N replicas): "$share/ingest-worker/telemetry/#" — shared
 	//     subscription load-balances each message to exactly one worker.
@@ -209,25 +216,153 @@ func main() {
 		SetMaxReconnectInterval(30 * time.Second)
 
 	opts.OnConnect = func(c mqtt.Client) {
-		log.Printf("Connected to MQTT broker as %s; subscribing to %q", clientID, subTopic)
-		// Re-subscribes automatically on every (re)connect.
-		if token := c.Subscribe(subTopic, 1, handleTelemetry); token.Wait() && token.Error() != nil {
-			log.Printf("Subscribe error on %q: %v", subTopic, token.Error())
+		mqttConnected.Store(true)
+		log.Printf("[mqtt] Connected to MQTT broker as %s; subscribing to %q", clientID, subTopic)
+		// Re-subscribes automatically on every (re)connect with a 10s timeout to prevent hanging.
+		if token := c.Subscribe(subTopic, 1, handleTelemetry); token.WaitTimeout(10 * time.Second) {
+			if token.Error() != nil {
+				log.Printf("[mqtt] ERROR: Subscribe error on %q: %v", subTopic, token.Error())
+			} else {
+				log.Printf("[mqtt] Successfully subscribed to %q", subTopic)
+			}
+		} else {
+			log.Printf("[mqtt] WARN: Subscribe to %q timed out after 10s", subTopic)
 		}
 	}
-	opts.OnConnectionLost = func(c mqtt.Client, err error) { log.Printf("MQTT connection lost: %v (auto-reconnecting)", err) }
+	opts.OnConnectionLost = func(c mqtt.Client, err error) {
+		mqttConnected.Store(false)
+		log.Printf("[mqtt] Connection lost: %v (auto-reconnecting...)", err)
+	}
 
 	mqttClient = mqtt.NewClient(opts)
-	if token := mqttClient.Connect(); token.Wait() && token.Error() != nil {
+	if token := mqttClient.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
 		log.Fatalf("MQTT Connect Error: %v", token.Error())
 	}
 
+	// 4. Start HTTP health check server for Kubernetes liveness & readiness probes
+	healthPort := getEnv("HEALTH_PORT", "8080")
+	go startHealthServer(healthPort)
+
+	// 5. Start background watchdog & throughput monitor
+	go startMqttWatchdog(mqttClient, subTopic)
 	go heartbeatLoop()
 
 	log.Println("Worker started. Press Ctrl+C to exit.")
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
+}
+
+// startMqttWatchdog proactively detects and recovers from silent subscription loss
+// or deadlocked connections when the broker restarts or drops sessions without socket closure.
+func startMqttWatchdog(client mqtt.Client, subTopic string) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		connected := client != nil && client.IsConnected()
+		mqttConnected.Store(connected)
+
+		if !connected {
+			log.Println("[watchdog] MQTT disconnected; waiting for automatic reconnection...")
+			continue
+		}
+
+		lastMs := lastTelemetryUnix.Load()
+		if lastMs == 0 {
+			// No telemetry received yet since startup
+			if time.Since(startTime) > 2*time.Minute {
+				log.Printf("[watchdog] WARN: No telemetry received since startup (%s ago); re-verifying subscription on %q...",
+					time.Since(startTime).Round(time.Second), subTopic)
+				if token := client.Subscribe(subTopic, 1, handleTelemetry); token.WaitTimeout(5 * time.Second) {
+					if token.Error() != nil {
+						log.Printf("[watchdog] Re-subscription error on %q: %v", subTopic, token.Error())
+					} else {
+						log.Printf("[watchdog] Re-subscription confirmed on %q", subTopic)
+					}
+				}
+			}
+			continue
+		}
+
+		lastTime := time.Unix(lastMs, 0)
+		idle := time.Since(lastTime)
+		// If devices were publishing but nothing received for > 3 minutes while connected (silent drop)
+		if idle > 3*time.Minute {
+			log.Printf("[watchdog] WARN: No telemetry received for %s (silent subscription drop suspected); refreshing subscription on %q...",
+				idle.Round(time.Second), subTopic)
+			if token := client.Subscribe(subTopic, 1, handleTelemetry); token.WaitTimeout(5 * time.Second) {
+				if token.Error() != nil {
+					log.Printf("[watchdog] Re-subscription error: %v", token.Error())
+				} else {
+					log.Printf("[watchdog] Re-subscription refreshed successfully on %q", subTopic)
+				}
+			}
+		}
+	}
+}
+
+// startHealthServer serves Kubernetes liveness (/healthz) and readiness (/readyz) probes.
+func startHealthServer(port string) {
+	mux := http.NewServeMux()
+
+	// Liveness probe: verifies process responsiveness & MQTT connection status
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		connected := mqttClient != nil && mqttClient.IsConnected()
+		// Allow 1 minute grace period on startup before declaring unhealthy
+		if !connected && time.Since(startTime) > 1*time.Minute {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]any{
+				"status":         "unhealthy",
+				"mqtt_connected": false,
+				"uptime":         time.Since(startTime).Round(time.Second).String(),
+			})
+			return
+		}
+
+		lastMs := lastTelemetryUnix.Load()
+		lastAge := "never"
+		if lastMs > 0 {
+			lastAge = time.Since(time.Unix(lastMs, 0)).Round(time.Second).String()
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":         "ok",
+			"mqtt_connected": connected,
+			"last_telemetry": lastAge,
+			"uptime":         time.Since(startTime).Round(time.Second).String(),
+		})
+	})
+
+	// Readiness probe: verifies control database ping & broker readiness
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if controlDB == nil || controlDB.Ping() != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("database not reachable"))
+			return
+		}
+		if mqttClient != nil && !mqttClient.IsConnected() && time.Since(startTime) > 30*time.Second {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("mqtt not connected"))
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ready"))
+	})
+
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	}
+
+	log.Printf("[health] Health server listening on :%s (/healthz, /readyz)", port)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("[health] Health server error: %v", err)
+	}
 }
 
 // heartbeatLoop prints one line per window so an operator can tell a healthy but
@@ -237,8 +372,14 @@ func heartbeatLoop() {
 	for range time.Tick(window) {
 		devices := 0
 		statDevices.Range(func(k, _ any) bool { devices++; statDevices.Delete(k); return true })
-		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d device(s)",
-			window, statReadings.Swap(0), statPresence.Swap(0), statDropped.Swap(0), statErrors.Swap(0), devices)
+		lastMs := lastTelemetryUnix.Load()
+		lastAge := "never"
+		if lastMs > 0 {
+			lastAge = time.Since(time.Unix(lastMs, 0)).Round(time.Second).String()
+		}
+		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d device(s) [mqtt_connected=%v, last_telemetry=%s]",
+			window, statReadings.Swap(0), statPresence.Swap(0), statDropped.Swap(0), statErrors.Swap(0), devices,
+			mqttClient != nil && mqttClient.IsConnected(), lastAge)
 	}
 }
 
@@ -763,6 +904,8 @@ func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t Tele
 }
 
 func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
+	lastTelemetryUnix.Store(time.Now().Unix())
+	mqttConnected.Store(true)
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Recovered in handleTelemetry: %v", r)

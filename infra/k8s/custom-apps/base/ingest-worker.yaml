@@ -47,7 +47,7 @@ spec:
         # secretKeyRef do NOT restart pods on Secret updates). db-iothub-2: switched
         # DB creds to component env (DB_PASSWORD from mysql-credentials) after the
         # hardcoded root password gave "Access denied for user 'root'".
-        checksum/secrets: "db-iothub-2"
+        checksum/secrets: "v2-watchdog-1"
     spec:
       securityContext:
         runAsNonRoot: true
@@ -55,7 +55,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: worker
-          image: registry.gitlab.com/narongwile/carbon-credit-platform/ingest-worker:c16a369e
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/ingest-worker:v2-watchdog
           imagePullPolicy: Always
           env:
             - name: TZ
@@ -93,6 +93,27 @@ spec:
             # Unique client id per pod so replicas never kick each other.
             - name: MQTT_CLIENT_ID
               valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: HEALTH_PORT
+              value: "8080"
+          ports:
+            - name: health
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 2
           envFrom:
             # optional so a missing secret can never wedge the pod in
             # CreateContainerConfigError again (worker falls back to env defaults).
