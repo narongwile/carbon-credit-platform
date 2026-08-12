@@ -210,10 +210,13 @@ func main() {
 		SetUsername(getEnv("MQTT_USER", "admin")).
 		SetPassword(getEnv("MQTT_PASS", "public")).
 		SetKeepAlive(30 * time.Second).
+		SetPingTimeout(10 * time.Second).
+		SetWriteTimeout(10 * time.Second).
 		SetAutoReconnect(true). // survive broker restarts
 		SetConnectRetry(true).  // keep trying if the broker isn't up yet at boot
-		SetConnectRetryInterval(5 * time.Second).
-		SetMaxReconnectInterval(30 * time.Second)
+		SetConnectRetryInterval(3 * time.Second).
+		SetMaxReconnectInterval(10 * time.Second).
+		SetResumeSubs(true) // crucial: enables queuing/resuming subscriptions on reconnect
 
 	opts.OnConnect = func(c mqtt.Client) {
 		mqttConnected.Store(true)
@@ -258,13 +261,26 @@ func main() {
 func startMqttWatchdog(client mqtt.Client, subTopic string) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	subErrCount := 0
 
 	for range ticker.C {
 		connected := client != nil && client.IsConnected()
 		mqttConnected.Store(connected)
 
 		if !connected {
-			log.Println("[watchdog] MQTT disconnected; waiting for automatic reconnection...")
+			subErrCount++
+			log.Printf("[watchdog] MQTT disconnected (tick %d); waiting for automatic reconnection...", subErrCount)
+			if subErrCount >= 4 { // > 2 minutes disconnected
+				log.Println("[watchdog] Persistent disconnect detected. Forcing clean reconnect cycle...")
+				client.Disconnect(250)
+				time.Sleep(500 * time.Millisecond)
+				if token := client.Connect(); token.WaitTimeout(10*time.Second) && token.Error() != nil {
+					log.Printf("[watchdog] Force reconnect failed: %v", token.Error())
+				} else {
+					log.Println("[watchdog] Force reconnect succeeded")
+					subErrCount = 0
+				}
+			}
 			continue
 		}
 
@@ -277,8 +293,17 @@ func startMqttWatchdog(client mqtt.Client, subTopic string) {
 				if token := client.Subscribe(subTopic, 1, handleTelemetry); token.WaitTimeout(5 * time.Second) {
 					if token.Error() != nil {
 						log.Printf("[watchdog] Re-subscription error on %q: %v", subTopic, token.Error())
+						subErrCount++
+						if subErrCount >= 2 {
+							log.Println("[watchdog] Re-subscription failed repeatedly. Forcing clean reconnect cycle...")
+							client.Disconnect(250)
+							time.Sleep(500 * time.Millisecond)
+							client.Connect()
+							subErrCount = 0
+						}
 					} else {
 						log.Printf("[watchdog] Re-subscription confirmed on %q", subTopic)
+						subErrCount = 0
 					}
 				}
 			}
@@ -294,8 +319,17 @@ func startMqttWatchdog(client mqtt.Client, subTopic string) {
 			if token := client.Subscribe(subTopic, 1, handleTelemetry); token.WaitTimeout(5 * time.Second) {
 				if token.Error() != nil {
 					log.Printf("[watchdog] Re-subscription error: %v", token.Error())
+					subErrCount++
+					if subErrCount >= 2 {
+						log.Println("[watchdog] Re-subscription error limit reached. Forcing clean reconnect cycle...")
+						client.Disconnect(250)
+						time.Sleep(500 * time.Millisecond)
+						client.Connect()
+						subErrCount = 0
+					}
 				} else {
 					log.Printf("[watchdog] Re-subscription refreshed successfully on %q", subTopic)
+					subErrCount = 0
 				}
 			}
 		}
@@ -306,21 +340,49 @@ func startMqttWatchdog(client mqtt.Client, subTopic string) {
 func startHealthServer(port string) {
 	mux := http.NewServeMux()
 
-	// Liveness probe: verifies process responsiveness & MQTT connection status
+	// Liveness probe: verifies process responsiveness & active telemetry flow.
+	// If the worker has received NO telemetry for > 5 minutes (and running > 3 minutes),
+	// it reports 503 so Kubernetes automatically restarts the pod (Self-Healing).
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		connected := mqttClient != nil && mqttClient.IsConnected()
-		// Allow 1 minute grace period on startup before declaring unhealthy
-		if !connected && time.Since(startTime) > 1*time.Minute {
+		lastMs := lastTelemetryUnix.Load()
+		uptime := time.Since(startTime)
+
+		// 1. Check if completely disconnected for > 1 minute
+		if !connected && uptime > 1*time.Minute {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]any{
 				"status":         "unhealthy",
+				"reason":         "mqtt_disconnected",
 				"mqtt_connected": false,
-				"uptime":         time.Since(startTime).Round(time.Second).String(),
+				"uptime":         uptime.Round(time.Second).String(),
 			})
 			return
 		}
 
-		lastMs := lastTelemetryUnix.Load()
+		// 2. Check for stale telemetry (silent deadlock / stalled subscription)
+		if uptime > 3*time.Minute {
+			var idle time.Duration
+			if lastMs == 0 {
+				idle = uptime
+			} else {
+				idle = time.Since(time.Unix(lastMs, 0))
+			}
+
+			// If no telemetry received for > 5 minutes, declare pod unhealthy for K8s restart
+			if idle > 5*time.Minute {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]any{
+					"status":         "unhealthy",
+					"reason":         "stale_telemetry",
+					"idle_duration":  idle.Round(time.Second).String(),
+					"mqtt_connected": connected,
+					"uptime":         uptime.Round(time.Second).String(),
+				})
+				return
+			}
+		}
+
 		lastAge := "never"
 		if lastMs > 0 {
 			lastAge = time.Since(time.Unix(lastMs, 0)).Round(time.Second).String()
@@ -332,7 +394,7 @@ func startHealthServer(port string) {
 			"status":         "ok",
 			"mqtt_connected": connected,
 			"last_telemetry": lastAge,
-			"uptime":         time.Since(startTime).Round(time.Second).String(),
+			"uptime":         uptime.Round(time.Second).String(),
 		})
 	})
 

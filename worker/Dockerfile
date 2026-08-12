@@ -2,9 +2,9 @@
 # matches the Deployment securityContext (runAsNonRoot + readOnlyRootFilesystem).
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
-COPY go.mod go.sum ./
-RUN go mod download
+COPY go.mod ./
 COPY *.go ./
+RUN go mod tidy
 # CGO off → fully static binary that runs on distroless/static.
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /worker .
 
