@@ -503,6 +503,118 @@ global.set('notifyConfig', async function(){
   global.set('__notifyCfg', { val, exp: Date.now()+60000 });
   return val;
 });
+
+// Notify Org Admins when a new user self-registers and is pending approval
+global.set('notifyAdminNewUser', async function(pool, orgId, newUser){
+  try {
+    const [admins] = await pool.query("SELECT email, name FROM users WHERE org_id=? AND role='admin' AND email IS NOT NULL", [orgId]);
+    const mc = await global.get('mailConfig')();
+    const nc = await global.get('notifyConfig')();
+    const frontendUrl = mc.frontendUrl || 'https://iiotplatform.thermexpertise.com';
+    const approveUrl = (frontendUrl.replace(/\\/+$/,'') + '/admin/users/?tab=users');
+    
+    const subject = '🔔 [Action Required] New User Registration Pending Approval: ' + newUser.name;
+    const text = 'Hello Admin,\\n\\nA new user has registered for organization "' + orgId + '" and is pending your approval:\\n\\n' +
+      '• Name: ' + newUser.name + '\\n' +
+      '• Email: ' + newUser.email + '\\n' +
+      '• Phone: ' + (newUser.phone || '—') + '\\n' +
+      '• Role Requested: Viewer\\n\\n' +
+      'Please sign in to approve this user and assign them to departments:\\n' +
+      approveUrl + '\\n\\n' +
+      'Thanks,\\nONEOPS System';
+
+    const html = '<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #1e293b;">' +
+      '<h2 style="color: #6366f1; margin-top: 0;">🔔 New User Registration Pending Approval</h2>' +
+      '<p>A new user has registered for organization <strong style="color: #a5b4fc;">' + orgId + '</strong> and requires admin review:</p>' +
+      '<table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #1e293b; border-radius: 8px; overflow: hidden;">' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8; width: 140px;">Name</td><td style="padding: 10px 16px; font-weight: bold; color: #ffffff;">' + newUser.name + '</td></tr>' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8;">Email</td><td style="padding: 10px 16px; color: #ffffff;">' + newUser.email + '</td></tr>' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8;">Phone</td><td style="padding: 10px 16px; color: #ffffff;">' + (newUser.phone || '—') + '</td></tr>' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8;">Requested Role</td><td style="padding: 10px 16px; color: #4ade80;">Viewer</td></tr>' +
+      '</table>' +
+      '<p style="margin: 24px 0 12px;"><a href="' + approveUrl + '" style="background: #6366f1; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; display: inline-block;">Review & Approve in User Management →</a></p>' +
+      '<p style="font-size: 12px; color: #64748b; margin-top: 24px;">ONEOPS Industrial Platform</p>' +
+      '</div>';
+
+    if (mc.transport && admins.length) {
+      for (const adm of admins) {
+        if (adm.email) await mc.transport.sendMail({ from: mc.from, to: adm.email, subject, text, html }).catch(()=>{});
+      }
+    }
+
+    const tgToken = nc && nc.telegramToken;
+    const tgChat = nc && nc.telegramChatId;
+    if (tgToken && tgChat) {
+      const tgMsg = '🔔 <b>New User Pending Approval</b>\\n' +
+        'Organization: <code>' + orgId + '</code>\\n' +
+        'Name: <b>' + newUser.name + '</b>\\n' +
+        'Email: <code>' + newUser.email + '</code>\\n' +
+        'Phone: ' + (newUser.phone || '—') + '\\n\\n' +
+        '<a href=\"' + approveUrl + '\">Open User Management to Approve</a>';
+      await fetch('https://api.telegram.org/bot' + tgToken + '/sendMessage', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: tgChat, text: tgMsg, parse_mode: 'HTML' })
+      }).catch(()=>{});
+    }
+  } catch (err) {
+    node.warn('notifyAdminNewUser failed: ' + err.message);
+  }
+});
+
+// Notify User when their account is activated/approved by Admin or created manually
+global.set('notifyUserActivated', async function(pool, orgId, user, deptNames){
+  try {
+    if (!user || !user.email) return;
+    const mc = await global.get('mailConfig')();
+    const nc = await global.get('notifyConfig')();
+    const frontendUrl = mc.frontendUrl || 'https://iiotplatform.thermexpertise.com';
+    const loginUrl = (frontendUrl.replace(/\\/+$/,'') + '/');
+    
+    const subject = '🎉 Welcome to ONEOPS — Your Account is Active!';
+    const text = 'Hello ' + user.name + ',\\n\\n' +
+      'Your account for organization "' + orgId + '" has been activated!\\n\\n' +
+      '• Role: ' + (user.role || 'viewer') + '\\n' +
+      '• Department: ' + (deptNames || 'General') + '\\n' +
+      '• Login Portal: ' + loginUrl + '\\n' +
+      '• Username / Email: ' + (user.email || user.username) + '\\n\\n' +
+      'You can now sign in to view your organization dashboard and devices.\\n\\n' +
+      'Best regards,\\n' + orgId + ' Administration Team';
+
+    const html = '<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #1e293b;">' +
+      '<h2 style="color: #4ade80; margin-top: 0;">🎉 Welcome! Your Account is Active</h2>' +
+      '<p>Hello <strong>' + user.name + '</strong>,</p>' +
+      '<p>Your account for organization <strong style="color: #a5b4fc;">' + orgId + '</strong> has been approved and activated by an administrator.</p>' +
+      '<table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #1e293b; border-radius: 8px; overflow: hidden;">' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8; width: 140px;">Role</td><td style="padding: 10px 16px; font-weight: bold; color: #ffffff;">' + (user.role || 'viewer') + '</td></tr>' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8;">Department</td><td style="padding: 10px 16px; color: #ffffff;">' + (deptNames || 'General') + '</td></tr>' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8;">Sign-in ID</td><td style="padding: 10px 16px; color: #ffffff;">' + (user.email || user.username) + '</td></tr>' +
+      '</table>' +
+      '<p style="margin: 24px 0 12px;"><a href="' + loginUrl + '" style="background: #4ade80; color: #0f172a; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; display: inline-block;">Sign In to Dashboard →</a></p>' +
+      '<p style="font-size: 12px; color: #64748b; margin-top: 24px;">ONEOPS Industrial Platform</p>' +
+      '</div>';
+
+    if (mc.transport && user.email) {
+      await mc.transport.sendMail({ from: mc.from, to: user.email, subject, text, html }).catch(()=>{});
+    }
+
+    const tgToken = nc && nc.telegramToken;
+    const tgChat = nc && nc.telegramChatId;
+    if (tgToken && tgChat) {
+      const tgMsg = '🎉 <b>User Account Activated</b>\\n' +
+        'Organization: <code>' + orgId + '</code>\\n' +
+        'User: <b>' + user.name + '</b> (' + (user.email || '') + ')\\n' +
+        'Role: ' + (user.role || 'viewer') + '\\n' +
+        'Department: ' + (deptNames || 'General');
+      await fetch('https://api.telegram.org/bot' + tgToken + '/sendMessage', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: tgChat, text: tgMsg, parse_mode: 'HTML' })
+      }).catch(()=>{});
+    }
+  } catch (err) {
+    node.warn('notifyUserActivated failed: ' + err.message);
+  }
+});
+
 node.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');
 `
 
@@ -524,7 +636,7 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
   }
   const reqOrg = b.orgId || hostOrg;
 
-  let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=?)";
+  let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,u.status AS user_status,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=?)";
   let userArgs = [ident, ident];
   if (reqOrg) {
     userQuery += " AND (u.org_id=? OR u.role='superadmin')";
@@ -542,6 +654,16 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
     node.send(msg);return;
   }
   if(u[0].status==='suspended'){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is suspended'};node.send(msg);return;}
+  if(u[0].user_status==='pending'){
+    msg.headers=__CORS;msg.statusCode=403;
+    msg.payload={error:'Your account is pending administrator approval. Please wait for an administrator to activate your account.'};
+    node.send(msg);return;
+  }
+  if(u[0].user_status==='rejected'||u[0].user_status==='disabled'){
+    msg.headers=__CORS;msg.statusCode=403;
+    msg.payload={error:'Your account is disabled or was not approved.'};
+    node.send(msg);return;
+  }
   delete rl[ip]; global.set('loginRL',rl);
   const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};
   const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
@@ -551,7 +673,7 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
 const registerFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
 if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'missing fields'};return msg;}
 (async()=>{
-  let orgId = null, role = 'admin', deptId = null;
+  let orgId = null, role = 'admin', deptId = null, userStatus = 'active';
   const phone = b.phone ? b.phone.replace(/[^0-9+]/g, '') : '';
 
   // Extract host-derived subdomain org if present
@@ -564,6 +686,28 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
   }
   const targetOrg = b.orgId || hostOrg;
 
+  // 1. Check existing accounts in users table for duplicates
+  const dupQ = []; const dupArgs = [];
+  if (b.email) { dupQ.push("LOWER(email)=LOWER(?)"); dupArgs.push(b.email.trim()); }
+  if (phone) { dupQ.push("(phone IS NOT NULL AND phone=? AND phone<>'')"); dupArgs.push(phone); }
+  if (b.name) { dupQ.push("LOWER(name)=LOWER(?)"); dupArgs.push(b.name.trim()); }
+  if (dupQ.length) {
+    const [dups] = await pool.query("SELECT email, phone, name FROM users WHERE " + dupQ.join(" OR "), dupArgs);
+    if (dups.length > 0) {
+      const match = dups[0];
+      msg.headers = __CORS; msg.statusCode = 409;
+      if (match.email && b.email && match.email.toLowerCase() === b.email.trim().toLowerCase()) {
+        msg.payload = { error: 'An account with this email address already exists. Please sign in or reset your password.' };
+      } else if (match.phone && phone && match.phone === phone) {
+        msg.payload = { error: 'An account with this phone number already exists.' };
+      } else {
+        msg.payload = { error: 'An account with this name already exists. Please use a distinct username/name.' };
+      }
+      node.send(msg); return;
+    }
+  }
+
+  // 2. Search employee directory
   const searchQ = []; const searchArgs = [];
   if (b.email) { searchQ.push("email=?"); searchArgs.push(b.email); }
   if (phone) { searchQ.push("phone=?"); searchArgs.push(phone); }
@@ -574,16 +718,17 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
       let best = matches.find(m => m.email && m.email.toLowerCase() === b.email.toLowerCase());
       if (!best && phone) best = matches.find(m => m.phone === phone);
       if (!best && b.name) best = matches.find(m => m.name && m.name.toLowerCase() === b.name.toLowerCase());
-      if (best) { orgId = best.org_id; deptId = best.department_id; role = 'viewer'; }
+      if (best) { orgId = best.org_id; deptId = best.department_id; role = 'viewer'; userStatus = 'pending'; }
     }
   }
 
-  // If explicit orgId/subdomain was provided (from subdomain /register or ?org=org-1)
+  // If explicit orgId/subdomain was provided (joining specific org as Viewer)
   if (!orgId && targetOrg) {
     const [orgCheck] = await pool.query("SELECT id FROM organizations WHERE id=?", [targetOrg]);
     if (orgCheck.length > 0) {
       orgId = orgCheck[0].id;
-      role = 'viewer'; // Registered user joining via specific org gets viewer role
+      role = 'viewer';
+      userStatus = 'pending'; // Requires Admin approval before login
     }
   }
 
@@ -593,6 +738,8 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
     orgId = await global.get('makeOrgId')(pool, orgName);
     await pool.query("INSERT INTO organizations (id, name, status) VALUES (?, ?, 'active')", [orgId, orgName]);
     await pool.query("INSERT INTO org_entitlements (org_id, platform) VALUES (?, 'eternityTransformers') ON DUPLICATE KEY UPDATE platform=platform", [orgId]);
+    role = 'admin';
+    userStatus = 'active';
     const murl=env.get('MIGRATE_URL');
     if(murl){ 
       try{ 
@@ -619,21 +766,43 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
 
   const hash = await bcrypt.hash(b.password, 10);
   const userId = 'u-'+Date.now();
-  await pool.query("INSERT INTO users (id,org_id,department_id,email,phone,name,role,password_hash) VALUES (?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, hash]);
+  try {
+    await pool.query("INSERT INTO users (id,org_id,department_id,email,phone,name,role,status,password_hash) VALUES (?,?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, userStatus, hash]);
+  } catch(colErr) {
+    // If status column not yet migrated, fall back gracefully
+    await pool.query("INSERT INTO users (id,org_id,department_id,email,phone,name,role,password_hash) VALUES (?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, hash]);
+  }
+
+  // If user is pending approval, notify the Organization's Admin(s) via Email & Telegram
+  if (userStatus === 'pending') {
+    global.get('notifyAdminNewUser')(pool, orgId, { name: b.name, email: b.email, phone });
+  }
 
   // If tenant DB mode is on or tenant DB exists, record user in tenant DB as well
   if (global.get('tenantMode') && orgId && orgId !== 'org-1' && orgId !== 'org-2' && orgId !== 'org-3') {
     const tenantDb = global.get('orgDbName')(orgId);
     if (tenantDb) {
       try {
-        await pool.query("INSERT IGNORE INTO " + tenantDb + ".users (id,org_id,department_id,email,phone,name,role,password_hash) VALUES (?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, hash]);
+        await pool.query("INSERT IGNORE INTO " + tenantDb + ".users (id,org_id,department_id,email,phone,name,role,status,password_hash) VALUES (?,?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, userStatus, hash]);
       } catch (copyUserErr) {
         node.warn('Failed to insert user into tenant db ' + tenantDb + ': ' + copyUserErr.message);
       }
     }
   }
 
-  msg.headers=__CORS; msg.payload={ok:true, userId, orgId, role, provisioned}; node.send(msg);
+  msg.headers=__CORS;
+  msg.payload={
+    ok: true,
+    pending: userStatus === 'pending',
+    userId,
+    orgId,
+    role,
+    provisioned,
+    message: userStatus === 'pending'
+      ? 'Registration submitted! Your account is pending administrator approval before you can sign in.'
+      : 'Account created successfully!'
+  };
+  node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const forgotFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
@@ -4651,40 +4820,41 @@ const deptDelFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}
   msg.headers=__CORS; msg.payload={ok:true, detachedUsers:(cnt[0]||{}).n||0}; node.send(msg);})()` + bbErr
 const usrListFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId;
 (async()=>{let r;
-  // Same optional-column dance as the insert: the list must not 500 while
-  // migrate-v22 is still pending.
-  try{ const[x]=await pool.query("SELECT id,org_id,email,username,name,role,department_id FROM users WHERE org_id=? ORDER BY name",[orgId]); r=x;
+  try{ const[x]=await pool.query("SELECT id,org_id,email,username,name,role,department_id,COALESCE(status,'active') AS status FROM users WHERE org_id=? ORDER BY (status='pending') DESC, name",[orgId]); r=x;
        try{ const[m]=await pool.query("SELECT ud.user_id,ud.department_id FROM user_departments ud JOIN users u ON u.id=ud.user_id WHERE u.org_id=?",[orgId]);
             const by={}; for(const x2 of m){ (by[x2.user_id]=by[x2.user_id]||[]).push(x2.department_id); }
             for(const row of r) row.department_ids = by[row.id] || (row.department_id?[row.department_id]:[]);
        }catch(e){ if(String(e&&e.message||'').indexOf('user_departments')<0) throw e;
             for(const row of r) row.department_ids = row.department_id?[row.department_id]:[]; } }
-  catch(e){ if(String(e&&e.message||'').indexOf('username')<0) throw e; const[x]=await pool.query("SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=? ORDER BY name",[orgId]); r=x; }
+  catch(e){
+    try{ const[x]=await pool.query("SELECT id,org_id,email,username,name,role,department_id FROM users WHERE org_id=? ORDER BY name",[orgId]); r=x; }
+    catch(e2){ const[x]=await pool.query("SELECT id,org_id,email,name,role,department_id FROM users WHERE org_id=? ORDER BY name",[orgId]); r=x; }
+    for(const row of r) { row.status = row.status || 'active'; row.department_ids = row.department_id?[row.department_id]:[]; }
+  }
   msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
 const usrPostFunc = CORS + `const pool=global.get('pool'); const orgId=msg.req.params.orgId; const b=msg.payload||{};
 if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name required'};return msg;}
 (async()=>{const id=b.id||'u-'+Date.now();
   const uname=(b.username||'').trim()||null;
-  // An admin-created user had no way to get a password: the row went in with a
-  // NULL password_hash, and login refuses those — so every new account needed a
-  // hash written into the table by hand before anyone could sign in.
   if(b.password!==undefined && b.password!==null && String(b.password)!=='' && String(b.password).length<8){
     msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'password too short (min 8)'};node.send(msg);return;
   }
-  // Unique per org — report the clash rather than letting the index throw a 500
-  // the form cannot explain.
   if(uname){
     const[dup]=await pool.query("SELECT id FROM users WHERE org_id=? AND username=? AND id<>?",[orgId,uname,id]);
     if(dup.length){msg.headers=__CORS;msg.statusCode=409;msg.payload={error:'that username is already taken in this organization'};node.send(msg);return;}
   }
+
+  let prevUser = null;
+  try {
+    const [prev] = await pool.query("SELECT id, status, email, name, role FROM users WHERE id=?", [id]);
+    if (prev.length) prevUser = prev[0];
+  } catch(e) {}
+
+  const targetStatus = b.status || 'active';
+
   try{
-    await pool.query("INSERT INTO users (id,org_id,email,username,name,role,department_id) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),username=VALUES(username),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id)",[id,orgId,b.email||null,uname,b.name,b.role||'viewer',b.departmentId||null]);
-    // Written separately so EDITING a user and leaving the password blank keeps
-    // the existing one rather than clearing it.
+    await pool.query("INSERT INTO users (id,org_id,email,username,name,role,department_id,status) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),username=VALUES(username),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id),status=VALUES(status)",[id,orgId,b.email||null,uname,b.name,b.role||'viewer',b.departmentId||null,targetStatus]);
     if(b.password){ await pool.query("UPDATE users SET password_hash=? WHERE id=?",[await bcrypt.hash(String(b.password),10), id]); }
-    // The form has always been a multi-select; only the first pick used to be
-    // stored. Replace the whole set, and keep users.department_id mirroring the
-    // first so anything still reading the column stays consistent.
     if(Array.isArray(b.departmentIds)){
       try{
         await pool.query("DELETE FROM user_departments WHERE user_id=?",[id]);
@@ -4693,13 +4863,24 @@ if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name requi
       }catch(e){ if(String(e&&e.message||'').indexOf('user_departments')<0) throw e; node.warn('users: user_departments missing (migrate-v25 not applied) — kept the first department only'); }
     }
   }catch(e){
-    // users.username arrives with migrate-v22; keep creating users on the older
-    // shape instead of failing the whole form until the migration lands.
-    if(String(e&&e.message||'').indexOf('username')<0) throw e;
-    node.warn('users: username column missing (migrate-v22 not applied yet) — saving '+id+' without it');
-    await pool.query("INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id)",[id,orgId,b.email||null,b.name,b.role||'viewer',b.departmentId||null]);
+    if(String(e&&e.message||'').indexOf('status')>=0 || String(e&&e.message||'').indexOf('username')>=0) {
+      await pool.query("INSERT INTO users (id,org_id,email,name,role,department_id) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE email=VALUES(email),name=VALUES(name),role=VALUES(role),department_id=VALUES(department_id)",[id,orgId,b.email||null,b.name,b.role||'viewer',b.departmentId||null]);
+    } else throw e;
   }
-  msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+
+  const isNewlyActivated = (!prevUser && targetStatus === 'active') || (prevUser && prevUser.status === 'pending' && targetStatus === 'active');
+  if (isNewlyActivated && b.email) {
+    let deptNamesStr = '';
+    if (Array.isArray(b.departmentIds) && b.departmentIds.length) {
+      try {
+        const [drows] = await pool.query("SELECT name FROM departments WHERE id IN (?)", [b.departmentIds]);
+        deptNamesStr = drows.map(d=>d.name).join(', ');
+      } catch(e) {}
+    }
+    global.get('notifyUserActivated')(pool, orgId, { name: b.name, email: b.email, username: uname, role: b.role||'viewer' }, deptNamesStr);
+  }
+
+  msg.headers=__CORS; msg.payload={ok:true,id,status:targetStatus}; node.send(msg);})()` + bbErr
 const usrDelFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const id=msg.req.params.id;
 (async()=>{const chk=await global.get('ownOrg')(au,pool,"SELECT org_id FROM users WHERE id=?",[id]); if(!chk.ok){msg.headers=__CORS;msg.statusCode=chk.code;msg.payload={error:chk.error};node.send(msg);return;}
   await pool.query("DELETE FROM users WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr

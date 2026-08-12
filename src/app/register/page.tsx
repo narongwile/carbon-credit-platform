@@ -53,9 +53,12 @@ export default function RegisterPage() {
       if (!r || (r as any).error) throw new Error((r as any)?.error || 'Registration failed')
       const targetOrg = (r as any).orgId || orgId
       if (targetOrg) setCreatedOrgId(targetOrg)
+      const isPending = !!(r as any).pending
       setDone(true)
       toast.success(
-        orgId
+        isPending
+          ? `Registration submitted! Awaiting administrator approval.`
+          : orgId
           ? `Account created — assigned to ${orgId} as Viewer!`
           : `Organization ${targetOrg || 'workspace'} & Admin account created successfully!`
       )
@@ -106,13 +109,15 @@ export default function RegisterPage() {
                 <CheckCircle2 size={34} className="text-green-400" />
               </div>
               <h3 className="text-lg font-bold text-white">
-                {orgId ? 'Registration submitted' : 'Workspace Created!'}
+                {orgId ? 'Registration Submitted — Pending Approval' : 'Workspace Created!'}
               </h3>
               <p className="text-sm text-slate-400 mt-2">
                 {orgId ? (
                   <>
-                    Your account request for <span className="text-white">{form.username}</span> has been created for{' '}
-                    <span className="text-indigo-400 font-semibold">{orgId}</span>. An admin will activate it shortly.
+                    Your registration for <span className="text-white font-medium">{form.username}</span> ({form.email}) has been submitted to{' '}
+                    <span className="text-indigo-400 font-semibold">{orgId}</span> administrators.
+                    <br /><br />
+                    Once an admin reviews and approves your account, you will receive an activation email & notification.
                   </>
                 ) : (
                   <>
