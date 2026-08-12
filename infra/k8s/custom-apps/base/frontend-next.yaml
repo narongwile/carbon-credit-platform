@@ -78,8 +78,18 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-  # UAT Root Platform & Wildcard Tenant Subdomains (*.27.254.143.144.nip.io)
+  # UAT Root Platform & Wildcard Tenant Subdomains
   - host: iiotplatform.27.254.143.144.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-next
+            port:
+              number: 80
+  - host: "*.iiotplatform.27.254.143.144.nip.io"
     http:
       paths:
       - path: /
@@ -99,8 +109,18 @@ spec:
             name: frontend-next
             port:
               number: 80
-  # Production Root Platform & Wildcard Tenant Subdomains (*.thermexpertise.com)
+  # Production Root Platform & Wildcard Tenant Subdomains
   - host: iiotplatform.thermexpertise.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend-next
+            port:
+              number: 80
+  - host: "*.iiotplatform.thermexpertise.com"
     http:
       paths:
       - path: /
@@ -123,7 +143,9 @@ spec:
   tls:
   - hosts:
     - iiotplatform.thermexpertise.com
+    - "*.iiotplatform.thermexpertise.com"
     - "*.thermexpertise.com"
     - iiotplatform.27.254.143.144.nip.io
+    - "*.iiotplatform.27.254.143.144.nip.io"
     - "*.27.254.143.144.nip.io"
     secretName: frontend-next-tls

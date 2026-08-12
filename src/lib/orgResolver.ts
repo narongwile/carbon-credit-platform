@@ -55,18 +55,21 @@ export function getOrgWorkspaceUrl(orgId: string, path = '/'): string {
   const port = window.location.port ? `:${window.location.port}` : ''
   const protocol = window.location.protocol
 
-  // If already on nip.io: "org-1.27.254.143.144.nip.io"
+  // If already on nip.io: e.g. "iiotplatform.27.254.143.144.nip.io" or "org-1.iiotplatform.27.254.143.144.nip.io"
   if (host.includes('nip.io')) {
     const nipParts = host.split('.nip.io')[0].split('.')
     const ipParts = nipParts.filter(p => /^\d+$/.test(p))
     if (ipParts.length === 4) {
       const ip = ipParts.join('.')
-      return `${protocol}//${orgId}.${ip}.nip.io${port}${path}`
+      return `${protocol}//${orgId}.iiotplatform.${ip}.nip.io${port}${path}`
     }
   }
 
   // If on production domain: "iiotplatform.thermexpertise.com" or "xxx.thermexpertise.com"
   if (host.includes('thermexpertise.com')) {
+    if (host.includes('iiotplatform.')) {
+      return `${protocol}//${orgId}.iiotplatform.thermexpertise.com${port}${path}`
+    }
     return `${protocol}//${orgId}.thermexpertise.com${port}${path}`
   }
 
