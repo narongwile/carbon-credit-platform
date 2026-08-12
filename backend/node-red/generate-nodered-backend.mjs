@@ -511,24 +511,59 @@ const loginFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{}
 const ip=((msg.req.headers['x-forwarded-for']||'').split(',')[0].trim())||(msg.req.ip)||'unknown';
 const rl=global.get('loginRL')||{}; const max=Number(env.get('LOGIN_MAX_ATTEMPTS')||10); const win=Number(env.get('LOGIN_WINDOW_MIN')||15)*60000; const now=Date.now(); const rec=rl[ip];
 if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;msg.payload={error:'too many login attempts — try again later'};return msg;}
-// The login form's first field is labelled "Username" but has always been sent
-// as \`email\`, and resolution was strictly by email — so a user whose admin gave
-// them a username could not sign in with it. Accept either identifier; the
-// column is unique per org, and an exact email match still wins.
-(async()=>{const ident=String(b.email||b.username||'');
-  const[u]=await pool.query("SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE u.email=? OR u.username=? ORDER BY (u.email=?) DESC LIMIT 1",[ident,ident,ident]);
-  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){rl[ip]=(!rec||now>rec.resetAt)?{n:1,resetAt:now+win}:{n:rec.n+1,resetAt:rec.resetAt}; global.set('loginRL',rl); msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'invalid credentials'};node.send(msg);return;}
+
+(async()=>{
+  const ident=String(b.email||b.username||'');
+  // Detect organization scope from request payload or Host header subdomain
+  const hostHeader = (msg.req.headers['host'] || '').split(':')[0].toLowerCase();
+  const hostParts = hostHeader.split('.');
+  let hostOrg = null;
+  const genericHosts = ['iiotplatform', 'www', 'app', 'dashboard', 'localhost', 'nodered', 'argocd', 'grafana', 'emqx', 'pma', 'api', 'admin'];
+  if (hostParts.length >= 2 && !genericHosts.includes(hostParts[0]) && !/^\\d+$/.test(hostParts[0])) {
+    hostOrg = hostParts[0];
+  }
+  const reqOrg = b.orgId || hostOrg;
+
+  let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=?)";
+  let userArgs = [ident, ident];
+  if (reqOrg) {
+    userQuery += " AND (u.org_id=? OR u.role='superadmin')";
+    userArgs.push(reqOrg);
+  }
+  userQuery += " ORDER BY (u.email=?) DESC LIMIT 1";
+  userArgs.push(ident);
+
+  const [u] = await pool.query(userQuery, userArgs);
+  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){
+    rl[ip]=(!rec||now>rec.resetAt)?{n:1,resetAt:now+win}:{n:rec.n+1,resetAt:rec.resetAt};
+    global.set('loginRL',rl);
+    msg.headers=__CORS;msg.statusCode=401;
+    msg.payload={error: reqOrg ? ('Invalid credentials or account does not belong to organization ' + reqOrg) : 'Invalid credentials'};
+    node.send(msg);return;
+  }
   if(u[0].status==='suspended'){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is suspended'};node.send(msg);return;}
   delete rl[ip]; global.set('loginRL',rl);
   const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};
   const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
-  msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+  msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const registerFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
 if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'missing fields'};return msg;}
 (async()=>{
   let orgId = null, role = 'admin', deptId = null;
   const phone = b.phone ? b.phone.replace(/[^0-9+]/g, '') : '';
+
+  // Extract host-derived subdomain org if present
+  const hostHeader = (msg.req.headers['host'] || '').split(':')[0].toLowerCase();
+  const hostParts = hostHeader.split('.');
+  let hostOrg = null;
+  const genericHosts = ['iiotplatform', 'www', 'app', 'dashboard', 'localhost', 'nodered', 'argocd', 'grafana', 'emqx', 'pma', 'api', 'admin'];
+  if (hostParts.length >= 2 && !genericHosts.includes(hostParts[0]) && !/^\\d+$/.test(hostParts[0])) {
+    hostOrg = hostParts[0];
+  }
+  const targetOrg = b.orgId || hostOrg;
+
   const searchQ = []; const searchArgs = [];
   if (b.email) { searchQ.push("email=?"); searchArgs.push(b.email); }
   if (phone) { searchQ.push("phone=?"); searchArgs.push(phone); }
@@ -543,9 +578,9 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
     }
   }
 
-  // If explicit orgId was provided (from /register?org=org-1)
-  if (!orgId && b.orgId) {
-    const [orgCheck] = await pool.query("SELECT id FROM organizations WHERE id=?", [b.orgId]);
+  // If explicit orgId/subdomain was provided (from subdomain /register or ?org=org-1)
+  if (!orgId && targetOrg) {
+    const [orgCheck] = await pool.query("SELECT id FROM organizations WHERE id=?", [targetOrg]);
     if (orgCheck.length > 0) {
       orgId = orgCheck[0].id;
       role = 'viewer'; // Registered user joining via specific org gets viewer role

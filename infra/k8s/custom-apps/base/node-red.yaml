@@ -368,6 +368,16 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
+    - host: nodered.27.254.143.144.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: node-red
+                port:
+                  number: 1880
     - host: nodered.thermexpertise.com
       http:
         paths:
@@ -381,4 +391,5 @@ spec:
   tls:
     - hosts:
         - nodered.thermexpertise.com
+        - nodered.27.254.143.144.nip.io
       secretName: nodered-tls
