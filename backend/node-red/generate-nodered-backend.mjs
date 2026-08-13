@@ -633,14 +633,25 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
   const genericHosts = ['iiotplatform', 'www', 'app', 'dashboard', 'localhost', 'nodered', 'argocd', 'grafana', 'emqx', 'pma', 'api', 'admin'];
   if (hostParts.length >= 2 && !genericHosts.includes(hostParts[0]) && !/^\\d+$/.test(hostParts[0])) {
     hostOrg = hostParts[0];
-  }
   const reqOrg = b.orgId || hostOrg;
+  let canonicalReqOrg = null;
+  if (reqOrg) {
+    const cleanReq = String(reqOrg).replace(/^org-/, '');
+    const altReq = String(reqOrg).startsWith('org-') ? cleanReq : ('org-' + cleanReq);
+    try {
+      const [oc] = await pool.query(
+        "SELECT id FROM organizations WHERE id=? OR id=? OR id=? ORDER BY CASE WHEN id=? THEN 1 WHEN id=? THEN 2 ELSE 3 END LIMIT 1",
+        [reqOrg, altReq, cleanReq, reqOrg, altReq]
+      );
+      canonicalReqOrg = oc.length ? oc[0].id : reqOrg;
+    } catch(e) { canonicalReqOrg = reqOrg; }
+  }
 
   let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,u.status AS user_status,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=?)";
   let userArgs = [ident, ident];
-  if (reqOrg) {
+  if (canonicalReqOrg) {
     userQuery += " AND (u.org_id=? OR u.role='superadmin')";
-    userArgs.push(reqOrg);
+    userArgs.push(canonicalReqOrg);
   }
   userQuery += " ORDER BY (u.email=?) DESC LIMIT 1";
   userArgs.push(ident);
@@ -650,7 +661,7 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
     rl[ip]=(!rec||now>rec.resetAt)?{n:1,resetAt:now+win}:{n:rec.n+1,resetAt:rec.resetAt};
     global.set('loginRL',rl);
     msg.headers=__CORS;msg.statusCode=401;
-    msg.payload={error: reqOrg ? ('Invalid credentials or account does not belong to organization ' + reqOrg) : 'Invalid credentials'};
+    msg.payload={error: canonicalReqOrg ? ('Invalid credentials or account does not belong to organization ' + canonicalReqOrg) : 'Invalid credentials'};
     node.send(msg);return;
   }
   if(u[0].status==='suspended'){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is suspended'};node.send(msg);return;}
@@ -724,7 +735,12 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
 
   // If explicit orgId/subdomain was provided (joining specific org as Viewer)
   if (!orgId && targetOrg) {
-    const [orgCheck] = await pool.query("SELECT id FROM organizations WHERE id=?", [targetOrg]);
+    const cleanTarget = String(targetOrg).replace(/^org-/, '');
+    const altTarget = String(targetOrg).startsWith('org-') ? cleanTarget : ('org-' + cleanTarget);
+    const [orgCheck] = await pool.query(
+      "SELECT id FROM organizations WHERE id=? OR id=? OR id=? ORDER BY CASE WHEN id=? THEN 1 WHEN id=? THEN 2 ELSE 3 END LIMIT 1",
+      [targetOrg, altTarget, cleanTarget, targetOrg, altTarget]
+    );
     if (orgCheck.length > 0) {
       orgId = orgCheck[0].id;
       role = 'viewer';
@@ -906,7 +922,12 @@ const fpImageGetFunc = `const pool=global.get('pool'); const au=msg.auth||{}; co
 const orgLogoGetFunc = `const pool=global.get('pool'); const orgId=msg.req.params.orgId;
 (async()=>{
   let rows=[];
-  try { const[r]=await pool.query("SELECT image_data, content_type FROM org_logos WHERE org_id=?",[orgId]); rows=r; }
+  try {
+    const cleanId = String(orgId||'').replace(/^org-/, '');
+    const altId = String(orgId||'').startsWith('org-') ? cleanId : ('org-' + cleanId);
+    const[r]=await pool.query("SELECT image_data, content_type FROM org_logos WHERE org_id=? OR org_id=? ORDER BY CASE WHEN org_id=? THEN 1 ELSE 2 END LIMIT 1",[orgId, altId, orgId]);
+    rows=r;
+  }
   catch(e){ if(String(e&&e.message||'').indexOf('org_logos')<0) throw e; }
   if(!rows.length || !rows[0].image_data){ msg.statusCode=404; msg.headers={'Access-Control-Allow-Origin':'*'}; msg.payload='not found'; node.send(msg); return; }
   msg.statusCode=200;
@@ -938,7 +959,7 @@ const orgLogoPublicFunc = `const pool=global.get('pool'); const orgId=msg.req.pa
   try {
     const cleanId = String(orgId||'').replace(/^org-/, '');
     const altId = String(orgId||'').startsWith('org-') ? cleanId : ('org-' + cleanId);
-    const[r]=await pool.query("SELECT image_data, content_type FROM org_logos WHERE org_id=? OR org_id=?",[orgId, altId]);
+    const[r]=await pool.query("SELECT image_data, content_type FROM org_logos WHERE org_id=? OR org_id=? ORDER BY CASE WHEN org_id=? THEN 1 ELSE 2 END LIMIT 1",[orgId, altId, orgId]);
     rows=r;
   }
   catch(e){ if(String(e&&e.message||'').indexOf('org_logos')<0) throw e; }
