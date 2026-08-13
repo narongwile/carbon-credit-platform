@@ -30,8 +30,9 @@ export function getOrgFromLocation(): string | null {
       'iiotplatform', 'www', 'app', 'dashboard', 'localhost',
       'nodered', 'argocd', 'grafana', 'emqx', 'pma', 'api', 'admin'
     ])
-    // If the subdomain is not generic and not purely numeric (IP address octet like "27")
-    if (!generic.has(sub) && !/^\d+$/.test(sub)) {
+    const isPlatformService = generic.has(sub) || /^(pma|argocd|nodered|grafana|emqx|api|admin|app)-/.test(sub)
+    // If the subdomain is not generic platform service and not purely numeric (IP address octet like "27")
+    if (!isPlatformService && !/^\d+$/.test(sub)) {
       return sub
     }
   }

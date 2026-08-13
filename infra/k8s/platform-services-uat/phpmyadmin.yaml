@@ -38,7 +38,9 @@ spec:
             - name: UPLOAD_LIMIT
               value: 256M
             - name: PMA_ABSOLUTE_URI
-              value: https://pma-uat.27.254.143.144.nip.io/
+              value: "./"
+            - name: PMA_REVERSE_PROXY
+              value: "true"
           resources:
             requests:
               cpu: 50m
@@ -83,7 +85,7 @@ metadata:
   namespace: iiot-uat
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   ingressClassName: traefik
@@ -98,7 +100,18 @@ spec:
                 name: phpmyadmin
                 port:
                   number: 80
+    - host: pma-iiot.27.254.143.144.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: phpmyadmin
+                port:
+                  number: 80
   tls:
     - hosts:
         - pma-uat.27.254.143.144.nip.io
+        - pma-iiot.27.254.143.144.nip.io
       secretName: phpmyadmin-uat-tls
