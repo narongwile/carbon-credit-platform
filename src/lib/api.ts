@@ -267,7 +267,7 @@ export const api = {
   login: async (email: string, password: string, orgId?: string | null): Promise<
     { ok: true; user: AuthUser } | { ok: false; status: number; error: string }
   > => {
-    if (!isLive()) return { ok: false, status: 0, error: 'offline' }
+    if (!apiEnabled) return { ok: false, status: 0, error: 'offline' }
     try {
       const payload: Record<string, any> = { email, password }
       if (orgId) payload.orgId = orgId
@@ -277,14 +277,49 @@ export const api = {
       const body = await r.json().catch(() => null) as { token?: string; user?: AuthUser; error?: string } | null
       if (!r.ok || !body?.token) return { ok: false, status: r.status, error: body?.error || 'login failed' }
       setToken(body.token)
+      useAppStore.setState({ isLiveMode: true })
       return { ok: true, user: body.user as AuthUser }
-    } catch {
-      return { ok: false, status: 0, error: 'network error' }
+    } catch (err: any) {
+      return { ok: false, status: 0, error: err?.message || 'network error' }
     }
   },
-  register: async (b: any) => req(`/api/auth/register`, { method: 'POST', body: JSON.stringify(b) }),
-  forgotPassword: async (email: string) => req(`/api/auth/forgot`, { method: 'POST', body: JSON.stringify({ email }) }),
-  resetPassword: async (token: string, password: string) => req(`/api/auth/reset`, { method: 'POST', body: JSON.stringify({ token, password }) }),
+  register: async (b: any): Promise<{ ok: boolean; message?: string; error?: string; pending?: boolean } | null> => {
+    if (!apiEnabled) return null
+    try {
+      const r = await fetch(`${BASE}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(b),
+      })
+      const data = await r.json().catch(() => null)
+      if (!r.ok) return { ok: false, error: data?.error || 'Registration failed' }
+      return data || { ok: true }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || 'Network error' }
+    }
+  },
+  forgotPassword: async (email: string) => {
+    if (!apiEnabled) return null
+    try {
+      const r = await fetch(`${BASE}/api/auth/forgot`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      return await r.json().catch(() => null)
+    } catch { return null }
+  },
+  resetPassword: async (token: string, password: string) => {
+    if (!apiEnabled) return null
+    try {
+      const r = await fetch(`${BASE}/api/auth/reset`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token, password }),
+      })
+      return await r.json().catch(() => null)
+    } catch { return null }
+  },
   updatePassword: async (b: any) => req(`/api/auth/password`, { method: 'PUT', body: JSON.stringify(b) }),
   logout: () => setToken(null),
 
