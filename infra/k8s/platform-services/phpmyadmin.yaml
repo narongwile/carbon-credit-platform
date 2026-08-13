@@ -38,7 +38,9 @@ spec:
             - name: UPLOAD_LIMIT
               value: 256M
             - name: PMA_ABSOLUTE_URI
-              value: https://pma.thermexpertise.com/
+              value: "./"
+            - name: PMA_REVERSE_PROXY
+              value: "true"
           resources:
             requests:
               cpu: 50m
