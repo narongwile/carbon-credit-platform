@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, UserPlus, ArrowLeft, CheckCircle2, Boxes, Building2 } from 'lucide-react'

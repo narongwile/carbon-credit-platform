@@ -69,6 +69,17 @@ pages:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
 
+# ── Node-RED Syntax & Integrity Gate ──────────────────────────────────────────
+# Validates that all 150+ function node JavaScript handlers parse without syntax errors.
+test_nodered_syntax:
+  stage: build
+  image: node:20-alpine
+  script:
+    - node backend/node-red/generate-nodered-backend.mjs
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "web"
+
 # ── Next.js production frontend (frontend-next/) → GitLab Container Registry ──
 # Builds the static-export image and pushes it to this project's GitLab registry
 # ($CI_REGISTRY_IMAGE/frontend-next). Runs on GitLab.com SHARED runners (no tags),

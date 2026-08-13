@@ -20,6 +20,7 @@
 import { writeFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import vm from 'node:vm'
 
 // Broker host/port come from the deployment via ${MQTT_BROKER_HOST}/${MQTT_BROKER_PORT}
 // resolved by Node-RED at runtime (see the mqtt-broker config node below).
@@ -154,15 +155,16 @@ global.set('mirrorUserToTenantDb', async function(pool, orgId, userRecord){
       if (dbCheck.length > 0) {
         try {
           await pool.query(
-            "INSERT INTO " + tDb + ".users (id,org_id,department_id,email,phone,name,role,status,password_hash) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), phone=VALUES(phone), role=VALUES(role), status=VALUES(status), password_hash=COALESCE(VALUES(password_hash),password_hash), department_id=VALUES(department_id)",
-            [userRecord.id, orgId, userRecord.departmentId||null, userRecord.email||null, userRecord.phone||null, userRecord.name, userRecord.role||'viewer', userRecord.status||'active', userRecord.passwordHash||null]
+            "INSERT INTO " + tDb + ".users (id,org_id,department_id,email,phone,name,role,status) VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), phone=VALUES(phone), role=VALUES(role), status=VALUES(status), department_id=VALUES(department_id)",
+            [userRecord.id, orgId, userRecord.departmentId||null, userRecord.email||null, userRecord.phone||null, userRecord.name, userRecord.role||'viewer', userRecord.status||'active']
           );
         } catch(subErr) {
           await pool.query(
-            "INSERT INTO " + tDb + ".users (id,org_id,department_id,email,name,role,password_hash) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role), password_hash=COALESCE(VALUES(password_hash),password_hash), department_id=VALUES(department_id)",
-            [userRecord.id, orgId, userRecord.departmentId||null, userRecord.email||null, userRecord.name, userRecord.role||'viewer', userRecord.passwordHash||null]
+            "INSERT INTO " + tDb + ".users (id,org_id,department_id,email,name,role) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role), department_id=VALUES(department_id)",
+            [userRecord.id, orgId, userRecord.departmentId||null, userRecord.email||null, userRecord.name, userRecord.role||'viewer']
           );
         }
+        break; // Matched primary tenant DB, avoid writing duplicate candidate DBs
       }
     } catch(err) {
       node.warn('mirrorUserToTenantDb error for ' + tDb + ': ' + err.message);
@@ -5549,6 +5551,31 @@ ingestNode.wires = [['dbgIngest'], ['notify', 'wsbroadcast'], ['readpost_resp'],
     console.error('Fix: interpolate the value into the handler string, e.g. ${JSON.stringify(PHOTO_KINDS)}.')
     process.exit(1)
   }
+}
+
+// Build-time guard #3: JavaScript syntax verification on EVERY function node.
+// Parses each function node's `func` string with vm.Script. Any syntax error
+// (unclosed braces, unexpected tokens, invalid syntax) fails the generator immediately.
+{
+  const syntaxErrors = []
+  let funcNodeCount = 0
+  for (const n of flow) {
+    if (n.type !== 'function' || !n.func) continue
+    funcNodeCount++
+    try {
+      new vm.Script(`(async function(){\n${n.func}\n})`, { filename: `node_${n.id}.js` })
+    } catch (err) {
+      syntaxErrors.push({ id: n.id, name: n.name || '', error: err.message })
+    }
+  }
+  if (syntaxErrors.length) {
+    console.error(`FATAL: ${syntaxErrors.length} Syntax Error(s) detected in function node(s):`)
+    for (const e of syntaxErrors) {
+      console.error(`  ✗ Node "${e.id}" (${e.name}): ${e.error}`)
+    }
+    process.exit(1)
+  }
+  console.log(`✓ Syntax gate passed: ${funcNodeCount} function nodes validated (0 errors).`)
 }
 
 const out = join(dirname(fileURLToPath(import.meta.url)), 'flows.nodered-backend.json')
