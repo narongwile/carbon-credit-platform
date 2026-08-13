@@ -1171,6 +1171,11 @@ const e = msg.payload;
 if (!e) return null;
 // DB-per-tenant: notification_channels live in the alarm's org DB (control pool when flag off).
 const pool = global.get('resolvePool')(e.orgId);
+// users + user_prefs are ALWAYS control-DB (accessFor/meGetFunc/mePutFunc all read/write
+// them via global.get('pool'), never resolvePool) — the per-user channel lookup below must
+// use the same pool those writes went to, or it joins against an empty/unmirrored table in
+// the tenant DB and silently notifies nobody.
+const controlPool = global.get('pool');
 const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}
 const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' — '+(e.kind||'')+' @ '+when;
 const subject = 'ONEOPS '+e.severity+': '+e.paramLabel;
@@ -1286,7 +1291,7 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
     // contacted. Notifying everyone whose profile happens to hold a token would
     // turn switching this on into a mass mailing.
     try {
-      const [urows] = await pool.query(
+      const [urows] = await controlPool.query(
         "SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?",
         [e.orgId]);
       for (const u of urows) {
