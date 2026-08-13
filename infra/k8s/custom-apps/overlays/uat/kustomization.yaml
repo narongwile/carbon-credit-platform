@@ -196,3 +196,29 @@ patches:
                   # in UAT.
                   - name: APP_BASE_URL
                     value: "https://iiotplatform.27.254.143.144.nip.io:30443"
+                  # ── Chat alarms: YOUR test channel, never a customer's ──
+                  # notifyFunc uses an org's own notification_channels rows first
+                  # and only falls back to these platform-wide credentials when it
+                  # has none. mail-sink-guard-job disables the per-org rows — which
+                  # are prod-derived and point at real customer channels — so every
+                  # UAT alarm lands here instead, through the identical code path.
+                  # optional: true so the pod still starts before you create the
+                  # Secret; the channel is simply skipped while its token is empty.
+                  - name: TELEGRAM_BOT_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        name: uat-notify
+                        key: telegram-bot-token
+                        optional: true
+                  - name: TELEGRAM_CHAT_ID
+                    valueFrom:
+                      secretKeyRef:
+                        name: uat-notify
+                        key: telegram-chat-id
+                        optional: true
+                  - name: GOOGLE_CHAT_WEBHOOK
+                    valueFrom:
+                      secretKeyRef:
+                        name: uat-notify
+                        key: google-chat-webhook
+                        optional: true

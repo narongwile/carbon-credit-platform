@@ -84,19 +84,37 @@ spec:
                 const c = await mysql.createConnection({ ...cfg, database: process.env.DB_NAME });
                 try {
                   // smtp.%   — the real relay (this is what pointed UAT at Gmail).
-                  // notify.% — Telegram / LINE / Google Chat tokens.
+                  //   Still stripped even though UAT now delivers for real: mail
+                  //   must leave through Mailpit so every message is captured and
+                  //   filtered by its recipient allowlist. A direct smtp.host row
+                  //   would route around both.
                   // app.frontendUrl — same DB-first precedence as SMTP_HOST but a
                   //   different key, so a LIKE 'smtp.%' sweep misses it and every
-                  //   captured reset mail would still carry a PRODUCTION link.
+                  //   reset mail would still carry a PRODUCTION link.
+                  //
+                  // notify.% is deliberately NOT stripped while UAT is proving the
+                  // chat path: those hold the Telegram / Google Chat credentials
+                  // for YOUR OWN test channel, and notifyFunc falls back to them
+                  // whenever an org has no channel rows of its own. Re-add
+                  // "OR skey LIKE 'notify.%'" here when reverting to sink-only.
                   await tryQuery(c,
-                    "DELETE FROM platform_settings WHERE skey LIKE 'smtp.%' OR skey LIKE 'notify.%' OR skey = 'app.frontendUrl'",
+                    "DELETE FROM platform_settings WHERE skey LIKE 'smtp.%' OR skey = 'app.frontendUrl'",
                     'platform_settings stripped');
 
-                  // An SMTP sink captures SMTP and nothing else. notification_channels
-                  // rows drive direct HTTPS pushes to Telegram / LINE / Google Chat —
-                  // and the googlechat branch POSTs to whatever webhook URL the row
-                  // carries, which in prod-derived UAT data is a real customer channel.
-                  // Mailpit never sees those, so they are disabled here instead.
+                  // Per-org notification_channels rows stay disabled even now that
+                  // UAT delivers for real, and this is what makes testing the chat
+                  // path safe rather than reckless: those rows are prod-derived, so
+                  // their Telegram chat ids and Google Chat webhook URLs are REAL
+                  // CUSTOMER channels, and nothing in an SMTP relay allowlist can
+                  // filter an HTTPS POST that never touches SMTP.
+                  //
+                  // Disabling them is not the same as switching chat off. notifyFunc
+                  // does:  if (!channels.length) { ...push telegram/line/googlechat
+                  // from notifyConfig() }  — so with no per-org rows it falls back
+                  // to the platform-wide credentials, i.e. YOUR test channel. The
+                  // alarm still fires, through the identical code path, and lands
+                  // somewhere you own.
+                  //
                   // The table is per-tenant (notifyFunc uses resolvePool(e.orgId)),
                   // so every org database has to be swept, not just the control one.
                   const [orgs] = await c.query("SELECT id FROM organizations");
