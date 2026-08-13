@@ -2,14 +2,16 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { organizations } from '@/lib/mockData'
 import { api, isLive } from '@/lib/api'
+import { useAppStore } from '@/lib/store'
 import { getDepartmentsByOrg, getUsersByOrg, getThemeById, roleLabels, dashboardThemes } from '@/lib/orgData'
 import { getOrgThemeGrants, fetchOrgThemeGrants, saveOrgThemeGrants } from '@/lib/orgThemes'
 import { PLATFORM_TEMPLATES } from '@/lib/platforms'
 import OrgLogoEditor from '@/components/OrgLogoEditor'
 import type { Organization } from '@/types'
-import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette } from 'lucide-react'
+import { Search, Building2, X, ChevronDown, ChevronRight, ToggleLeft, ToggleRight, Shield, Eye, User, Users, Palette, HardDrive } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 
@@ -355,6 +357,8 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
 }
 
 export default function OrganizationsPage() {
+  const router = useRouter()
+  const setSelectedOrgId = useAppStore((s) => s.setSelectedOrgId)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Organization | null>(null)
   const [orgs, setOrgs] = useState<Organization[]>(organizations)
@@ -464,7 +468,26 @@ export default function OrganizationsPage() {
                 <td className="py-3.5 px-4"><StatusBadge status={org.status} /></td>
                 <td className="py-3.5 px-4"><LicenseBadge tier={org.licenseTier} /></td>
                 <td className="py-3.5 px-4">
-                  <button className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">Configure</button>
+                  {/* Was a "Configure" button with no onClick — went nowhere,
+                      same dead-button bug "+ New Organization" had above. License/
+                      theme/logo config is already one click away (the row itself
+                      opens OrgModal), but nothing anywhere let a superadmin reach
+                      an org's OWN admin console — device management, pending
+                      approvals, the payload spec each product expects — short of
+                      typing the URL by hand and using the tenant switcher buried
+                      in /admin's sidebar. This is that entry point: point the
+                      switcher at this org, then land where a superadmin actually
+                      wants to start. */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedOrgId(org.id)
+                      router.push('/admin/devices')
+                    }}
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors flex items-center gap-1"
+                  >
+                    <HardDrive size={12} /> Manage Devices
+                  </button>
                 </td>
               </tr>
             ))}
