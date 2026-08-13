@@ -633,6 +633,7 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
   const genericHosts = ['iiotplatform', 'www', 'app', 'dashboard', 'localhost', 'nodered', 'argocd', 'grafana', 'emqx', 'pma', 'api', 'admin'];
   if (hostParts.length >= 2 && !genericHosts.includes(hostParts[0]) && !/^\\d+$/.test(hostParts[0])) {
     hostOrg = hostParts[0];
+  }
   const reqOrg = b.orgId || hostOrg;
   let canonicalReqOrg = null;
   if (reqOrg) {
