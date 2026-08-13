@@ -140,6 +140,35 @@ global.set('makeOrgId', async function(pool, name){
   }
   return 'org-'+Date.now();
 });
+global.set('mirrorUserToTenantDb', async function(pool, orgId, userRecord){
+  if (!orgId) return;
+  const cleanOrg = String(orgId).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const candidateDbs = Array.from(new Set([
+    'iothub_' + cleanOrg,
+    'iothub_org_' + cleanOrg.replace(/^org_/, ''),
+    'iothub_' + cleanOrg.replace(/^org_/, '')
+  ]));
+  for (const tDb of candidateDbs) {
+    try {
+      const [dbCheck] = await pool.query("SHOW DATABASES LIKE ?", [tDb]);
+      if (dbCheck.length > 0) {
+        try {
+          await pool.query(
+            "INSERT INTO " + tDb + ".users (id,org_id,department_id,email,phone,name,role,status,password_hash) VALUES (?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), phone=VALUES(phone), role=VALUES(role), status=VALUES(status), password_hash=COALESCE(VALUES(password_hash),password_hash), department_id=VALUES(department_id)",
+            [userRecord.id, orgId, userRecord.departmentId||null, userRecord.email||null, userRecord.phone||null, userRecord.name, userRecord.role||'viewer', userRecord.status||'active', userRecord.passwordHash||null]
+          );
+        } catch(subErr) {
+          await pool.query(
+            "INSERT INTO " + tDb + ".users (id,org_id,department_id,email,name,role,password_hash) VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE name=VALUES(name), email=VALUES(email), role=VALUES(role), password_hash=COALESCE(VALUES(password_hash),password_hash), department_id=VALUES(department_id)",
+            [userRecord.id, orgId, userRecord.departmentId||null, userRecord.email||null, userRecord.name, userRecord.role||'viewer', userRecord.passwordHash||null]
+          );
+        }
+      }
+    } catch(err) {
+      node.warn('mirrorUserToTenantDb error for ' + tDb + ': ' + err.message);
+    }
+  }
+});
 global.set('resolvePool', function(orgId){
   const ctl=global.get('pool');
   if(!__TENANT || !orgId) return ctl;                        // flag off / no org → control pool
@@ -625,7 +654,12 @@ const rl=global.get('loginRL')||{}; const max=Number(env.get('LOGIN_MAX_ATTEMPTS
 if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;msg.payload={error:'too many login attempts — try again later'};return msg;}
 
 (async()=>{
-  const ident=String(b.email||b.username||'');
+  const ident=String(b.email||b.username||'').trim();
+  if(!ident || !b.password){
+    msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'Please enter username/email and password'};
+    node.send(msg);return;
+  }
+
   // Detect organization scope from request payload or Host header subdomain
   const hostHeader = (msg.req.headers['host'] || '').split(':')[0].toLowerCase();
   const hostParts = hostHeader.split('.');
@@ -648,24 +682,43 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
     } catch(e) { canonicalReqOrg = reqOrg; }
   }
 
-  let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,u.status AS user_status,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=?)";
-  let userArgs = [ident, ident];
-  if (canonicalReqOrg) {
-    userQuery += " AND (u.org_id=? OR u.role='superadmin')";
-    userArgs.push(canonicalReqOrg);
+  let u = [];
+  try {
+    let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,COALESCE(u.status,'active') AS user_status,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=? OR u.id=?)";
+    let userArgs = [ident, ident, ident];
+    if (canonicalReqOrg) {
+      userQuery += " AND (u.org_id=? OR u.role='superadmin')";
+      userArgs.push(canonicalReqOrg);
+    }
+    userQuery += " ORDER BY (u.email=?) DESC, (u.username=?) DESC LIMIT 1";
+    userArgs.push(ident, ident);
+    const [rows] = await pool.query(userQuery, userArgs);
+    u = rows;
+  } catch(colErr) {
+    try {
+      let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,'active' AS user_status,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.id=?)";
+      let userArgs = [ident, ident];
+      if (canonicalReqOrg) {
+        userQuery += " AND (u.org_id=? OR u.role='superadmin')";
+        userArgs.push(canonicalReqOrg);
+      }
+      userQuery += " LIMIT 1";
+      const [rows] = await pool.query(userQuery, userArgs);
+      u = rows;
+    } catch(err2) {
+      const [rows] = await pool.query("SELECT id,org_id,role,name,email,password_hash,'active' AS user_status FROM users WHERE email=? OR id=? LIMIT 1", [ident, ident]);
+      u = rows;
+    }
   }
-  userQuery += " ORDER BY (u.email=?) DESC LIMIT 1";
-  userArgs.push(ident);
 
-  const [u] = await pool.query(userQuery, userArgs);
-  if(!u.length||!u[0].password_hash||!(await bcrypt.compare(b.password||'', u[0].password_hash))){
+  if(!u.length || !u[0].password_hash || !(await bcrypt.compare(b.password||'', u[0].password_hash))){
     rl[ip]=(!rec||now>rec.resetAt)?{n:1,resetAt:now+win}:{n:rec.n+1,resetAt:rec.resetAt};
     global.set('loginRL',rl);
     msg.headers=__CORS;msg.statusCode=401;
     msg.payload={error: canonicalReqOrg ? ('Invalid credentials or account does not belong to organization ' + canonicalReqOrg) : 'Invalid credentials'};
     node.send(msg);return;
   }
-  if(u[0].status==='suspended'){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is suspended'};node.send(msg);return;}
+  if(u[0].status==='suspended'){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'Organization is suspended'};node.send(msg);return;}
   if(u[0].user_status==='pending'){
     msg.headers=__CORS;msg.statusCode=403;
     msg.payload={error:'Your account is pending administrator approval. Please wait for an administrator to activate your account.'};
@@ -679,7 +732,7 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
   delete rl[ip]; global.set('loginRL',rl);
   const claims={userId:u[0].id,orgId:u[0].org_id||'',role:u[0].role||'viewer'};
   const token=jwt.sign(claims, env.get('JWT_SECRET')||'dev-secret-change-me', {expiresIn: env.get('JWT_TTL')||'12h'});
-  msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name,email:u[0].email}}; node.send(msg);
+  msg.headers=__CORS; msg.payload={token, user:{id:claims.userId,orgId:claims.orgId,role:claims.role,name:u[0].name||u[0].email||u[0].id,email:u[0].email||''}}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 const registerFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
@@ -795,17 +848,8 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
     global.get('notifyAdminNewUser')(pool, orgId, { name: b.name, email: b.email, phone });
   }
 
-  // If tenant DB mode is on or tenant DB exists, record user in tenant DB as well
-  if (global.get('tenantMode') && orgId && orgId !== 'org-1' && orgId !== 'org-2' && orgId !== 'org-3') {
-    const tenantDb = global.get('orgDbName')(orgId);
-    if (tenantDb) {
-      try {
-        await pool.query("INSERT IGNORE INTO " + tenantDb + ".users (id,org_id,department_id,email,phone,name,role,status,password_hash) VALUES (?,?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, userStatus, hash]);
-      } catch (copyUserErr) {
-        node.warn('Failed to insert user into tenant db ' + tenantDb + ': ' + copyUserErr.message);
-      }
-    }
-  }
+  // Always mirror user into tenant DB if tenant DB exists
+  await global.get('mirrorUserToTenantDb')(pool, orgId, { id: userId, departmentId: deptId, email: b.email, phone, name: b.name, role, status: userStatus, passwordHash: hash });
 
   msg.headers=__CORS;
   msg.payload={
@@ -4906,6 +4950,9 @@ if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name requi
     }
     global.get('notifyUserActivated')(pool, orgId, { name: b.name, email: b.email, username: uname, role: b.role||'viewer' }, deptNamesStr);
   }
+
+  // Always mirror user into tenant DB if tenant DB exists
+  await global.get('mirrorUserToTenantDb')(pool, orgId, { id, departmentId: b.departmentId||(Array.isArray(b.departmentIds)?b.departmentIds[0]:null), email: b.email, phone: b.phone, name: b.name, role: b.role||'viewer', status: targetStatus, passwordHash: b.password ? await bcrypt.hash(String(b.password),10) : (prevUser?prevUser.password_hash:null) });
 
   msg.headers=__CORS; msg.payload={ok:true,id,status:targetStatus}; node.send(msg);})()` + bbErr
 const usrDelFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const id=msg.req.params.id;

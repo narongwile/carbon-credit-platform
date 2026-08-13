@@ -38,12 +38,7 @@ export default function LoginPage() {
       const r = await loginRemote(username, password, orgId)
       setLoading(false)
       if (!r.ok) {
-        setError(
-          r.status === 429 ? r.error || 'Too many attempts — please wait and try again.'
-          : r.status === 403 ? r.error || 'This organization is suspended.'
-          : r.status === 401 ? (r.error || 'Invalid credentials.')
-          : 'Could not reach the server. Please try again.'
-        )
+        setError(r.error || (r.status === 429 ? 'Too many attempts — please wait and try again.' : 'Could not reach the server. Please try again.'))
         return
       }
       saveSession(r.user)
