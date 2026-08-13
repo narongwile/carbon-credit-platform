@@ -6,12 +6,24 @@ import { useSessionRole } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { schemaLabel } from '@/lib/useParamLabels'
+import { ALARM_SCHEMA } from '@/lib/alarmParams'
+import { getPlatformTemplate } from '@/lib/platforms'
 import type { TransformerModel } from '@/lib/useNodeNameplate'
 import type { SensorDomain } from '@/types/fleet'
 import PhotoStrip from '@/components/device/PhotoStrip'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
-import { PlugZap, Check, X, RefreshCw, Building2, Activity, Hash, Settings2, AlertTriangle } from 'lucide-react'
+import OrgPayloadSpecPicker from '@/components/device/OrgPayloadSpecPicker'
+import { PlugZap, Check, X, RefreshCw, Building2, Activity, Hash, Settings2, AlertTriangle, Radio, Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+// The MQTT topic's product segment, matching worker/main.go's
+// domainFromProduct() switch-case exactly (lowercased): "transformer" |
+// "eternity" | "eternitytransformers" -> transformer, "carbonnode" |
+// "carbonbox" | ... -> carbonNode, "bloodbox" -> bloodBox. Derived from
+// PLATFORM_TEMPLATES.shortName rather than hardcoded a second time, so the
+// two can't drift — shortName is already 'ETERNITY' / 'CarbonBOX' / 'BloodBOX'.
+const topicProduct = (domain: SensorDomain): string =>
+  (getPlatformTemplate(DOMAIN_TO_PLATFORM[domain])?.shortName ?? domain).toLowerCase()
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -99,11 +111,23 @@ export default function PendingDevicesPage() {
   // dedupe on a flat set of strings instead of walking a tree on every row.
   const [specByKey, setSpecByKey] = useState<Record<string, { paramKeys: string[]; labels: Record<string, string> }>>({})
   const specKeyOf = (targetOrgId: string, domain: string) => `${targetOrgId}::${domain}`
+  // Refetch one (org, domain) pair directly rather than invalidating the cache
+  // and hoping something re-triggers it: the fetch effect below is keyed on
+  // domainOrgPairsKey, which does not change just because a save happened —
+  // the pair was already present before the edit.
+  const refetchSpec = async (targetOrgId: string, domain: string) => {
+    const key = specKeyOf(targetOrgId, domain)
+    const [dp, pl] = await Promise.all([api.displayParams(targetOrgId, domain), api.paramLabels(targetOrgId, domain)])
+    setSpecByKey((prev) => ({ ...prev, [key]: { paramKeys: dp?.paramKeys ?? [], labels: pl?.labels ?? {} } }))
+  }
   // Which row's payload-spec editor is open. Carries the resolved org/domain
   // rather than re-deriving them from `n`/`form` at render time, so the modal's
   // props can't drift if the admin changes the row's Organization/Product
   // picker while it is open.
   const [specEditor, setSpecEditor] = useState<{ node: PendingNode; orgId: string; domain: SensorDomain } | null>(null)
+  // Same idea, but for the org-wide reference section below — no specific
+  // device involved, so no PendingNode to carry.
+  const [orgSpecEditor, setOrgSpecEditor] = useState<{ orgId: string; domain: SensorDomain } | null>(null)
 
   const load = useCallback(async () => {
     if (!isLive()) {
@@ -219,8 +243,21 @@ export default function PendingDevicesPage() {
       if (!targetOrg || targetOrg === UNASSIGNED) continue
       set.add(specKeyOf(targetOrg, f.domain))
     }
+    // Also every product THIS org (orgId — the admin's own, or the superadmin's
+    // current tenant-switcher pick) is licensed for, independent of whether any
+    // device — pending or approved — exists yet. This is what makes the setup
+    // reference below usable for a brand-new org: it has to answer "what do I
+    // send" before the chicken-and-egg problem of needing a device to have
+    // already reported something in order to know what it should report.
+    if (orgId && orgId !== UNASSIGNED) {
+      for (const d of domainsFor(orgId)) set.add(specKeyOf(orgId, d.value))
+    }
     return Array.from(set).sort()
-  }, [rows, form, isSuper, orgId])
+    // domainsFor reads entsByOrg via closure, not a dep — it is a plain function
+    // recreated every render, and adding it here would defeat the whole point of
+    // keying this memo on a stable joined string below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, form, isSuper, orgId, entsByOrg])
   const domainOrgPairsKey = domainOrgPairs.join(',')
 
   useEffect(() => {
@@ -296,13 +333,97 @@ export default function PendingDevicesPage() {
         </div>
       )}
 
+      {/* MQTT setup reference — this org's REAL id, for every product it is
+          licensed for, independent of whether any device exists yet. The old
+          empty state below only ever showed the literal template string
+          "telemetry/{org}/{product}/{id}" — {org} was never substituted, so a
+          brand-new org's admin had no way to learn their own org's actual id
+          from this page at all, only ?org= (this) config check.
+          Configuring the payload spec is superadmin-only (set at provisioning);
+          the topic and whatever spec already exists are visible to every admin
+          — they are the ones who actually have to go program a device with it. */}
+      {orgId && orgId !== UNASSIGNED && (
+        <div className="rounded-xl p-4 space-y-3" style={surface}>
+          <div className="flex items-center gap-2">
+            <Radio size={14} className="text-indigo-400" />
+            <h2 className="text-sm font-semibold text-white">MQTT setup — connect a new device</h2>
+          </div>
+          {domainsFor(orgId).length === 0 ? (
+            <p className="text-xs text-slate-600">This organization is not licensed for any product yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {domainsFor(orgId).map((d) => {
+                const domain = d.value as SensorDomain
+                const spec = specByKey[specKeyOf(orgId, domain)]
+                const topic = `telemetry/${orgId}/${topicProduct(domain)}/<your-device-id>`
+                const exampleValues = (spec?.paramKeys ?? []).reduce<Record<string, number>>((acc, k) => {
+                  const warn = ALARM_SCHEMA[domain]?.params.find((p) => p.key === k)?.warn
+                  acc[k] = typeof warn === 'number' ? Math.round((warn / 2) * 10) / 10 : 0
+                  return acc
+                }, {})
+                const example = JSON.stringify({ nodeId: '<your-device-id>', ts: Date.now(), values: exampleValues }, null, 2)
+                return (
+                  <div key={domain} className="rounded-lg p-3" style={inset}>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-xs font-medium text-white">{d.label}</span>
+                      {isSuper && (
+                        <button onClick={() => setOrgSpecEditor({ orgId, domain })}
+                          className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={surface}>
+                          <Settings2 size={10} /> Configure
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Hash size={10} className="text-slate-600 flex-shrink-0" />
+                      <span className="font-mono text-[11px] text-slate-300 truncate" title={topic}>{topic}</span>
+                      <button
+                        onClick={() => { navigator.clipboard?.writeText(topic); toast.success('Topic copied') }}
+                        title="Copy topic" className="text-slate-600 hover:text-white flex-shrink-0"
+                      >
+                        <Copy size={11} />
+                      </button>
+                    </div>
+                    {spec && spec.paramKeys.length > 0 ? (
+                      <>
+                        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+                          {spec.paramKeys.map((k) => (
+                            <span key={k} className="text-[11px] px-2 py-0.5 rounded-md font-mono" style={surface}>
+                              <span className="text-slate-500">{spec.labels[k] || schemaLabel(domain, k)}</span> <span className="text-slate-600">{k}</span>
+                            </span>
+                          ))}
+                        </div>
+                        <div className="relative">
+                          <pre className="text-[10px] text-slate-400 rounded-md p-2 overflow-x-auto font-mono" style={surface}>{example}</pre>
+                          <button
+                            onClick={() => { navigator.clipboard?.writeText(example); toast.success('Payload example copied') }}
+                            title="Copy JSON" className="absolute top-1.5 right-1.5 text-slate-600 hover:text-white"
+                          >
+                            <Copy size={11} />
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-[11px] text-slate-600">
+                        {isSuper
+                          ? 'No payload spec configured yet — click Configure to define which fields this product sends.'
+                          : "No payload spec configured yet — a device may publish any fields under payload.values and they'll show up once it connects."}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="p-8 text-center text-slate-500 text-sm" style={surface}>Loading…</div>
       ) : rows.length === 0 ? (
         <div className="p-10 rounded-xl text-center" style={surface}>
           <PlugZap size={28} className="text-slate-600 mx-auto mb-2" />
           <p className="text-sm text-slate-400">No devices awaiting approval.</p>
-          <p className="text-xs text-slate-600 mt-1">A newly powered device publishing to <span className="font-mono">telemetry/{'{org}'}/{'{product}'}/{'{id}'}</span> will appear here within seconds.</p>
+          <p className="text-xs text-slate-600 mt-1">A newly powered device publishing to the topic above will appear here within seconds.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -518,19 +639,19 @@ export default function PendingDevicesPage() {
           nodeId={specEditor.node.id}
           available={specEditor.node.last_sample ? Object.keys(specEditor.node.last_sample) : []}
           onClose={() => setSpecEditor(null)}
-          onSaved={async () => {
-            // Refetch directly rather than just invalidating the cache: the
-            // fetch effect above is keyed on domainOrgPairsKey, which has not
-            // changed (same org/domain pair, still present) — dropping the
-            // entry alone would leave it missing until something else in the
-            // set of pairs changes, which may be never.
-            const key = specKeyOf(specEditor.orgId, specEditor.domain)
-            const [dp, pl] = await Promise.all([
-              api.displayParams(specEditor.orgId, specEditor.domain),
-              api.paramLabels(specEditor.orgId, specEditor.domain),
-            ])
-            setSpecByKey((prev) => ({ ...prev, [key]: { paramKeys: dp?.paramKeys ?? [], labels: pl?.labels ?? {} } }))
-          }}
+          onSaved={() => refetchSpec(specEditor.orgId, specEditor.domain)}
+        />
+      )}
+
+      {/* Same tables, but for a product with no device to check boxes
+          against yet — see OrgPayloadSpecPicker's own header comment for why
+          DisplayParamPicker doesn't fit that case. */}
+      {orgSpecEditor && (
+        <OrgPayloadSpecPicker
+          orgId={orgSpecEditor.orgId}
+          domain={orgSpecEditor.domain}
+          onClose={() => setOrgSpecEditor(null)}
+          onSaved={() => refetchSpec(orgSpecEditor.orgId, orgSpecEditor.domain)}
         />
       )}
     </div>
