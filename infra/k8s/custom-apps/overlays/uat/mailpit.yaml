@@ -140,15 +140,30 @@ spec:
             # 'notify.%' to the DELETE in mail-sink-guard-job.yaml. Nothing else
             # changes — Node-RED keeps pointing at this Service either way.
             #
-            # MP_SMTP_RELAY_ALLOWED_RECIPIENTS is the safety rail that makes
-            # "real delivery" survivable here: UAT shares tenant data with prod,
-            # so users holds REAL customer addresses, and an alarm storm or the
-            # 15-minute report cron would otherwise mail them from a test system.
-            # Only recipients matching this regex are actually relayed; every
-            # other message is still captured and visible in the UI, just never
-            # delivered. Widen it deliberately, one address at a time.
-            - name: MP_SMTP_RELAY_ALL
-              value: "true"
+            # MP_SMTP_RELAY_MATCHING is the safety rail that makes "real delivery"
+            # survivable here: UAT shares tenant data with prod, so users holds
+            # REAL customer addresses, and an alarm storm or the 15-minute report
+            # cron would otherwise mail them from a test system. Only recipients
+            # matching this regex are relayed; everything else is still captured
+            # and visible in the UI, just never delivered. Default-deny — widen
+            # it deliberately, one address at a time.
+            #
+            # It is specifically NOT MP_SMTP_RELAY_ALL. Upstream autoRelayMessage()
+            # is:
+            #     if config.SMTPRelayAll            { Relay(from, to, ...) }
+            #     else if SMTPRelayMatchingRegexp != nil { Relay(from, filtered, ...) }
+            # so RELAY_ALL delivers to EVERY recipient and skips the allowlist
+            # entirely — the two settings are alternatives, not layers, and
+            # combining them silently disables the filter.
+            - name: MP_SMTP_RELAY_MATCHING
+              valueFrom:
+                secretKeyRef:
+                  name: mailpit-relay
+                  key: allowed-recipients
+            # Guards the OTHER path to the outside world: the manual "Release"
+            # button in the UI/API, which is enforced in apiv1/release.go and
+            # ignores RELAY_MATCHING. Same regex, so neither route can reach an
+            # address the other would refuse.
             - name: MP_SMTP_RELAY_ALLOWED_RECIPIENTS
               valueFrom:
                 secretKeyRef:
