@@ -1,13 +1,16 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useAppStore } from '@/lib/store'
 import { useSessionRole } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
+import { schemaLabel } from '@/lib/useParamLabels'
 import type { TransformerModel } from '@/lib/useNodeNameplate'
+import type { SensorDomain } from '@/types/fleet'
 import PhotoStrip from '@/components/device/PhotoStrip'
-import { PlugZap, Check, X, RefreshCw, Building2, Activity } from 'lucide-react'
+import DisplayParamPicker from '@/components/device/DisplayParamPicker'
+import { PlugZap, Check, X, RefreshCw, Building2, Activity, Hash, Settings2, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -82,6 +85,25 @@ export default function PendingDevicesPage() {
   // (still loading, or entitlements fetch failed) → don't filter, same as the
   // rest of the app's "no entitlement answer yet" fallback.
   const [entsByOrg, setEntsByOrg] = useState<Record<string, string[]>>({})
+
+  // The MQTT payload SPEC for a (org, product) pair: which fields that product
+  // is supposed to send for that org, and their display names — set up front by
+  // a superadmin (display_params + param_labels, org-wide default row, migrate-
+  // v26/v34) rather than discovered after the fact. Different units of the same
+  // product can send a different sensor set ("each transformer may have values
+  // that differ by spec"), which is exactly why display_params already scopes
+  // per DEVICE as an override on top of this org-wide default — approving a
+  // device here can open that same picker, pointed at this device.
+  //
+  // Keyed "orgId::domain" rather than nested, so the fetch effect below can
+  // dedupe on a flat set of strings instead of walking a tree on every row.
+  const [specByKey, setSpecByKey] = useState<Record<string, { paramKeys: string[]; labels: Record<string, string> }>>({})
+  const specKeyOf = (targetOrgId: string, domain: string) => `${targetOrgId}::${domain}`
+  // Which row's payload-spec editor is open. Carries the resolved org/domain
+  // rather than re-deriving them from `n`/`form` at render time, so the modal's
+  // props can't drift if the admin changes the row's Organization/Product
+  // picker while it is open.
+  const [specEditor, setSpecEditor] = useState<{ node: PendingNode; orgId: string; domain: SensorDomain } | null>(null)
 
   const load = useCallback(async () => {
     if (!isLive()) {
@@ -183,6 +205,44 @@ export default function PendingDevicesPage() {
     return () => { cancelled = true }
   }, [orgId, orgs])
 
+  // Distinct (org, currently-selected product) pairs actually on screen right
+  // now — NOT the whole `form` object, and NOT every org in the picker. Editing
+  // a row's Name field re-renders `form` on every keystroke; keying the effect
+  // on this joined, deduped string instead means a spec is fetched once per
+  // pair and never re-fetched just because someone typed a letter.
+  const domainOrgPairs = useMemo(() => {
+    const set = new Set<string>()
+    for (const n of rows) {
+      const f = form[n.id]
+      if (!f) continue
+      const targetOrg = isSuper ? f.orgId : orgId
+      if (!targetOrg || targetOrg === UNASSIGNED) continue
+      set.add(specKeyOf(targetOrg, f.domain))
+    }
+    return Array.from(set).sort()
+  }, [rows, form, isSuper, orgId])
+  const domainOrgPairsKey = domainOrgPairs.join(',')
+
+  useEffect(() => {
+    if (!isLive() || !domainOrgPairsKey) return
+    let cancelled = false
+    Promise.all(domainOrgPairs.map(async (key) => {
+      const [oid, dom] = key.split('::')
+      const [dp, pl] = await Promise.all([api.displayParams(oid, dom), api.paramLabels(oid, dom)])
+      return [key, { paramKeys: dp?.paramKeys ?? [], labels: pl?.labels ?? {} }] as const
+    })).then((results) => {
+      if (cancelled) return
+      setSpecByKey((prev) => {
+        const next = { ...prev }
+        for (const [key, val] of results) next[key] = val
+        return next
+      })
+    })
+    return () => { cancelled = true }
+    // domainOrgPairsKey is the deliberate dependency — see the comment above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [domainOrgPairsKey])
+
   const approve = async (n: PendingNode) => {
     const f = form[n.id]
     if (isSuper && !f.orgId) { toast.error('Select an organization for this device'); return }
@@ -251,6 +311,16 @@ export default function PendingDevicesPage() {
             const set = (patch: Partial<typeof f>) => setForm((s) => ({ ...s, [n.id]: { ...f, ...patch } }))
             const isOrphan = n.org_id === UNASSIGNED
             const sample = n.last_sample && typeof n.last_sample === 'object' ? Object.entries(n.last_sample) : []
+            const sampleKeys = new Set(sample.map(([k]) => k))
+            // The org this row currently resolves to — may still be empty for
+            // an unclaimed orphan a superadmin has not assigned yet.
+            const targetOrgId = isSuper ? f.orgId : orgId
+            const spec = targetOrgId ? specByKey[specKeyOf(targetOrgId, f.domain)] : undefined
+            const specLabelOf = (k: string) => spec?.labels[k] || schemaLabel(f.domain as SensorDomain, k)
+            // Fields the org's spec expects for this product that this device
+            // has not actually sent yet — worth a flag, not a block: a unit can
+            // be missing an optional sensor and still be worth approving.
+            const missingFromSpec = spec ? spec.paramKeys.filter((k) => !sampleKeys.has(k)) : []
             return (
               <div key={n.id} className="p-4 rounded-xl" style={surface}>
                 <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -271,6 +341,17 @@ export default function PendingDevicesPage() {
                   <span className="text-xs text-slate-500 ml-auto">last seen {ago(n.last_seen)} · first {ago(n.first_seen)}</span>
                 </div>
 
+                {/* The actual MQTT topic this device published on
+                    (telemetry/{org}/{product}/{id}) — captured verbatim by the
+                    worker at auto-registration, so it reflects what the device
+                    really sent even if the org/product below get corrected. */}
+                {n.mqtt_prefix && (
+                  <div className="flex items-center gap-1.5 mb-2 text-[11px]">
+                    <Hash size={11} className="text-slate-600 flex-shrink-0" />
+                    <span className="font-mono text-slate-500 truncate" title={n.mqtt_prefix}>{n.mqtt_prefix}</span>
+                  </div>
+                )}
+
                 {/* Latest telemetry sample so the admin can sanity-check readings */}
                 {sample.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 mb-3">
@@ -280,6 +361,44 @@ export default function PendingDevicesPage() {
                         <span className="text-slate-500">{k}</span> <span className="text-slate-200">{typeof v === 'number' ? v : String(v)}</span>
                       </span>
                     ))}
+                  </div>
+                )}
+
+                {/* Expected payload for this product+org — the spec a superadmin
+                    sets up front (display_params/param_labels, org-wide default),
+                    not something inferred from whichever device happened to
+                    connect first. Shown to every approver as a reference; only a
+                    superadmin gets the button to change it, per how licensing
+                    (Feature Entitlements) already works on this platform. */}
+                {targetOrgId && (
+                  <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                    <span className="text-[10px] text-slate-600 uppercase tracking-wider flex-shrink-0">Expected payload</span>
+                    {spec && spec.paramKeys.length > 0 ? (
+                      spec.paramKeys.map((k) => {
+                        const present = sampleKeys.has(k)
+                        return (
+                          <span key={k} title={present ? 'reported in the last sample' : 'not seen in the last sample — may be optional on this unit'}
+                            className="text-[11px] px-2 py-0.5 rounded-md" style={present ? inset : { background: 'rgba(251,191,36,0.08)', border: '1px dashed #92702c' }}>
+                            <span className={present ? 'text-slate-200' : 'text-amber-500'}>{specLabelOf(k)}</span>
+                            <span className="text-slate-600 font-mono ml-1">{k}</span>
+                          </span>
+                        )
+                      })
+                    ) : (
+                      <span className="text-[11px] text-slate-600">not configured yet — approving will show every field this device sends</span>
+                    )}
+                    {isSuper && (
+                      <button onClick={() => setSpecEditor({ node: n, orgId: targetOrgId, domain: f.domain as SensorDomain })}
+                        className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={inset}>
+                        <Settings2 size={10} /> Configure
+                      </button>
+                    )}
+                  </div>
+                )}
+                {missingFromSpec.length > 0 && (
+                  <div className="flex items-center gap-1.5 mb-3 text-[11px] text-amber-500">
+                    <AlertTriangle size={11} className="flex-shrink-0" />
+                    <span>{missingFromSpec.length} expected field{missingFromSpec.length === 1 ? '' : 's'} not in the last sample — confirm this unit&apos;s spec before approving, or it may just be an optional sensor.</span>
                   </div>
                 )}
 
@@ -386,6 +505,33 @@ export default function PendingDevicesPage() {
             )
           })}
         </div>
+      )}
+
+      {/* Reuses the same picker device settings use (org-wide default OR
+          per-device override, migrate-v26/v34) rather than a one-off editor —
+          this IS that config, just reached before the device is approved
+          instead of after, from its own settings page. */}
+      {specEditor && (
+        <DisplayParamPicker
+          orgId={specEditor.orgId}
+          domain={specEditor.domain}
+          nodeId={specEditor.node.id}
+          available={specEditor.node.last_sample ? Object.keys(specEditor.node.last_sample) : []}
+          onClose={() => setSpecEditor(null)}
+          onSaved={async () => {
+            // Refetch directly rather than just invalidating the cache: the
+            // fetch effect above is keyed on domainOrgPairsKey, which has not
+            // changed (same org/domain pair, still present) — dropping the
+            // entry alone would leave it missing until something else in the
+            // set of pairs changes, which may be never.
+            const key = specKeyOf(specEditor.orgId, specEditor.domain)
+            const [dp, pl] = await Promise.all([
+              api.displayParams(specEditor.orgId, specEditor.domain),
+              api.paramLabels(specEditor.orgId, specEditor.domain),
+            ])
+            setSpecByKey((prev) => ({ ...prev, [key]: { paramKeys: dp?.paramKeys ?? [], labels: pl?.labels ?? {} } }))
+          }}
+        />
       )}
     </div>
   )
