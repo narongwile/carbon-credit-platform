@@ -171,12 +171,13 @@ patches:
                     value: "emqx.iiot-uat.svc.cluster.local"
                   - name: DB_HOST
                     value: "mysql.iiot-uat.svc.cluster.local"
-                  # ── Mail: everything goes to the Mailpit sink, nothing leaves ──
-                  # mailConfig() prefers platform_settings over every env var
-                  # here (`m['smtp.host'] || env.get('SMTP_HOST')`), so these are
-                  # INERT while the matching DB rows exist. mail-sink-guard-job
-                  # strips them on every sync — that Job is what makes this block
-                  # take effect, not a comment telling someone to run SQL.
+                  # ── Mail routes through Mailpit, which relays on ──
+                  # These are only the FALLBACK. mailConfig() reads
+                  # platform_settings first (`m['smtp.host'] || env.get(...)`), and
+                  # /superadmin/integrations writes those rows, so what actually
+                  # wins is the pin written by mail-sink-guard-job. Keep the two in
+                  # sync — the Job's PIN_SMTP_HOST/PIN_SMTP_PORT/PIN_FRONTEND_URL
+                  # must match the values here.
                   - name: SMTP_HOST
                     value: "mailpit.iiot-uat.svc.cluster.local"
                   - name: SMTP_PORT
