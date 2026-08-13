@@ -12,6 +12,14 @@ resources:
   # 65 KB mysql-migrations ConfigMap it used to mount is gone — with prune:true
   # ArgoCD removes it from the cluster on the next sync.
   - mysql-migrate-job.yaml
+  # SMTP sink — UAT must never deliver mail to the real customer addresses it
+  # shares with prod. Overlay-only on purpose: in prod this would swallow every
+  # alarm. See mailpit.yaml.
+  - mailpit.yaml
+  # Strips any real relay out of platform_settings on every sync. Without this the
+  # SMTP_* env below is inert, because mailConfig() lets the DB win. See the file
+  # header for the Gmail incident that made this a hook rather than a one-off.
+  - mail-sink-guard-job.yaml
 
 commonAnnotations:
   environment: uat
@@ -163,3 +171,28 @@ patches:
                     value: "emqx.iiot-uat.svc.cluster.local"
                   - name: DB_HOST
                     value: "mysql.iiot-uat.svc.cluster.local"
+                  # ── Mail: everything goes to the Mailpit sink, nothing leaves ──
+                  # mailConfig() prefers platform_settings over every env var
+                  # here (`m['smtp.host'] || env.get('SMTP_HOST')`), so these are
+                  # INERT while the matching DB rows exist. mail-sink-guard-job
+                  # strips them on every sync — that Job is what makes this block
+                  # take effect, not a comment telling someone to run SQL.
+                  - name: SMTP_HOST
+                    value: "mailpit.iiot-uat.svc.cluster.local"
+                  - name: SMTP_PORT
+                    value: "1025"
+                  # No SMTP_USER/SMTP_PASS: mailConfig() only attaches auth when
+                  # a user is set, and Mailpit needs none.
+                  - name: MAIL_FROM
+                    value: "alerts@uat.thermexpertise.com"
+                  # Password-reset links are built from this. Unset it falls back
+                  # to http://localhost:3000, so every UAT reset mail shipped a
+                  # dead link.
+                  - name: FRONTEND_URL
+                    value: "https://iiotplatform.27.254.143.144.nip.io:30443"
+                  # "Open device" deep links in alarm cards. Inherited from base
+                  # this is the PRODUCTION origin, so UAT alarm mail pointed
+                  # engineers at the prod console for a device that only exists
+                  # in UAT.
+                  - name: APP_BASE_URL
+                    value: "https://iiotplatform.27.254.143.144.nip.io:30443"

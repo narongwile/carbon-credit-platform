@@ -1,0 +1,145 @@
+# ============================================================
+# UAT mail-sink guard — strip any real relay/notify config from platform_settings
+#
+# WHY THIS EXISTS (not hypothetical — this already happened):
+#   2026-08-13 16:31 UAT
+#   [error] [function:POST /api/auth/forgot] Forgot password sendMail failed:
+#   Invalid login: 535-5.7.8 Username and Password not accepted ... gsmtp
+#
+# UAT was configured to send through smtp.gmail.com. base/node-red.yaml declares
+# no SMTP_* env at all, so that could only have come from a platform_settings row
+# in the UAT control DB. It was NOT delivering only because the credentials were
+# broken — the moment someone fixed them, UAT would have started mailing the real
+# customer addresses it shares with production.
+#
+# mailConfig() gives the DB priority over env:
+#     const host = m['smtp.host'] || env.get('SMTP_HOST') || '';
+# so the SMTP_HOST=mailpit... env set in kustomization.yaml is INERT while any
+# smtp.host row exists. Setting the env without clearing the rows changes nothing.
+#
+# A one-off DELETE would fix it today and rot tomorrow: the superadmin UI can
+# write those rows back at any time, and nothing would notice. Running as a Sync
+# hook makes "UAT cannot reach a real relay" an invariant ArgoCD re-establishes on
+# every sync, instead of a note somebody has to remember.
+#
+# notify.% is included for the same reason: an SMTP sink captures email only.
+# Telegram / LINE / Google Chat tokens in platform_settings would still push UAT
+# alarms straight to whatever real channel they name — Mailpit never sees them.
+# If you deliberately want to exercise a chat channel from UAT, drop 'notify.%'
+# from the DELETE below; do not disable the whole hook.
+# ============================================================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: uat-mail-sink-guard
+  namespace: iiot-uat
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    # Same policy as mysql-auto-migrate: clear the previous run immediately
+    # before the next, never on success, so the log survives for inspection and
+    # ArgoCD always has an object to poll.
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    # Run AFTER the migration hook — platform_settings has to exist before there
+    # is anything to clean out of it.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: guard
+          # Reuse the migrate-service image purely for its node + mysql2: pulling
+          # mysql:8.0 from Docker Hub on every sync is a rate limit waiting to
+          # stall the application behind this hook (same reasoning as
+          # mysql-migrate-job.yaml).
+          image: registry.gitlab.com/narongwile/carbon-credit-platform/migrate-service:31ad9acc
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - -e
+            - |
+              const mysql = require('mysql2/promise');
+              // Tolerate a table that does not exist yet (fresh UAT database).
+              // That is the SAFE state — nothing to strip — and it must not fail
+              // the sync and block every resource queued behind this hook.
+              const tryQuery = async (c, sql, label) => {
+                try {
+                  const [r] = await c.query(sql);
+                  console.log('[mail-sink-guard] ' + label + ': ' + r.affectedRows + ' row(s)');
+                } catch (e) {
+                  if (e.code === 'ER_NO_SUCH_TABLE') {
+                    console.log('[mail-sink-guard] ' + label + ': table absent, nothing to do');
+                  } else {
+                    throw e;
+                  }
+                }
+              };
+              (async () => {
+                const cfg = {
+                  host: process.env.DB_HOST, port: 3306,
+                  user: process.env.DB_USER, password: process.env.DB_PASSWORD,
+                };
+                const c = await mysql.createConnection({ ...cfg, database: process.env.DB_NAME });
+                try {
+                  // smtp.%   — the real relay (this is what pointed UAT at Gmail).
+                  // notify.% — Telegram / LINE / Google Chat tokens.
+                  // app.frontendUrl — same DB-first precedence as SMTP_HOST but a
+                  //   different key, so a LIKE 'smtp.%' sweep misses it and every
+                  //   captured reset mail would still carry a PRODUCTION link.
+                  await tryQuery(c,
+                    "DELETE FROM platform_settings WHERE skey LIKE 'smtp.%' OR skey LIKE 'notify.%' OR skey = 'app.frontendUrl'",
+                    'platform_settings stripped');
+
+                  // An SMTP sink captures SMTP and nothing else. notification_channels
+                  // rows drive direct HTTPS pushes to Telegram / LINE / Google Chat —
+                  // and the googlechat branch POSTs to whatever webhook URL the row
+                  // carries, which in prod-derived UAT data is a real customer channel.
+                  // Mailpit never sees those, so they are disabled here instead.
+                  // The table is per-tenant (notifyFunc uses resolvePool(e.orgId)),
+                  // so every org database has to be swept, not just the control one.
+                  const [orgs] = await c.query("SELECT id FROM organizations");
+                  const dbs = [process.env.DB_NAME];
+                  for (const o of orgs) {
+                    const slug = String(o.id).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+                    if (slug) dbs.push(('iothub_' + slug).slice(0, 64));
+                  }
+                  for (const db of [...new Set(dbs)]) {
+                    const [exists] = await c.query("SHOW DATABASES LIKE ?", [db]);
+                    if (!exists.length) continue;
+                    const oc = await mysql.createConnection({ ...cfg, database: db });
+                    try {
+                      await tryQuery(oc,
+                        "UPDATE notification_channels SET enabled=0 WHERE channel<>'email' AND enabled=1",
+                        db + ' chat channels disabled');
+                    } finally {
+                      await oc.end();
+                    }
+                  }
+                  console.log('[mail-sink-guard] done — UAT now falls through to the SMTP_* env (Mailpit)');
+                } finally {
+                  await c.end();
+                }
+              })().catch((e) => { console.error('[mail-sink-guard] ' + e.message); process.exit(1); });
+          env:
+            - name: DB_HOST
+              value: "mysql.iiot-uat.svc.cluster.local"
+            - name: DB_USER
+              value: "root"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-root-password
+            # The CONTROL database — platform_settings is control-plane, never
+            # per-tenant (mailConfig reads it through global.get('pool')).
+            - name: DB_NAME
+              value: "iothub"
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }

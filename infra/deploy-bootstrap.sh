@@ -272,7 +272,7 @@ seed_cluster() {
   # Ensure all target namespaces exist (some Helm charts run before
   # Application-managed namespace creation completes).
   local ns
-  for ns in argocd cert-manager monitoring data app web carbon-credit; do
+  for ns in argocd cert-manager monitoring data app web carbon-credit iiot-uat; do
     $KUBECTL create namespace "$ns" --dry-run=client -o yaml | $KUBECTL apply -f -
   done
 
@@ -356,6 +356,18 @@ EOF
   ensure_secret carbon-credit node-red-auth \
     "username=${ADMIN_USER}" "password-bcrypt=${nr_hash}"
   record_secret "node-red ${ADMIN_USER}@carbon-credit" "${pw}"
+
+  # ─ Mailpit UI/API basic auth (UAT mail sink) ─
+  # The Deployment mounts this NON-optionally, so without it the pod sits in
+  # ContainerCreating forever and UAT silently captures no mail at all. It has to
+  # be a real credential, not a convenience: the captured mailbox holds live
+  # password-reset tokens for the REAL customer addresses UAT shares with prod,
+  # on a public nip.io host. Single htpasswd line — go-htpasswd (the library
+  # Mailpit uses) reads exactly this bcrypt format.
+  local mp_line
+  mp_line="$(htpasswd -bnBC 10 "${ADMIN_USER}" "${pw}")"
+  ensure_secret iiot-uat mailpit-auth "htpasswd=${mp_line}"
+  record_secret "mailpit UI ${ADMIN_USER}@iiot-uat" "${pw}"
 
   log "Secrets seeded → ${SECRETS_LOG}"
 }

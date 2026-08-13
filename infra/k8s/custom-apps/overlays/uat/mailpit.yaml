@@ -1,0 +1,253 @@
+# ============================================================
+# Mailpit — SMTP sink for UAT (UAT-ONLY, never in prod)
+#
+# UAT shares real customer data with production: the users table holds real
+# email addresses and iothub_org_eternity is a real tenant. A UAT alarm storm,
+# or the report cron (every 15 min), sending through a real MTA would mail
+# actual customers from a test environment — damage that cannot be undone.
+#
+# Mailpit accepts every message and delivers NOTHING. Everything the platform
+# "would have sent" is readable in its web UI, with HTML preview, which is a
+# better template-testing loop than real delivery anyway. No domain, no DNS,
+# no DKIM, no IP warm-up, no blocklist risk.
+#
+# Lives in the uat overlay (not base) precisely so it can never be synced to
+# prod: prod gets a real MTA, and a mail sink there would silently swallow
+# every alarm.
+# ============================================================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mailpit-data
+  namespace: iiot-uat
+  labels:
+    app: mailpit
+  annotations:
+    # Same reasoning as node-red-data: never let a prune leave this stuck
+    # Terminating behind the pvc-protection finalizer, which blocks the
+    # replacement pod from scheduling.
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: iiot-uat
+  labels:
+    app: mailpit
+    app.kubernetes.io/name: mailpit
+    app.kubernetes.io/component: smtp-sink
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # PVC is RWO — single writer only
+  selector:
+    matchLabels:
+      app: mailpit
+  template:
+    metadata:
+      labels:
+        app: mailpit
+    spec:
+      securityContext:
+        # The upstream image declares no USER and would run as root. The binary
+        # is mode 0755 and both listeners are above 1024, so nothing here needs
+        # privilege.
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      initContainers:
+        # fsGroup alone is NOT enough on this cluster. The local-path provisioner
+        # hands out plain hostPath-backed volumes, and hostPath PVs do not get
+        # kubelet's fsGroup ownership management — which is exactly why node-red,
+        # the only other local-path consumer here, sets the same fsGroup: 1000 and
+        # STILL needs this chown (base/node-red.yaml:74-78). Without it Mailpit
+        # cannot create /data/mailpit.db and CrashLoopBackOffs, and because every
+        # sender swallows its errors the symptom is silent: mail simply vanishes.
+        - name: fix-permissions
+          image: busybox:latest
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: mailpit-data
+              mountPath: /data
+      containers:
+        - name: mailpit
+          # Pinned, not :latest — a mail sink that silently changes behaviour
+          # under UAT is worse than one that is a version behind.
+          image: axllent/mailpit:v1.30.7
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 1025
+              name: smtp
+              protocol: TCP
+            - containerPort: 8025
+              name: http
+              protocol: TCP
+          env:
+            - name: TZ
+              value: Asia/Bangkok
+            - name: MP_SMTP_BIND_ADDR
+              value: "0.0.0.0:1025"
+            - name: MP_UI_BIND_ADDR
+              value: "0.0.0.0:8025"
+            # Persist to the PVC so a pod restart does not throw away the
+            # evidence someone was in the middle of reading.
+            - name: MP_DATABASE
+              value: /data/mailpit.db
+            # Default is 500. The report cron alone (every 15 min) plus an
+            # alarm burst rolls that over inside a day of testing.
+            - name: MP_MAX_MESSAGES
+              value: "5000"
+            # Bound the OTHER two dimensions as well. Count alone is not a size
+            # limit: upstream defaults to a 50 MiB cap per message and no age
+            # pruning, so 5000 messages is a 244 GiB worst case — and the report
+            # scheduler genuinely attaches multi-MB CSV/PDF files over SMTP. The
+            # PVC's `storage: 1Gi` enforces nothing, because local-path is a host
+            # directory with no quota, so an unbounded store fills the NODE disk,
+            # which on this single-node cluster takes production down with it.
+            - name: MP_MAX_MESSAGE_SIZE
+              value: "10"          # MiB — no legitimate UAT mail approaches this
+            - name: MP_MAX_AGE
+              value: "7d"          # prune by age too, not just by count
+            # mailConfig() sends credentials only when smtp.user is set, so most
+            # of the time Mailpit sees no AUTH at all. Accepting anything (over
+            # a plaintext in-cluster hop) means flipping smtp.user/pass in the
+            # superadmin UI to rehearse a real relay does not start bouncing.
+            - name: MP_SMTP_AUTH_ACCEPT_ANY
+              value: "true"
+            - name: MP_SMTP_AUTH_ALLOW_INSECURE
+              value: "true"
+            # Basic auth for the web UI + API. REQUIRED, not optional: the
+            # captured mail includes password-reset links for real addresses,
+            # so an unauthenticated UI on a public nip.io host would hand
+            # account takeover to anyone who guesses the URL. A missing Secret
+            # keeps the pod from starting, which is the correct failure.
+            - name: MP_UI_AUTH_FILE
+              value: /auth/htpasswd
+          volumeMounts:
+            - name: mailpit-data
+              mountPath: /data
+            - name: ui-auth
+              mountPath: /auth
+              readOnly: true
+          securityContext:
+            # The pod-level block above already drops to 1000, but runAsNonRoot
+            # is the admission-time guard: without it, anyone who later strips
+            # the pod-level runAsUser (a plausible "the PVC permissions are
+            # broken, let me just remove this" edit) gets a silently-root
+            # container, because the image declares no USER.
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          # /livez and /readyz are registered outside the basic-auth middleware
+          # upstream, so these keep working with MP_UI_AUTH_FILE set.
+          #
+          # timeoutSeconds is explicit because the default is 1s and this
+          # container is CPU-capped: the alarm storm this sink exists to absorb
+          # is precisely when Mailpit is throttled parsing MIME and committing to
+          # SQLite, and three missed 1s deadlines would delete the pod mid-write.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 3
+            timeoutSeconds: 5
+            failureThreshold: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "50m"
+              memory: 64Mi
+            limits:
+              # 1 core, not 500m: a single-writer SQLite store under a burst
+              # should not be throttled into failing its own health checks.
+              cpu: "1"
+              memory: 512Mi
+      volumes:
+        - name: mailpit-data
+          persistentVolumeClaim:
+            claimName: mailpit-data
+        - name: ui-auth
+          secret:
+            secretName: mailpit-auth
+            items:
+              - key: htpasswd
+                path: htpasswd
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: iiot-uat
+  labels:
+    app: mailpit
+spec:
+  type: ClusterIP
+  selector:
+    app: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+      protocol: TCP
+    - name: http
+      port: 8025
+      targetPort: http
+      protocol: TCP
+---
+# Web UI only. The SMTP port is deliberately NOT exposed through the ingress —
+# nothing outside the cluster has any reason to inject mail into UAT.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mailpit
+  namespace: iiot-uat
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: traefik
+  rules:
+    # A plain label under nip.io, not under *.iiotplatform.*, so the
+    # frontend-next wildcard (which 0bf75166 narrowed to *.iiotplatform.* for
+    # exactly this reason) cannot swallow it.
+    - host: mail-uat.27.254.143.144.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mailpit
+                port:
+                  number: 8025
+  tls:
+    - hosts:
+        - mail-uat.27.254.143.144.nip.io
+      secretName: mailpit-tls
