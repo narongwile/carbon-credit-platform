@@ -935,7 +935,12 @@ const orgLogoGetFunc = `const pool=global.get('pool'); const orgId=msg.req.param
 const orgLogoPublicFunc = `const pool=global.get('pool'); const orgId=msg.req.params.orgId;
 (async()=>{
   let rows=[];
-  try { const[r]=await pool.query("SELECT image_data, content_type FROM org_logos WHERE org_id=?",[orgId]); rows=r; }
+  try {
+    const cleanId = String(orgId||'').replace(/^org-/, '');
+    const altId = String(orgId||'').startsWith('org-') ? cleanId : ('org-' + cleanId);
+    const[r]=await pool.query("SELECT image_data, content_type FROM org_logos WHERE org_id=? OR org_id=?",[orgId, altId]);
+    rows=r;
+  }
   catch(e){ if(String(e&&e.message||'').indexOf('org_logos')<0) throw e; }
   if(!rows.length || !rows[0].image_data){ msg.statusCode=404; msg.headers={'Access-Control-Allow-Origin':'*'}; msg.payload='not found'; node.send(msg); return; }
   msg.statusCode=200;
