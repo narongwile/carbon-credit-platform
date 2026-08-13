@@ -37,7 +37,7 @@ export interface ManagedUser {
   role: ManagedRole
   /** A user can belong to multiple departments. */
   departmentIds: string[]
-  status: 'active' | 'invited' | 'disabled'
+  status: 'active' | 'pending' | 'invited' | 'disabled'
   /**
    * Only ever set while SUBMITTING the admin form — never returned by the API
    * and never held in the roster. Blank on an edit means "keep the current

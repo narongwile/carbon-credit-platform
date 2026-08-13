@@ -264,13 +264,15 @@ export const api = {
    * wrong here. The backend already returns a real message for each
    * (loginFunc); this is what actually reads it.
    */
-  login: async (email: string, password: string): Promise<
+  login: async (email: string, password: string, orgId?: string | null): Promise<
     { ok: true; user: AuthUser } | { ok: false; status: number; error: string }
   > => {
     if (!isLive()) return { ok: false, status: 0, error: 'offline' }
     try {
+      const payload: Record<string, any> = { email, password }
+      if (orgId) payload.orgId = orgId
       const r = await fetch(`${BASE}/api/auth/login`, {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }),
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload),
       })
       const body = await r.json().catch(() => null) as { token?: string; user?: AuthUser; error?: string } | null
       if (!r.ok || !body?.token) return { ok: false, status: r.status, error: body?.error || 'login failed' }

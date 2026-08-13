@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { login, loginRemote, saveSession, getDashboardRoute, authApiEnabled } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
 import { apiImageUrl } from '@/lib/api'
+import { getOrgFromLocation } from '@/lib/orgResolver'
 import { Boxes, Eye, EyeOff } from 'lucide-react'
 
 export default function LoginPage() {
@@ -19,7 +20,7 @@ export default function LoginPage() {
   const [orgLogoUrl, setOrgLogoUrl] = useState<string | null>(null)
   const [orgLogoFailed, setOrgLogoFailed] = useState(false)
   useEffect(() => {
-    const org = new URLSearchParams(window.location.search).get('org')
+    const org = getOrgFromLocation()
     if (org) {
       setOrgId(org)
       setOrgLogoUrl(apiImageUrl(`/api/public/orgs/${encodeURIComponent(org)}/logo`))
@@ -34,13 +35,13 @@ export default function LoginPage() {
     }
     setLoading(true)
     if (authApiEnabled) {
-      const r = await loginRemote(username, password)
+      const r = await loginRemote(username, password, orgId)
       setLoading(false)
       if (!r.ok) {
         setError(
           r.status === 429 ? r.error || 'Too many attempts — please wait and try again.'
           : r.status === 403 ? r.error || 'This organization is suspended.'
-          : r.status === 401 ? 'Invalid credentials.'
+          : r.status === 401 ? (r.error || 'Invalid credentials.')
           : 'Could not reach the server. Please try again.'
         )
         return
@@ -93,7 +94,16 @@ export default function LoginPage() {
               </div>
             )}
           </div>
-          <p className="text-slate-500 text-sm">Unified multi-sensor operations — Sign in to continue</p>
+          {orgId ? (
+            <div className="flex flex-col items-center gap-1">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                🏢 Workspace: <span className="text-white">{orgId}</span>
+              </span>
+              <p className="text-slate-400 text-xs mt-1">Sign in to your organization workspace</p>
+            </div>
+          ) : (
+            <p className="text-slate-500 text-sm">Unified multi-sensor operations — Sign in to continue</p>
+          )}
         </div>
 
         <div className="rounded-2xl p-8 glass" style={{ border: '1px solid #1e2433' }}>

@@ -17,7 +17,7 @@ import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { Department, ManagedUser, ManagedRole, EventProblem } from '@/types/org'
 import {
   Users, Building2, Palette, Plus, Trash2, X, Check, Boxes,
-  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet, MapPin, HardDrive,
+  ToggleLeft, ToggleRight, Pencil, Eye, EyeOff, Settings2, Ban, ListChecks, Upload, FileSpreadsheet, MapPin, HardDrive, Clock, ShieldCheck,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -76,13 +76,14 @@ export default function UserManagementPage() {
     })
     api.users(orgId).then((rows) => {
       if (cancelled || !rows) return
-      setUsers((rows as Array<{ id: string; name: string; email?: string; username?: string; role?: string; department_id?: string; department_ids?: string[] }>).map((r) => ({
+      setUsers((rows as Array<{ id: string; name: string; email?: string; username?: string; role?: string; status?: string; department_id?: string; department_ids?: string[] }>).map((r) => ({
         // username is a stored column now — fall back only for rows created
         // before migrate-v22, which have none yet.
         id: r.id, orgId, name: r.name, username: r.username || r.email || r.id, email: r.email || '',
         role: (r.role === 'admin' ? 'admin' : 'viewer'),
         // department_ids is the real set; the singular column is the pre-v25 shape.
-        departmentIds: r.department_ids ?? (r.department_id ? [r.department_id] : []), status: 'active',
+        departmentIds: r.department_ids ?? (r.department_id ? [r.department_id] : []),
+        status: (r.status === 'pending' ? 'pending' : r.status === 'disabled' ? 'disabled' : 'active') as any,
       })))
     })
     return () => { cancelled = true }
@@ -359,6 +360,34 @@ export default function UserManagementPage() {
             </div>
           )}
 
+          {/* Pending Approval Alert Banner */}
+          {users.filter((u) => u.status === 'pending').length > 0 && (
+            <div className="p-4 rounded-xl flex items-center justify-between border border-amber-500/30 bg-amber-500/10 mb-4 animate-in fade-in">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
+                  <Clock size={20} className="animate-pulse" />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-amber-300">
+                    {users.filter((u) => u.status === 'pending').length} User Registration(s) Pending Approval
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Self-registered users awaiting admin approval and department assignment before they can sign in.
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  const firstPending = users.find((u) => u.status === 'pending')
+                  if (firstPending) setEditingUser({ ...firstPending, status: 'active' })
+                }}
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors shadow-sm"
+              >
+                Review & Approve
+              </button>
+            </div>
+          )}
+
           {/* User table */}
           <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
             <table className="w-full text-sm">
@@ -373,7 +402,12 @@ export default function UserManagementPage() {
                 {users.map((u) => (
                   <tr key={u.id} style={{ borderBottom: '1px solid #1e2433' }}>
                     <td className="py-3 px-4">
-                      <div className="text-white font-medium">{u.name}</div>
+                      <div className="text-white font-medium flex items-center gap-1.5">
+                        {u.name}
+                        {u.status === 'pending' && (
+                          <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-ping" title="Pending approval" />
+                        )}
+                      </div>
                       <div className="text-xs text-slate-500">{u.email}</div>
                     </td>
                     <td className="py-3 px-4 text-slate-400 font-mono text-xs">{u.username}</td>
@@ -384,9 +418,26 @@ export default function UserManagementPage() {
                       {u.departmentIds.length ? u.departmentIds.map(deptName).join(', ') : <span className="text-slate-600">org-level</span>}
                     </td>
                     <td className="py-3 px-4">
-                      <span className={clsx('text-xs font-medium capitalize', u.status === 'active' ? 'text-green-400' : u.status === 'invited' ? 'text-amber-400' : 'text-slate-500')}>{u.status}</span>
+                      {u.status === 'pending' ? (
+                        <span className="text-xs px-2 py-0.5 rounded-full font-medium text-amber-400 bg-amber-400/10 border border-amber-400/20 inline-flex items-center gap-1">
+                          <Clock size={11} /> Pending Approval
+                        </span>
+                      ) : (
+                        <span className={clsx('text-xs font-medium capitalize', u.status === 'active' ? 'text-green-400' : u.status === 'invited' ? 'text-amber-400' : 'text-slate-500')}>
+                          {u.status}
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
+                      {u.status === 'pending' && (
+                        <button
+                          onClick={() => setEditingUser({ ...u, status: 'active' })}
+                          title="Approve user & assign department"
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30 mr-1.5 inline-flex items-center gap-1 transition-colors"
+                        >
+                          <Check size={12} /> Approve
+                        </button>
+                      )}
                       <button onClick={() => setEditingUser(u)} className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-400 hover:bg-white/5"><Pencil size={13} /></button>
                       <button onClick={() => removeUser(u.id)} className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/5"><Trash2 size={13} /></button>
                     </td>
@@ -1171,12 +1222,32 @@ function UserModal({ user, departments, orgId, onClose, onSave }: {
               })}
             </div>
           </div>
+          <div>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Account Status</label>
+            <div className="flex gap-2">
+              {[
+                { id: 'active', label: 'Active (Approved)', activeClass: 'text-green-400 border-green-500/60 bg-green-500/15' },
+                { id: 'pending', label: 'Pending Approval', activeClass: 'text-amber-400 border-amber-500/60 bg-amber-500/15' },
+                { id: 'disabled', label: 'Disabled', activeClass: 'text-slate-400 border-slate-600 bg-slate-800/40' },
+              ].map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setForm((f) => ({ ...f, status: s.id as any }))}
+                  className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold transition-all border', form.status === s.id ? s.activeClass : 'text-slate-500 border-transparent')}
+                  style={form.status === s.id ? {} : inset}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="flex gap-3 p-5" style={{ borderTop: '1px solid #1e2433' }}>
           <button
-            onClick={() => { setTouched(true); if (valid) onSave({ ...form, name: form.name.trim(), username: form.username.trim(), email: form.email.trim(), password: password || undefined }) }}
+            onClick={() => { setTouched(true); if (valid) onSave({ ...form, name: form.name.trim(), username: form.username.trim(), email: form.email.trim(), status: form.status || 'active', password: password || undefined }) }}
             className="flex-1 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-            style={gradient}>Save</button>
+            style={gradient}>{user && user.status === 'pending' ? 'Approve & Activate User' : 'Save'}</button>
           <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>Cancel</button>
         </div>
       </div>

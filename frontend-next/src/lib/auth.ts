@@ -32,10 +32,10 @@ export function login(username: string, password: string): User | null {
  * different situations needing different messages, not one generic
  * "Invalid credentials" that hides which one actually happened.
  */
-export async function loginRemote(email: string, password: string): Promise<
+export async function loginRemote(email: string, password: string, orgId?: string | null): Promise<
   { ok: true; user: User } | { ok: false; status: number; error: string }
 > {
-  const r = await api.login(email, password)
+  const r = await api.login(email, password, orgId)
   if (!r.ok) return r
   const u = r.user
   const role = (u.role === 'viewer' ? 'customer' : u.role) as User['role']

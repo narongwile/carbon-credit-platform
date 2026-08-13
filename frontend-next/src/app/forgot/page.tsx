@@ -6,6 +6,7 @@ import { Boxes, ArrowLeft, Mail, CheckCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api, apiImageUrl } from '@/lib/api'
 import { authApiEnabled } from '@/lib/auth'
+import { getOrgFromLocation } from '@/lib/orgResolver'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
@@ -20,7 +21,7 @@ export default function ForgotPasswordPage() {
   const [orgLogoFailed, setOrgLogoFailed] = useState(false)
 
   useEffect(() => {
-    const org = new URLSearchParams(window.location.search).get('org')
+    const org = getOrgFromLocation()
     if (org) {
       setOrgId(org)
       setOrgLogoUrl(apiImageUrl(`/api/public/orgs/${encodeURIComponent(org)}/logo`))
