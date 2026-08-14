@@ -208,6 +208,148 @@ global.set('orgOfNode', async function(nodeId){
   if(org){ cache[nodeId]=org; global.set('nodeOrgCache',cache); }
   return org;
 });
+// --- moveNodeToOrg: reassign one ALREADY-ACTIVE device to a different org --
+// Nothing else in this file can do this: approve's org picker only applies
+// to a device still status='pending', and the device profile endpoint never
+// accepts orgId at all. An active device has real history — readings,
+// alarm_events, documents, node_photos — and under TENANT_DB_MODE that
+// history lives in the OLD org's own database (resolvePool(oldOrgId)), not
+// the control DB. Just flipping nodes.org_id would leave every one of those
+// rows behind, invisible to the new org's own resolvePool(newOrgId)
+// queries — the device would appear to move while its data silently didn't.
+//
+// MOVE_TABLE_RULES lists every table this app has that carries a node_id,
+// and what happens to each row on a cross-org move:
+//   resetOrg:      this column is org-scoped — set it to the destination org
+//   nullCols:      old-org-specific values (a department id, a model id from
+//                  the old org's own catalog) that mean nothing in the new
+//                  org — cleared, not carried
+//   dropOnly:      defines an old-org-specific GRANT (which departments/users
+//                  may see this device) — never copied, just deleted; the
+//                  new org's admin re-grants explicitly if needed
+//   requireNodeId: this table also holds org-WIDE default rows (node_id IS
+//                  NULL) that are not about this device at all and must
+//                  never be touched by a per-device move
+// Columns are discovered from information_schema at call time, not
+// hardcoded — a future migrate-vN adding a column here can't silently go
+// stale against a copy-pasted list.
+const MOVE_TABLE_RULES = {
+  readings: {}, readings_rollup: {}, device_presence: {}, device_logs: {},
+  edge_alarm_log: {}, transport_events: {}, offline_sync_log: {}, ota_deployments: {},
+  node_photos: {}, node_images: {},
+  node_nameplates: { nullCols: ['model_id'] },
+  alarm_rules: { resetOrg: 'org_id' },
+  alarm_events: { resetOrg: 'org_id', nullCols: ['department_id'] },
+  documents: {},
+  display_params: { resetOrg: 'org_id', nullCols: ['department_id'], requireNodeId: true },
+  param_labels: { resetOrg: 'org_id', requireNodeId: true },
+  node_departments: { dropOnly: true },
+  node_user_visibility: { dropOnly: true },
+};
+global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
+  const pool = global.get('pool');
+  const [rows] = await pool.query('SELECT * FROM nodes WHERE id=?', [id]);
+  if (!rows.length) return { nodeId: id, ok: false, error: 'not found' };
+  const nd = rows[0];
+  if (nd.status !== 'active') return { nodeId: id, ok: false, error: "only active devices can be moved (this one is '"+nd.status+"')" };
+  if (nd.org_id === targetOrgId) return { nodeId: id, ok: true, moved: false, note: 'already in that organization' };
+  const [org] = await pool.query("SELECT id FROM organizations WHERE id=? AND status='active'", [targetOrgId]);
+  if (!org.length) return { nodeId: id, ok: false, error: 'target organization does not exist or is suspended' };
+
+  const oldOrgId = nd.org_id;
+  const oldPool = global.get('resolvePool')(oldOrgId);
+  const newPool = global.get('resolvePool')(targetOrgId);
+  const warnings = [];
+
+  // 1. Control-DB row FIRST — this is the routing index guard()/orgOfNode
+  //    read on every request, so it defines the move regardless of what
+  //    happens to the data below. site_id/department_id are org-scoped
+  //    (a site or department id from the old org means nothing in the new
+  //    one) and merge_into is handled by the caller (it must either move
+  //    together with its target, or be cleared before this runs).
+  await pool.query('UPDATE nodes SET org_id=?, department_id=NULL, site_id=NULL WHERE id=?', [targetOrgId, id]);
+  if (newPool !== pool) {
+    await newPool.query(
+      "INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng,status,merge_into) VALUES (?,?,NULL,NULL,?,?,?,?,?,'active',?) "+
+      "ON DUPLICATE KEY UPDATE org_id=VALUES(org_id),site_id=NULL,department_id=NULL,domain=VALUES(domain),name=VALUES(name),mqtt_prefix=VALUES(mqtt_prefix),lat=VALUES(lat),lng=VALUES(lng),status='active',merge_into=VALUES(merge_into)",
+      [id, targetOrgId, nd.domain, nd.name, nd.mqtt_prefix, nd.lat, nd.lng, nd.merge_into]);
+  }
+
+  const colsOf = async (p, table) => {
+    const [c] = await p.query(
+      "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND EXTRA NOT LIKE '%GENERATED%' ORDER BY ORDINAL_POSITION",
+      [table]);
+    return c.map(x => x.COLUMN_NAME);
+  };
+  const valueFor = (rule, col, row) => {
+    if (rule.resetOrg === col) return targetOrgId;
+    if (rule.nullCols && rule.nullCols.indexOf(col) >= 0) return null;
+    const v = row[col];
+    // mysql2 auto-parses a JSON column's value into a real JS object on
+    // SELECT (alarm_rules.rule_json, device_presence.last_sample,
+    // node_photos.annotations, ...) — re-inserting that object as-is is not
+    // re-serialized back to JSON text by the driver, and MySQL rejects it
+    // ("Invalid JSON text"). Buffers (image/thumb blobs) and Dates
+    // (datetime columns) must NOT be caught by this — only a genuine object.
+    if (v !== null && typeof v === 'object' && !Buffer.isBuffer(v) && !(v instanceof Date)) return JSON.stringify(v);
+    return v;
+  };
+
+  for (const [table, rule] of Object.entries(MOVE_TABLE_RULES)) {
+    const nodeIdFilter = rule.requireNodeId ? ' AND node_id IS NOT NULL' : '';
+    try {
+      if (rule.dropOnly) {
+        // An old-org-specific grant. Whether or not the data itself is
+        // physically relocating, this never carries forward — deleted either way.
+        await oldPool.query('DELETE FROM \`'+table+'\` WHERE node_id=?', [id]);
+        continue;
+      }
+      if (oldPool === newPool) {
+        // Same physical database — nothing to relocate. Only the org-scoped
+        // columns some of these tables carry need correcting in place.
+        const sets = [];
+        if (rule.resetOrg) sets.push('\`'+rule.resetOrg+'\`=?');
+        if (rule.nullCols) for (const c of rule.nullCols) sets.push('\`'+c+'\`=NULL');
+        if (!sets.length) continue; // nothing org-scoped here — the rows are already correct
+        const vals = rule.resetOrg ? [targetOrgId] : [];
+        await oldPool.query('UPDATE \`'+table+'\` SET '+sets.join(',')+' WHERE node_id=?'+nodeIdFilter, [...vals, id]);
+        continue;
+      }
+      // Genuinely different databases: copy across with overrides applied,
+      // then remove the source rows so the device's history lives in exactly
+      // one place — the org it now belongs to.
+      const colNames = await colsOf(oldPool, table);
+      if (!colNames.length) continue; // table not present on this schema version
+      const [srcRows] = await oldPool.query(
+        'SELECT '+colNames.map(c => '\`'+c+'\`').join(',')+' FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
+      if (srcRows.length) {
+        const placeholders = '('+colNames.map(() => '?').join(',')+')';
+        const colList = colNames.map(c => '\`'+c+'\`').join(',');
+        for (const row of srcRows) {
+          const vals = colNames.map(c => valueFor(rule, c, row));
+          await newPool.query('INSERT IGNORE INTO \`'+table+'\` ('+colList+') VALUES '+placeholders, vals);
+        }
+      }
+      await oldPool.query('DELETE FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
+    } catch (e) {
+      // Tolerate a table this schema version doesn't have yet on one side (an
+      // org DB behind on migrations) — same "skip on missing table" pattern
+      // used everywhere else in this file — but surface anything else.
+      if (String(e && e.message || '').indexOf(table) < 0) throw e;
+      warnings.push(table+' skipped — not present on this schema version (run migrations for this organization)');
+    }
+  }
+
+  // The stale MIRROR row in the old tenant DB (not the control row — that
+  // one was UPDATED, not deleted, in step 1).
+  if (oldPool !== pool) {
+    try { await oldPool.query('DELETE FROM nodes WHERE id=?', [id]); }
+    catch (e) { warnings.push('could not remove the stale copy from the previous organization database: '+e.message); }
+  }
+
+  global.get('auditLog')(actorLabel, 'nodes.move', 'node', id, { fromOrg: oldOrgId, toOrg: targetOrgId, warnings: warnings.length });
+  return { nodeId: id, ok: true, moved: true, fromOrg: oldOrgId, toOrg: targetOrgId, warnings };
+});
 // Org ids for the background sweeps to iterate. [null] when flag off → sweeps
 // run once against the control pool, identical to before.
 global.set('sweepOrgs', async function(){
@@ -5234,6 +5376,31 @@ const mergeFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; 
   msg.headers=__CORS; msg.payload={ok:true, id, mergeInto:tgt}; node.send(msg);
 })()` + bbErr
 
+// POST /api/nodes/move {nodeIds:[...], targetOrgId} — superadmin only. Moves
+// every listed device in one call so a merged group (a primary and its
+// second feeds) moves together rather than one at a time, which would leave
+// the group split across two organizations mid-operation. A device whose
+// merge_into points OUTSIDE the list is refused up front — silently clearing
+// that link would strand the OTHER half of the pair, and silently moving it
+// too would move a device the caller never asked for.
+const nodesMoveFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const b=msg.payload||{};
+(async()=>{
+  const ids=Array.isArray(b.nodeIds)?b.nodeIds.filter(Boolean):[];
+  const targetOrgId=String(b.targetOrgId||'');
+  if(!ids.length||!targetOrgId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'nodeIds (non-empty array) and targetOrgId are required'};node.send(msg);return;}
+  const idSet=new Set(ids);
+  const[rows]=await pool.query("SELECT id,merge_into FROM nodes WHERE id IN (?)",[ids]);
+  const found=new Set(rows.map(r=>r.id));
+  const missing=ids.filter(i=>!found.has(i));
+  if(missing.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found: '+missing.join(', ')};node.send(msg);return;}
+  const strandedBy=rows.find(r=>r.merge_into && !idSet.has(r.merge_into));
+  if(strandedBy){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:strandedBy.id+' is a second feed of '+strandedBy.merge_into+', which is not in this move — include it too, or unlink '+strandedBy.id+' first'};node.send(msg);return;}
+  const results=[];
+  for(const id of ids){ results.push(await global.get('moveNodeToOrg')(id,targetOrgId,au.name||au.userId||'superadmin')); }
+  const ok=results.every(r=>r.ok);
+  msg.headers=__CORS; msg.statusCode=ok?200:207; msg.payload={ok,results}; node.send(msg);
+})()` + bbErr
+
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
   { id: 'wslistener', type: 'websocket-listener', path: '/ws/telemetry', wholemsg: 'false' },
@@ -5466,6 +5633,12 @@ const flow = [
   ...endpoint('nodeapprove', 'post', '/api/nodes/:id/approve', approveFunc, 'admin'),
   ...endpoint('nodereject', 'post', '/api/nodes/:id/reject', rejectFunc, 'admin'),
   ...endpoint('nodemerge', 'put', '/api/nodes/:id/merge', mergeFunc, 'admin'),
+  // Cross-org reassignment for already-active devices — 'super' policy,
+  // unlike everything else in this onboarding block: an org admin may
+  // rearrange devices within their own org (merge/location/profile), but
+  // moving a device OUT of an org entirely is a superadmin-only action, same
+  // boundary as the org picker on a still-pending device (approveFunc).
+  ...endpoint('nodesmove', 'post', '/api/nodes/move', nodesMoveFunc, 'super'),
   ...endpoint('nodeloc', 'put', '/api/nodes/:id/location', nodeLocPutFunc, 'admin'),
   ...endpoint('nodeprofile', 'put', '/api/nodes/:id/profile', nodeProfilePutFunc, 'admin'),
   ...endpoint('nodefeeds', 'get', '/api/nodes/:id/feeds', nodeFeedsGetFunc, 'admin'),

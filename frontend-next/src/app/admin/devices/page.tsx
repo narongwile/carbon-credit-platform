@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
+import { useSessionRole } from '@/lib/auth'
 import { getDepartmentsByOrg } from '@/lib/orgData'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { api, isLive } from '@/lib/api'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodeThumb, NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import PhotoStrip from '@/components/device/PhotoStrip'
+import MoveDeviceModal from '@/components/device/MoveDeviceModal'
 import { DOMAIN_META } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
-import { HardDrive, X, Wifi, WifiOff, MapPin, PlugZap } from 'lucide-react'
+import { HardDrive, X, Wifi, WifiOff, MapPin, PlugZap, ArrowRightLeft } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -24,6 +26,7 @@ interface Dept { id: string; name: string }
 export default function DeviceManagementPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
+  const isSuper = useSessionRole() === 'superadmin'
 
   // Real fleet (GET /api/fleet in Live mode, with retry — useManagedDevices),
   // so a zero-touch-registered device is manageable here. Live departments
@@ -40,7 +43,13 @@ export default function DeviceManagementPage() {
   // Local overlay of a just-saved edit, applied on top of the fleet until the
   // roster itself refetches — same shape the rest of this app uses.
   const [override, setOverride] = useState<Record<string, ManagedDevice>>({})
-  const devices = roster.map((d) => override[d.id] ?? d)
+  // A moved device no longer belongs to this org at all — it must disappear
+  // from this list entirely, not just get patched in place like an edit.
+  // useManagedDevices only refetches when orgId/domain change, so there is
+  // nothing to invalidate; hiding it locally is the same overlay pattern
+  // `override` already uses for edits, one step further.
+  const [moved, setMoved] = useState<Set<string>>(new Set())
+  const devices = roster.filter((d) => !moved.has(d.id)).map((d) => override[d.id] ?? d)
   const [editing, setEditing] = useState<ManagedDevice | null>(null)
   // Cover photo per device, one request for the whole table — a column of ids
   // is a column of ids; a column of pictures is a fleet you can recognise.
@@ -161,8 +170,14 @@ export default function DeviceManagementPage() {
           device={editing}
           departments={depts}
           others={devices.filter((d) => d.id !== editing.id)}
+          orgId={orgId}
+          isSuper={isSuper}
           onClose={() => setEditing(null)}
           onSave={(patch) => save(editing, patch)}
+          onMoved={(movedIds) => {
+            setMoved((m) => new Set([...Array.from(m), ...movedIds]))
+            setEditing(null)
+          }}
         />
       )}
 
@@ -174,14 +189,18 @@ export default function DeviceManagementPage() {
   )
 }
 
-function DeviceModal({ device, departments, others, onClose, onSave }: {
+function DeviceModal({ device, departments, others, orgId, isSuper, onClose, onSave, onMoved }: {
   device: ManagedDevice
   departments: Dept[]
   /** The other devices in this org — merge targets. */
   others: ManagedDevice[]
+  orgId: string
+  isSuper: boolean
   onClose: () => void
   onSave: (patch: { name: string; departmentId: string | null; visibleTo: string[] | null; mergeInto?: string | null; grafanaUrl?: string | null }) => void
+  onMoved: (movedIds: string[]) => void
 }) {
+  const [movingOpen, setMovingOpen] = useState(false)
   const [name, setName] = useState(device.name)
   const [deptId, setDeptId] = useState<string | null>(device.departmentIds[0] ?? null)
   // The Free-Style dashboard's real, persisted link (migrate-v45) — set here
@@ -441,6 +460,28 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
             </div>
           )}
 
+          {/* Cross-org reassignment. Superadmin only — an org admin can
+              rearrange devices within their own org (everything above), but
+              moving one OUT entirely is the same boundary the pending-device
+              org picker already draws. `device` here can never itself be a
+              second feed: GET /api/fleet (this roster's source) filters out
+              merge_into IS NOT NULL rows, so it always opens on the primary,
+              with `feeds` below carrying any second feeds along. */}
+          {isSuper && (
+            <div className="p-3 rounded-lg" style={inset}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-slate-400 uppercase tracking-wider mb-1">Organization</div>
+                  <p className="text-[11px] text-slate-600">Relocate this device — and its readings, alarms, photos and documents — to a different organization.</p>
+                </div>
+                <button onClick={() => setMovingOpen(true)}
+                  className="text-[11px] px-3 py-1.5 rounded-md flex items-center gap-1.5 text-amber-300 hover:text-amber-200 flex-shrink-0" style={surface}>
+                  <ArrowRightLeft size={12} /> Move
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="p-3 rounded-lg text-xs text-slate-500 flex items-start gap-2" style={inset}>
             <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style={{ color: device.theme === 'fix' ? '#22c55e' : '#a78bfa', background: device.theme === 'fix' ? 'rgba(34,197,94,0.12)' : 'rgba(167,139,250,0.12)' }}>
               {device.theme === 'fix' ? 'FIX' : 'Free Style'}
@@ -470,6 +511,16 @@ function DeviceModal({ device, departments, others, onClose, onSave }: {
           <button onClick={onClose} className="px-6 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white" style={inset}>Cancel</button>
         </div>
       </div>
+
+      {movingOpen && (
+        <MoveDeviceModal
+          device={{ id: device.id, name: device.name }}
+          group={feeds}
+          currentOrgId={orgId}
+          onClose={() => setMovingOpen(false)}
+          onMoved={() => onMoved([device.id, ...feeds.map((f) => f.id)])}
+        />
+      )}
     </div>
   )
 }

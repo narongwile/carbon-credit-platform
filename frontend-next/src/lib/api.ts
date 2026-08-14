@@ -622,6 +622,39 @@ export const api = {
     req<{ id: string; feeds: { id: string; name: string | null; domain: string | null; mqtt_prefix: string | null }[] }>(
       `/api/nodes/${id}/feeds`),
   /**
+   * Reassign one or more ALREADY-ACTIVE devices to a different organization
+   * (superadmin only). Unlike updateNodeProfile, this genuinely relocates the
+   * device's history — readings, alarms, photos, documents — into the target
+   * org's own database under TENANT_DB_MODE, not just a column flip. Pass
+   * every device that must move TOGETHER (a primary and its merged second
+   * feeds) in one call — the backend refuses a partial group.
+   *
+   * A dedicated fetch, not req(): the backend answers 400/404 with a real,
+   * specific {error} (a stranded merge group, an unknown id, a suspended
+   * target org) and 207 on a partial per-device failure with a real
+   * {results} array — req() discards the body on ANY non-2xx, which would
+   * have swallowed exactly this endpoint's reason for existing. Same mistake
+   * runMigrations had; not repeating it here.
+   */
+  moveNodes: async (nodeIds: string[], targetOrgId: string): Promise<
+    { ok: boolean; results: { nodeId: string; ok: boolean; moved?: boolean; note?: string; error?: string; fromOrg?: string; toOrg?: string; warnings?: string[] }[] } | { ok: false; error: string; results?: undefined }
+  > => {
+    if (!apiEnabled) return { ok: false, error: 'offline' }
+    try {
+      const tok = getToken()
+      const r = await fetch(`${BASE}/api/nodes/move`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(tok ? { authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ nodeIds, targetOrgId }),
+      })
+      const body = await r.json().catch(() => null)
+      if (body) return body
+      return { ok: false, error: `HTTP ${r.status} with no readable response body` }
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'network error' }
+    }
+  },
+  /**
    * Which departments may SEE this device (migrate-v35). Distinct from
    * updateNodeProfile's departmentId, which is the OWNING department — the
    * one alarms route to. `granted` is what is stored; `effective` is what the
