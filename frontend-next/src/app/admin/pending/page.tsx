@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useAppStore } from '@/lib/store'
-import { useSessionRole } from '@/lib/auth'
+import { useSessionRole, useSessionOrgId } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { schemaLabel } from '@/lib/useParamLabels'
@@ -81,6 +81,19 @@ export default function PendingDevicesPage() {
   // field) — a guaranteed hydration mismatch for every superadmin.
   const isSuper = useSessionRole() === 'superadmin'
   const orgId = selectedOrgId || 'org-1'
+  // The MQTT setup card specifically must NEVER show one org's real id/topic
+  // under another's session — that is what a customer copies into firmware.
+  // `orgId` above falls back to the literal string 'org-1' (matching the
+  // store's own persisted default, lib/store.ts:60), so for a NON-superadmin
+  // whose session→store sync effect (admin/layout.tsx) hasn't run yet, or
+  // whose session genuinely carries no orgId, `orgId` would confidently show
+  // 'org-1' regardless of whose session this actually is. '' (not the
+  // fallback's own default) makes "not yet known" distinguishable from a
+  // real id — the card renders nothing until it resolves, rather than
+  // guessing. A superadmin has no session org at all (they pick one via the
+  // tenant switcher), so they always use `orgId`/`selectedOrgId` instead.
+  const sessionOrgId = useSessionOrgId('')
+  const cardOrgId = isSuper ? orgId : sessionOrgId
   const [rows, setRows] = useState<PendingNode[]>([])
   const [depts, setDepts] = useState<Dept[]>([])
   const [orgs, setOrgs] = useState<Org[]>([])
@@ -243,21 +256,23 @@ export default function PendingDevicesPage() {
       if (!targetOrg || targetOrg === UNASSIGNED) continue
       set.add(specKeyOf(targetOrg, f.domain))
     }
-    // Also every product THIS org (orgId — the admin's own, or the superadmin's
-    // current tenant-switcher pick) is licensed for, independent of whether any
-    // device — pending or approved — exists yet. This is what makes the setup
-    // reference below usable for a brand-new org: it has to answer "what do I
-    // send" before the chicken-and-egg problem of needing a device to have
-    // already reported something in order to know what it should report.
-    if (orgId && orgId !== UNASSIGNED) {
-      for (const d of domainsFor(orgId)) set.add(specKeyOf(orgId, d.value))
+    // Also every product THIS org (cardOrgId — see its own comment: the
+    // admin's own verified session org, or the superadmin's tenant-switcher
+    // pick, and '' rather than a guessed default while unresolved) is
+    // licensed for, independent of whether any device — pending or approved
+    // — exists yet. This is what makes the setup reference below usable for
+    // a brand-new org: it has to answer "what do I send" before the
+    // chicken-and-egg problem of needing a device to have already reported
+    // something in order to know what it should report.
+    if (cardOrgId && cardOrgId !== UNASSIGNED) {
+      for (const d of domainsFor(cardOrgId)) set.add(specKeyOf(cardOrgId, d.value))
     }
     return Array.from(set).sort()
     // domainsFor reads entsByOrg via closure, not a dep — it is a plain function
     // recreated every render, and adding it here would defeat the whole point of
     // keying this memo on a stable joined string below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, form, isSuper, orgId, entsByOrg])
+  }, [rows, form, isSuper, orgId, cardOrgId, entsByOrg])
   const domainOrgPairsKey = domainOrgPairs.join(',')
 
   useEffect(() => {
@@ -341,21 +356,58 @@ export default function PendingDevicesPage() {
           from this page at all, only ?org= (this) config check.
           Configuring the payload spec is superadmin-only (set at provisioning);
           the topic and whatever spec already exists are visible to every admin
-          — they are the ones who actually have to go program a device with it. */}
-      {orgId && orgId !== UNASSIGNED && (
+          — they are the ones who actually have to go program a device with it.
+
+          Uses cardOrgId, NOT orgId — see cardOrgId's own comment. A regular
+          admin must never be shown another org's real id/credentials on the
+          page they copy firmware config from. */}
+      {!isSuper && !cardOrgId ? (
+        <div className="rounded-xl p-4 text-xs text-slate-500" style={surface}>Resolving your organization…</div>
+      ) : cardOrgId && cardOrgId !== UNASSIGNED && (
         <div className="rounded-xl p-4 space-y-3" style={surface}>
           <div className="flex items-center gap-2">
             <Radio size={14} className="text-indigo-400" />
             <h2 className="text-sm font-semibold text-white">MQTT setup — connect a new device</h2>
           </div>
-          {domainsFor(orgId).length === 0 ? (
+
+          {/* Connection details. All EMQX 'device' users share ONE account —
+              tenant isolation comes entirely from the MQTT clientId, which the
+              broker's ACL requires to equal the org id (device -> publish
+              telemetry/${'{clientid}'}/#). Get the clientId wrong and the
+              broker does not reject the connection or the publish — it just
+              silently drops it (EMQX deny_action=ignore) — so this has to be
+              stated as plainly as the topic itself, not left for someone to
+              guess from a support ticket. */}
+          <div className="rounded-lg p-3 space-y-1.5" style={inset}>
+            <div className="text-[10px] text-slate-600 uppercase tracking-wider">Broker connection</div>
+            {([
+              ['Host', '27.254.143.144'],
+              ['Port', '1883 (plain TCP, no TLS)'],
+              ['Username', 'device'],
+              ['Password', 'iothub.2026'],
+              ['MQTT Client ID', cardOrgId],
+            ] as const).map(([label, value]) => (
+              <div key={label} className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-slate-500 w-28 flex-shrink-0">{label}</span>
+                <span className="font-mono text-slate-300 truncate">{value}</span>
+                <button onClick={() => { navigator.clipboard?.writeText(value); toast.success(`${label} copied`) }}
+                  title={`Copy ${label}`} className="text-slate-600 hover:text-white flex-shrink-0"><Copy size={10} /></button>
+              </div>
+            ))}
+            <p className="text-[10px] text-amber-500/90 pt-1">
+              Client ID must be set to this exact value — a shared broker account tells organizations apart ONLY by
+              client ID. Get it wrong and the device connects fine but every publish is silently dropped.
+            </p>
+          </div>
+
+          {domainsFor(cardOrgId).length === 0 ? (
             <p className="text-xs text-slate-600">This organization is not licensed for any product yet.</p>
           ) : (
             <div className="space-y-3">
-              {domainsFor(orgId).map((d) => {
+              {domainsFor(cardOrgId).map((d) => {
                 const domain = d.value as SensorDomain
-                const spec = specByKey[specKeyOf(orgId, domain)]
-                const topic = `telemetry/${orgId}/${topicProduct(domain)}/<your-device-id>`
+                const spec = specByKey[specKeyOf(cardOrgId, domain)]
+                const topic = `telemetry/${cardOrgId}/${topicProduct(domain)}/<your-device-id>`
                 const exampleValues = (spec?.paramKeys ?? []).reduce<Record<string, number>>((acc, k) => {
                   const warn = ALARM_SCHEMA[domain]?.params.find((p) => p.key === k)?.warn
                   acc[k] = typeof warn === 'number' ? Math.round((warn / 2) * 10) / 10 : 0
@@ -367,7 +419,7 @@ export default function PendingDevicesPage() {
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-xs font-medium text-white">{d.label}</span>
                       {isSuper && (
-                        <button onClick={() => setOrgSpecEditor({ orgId, domain })}
+                        <button onClick={() => setOrgSpecEditor({ orgId: cardOrgId, domain })}
                           className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={surface}>
                           <Settings2 size={10} /> Configure
                         </button>
@@ -401,6 +453,16 @@ export default function PendingDevicesPage() {
                             <Copy size={11} />
                           </button>
                         </div>
+                        {/* The example implies these rules but never states them,
+                            and every one of them fails SILENTLY on the wire — the
+                            worker logs a parse error server-side and the device
+                            never appears here, with nothing to say why. */}
+                        <ul className="text-[10px] text-slate-600 mt-2 space-y-0.5 list-disc list-inside">
+                          <li>Every value in <span className="font-mono">values</span> must be a JSON number, not a string — <span className="font-mono">&quot;oilTemp&quot;:&quot;63.4&quot;</span> is rejected, the whole message is dropped.</li>
+                          <li><span className="font-mono">values</span> must not be empty — a status/heartbeat-only frame (no <span className="font-mono">values</span>) is presence, not a reading, and by itself will not create this pending entry.</li>
+                          <li><span className="font-mono">ts</span> is Unix time in <span className="font-mono">milliseconds</span> (13 digits); omit it and the server stamps arrival time instead.</li>
+                          <li><span className="font-mono">nodeId</span> in the payload — not the last topic segment — is this device&apos;s real identity, and must be unique across every customer on the platform, not just this organization.</li>
+                        </ul>
                       </>
                     ) : (
                       <p className="text-[11px] text-slate-600">
@@ -423,7 +485,16 @@ export default function PendingDevicesPage() {
         <div className="p-10 rounded-xl text-center" style={surface}>
           <PlugZap size={28} className="text-slate-600 mx-auto mb-2" />
           <p className="text-sm text-slate-400">No devices awaiting approval.</p>
-          <p className="text-xs text-slate-600 mt-1">A newly powered device publishing to the topic above will appear here within seconds.</p>
+          {/* Used to unconditionally promise "will appear here within seconds" —
+              false often enough to be actively misleading: a bad client ID, an
+              org id typo, or a non-numeric value all drop the message on the
+              floor with zero feedback anywhere in the product. This is the one
+              honest thing the page can say instead. */}
+          <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto">
+            A device publishing correctly to the topic above appears here within seconds. If nothing shows up after
+            a real publish attempt, check in order: (1) MQTT client ID matches your organization id exactly,
+            (2) the topic&apos;s organization segment matches it too, (3) every field under <span className="font-mono">values</span> is a number, not a string.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
