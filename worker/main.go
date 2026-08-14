@@ -465,8 +465,13 @@ func resolvePool(orgID string) *sql.DB {
 		return controlDB
 	}
 
-	// Legacy organizations keep using the control DB instead of a tenant DB
-	if orgID == "org-1" || orgID == "org-2" || orgID == "org-3" {
+	// Legacy organizations, and the unclaimed pool, keep using the control DB
+	// instead of a tenant DB. UnassignedOrg is a sentinel, not a real org with
+	// its own database — autoRegisterPending always writes these nodes into
+	// controlDB.nodes, regardless of tenantMode — so resolving it to a tenant
+	// pool would try to open "iothub_unassigned", a database that never
+	// exists, on every single frame from a not-yet-claimed device.
+	if orgID == "org-1" || orgID == "org-2" || orgID == "org-3" || orgID == UnassignedOrg {
 		return controlDB
 	}
 

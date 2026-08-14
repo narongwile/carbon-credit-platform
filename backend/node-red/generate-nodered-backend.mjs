@@ -171,10 +171,19 @@ global.set('mirrorUserToTenantDb', async function(pool, orgId, userRecord){
     }
   }
 });
+// The claimable pool an auto-registered device lands in when its MQTT topic's
+// org segment doesn't match a known active org (worker/main.go: UnassignedOrg).
+// It is a sentinel, not a real organizations row with its own tenant database —
+// autoRegisterPending() always writes these nodes into the CONTROL DB's nodes
+// table, on every code path, regardless of TENANT_DB_MODE. resolvePool must
+// agree, or any endpoint touching an unclaimed device's data (photos, kind
+// catalog, etc.) tries to open "iothub_unassigned", a database that was never
+// created and never will be, and 500s.
+const UNASSIGNED_ORG = '__unassigned__';
 global.set('resolvePool', function(orgId){
   const ctl=global.get('pool');
   if(!__TENANT || !orgId) return ctl;                        // flag off / no org → control pool
-  if(orgId === 'org-1' || orgId === 'org-2' || orgId === 'org-3') return ctl; // legacy organizations use control pool
+  if(orgId === 'org-1' || orgId === 'org-2' || orgId === 'org-3' || orgId === UNASSIGNED_ORG) return ctl; // legacy orgs + the unclaimed pool use the control pool
   const dbn=global.get('orgDbName')(orgId); if(!dbn) return ctl;
   const pools=global.get('orgPools')||{};
   if(pools[dbn] && typeof pools[dbn].query==='function') return pools[dbn];
