@@ -656,6 +656,54 @@ func autoRegisterPending(nodeID, topic string, sample []byte) {
 	touchPending(nodeID, sample)
 }
 
+// reclaimOrphan moves a PENDING device out of the unassigned pool once its
+// topic names a real, active org. autoRegisterPending only ever runs on a
+// node's genuinely first frame — it is an INSERT IGNORE, and nothing else
+// re-reads the topic for a node that already has a row. Without this, a
+// device that published once with a wrong or not-yet-existing org segment
+// (a test before the org existed, the wrong id typo'd once) stays pinned to
+// UnassignedOrg forever: nodeInfo() returns that literal string, never "",
+// so the auto-register path in handleTelemetry never runs again for it no
+// matter how correct the firmware becomes. Only a superadmin claiming the
+// orphan by hand would ever move it — which defeats the entire point of
+// telling an org admin "update your firmware to the topic shown" if the
+// device already made one bad publish before they did.
+//
+// Scoped strictly to status='pending' AND org_id=UnassignedOrg in the UPDATE
+// itself (not just the caller's intent) so a spoofed topic can never move an
+// already-APPROVED device into another org.
+func reclaimOrphan(nodeID, topic string) {
+	parts := strings.Split(topic, "/")
+	if len(parts) < 2 {
+		return
+	}
+	orgID := parts[1]
+	if orgID == "" || orgID == UnassignedOrg || !orgExists(orgID) {
+		return
+	}
+	product := ""
+	if len(parts) >= 3 {
+		product = parts[2]
+	}
+	prefix := topic
+	if len(parts) >= 4 {
+		prefix = strings.Join(parts[:4], "/")
+	}
+	res, err := controlDB.Exec(
+		"UPDATE nodes SET org_id=?, domain=?, mqtt_prefix=? WHERE id=? AND status='pending' AND org_id=?",
+		orgID, domainFromProduct(product), prefix, nodeID, UnassignedOrg)
+	if err != nil {
+		log.Printf("reclaimOrphan failed for node %s: %v", nodeID, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		// The 2-minute nodeInfo cache would otherwise keep answering
+		// UnassignedOrg for whatever is left of its TTL.
+		nodeToOrg.Delete(nodeID)
+		log.Printf("Reclaimed orphan node %s -> org=%s (topic now names an active org)", nodeID, orgID)
+	}
+}
+
 // updatePresence records a status (birth/LWT) or heartbeat frame in
 // device_presence: online state plus the diagnostics the fleet screens show
 // (rssi/battery/firmware). These frames carry no readings, so they never reach
@@ -1004,6 +1052,37 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	statPresence.Add(1)
 	statDevices.Store(t.NodeID, struct{}{})
 
+	// Zero-touch onboarding: an unknown device is auto-registered as a PENDING
+	// node (org from its topic) and awaits admin approval — its data is dropped
+	// until approved. Registration always uses the PUBLISHING id: a feed has to
+	// exist as its own row before an admin can point it at a primary, so this
+	// is what surfaces the second topic on the approval screen in the first
+	// place.
+	//
+	// Runs BEFORE the isPresence() gate below, on purpose: this used to sit
+	// after it (and after the Kafka produce), so a device whose firmware sends
+	// a birth/heartbeat frame before its first readings frame got a
+	// device_presence row from updatePresence() above and NO nodes row —
+	// "online" in the DB, invisible on admin/pending forever, since that page
+	// is `SELECT ... FROM nodes ... WHERE status='pending'`. nodeInfo() (called
+	// above via resolveFeed) already returns real values for any node ALREADY
+	// in the table regardless of its status, so orgID=="" is true only on this
+	// device's genuinely first frame — moving this earlier does not make it
+	// re-run on every later presence frame.
+	if orgID == "" {
+		sample, _ := json.Marshal(t.Values)
+		autoRegisterPending(feedID, msg.Topic(), sample)
+		statDropped.Add(1)
+		return
+	}
+	// The sticky-orphan case: this node already exists (orgID != ""), pinned
+	// to UnassignedOrg from an earlier bad publish. Check on every frame
+	// whether the topic NOW names a real org — see reclaimOrphan's own
+	// comment for why nothing else in this file ever does.
+	if orgID == UnassignedOrg && status == "pending" {
+		reclaimOrphan(target, msg.Topic())
+	}
+
 	// Status (birth/LWT) and heartbeat frames carry no readings — stop here
 	// instead of falling through the readings path.
 	if t.isPresence() {
@@ -1025,20 +1104,6 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		Value: payload,
 	}
 	kafkaClient.Produce(context.Background(), record, nil)
-
-	// Zero-touch onboarding: an unknown device is auto-registered as a PENDING
-	// node (org from its topic) and awaits admin approval — its data is dropped
-	// until approved. Known-but-not-approved (pending/rejected) devices are kept
-	// "alive" for the approval screen but likewise store no readings/alarms.
-	// Registration always uses the PUBLISHING id: a feed has to exist as its own
-	// row before an admin can point it at a primary, so this is what surfaces the
-	// second topic on the approval screen in the first place.
-	if orgID == "" {
-		sample, _ := json.Marshal(t.Values)
-		autoRegisterPending(feedID, msg.Topic(), sample)
-		statDropped.Add(1)
-		return
-	}
 	if status == "pending" || status == "rejected" {
 		if status == "pending" {
 			sample, _ := json.Marshal(t.Values)
