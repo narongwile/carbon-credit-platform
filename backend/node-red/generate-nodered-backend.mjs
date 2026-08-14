@@ -208,6 +208,25 @@ global.set('orgOfNode', async function(nodeId){
   if(org){ cache[nodeId]=org; global.set('nodeOrgCache',cache); }
   return org;
 });
+// The pool a NODE-scoped endpoint should read/write: the database belonging
+// to the device's OWN organization, not the caller's.
+//
+// The two differ for exactly one caller — a superadmin, who has no orgId of
+// their own — and that is precisely who could not see a moved device's data.
+// The DATA_PLANE rewrite at the bottom of this file keys the pool off
+// msg.auth.orgId, which for a superadmin is '', and resolvePool('') falls
+// back to the CONTROL database no matter which org the device is in. For an
+// ordinary org admin the two always agree (guard's 'node' policy already
+// requires it), which is why this stayed invisible in every manual test
+// until a device actually moved to a tenant DB.
+//
+// Falls back to the caller's org when orgOfNode returns null — that happens
+// when TENANT_DB_MODE is off, where resolvePool collapses everything to the
+// control pool anyway, so the fallback is a no-op rather than a guess.
+global.set('poolForNode', async function(nodeId, au){
+  const org = (await global.get('orgOfNode')(nodeId)) || (au && au.orgId) || '';
+  return global.get('resolvePool')(org);
+});
 // --- moveNodeToOrg: reassign one ALREADY-ACTIVE device to a different org --
 // Nothing else in this file can do this: approve's org picker only applies
 // to a device still status='pending', and the device profile endpoint never
@@ -1967,7 +1986,16 @@ const ackFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.i
 // ~170k rows (tens of MB of JSON) to draw a few hundred pixels of line. The raw
 // form is kept as the default because the live tiles legitimately want the last
 // individual samples.
-const readingsGetFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const q=msg.req.query||{};
+// pool resolved from the NODE's own org inside the async body (see
+// poolForNode in initFunc), not from msg.auth.orgId via the DATA_PLANE
+// rewrite: a superadmin has no orgId, so that rewrite silently sent every
+// chart query to the CONTROL database regardless of which org the device
+// belongs to. After a device moved to a real tenant DB that meant the
+// superadmin's charts froze at the moment of the move (they were reading
+// leftover control-DB rows) while the tenant's own admin saw the live data
+// — the two roles looking at the same device saw two different halves of
+// its history. 'readget' is removed from DATA_PLANE for the same reason.
+const readingsGetFunc = CORS + `const id=msg.req.params.id; const q=msg.req.query||{};
 const since=Number(q.sinceMin||360); const bucket=Math.max(0,Math.floor(Number(q.bucketSec||0)));
 // An explicit window is what the per-parameter history modal needs: "last N
 // minutes" cannot express a period that ENDS in the past, so a user inspecting
@@ -1985,6 +2013,7 @@ const only = q.paramKey ? String(q.paramKey) : '';
 const pk = only ? ' AND param_key=?' : '';
 const pkArgs = only ? [only] : [];
 (async()=>{
+  const pool=await global.get('poolForNode')(id, msg.auth);
   let r;
   if(bucket>0){
     // FROM_UNIXTIME/UNIX_TIMESTAMP both use the session timezone, so the bucket
@@ -2619,13 +2648,17 @@ const pool=global.get('resolvePool')(orgId);   // org DB for the fleet query (ac
   }
   msg.headers=__CORS; msg.payload=vis; node.send(msg);})()` + bbErr
 
-const fleetLatestFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
+// pool from the node's own org, not msg.auth.orgId — same superadmin
+// blind spot readingsGetFunc documents; this is what feeds the live value
+// on every device card and header, so a superadmin saw stale numbers for
+// any device living in a tenant DB. Removed from DATA_PLANE too.
+const fleetLatestFunc = CORS + `const id=msg.req.params.id;
 // Only params the device is STILL reporting: keep those whose newest reading is
 // within LATEST_WINDOW_MIN (default 60) of the node's newest reading overall.
 // Without this, params a device stopped sending (e.g. after re-flashing it to a
 // different product) linger forever and the UI shows a mix of live and dead keys.
 const __win = Number(env.get('LATEST_WINDOW_MIN') || 60);
-(async()=>{const[r]=await pool.query("SELECT r1.param_key,r1.value,r1.taken_at FROM readings r1 JOIN (SELECT param_key,MAX(taken_at) mt FROM readings WHERE node_id=? GROUP BY param_key) r2 ON r1.param_key=r2.param_key AND r1.taken_at=r2.mt JOIN (SELECT MAX(taken_at) nt FROM readings WHERE node_id=?) r3 ON r2.mt >= r3.nt - INTERVAL ? MINUTE WHERE r1.node_id=?",[id,id,__win,id]);
+(async()=>{const pool=await global.get('poolForNode')(id, msg.auth); const[r]=await pool.query("SELECT r1.param_key,r1.value,r1.taken_at FROM readings r1 JOIN (SELECT param_key,MAX(taken_at) mt FROM readings WHERE node_id=? GROUP BY param_key) r2 ON r1.param_key=r2.param_key AND r1.taken_at=r2.mt JOIN (SELECT MAX(taken_at) nt FROM readings WHERE node_id=?) r3 ON r2.mt >= r3.nt - INTERVAL ? MINUTE WHERE r1.node_id=?",[id,id,__win,id]);
   const out={}; let last=null; for(const row of r){ out[row.param_key]=Number(row.value); if(!last||row.taken_at>last) last=row.taken_at; }
   // Presence comes with it: the device pages poll this endpoint every 10s
   // anyway, and the header badge must follow device_presence (what the offline
@@ -5785,9 +5818,9 @@ const sendExportFn = flow.find((n) => n.id === 'sendexport_fn'); if (sendExportF
 // the same superadmin-blind-spot almost certainly affects every other id
 // still listed here (ack, readget, docsget, the bloodbox/report/ota
 // handlers), not yet audited one by one.
-const DATA_PLANE = new Set(['ack','readget','docsget','docspost','docsdl',
+const DATA_PLANE = new Set(['ack','docsget','docspost','docsdl',
   'bbjourneyget','bbjourneypost','bbtemp','bbtransit','bbtransits','bbfloors','bbbeacondel','bbbeaconsget','bbbeaconspost','bblocget','bblocpost',
-  'fleetlatest','rptlist','rptpost','rptdel','eppost','epdel',
+  'rptlist','rptpost','rptdel','eppost','epdel',
   'cfgput','cmdpost','otapost','otarellist','otarelpost','otareldel','otadeplist','otafleet'])
 for (const n of flow) {
   if (n.type === 'function' && DATA_PLANE.has(String(n.id || '').replace(/_fn$/, ''))) {
