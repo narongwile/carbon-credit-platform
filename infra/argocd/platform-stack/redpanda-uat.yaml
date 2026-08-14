@@ -18,6 +18,23 @@ spec:
         # Minimal Redpanda deployment for UAT testing
         statefulset:
           replicas: 1
+          # The chart's readinessProbe (`rpk cluster health`, an exec probe
+          # that forks a process and hits the admin API) has no
+          # timeoutSeconds field of its own in this chart version — it isn't
+          # exposed under values.yaml at all, so it falls back to
+          # Kubernetes' bare default of 1s regardless of what's set here.
+          # On this VPS (seen at 82% CPU / 87% RAM) that 1s window is
+          # genuinely too tight some of the time: the broker itself started
+          # and stayed healthy (confirmed in the redpanda container's own
+          # log — "Successfully started Redpanda!", still fine 10 minutes
+          # later) while the probe still flapped NotReady. failureThreshold/
+          # periodSeconds ARE real values.yaml fields, so this widens the
+          # tolerance window (10 x 10s = 100s of consecutive slow/failed
+          # checks) instead of flipping the pod NotReady on one bad tick —
+          # without making a genuinely dead broker take forever to detect.
+          readinessProbe:
+            failureThreshold: 10
+            periodSeconds: 10
         resources:
           cpu:
             cores: 1
