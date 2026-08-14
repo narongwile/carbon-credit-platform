@@ -265,43 +265,19 @@ const MOVE_TABLE_RULES = {
   node_departments: { dropOnly: true },
   node_user_visibility: { dropOnly: true },
 };
-global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
-  const pool = global.get('pool');
-  const [rows] = await pool.query('SELECT * FROM nodes WHERE id=?', [id]);
-  if (!rows.length) return { nodeId: id, ok: false, error: 'not found' };
-  const nd = rows[0];
-  if (nd.status !== 'active') return { nodeId: id, ok: false, error: "only active devices can be moved (this one is '"+nd.status+"')" };
-  if (nd.org_id === targetOrgId) return { nodeId: id, ok: true, moved: false, note: 'already in that organization' };
-  const [org] = await pool.query("SELECT id FROM organizations WHERE id=? AND status='active'", [targetOrgId]);
-  if (!org.length) return { nodeId: id, ok: false, error: 'target organization does not exist or is suspended' };
-
-  const oldOrgId = nd.org_id;
-  const oldPool = global.get('resolvePool')(oldOrgId);
-  const newPool = global.get('resolvePool')(targetOrgId);
+// Relocate every per-device row for one node id from one pool to another, applying
+// MOVE_TABLE_RULES. Shared by moveNodeToOrg (a deliberate move) and
+// repairNodeOrphans (cleaning up rows an earlier, partial move left behind),
+// so the fiddly parts — JSON re-serialization, org-scoped column rewrites,
+// the node_id IS NOT NULL guard on tables that also hold org-wide defaults —
+// exist once rather than in two copies that can drift apart.
+//
+// Returns per-table counts as well as warnings: "how many rows actually
+// moved" is the only way a caller can tell a genuine no-op from a silent
+// skip.
+global.set('relocateNodeRows', async function(id, oldPool, newPool, targetOrgId){
   const warnings = [];
-
-  // 1. Control-DB row FIRST — this is the routing index guard()/orgOfNode
-  //    read on every request, so it defines the move regardless of what
-  //    happens to the data below. site_id/department_id are org-scoped
-  //    (a site or department id from the old org means nothing in the new
-  //    one) and merge_into is handled by the caller (it must either move
-  //    together with its target, or be cleared before this runs).
-  await pool.query('UPDATE nodes SET org_id=?, department_id=NULL, site_id=NULL WHERE id=?', [targetOrgId, id]);
-  // orgOfNode() caches nodeId -> org_id in memory FOREVER (nodeOrgCache) once
-  // looked up once, with nothing anywhere invalidating it — this is that
-  // invalidation. Every node-scoped read that resolves its pool through
-  // orgOfNode (photos, documents, transport, reports, ...) would otherwise
-  // keep querying the OLD org's database after a move: the old rows are gone
-  // (deleted below), so a freshly-uploaded photo would list, then vanish the
-  // moment this same node process serves it from cache again.
-  { const __c = global.get('nodeOrgCache'); if (__c) { delete __c[id]; global.set('nodeOrgCache', __c); } }
-  if (newPool !== pool) {
-    await newPool.query(
-      "INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng,status,merge_into) VALUES (?,?,NULL,NULL,?,?,?,?,?,'active',?) "+
-      "ON DUPLICATE KEY UPDATE org_id=VALUES(org_id),site_id=NULL,department_id=NULL,domain=VALUES(domain),name=VALUES(name),mqtt_prefix=VALUES(mqtt_prefix),lat=VALUES(lat),lng=VALUES(lng),status='active',merge_into=VALUES(merge_into)",
-      [id, targetOrgId, nd.domain, nd.name, nd.mqtt_prefix, nd.lat, nd.lng, nd.merge_into]);
-  }
-
+  const counts = {};
   const colsOf = async (p, table) => {
     const [c] = await p.query(
       "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND EXTRA NOT LIKE '%GENERATED%' ORDER BY ORDINAL_POSITION",
@@ -356,6 +332,7 @@ global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
           const vals = colNames.map(c => valueFor(rule, c, row));
           await newPool.query('INSERT IGNORE INTO \`'+table+'\` ('+colList+') VALUES '+placeholders, vals);
         }
+        counts[table] = srcRows.length;
       }
       await oldPool.query('DELETE FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
     } catch (e) {
@@ -366,6 +343,89 @@ global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
       warnings.push(table+' skipped — not present on this schema version (run migrations for this organization)');
     }
   }
+  return { counts, warnings };
+});
+
+// Clean up per-device rows stranded in the CONTROL database for a device
+// that now lives in a tenant database.
+//
+// This is repair, not routine: it exists because rows can be left behind
+// when a move happened while writes were still in flight (the ingest worker
+// caches nodeId -> org for up to 2 minutes, so frames arriving right after a
+// move can still land in the previous database), or when an earlier,
+// partially-working version of the move left a table behind. Symptom is a
+// device whose history appears to stop dead at the moment it was moved.
+//
+// Only ever pulls FROM control TO the device's current org — never the other
+// way, and never between two tenants — so the worst case is a no-op.
+global.set('repairNodeOrphans', async function(id, actorLabel, dryRun){
+  const pool = global.get('pool');
+  const [rows] = await pool.query('SELECT org_id, status FROM nodes WHERE id=?', [id]);
+  if (!rows.length) return { nodeId: id, ok: false, error: 'not found' };
+  const orgId = rows[0].org_id;
+  const orgPool = global.get('resolvePool')(orgId);
+  if (orgPool === pool) {
+    // The device's org resolves to the control DB itself (TENANT_DB_MODE off,
+    // or a control-pool org like org-1/2/3) — by definition nothing is
+    // stranded, since that IS where it belongs.
+    return { nodeId: id, ok: true, orgId, repaired: false, note: 'this device lives in the control database — nothing can be stranded' };
+  }
+  // Count first, always — this is what makes a dry run meaningful and what
+  // lets the caller report "found 0" instead of an ambiguous success.
+  const found = {};
+  for (const [table, rule] of Object.entries(MOVE_TABLE_RULES)) {
+    if (rule.dropOnly) continue;
+    const nodeIdFilter = rule.requireNodeId ? ' AND node_id IS NOT NULL' : '';
+    try {
+      const [c] = await pool.query('SELECT COUNT(*) AS n FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
+      if (Number(c[0].n) > 0) found[table] = Number(c[0].n);
+    } catch (e) { if (String(e && e.message || '').indexOf(table) < 0) throw e; }
+  }
+  const total = Object.values(found).reduce((a, b) => a + b, 0);
+  if (dryRun || total === 0) return { nodeId: id, ok: true, orgId, repaired: false, dryRun: !!dryRun, found, total };
+  const r = await global.get('relocateNodeRows')(id, pool, orgPool, orgId);
+  global.get('auditLog')(actorLabel, 'nodes.repairOrphans', 'node', id, { orgId, moved: r.counts, total });
+  return { nodeId: id, ok: true, orgId, repaired: true, found, total, moved: r.counts, warnings: r.warnings };
+});
+global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
+  const pool = global.get('pool');
+  const [rows] = await pool.query('SELECT * FROM nodes WHERE id=?', [id]);
+  if (!rows.length) return { nodeId: id, ok: false, error: 'not found' };
+  const nd = rows[0];
+  if (nd.status !== 'active') return { nodeId: id, ok: false, error: "only active devices can be moved (this one is '"+nd.status+"')" };
+  if (nd.org_id === targetOrgId) return { nodeId: id, ok: true, moved: false, note: 'already in that organization' };
+  const [org] = await pool.query("SELECT id FROM organizations WHERE id=? AND status='active'", [targetOrgId]);
+  if (!org.length) return { nodeId: id, ok: false, error: 'target organization does not exist or is suspended' };
+
+  const oldOrgId = nd.org_id;
+  const oldPool = global.get('resolvePool')(oldOrgId);
+  const newPool = global.get('resolvePool')(targetOrgId);
+  const warnings = [];
+
+  // 1. Control-DB row FIRST — this is the routing index guard()/orgOfNode
+  //    read on every request, so it defines the move regardless of what
+  //    happens to the data below. site_id/department_id are org-scoped
+  //    (a site or department id from the old org means nothing in the new
+  //    one) and merge_into is handled by the caller (it must either move
+  //    together with its target, or be cleared before this runs).
+  await pool.query('UPDATE nodes SET org_id=?, department_id=NULL, site_id=NULL WHERE id=?', [targetOrgId, id]);
+  // orgOfNode() caches nodeId -> org_id in memory FOREVER (nodeOrgCache) once
+  // looked up once, with nothing anywhere invalidating it — this is that
+  // invalidation. Every node-scoped read that resolves its pool through
+  // orgOfNode (photos, documents, transport, reports, ...) would otherwise
+  // keep querying the OLD org's database after a move: the old rows are gone
+  // (deleted below), so a freshly-uploaded photo would list, then vanish the
+  // moment this same node process serves it from cache again.
+  { const __c = global.get('nodeOrgCache'); if (__c) { delete __c[id]; global.set('nodeOrgCache', __c); } }
+  if (newPool !== pool) {
+    await newPool.query(
+      "INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng,status,merge_into) VALUES (?,?,NULL,NULL,?,?,?,?,?,'active',?) "+
+      "ON DUPLICATE KEY UPDATE org_id=VALUES(org_id),site_id=NULL,department_id=NULL,domain=VALUES(domain),name=VALUES(name),mqtt_prefix=VALUES(mqtt_prefix),lat=VALUES(lat),lng=VALUES(lng),status='active',merge_into=VALUES(merge_into)",
+      [id, targetOrgId, nd.domain, nd.name, nd.mqtt_prefix, nd.lat, nd.lng, nd.merge_into]);
+  }
+
+  const relocated = await global.get('relocateNodeRows')(id, oldPool, newPool, targetOrgId);
+  warnings.push(...relocated.warnings);
 
   // The stale MIRROR row in the old tenant DB (not the control row — that
   // one was UPDATED, not deleted, in step 1).
@@ -5487,6 +5547,27 @@ const nodesMoveFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||
   msg.headers=__CORS; msg.statusCode=ok?200:207; msg.payload={ok,results}; node.send(msg);
 })()` + bbErr
 
+// POST /api/nodes/repair-orphans {nodeIds:[...], dryRun?:true} — superadmin
+// only. Finds per-device rows stranded in the CONTROL database for devices
+// that now live in a tenant database, and pulls them across.
+//
+// dryRun defaults to TRUE: this touches historical data, so the caller has
+// to ask for the write explicitly ({dryRun:false}) rather than discovering
+// it moved several thousand rows by accident. A dry run reports exactly what
+// it WOULD move, per table, which is also the answer to "is anything even
+// stranded?" — usually the first thing worth knowing.
+const nodesRepairFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const b=msg.payload||{};
+(async()=>{
+  const ids=Array.isArray(b.nodeIds)?b.nodeIds.filter(Boolean):[];
+  if(!ids.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'nodeIds (non-empty array) is required'};node.send(msg);return;}
+  const dryRun = b.dryRun===false ? false : true;
+  const results=[];
+  for(const id of ids){ results.push(await global.get('repairNodeOrphans')(id, au.name||au.userId||'superadmin', dryRun)); }
+  const ok=results.every(r=>r.ok);
+  const total=results.reduce((a,r)=>a+(r.total||0),0);
+  msg.headers=__CORS; msg.statusCode=ok?200:207; msg.payload={ok,dryRun,total,results}; node.send(msg);
+})()` + bbErr
+
 const flow = [
   { id: 'be', type: 'tab', label: 'ONEOPS Node-RED Backend (all-in-one)' },
   { id: 'wslistener', type: 'websocket-listener', path: '/ws/telemetry', wholemsg: 'false' },
@@ -5725,6 +5806,10 @@ const flow = [
   // moving a device OUT of an org entirely is a superadmin-only action, same
   // boundary as the org picker on a still-pending device (approveFunc).
   ...endpoint('nodesmove', 'post', '/api/nodes/move', nodesMoveFunc, 'super'),
+  // Repair for rows an earlier/partial move stranded in the control DB.
+  // 'super' for the same reason move is: it rewrites where a device's
+  // history physically lives, across organization boundaries.
+  ...endpoint('nodesrepair', 'post', '/api/nodes/repair-orphans', nodesRepairFunc, 'super'),
   ...endpoint('nodeloc', 'put', '/api/nodes/:id/location', nodeLocPutFunc, 'admin'),
   ...endpoint('nodeprofile', 'put', '/api/nodes/:id/profile', nodeProfilePutFunc, 'admin'),
   ...endpoint('nodefeeds', 'get', '/api/nodes/:id/feeds', nodeFeedsGetFunc, 'admin'),
