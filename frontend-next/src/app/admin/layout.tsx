@@ -99,10 +99,27 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // wrong, and it is persisted — signing in as a different company on the same
   // browser would otherwise leave the console pointed at the previous one. The
   // session is the authority for anyone who cannot switch.
+  //
+  // orgReady exists because this correction is a useEffect: it runs AFTER
+  // the first commit, one render behind whatever selectedOrgId zustand's
+  // persist middleware hydrated (possibly stale — left over from an earlier
+  // session in this same browser, under a DIFFERENT organization). The
+  // entitlements/alarms effects below fire in that same first pass, before
+  // this one's setSelectedOrgId has had a chance to take effect — a plain
+  // state update from one effect isn't visible to a sibling effect in the
+  // same commit, only on the next render. Confirmed by reproducing it: a
+  // tenant admin's very first paint fired GET .../org-1/entitlements (403,
+  // the stale value) immediately followed by GET .../<real org>/entitlements
+  // (200, once this effect corrected it) — both requests really happened,
+  // but only the failed one is red in the console, so it reads as "broken"
+  // rather than "corrected one render late". Gating those fetches on
+  // orgReady removes the wrong request instead of just outrunning it.
+  const [orgReady, setOrgReady] = useState(false)
   useEffect(() => {
-    if (isSuper) return
+    if (isSuper) { setOrgReady(true); return }
     const orgId = getSession()?.orgId
-    if (orgId && orgId !== selectedOrgId) setSelectedOrgId(orgId)
+    if (orgId && orgId !== selectedOrgId) { setSelectedOrgId(orgId); return } // re-run once selectedOrgId updates, THEN mark ready
+    setOrgReady(true)
   }, [isSuper, selectedOrgId, setSelectedOrgId])
 
   // Real org list (tenant switcher) + hydrate per-company logos, from the
@@ -127,19 +144,19 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   // not just once: a superadmin moving between tenants must see EACH one's
   // own licenses, not whichever org's happened to load first.
   useEffect(() => {
-    if (!isLive() || !selectedOrgId) return
+    if (!isLive() || !selectedOrgId || !orgReady) return
     let cancelled = false
     api.entitlements(selectedOrgId).then((platforms) => {
       if (cancelled || !platforms) return
       setOrgEntitlements(selectedOrgId, platforms)
     })
     return () => { cancelled = true }
-  }, [selectedOrgId, setOrgEntitlements])
+  }, [selectedOrgId, orgReady, setOrgEntitlements])
 
   // Live count of devices awaiting approval → nav badge. Superadmin counts every
   // org (incl. orphans); a tenant admin is scoped by the backend.
   useEffect(() => {
-    if (!isLive()) return
+    if (!isLive() || !orgReady) return
     const sup = getSession()?.role === 'superadmin'
     const load = () =>
       api.pendingNodes(sup ? undefined : selectedOrgId)
@@ -148,12 +165,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     load()
     const t = setInterval(load, 15000)
     return () => clearInterval(t)
-  }, [selectedOrgId])
+  }, [selectedOrgId, orgReady])
 
   // Real open alarms for the selected org — useAppStore().alarms is seeded
   // once from mockData.ts at store creation and never refreshed from
   // anywhere, so this badge never reflected a real alarm regardless of mode.
-  const { alarms: liveOpenAlarms } = useOrgAlarms(selectedOrgId, { open: true, pollMs: 15000 })
+  // Empty orgId until orgReady, for the same reason the two effects above
+  // are gated: useOrgAlarms no-ops on a falsy orgId, so this simply doesn't
+  // fire the request rather than firing it against a stale org and 403ing.
+  const { alarms: liveOpenAlarms } = useOrgAlarms(orgReady ? selectedOrgId : '', { open: true, pollMs: 15000 })
   const mockUnacked = alarms.filter((a) => !a.acknowledged && a.orgId === selectedOrgId)
   const criticalCount = live
     ? liveOpenAlarms.filter((a) => a.severity === 'CRITICAL').length
