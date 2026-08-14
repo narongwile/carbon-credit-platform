@@ -876,9 +876,32 @@ export const api = {
    * Runs every TENANT database up to date via the migrate service. Not the
    * control database — that is applied by the deploy-time Job, so a control
    * database behind the code needs a deploy, not this button.
+   *
+   * A dedicated fetch, not req(): migrationsRunFunc already computes a real
+   * reason on failure — ECONNREFUSED, DNS failure, a timeout waiting on a
+   * genuinely slow full-catalog run — and sends it as {error} on a 502/503.
+   * req() discards the response body on any non-2xx and returns null, so
+   * MigrationsPanel's "Could not reach the migrate service" toast was the
+   * ONLY thing a superadmin could ever see here, regardless of what actually
+   * went wrong. The panel already renders result.error when result is
+   * non-null (built for this, apparently never exercised) — this is what
+   * actually gets it there.
    */
-  runMigrations: () =>
-    req<MigrationRunResult>(`/api/platform/migrations/run`, { method: 'POST' }),
+  runMigrations: async (): Promise<MigrationRunResult | null> => {
+    if (!apiEnabled) return null
+    try {
+      const tok = getToken()
+      const r = await fetch(`${BASE}/api/platform/migrations/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(tok ? { authorization: `Bearer ${tok}` } : {}) },
+      })
+      const body = await r.json().catch(() => null) as MigrationRunResult | null
+      if (body) return body
+      return { ok: false, httpStatus: r.status, migrated: [], failed: [], skipped: [], error: `HTTP ${r.status} with no readable response body` }
+    } catch (err: any) {
+      return { ok: false, httpStatus: 0, migrated: [], failed: [], skipped: [], error: err?.message || 'network error' }
+    }
+  },
   /** The superadmin header's numbers, queried rather than invented. */
   platformStats: () =>
     req<PlatformStats>(`/api/platform/stats`),

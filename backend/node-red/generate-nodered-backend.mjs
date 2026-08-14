@@ -4335,16 +4335,27 @@ const CONTROL_ORGS=String(env.get('CONTROL_ORG_IDS')||'org-1,org-2,org-3').split
 // It does NOT touch the control database: /migrate/all-orgs is tenant-only,
 // and the control schema is applied by the deploy-time Job. Saying so here
 // keeps the button honest about what pressing it can and cannot fix.
+//
+// Explicit timeout, not a bare fetch(): migrateAllOrgs runs every org's
+// pending .sql files SEQUENTIALLY against real data (migrate.ts), which with
+// enough orgs can legitimately take a while — long enough to be at risk of
+// whatever Node's fetch() implicit default actually is. 10 minutes is
+// deliberately generous rather than tight, since a false "timed out" on a
+// migration that was actually still working is worse than a slow success —
+// and the message says so explicitly, rather than surfacing whatever raw
+// AbortError text a timeout produces.
 const migrationsRunFunc = CORS + `const au=msg.auth||{};
 (async()=>{
   const murl=env.get('MIGRATE_URL');
   if(!murl){msg.headers=__CORS;msg.statusCode=503;msg.payload={error:'MIGRATE_URL is not configured — this deployment has no migrate service to call'};node.send(msg);return;}
   let r, body;
   try{
-    r = await fetch(String(murl).replace(/\\/+$/,'')+'/migrate/all-orgs',{method:'POST'});
+    r = await fetch(String(murl).replace(/\\/+$/,'')+'/migrate/all-orgs',{method:'POST',signal:AbortSignal.timeout(600000)});
     body = await r.json().catch(()=>null);
   }catch(e){
-    msg.headers=__CORS;msg.statusCode=502;msg.payload={error:'could not reach the migrate service: '+String(e&&e.message||e)};node.send(msg);return;
+    const timedOut = e && (e.name==='TimeoutError' || e.name==='AbortError');
+    const reason = timedOut ? 'timed out after 10 minutes waiting for a response' : String(e&&e.message||e);
+    msg.headers=__CORS;msg.statusCode=502;msg.payload={error:'could not reach the migrate service: '+reason};node.send(msg);return;
   }
   // auditLog JSON.stringifies its detail argument itself — pass the object,
   // not a string, or the row stores an escaped string instead of readable JSON.

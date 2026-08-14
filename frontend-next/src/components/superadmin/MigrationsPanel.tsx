@@ -60,6 +60,10 @@ export default function MigrationsPanel({
     if (!r) { toast.error('Could not reach the migrate service'); return }
     setResult(r)
     if (r.ok) toast.success(`${r.migrated.length} database${r.migrated.length === 1 ? '' : 's'} up to date`)
+    // A total failure (migrate service unreachable/timed out) has NO per-org
+    // failures to count — "0 organizations failed" would be actively wrong.
+    // Show the real reason instead; it's already in r.error either way.
+    else if (r.failed.length === 0 && r.error) toast.error(r.error)
     else toast.error(`${r.failed.length} organization${r.failed.length === 1 ? '' : 's'} failed — see the list`)
     reload()
   }
@@ -166,7 +170,14 @@ export default function MigrationsPanel({
               <div className="mx-5 mb-4 rounded-lg p-3 space-y-1.5" style={inset}>
                 <div className="flex items-center gap-2 text-xs font-medium" style={{ color: result.ok ? '#4ade80' : '#f87171' }}>
                   {result.ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
-                  {result.ok ? 'Every tenant database is current' : 'Some organizations failed'}
+                  {result.ok
+                    ? 'Every tenant database is current'
+                    // Zero per-org failures means the run never actually started —
+                    // "some organizations failed" would blame orgs that were never
+                    // even attempted.
+                    : result.failed.length === 0
+                      ? "Couldn't run — the migrate service itself didn't respond"
+                      : 'Some organizations failed'}
                 </div>
                 {result.migrated.map((m) => (
                   <div key={m.orgId} className="flex items-center gap-2 text-[11px]">
