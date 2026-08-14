@@ -268,6 +268,14 @@ global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
   //    one) and merge_into is handled by the caller (it must either move
   //    together with its target, or be cleared before this runs).
   await pool.query('UPDATE nodes SET org_id=?, department_id=NULL, site_id=NULL WHERE id=?', [targetOrgId, id]);
+  // orgOfNode() caches nodeId -> org_id in memory FOREVER (nodeOrgCache) once
+  // looked up once, with nothing anywhere invalidating it — this is that
+  // invalidation. Every node-scoped read that resolves its pool through
+  // orgOfNode (photos, documents, transport, reports, ...) would otherwise
+  // keep querying the OLD org's database after a move: the old rows are gone
+  // (deleted below), so a freshly-uploaded photo would list, then vanish the
+  // moment this same node process serves it from cache again.
+  { const __c = global.get('nodeOrgCache'); if (__c) { delete __c[id]; global.set('nodeOrgCache', __c); } }
   if (newPool !== pool) {
     await newPool.query(
       "INSERT INTO nodes (id,org_id,site_id,department_id,domain,name,mqtt_prefix,lat,lng,status,merge_into) VALUES (?,?,NULL,NULL,?,?,?,?,?,'active',?) "+
@@ -1815,8 +1823,17 @@ return null;
 const healthFunc = CORS + `const pool=global.get('pool');
 (async()=>{ let db=false; try{const c=await pool.getConnection(); await c.ping(); c.release(); db=true;}catch(e){} msg.headers=__CORS; msg.statusCode=200; msg.payload={ok:true,db,ts:Date.now()}; node.send(msg);})(); return null;`
 
-const getRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
-(async()=>{const[r]=await pool.query('SELECT rule_json, debounce_json FROM alarm_rules WHERE node_id=?',[id]);
+// pool resolved via orgOfNode, NOT the bare control pool: alarm_rules lives
+// wherever the node's CURRENT org resolves to (resolvePool), and a device
+// moved to a real tenant DB (POST /api/nodes/move) has its rule row there
+// now, not in control — a hardcoded control pool 404's every rule lookup for
+// any device that has ever moved, permanently, with no way to tell "no rule
+// set" from "looking in the wrong database".
+const getRuleFunc = CORS + `const id=msg.req.params.id;
+(async()=>{
+  const org=(await global.get('orgOfNode')(id))||'';
+  const pool=global.get('resolvePool')(org);
+  const[r]=await pool.query('SELECT rule_json, debounce_json FROM alarm_rules WHERE node_id=?',[id]);
   if(!r.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'no rule'};node.send(msg);return;}
   const rule=typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json;
   let debounce=null; try{debounce=r[0].debounce_json?(typeof r[0].debounce_json==='string'?JSON.parse(r[0].debounce_json):r[0].debounce_json):null;}catch(e){}
@@ -1824,12 +1841,31 @@ const getRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.para
   msg.headers=__CORS; msg.statusCode=200; msg.payload=rule; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
-const putRuleFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {orgId,rule,updatedBy}=msg.payload||{};
-if(!orgId||!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'orgId and rule required'};return msg;}
+// The org this rule is stored under is resolved server-side from the
+// nodes table itself, NOT trusted from the request body: the body's orgId
+// is whatever the CALLER's own client-side state happened to think the
+// device's org was at the moment of the click (e.g. a superadmin console's
+// org switcher, which is not necessarily synced to the device actually
+// being edited) — stale by even one org switch, it would silently write
+// this rule into the WRONG org's database, invisible to the device's real
+// org and never read back by getRuleFunc (also fixed to resolve the same
+// way) or orgRuleFunc's per-org seeding. orgId is still accepted in the
+// payload for older callers but no longer used for anything.
+//
+// A direct `nodes` query, not orgOfNode: orgOfNode deliberately returns
+// null when TENANT_DB_MODE is off (nothing needs pool routing then), which
+// is fine for a read but would store an empty org_id here — nodes.org_id
+// itself is authoritative in every mode.
+const putRuleFunc = CORS + `const id=msg.req.params.id; const {rule,updatedBy}=msg.payload||{};
+if(!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule required'};return msg;}
 (async()=>{
+  const[__n]=await global.get('pool').query('SELECT org_id FROM nodes WHERE id=?',[id]);
+  if(!__n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found'};node.send(msg);return;}
+  const org=__n[0].org_id;
+  const pool=global.get('resolvePool')(org);
   const debounceJson = rule.debounceJson ? JSON.stringify(rule.debounceJson) : null;
   const ruleJson = JSON.stringify({...rule, debounceJson:undefined});
-  await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),debounce_json=VALUES(debounce_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,orgId,rule.domain,ruleJson,debounceJson,updatedBy||null]);
+  await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),debounce_json=VALUES(debounce_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[id,org,rule.domain,ruleJson,debounceJson,updatedBy||null]);
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
@@ -1877,15 +1913,32 @@ if(!domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'domain req
   msg.headers=__CORS; msg.payload={rule,updatedBy:row.updated_by,updatedAt:row.updated_at}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
-const getEventsFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id;
-(async()=>{const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+// pool resolved via orgOfNode — alarm_events moves with the device on a
+// cross-org move (MOVE_TABLE_RULES), same reasoning as getRuleFunc above.
+// This is what backs the device page's "Active Alarms" panel; a hardcoded
+// control pool silently showed nothing for any moved device, forever.
+const getEventsFunc = CORS + `const id=msg.req.params.id;
+(async()=>{
+  const org=(await global.get('orgOfNode')(id))||'';
+  const pool=global.get('resolvePool')(org);
+  const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 // Transport/connectivity timeline for a device: link switches (transport_events,
 // written by the firmware's transport handler) merged with offline backlog
 // flushes (offline_sync_log, written by the ingest worker when a device uploads
 // readings older than 30s). Both are per-node, so the 'node' policy applies.
-const transportFunc = CORS + `const pool=global.get('resolvePool')(msg.auth&&msg.auth.orgId); const id=msg.req.params.id;
+//
+// pool resolved via orgOfNode(id), NOT msg.auth.orgId: for an ordinary org
+// admin those agree (guard's 'node' policy already required it), which is
+// why this worked in every manual test — but a superadmin has no fixed
+// orgId at all, so this always fell back to the control pool regardless of
+// which org the device actually belongs to, silently showing an empty
+// timeline for every device once TENANT_DB_MODE routes real orgs to their
+// own database.
+const transportFunc = CORS + `const id=msg.req.params.id;
 (async()=>{
+  const org=(await global.get('orgOfNode')(id))||(msg.auth&&msg.auth.orgId)||'';
+  const pool=global.get('resolvePool')(org);
   const out=[];
   try{ const [t]=await pool.query("SELECT id,from_transport,to_transport,reason,rssi,ts FROM transport_events WHERE node_id=? ORDER BY ts DESC LIMIT 25",[id]);
     for(const r of t) out.push({ id:'tr-'+r.id, ts:r.ts, type: r.to_transport==='none' ? 'LINK_LOST' : (r.from_transport==='none' ? 'LINK_RESTORE' : 'FALLBACK_'+String(r.to_transport||'').toUpperCase()),
@@ -5720,7 +5773,19 @@ const sendExportFn = flow.find((n) => n.id === 'sendexport_fn'); if (sendExportF
 // pool explicitly in-handler (org comes from a query param or the request body),
 // so they are excluded here. Under TENANT_DB_MODE=off, resolvePool() returns the
 // control pool, so this rewrite is a behavioural no-op.
-const DATA_PLANE = new Set(['getrule','putrule','events','ack','readget','docsget','docspost','docsdl',
+//
+// Keyed by msg.auth.orgId, which is the CALLER's own org — correct for an
+// ordinary org admin (guard's 'node'/'node:manage' policy already requires
+// it to match the device), but empty for a superadmin, who has no fixed
+// org at all: resolvePool(undefined) silently falls back to the control
+// pool regardless of which org the device the superadmin is actually
+// looking at belongs to. getrule/putrule/events were removed from this set
+// (generate-nodered-backend.mjs's own getRuleFunc/putRuleFunc/getEventsFunc
+// now resolve pool explicitly via the NODE's real org, not the caller's) —
+// the same superadmin-blind-spot almost certainly affects every other id
+// still listed here (ack, readget, docsget, the bloodbox/report/ota
+// handlers), not yet audited one by one.
+const DATA_PLANE = new Set(['ack','readget','docsget','docspost','docsdl',
   'bbjourneyget','bbjourneypost','bbtemp','bbtransit','bbtransits','bbfloors','bbbeacondel','bbbeaconsget','bbbeaconspost','bblocget','bblocpost',
   'fleetlatest','rptlist','rptpost','rptdel','eppost','epdel',
   'cfgput','cmdpost','otapost','otarellist','otarelpost','otareldel','otadeplist','otafleet'])
