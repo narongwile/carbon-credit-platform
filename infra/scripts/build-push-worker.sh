@@ -60,8 +60,25 @@ else
   info "GITLAB_REGISTRY_USER/GITLAB_REGISTRY_TOKEN not set — assuming 'docker login registry.gitlab.com' was already run"
 fi
 
+# `go mod tidy` in the builder stage needs real network access. On a sandboxed
+# host that routes egress through a local HTTP(S) proxy, --network=host is
+# what makes that proxy (which listens on the HOST's loopback) reachable at
+# all from inside the build container's RUN steps — a bare 127.0.0.1 inside an
+# isolated build container is the CONTAINER's own loopback, nothing is
+# listening there, and every module fetch fails (either connection-refused or,
+# worse, a confusing x509 error if some no_proxy-excluded domain gets routed
+# through an unrelated transparent interception instead). Only passed when
+# the environment actually sets a proxy — forcing it unconditionally would
+# point a plain, unproxied machine's build at a proxy that does not exist there.
+BUILD_NET_ARGS=()
+if [ -n "${HTTPS_PROXY:-}${https_proxy:-}" ]; then
+  PROXY_URL="${HTTPS_PROXY:-$https_proxy}"
+  info "proxy detected (${PROXY_URL}) — building with --network=host so the builder stage can reach it"
+  BUILD_NET_ARGS=(--network=host --build-arg "http_proxy=${PROXY_URL}" --build-arg "https_proxy=${PROXY_URL}" --build-arg "no_proxy=" --build-arg "NO_PROXY=")
+fi
+
 info "building ${IMAGE}:${TAG}"
-docker build -t "${IMAGE}:latest" -t "${IMAGE}:${TAG}" "$WORKER_DIR"
+docker build "${BUILD_NET_ARGS[@]}" -t "${IMAGE}:latest" -t "${IMAGE}:${TAG}" "$WORKER_DIR"
 
 info "pushing ${IMAGE}:latest"
 docker push "${IMAGE}:latest"
