@@ -13,8 +13,9 @@ import type { SensorDomain } from '@/types/fleet'
 import PhotoStrip from '@/components/device/PhotoStrip'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import OrgPayloadSpecPicker from '@/components/device/OrgPayloadSpecPicker'
+import PayloadCrossCheck from '@/components/device/PayloadCrossCheck'
 import MqttConnectionEditor, { type MqttConnection } from '@/components/MqttConnectionEditor'
-import { PlugZap, Check, X, RefreshCw, Building2, Activity, Hash, Settings2, AlertTriangle, Radio, Copy } from 'lucide-react'
+import { PlugZap, Check, X, RefreshCw, Building2, Hash, Settings2, Radio, Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 // The MQTT topic's product segment, matching worker/main.go's
@@ -29,6 +30,7 @@ const topicProduct = (domain: SensorDomain): string =>
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
+
 
 const UNASSIGNED = '__unassigned__'
 
@@ -526,16 +528,11 @@ export default function PendingDevicesPage() {
             const set = (patch: Partial<typeof f>) => setForm((s) => ({ ...s, [n.id]: { ...f, ...patch } }))
             const isOrphan = n.org_id === UNASSIGNED
             const sample = n.last_sample && typeof n.last_sample === 'object' ? Object.entries(n.last_sample) : []
-            const sampleKeys = new Set(sample.map(([k]) => k))
             // The org this row currently resolves to — may still be empty for
             // an unclaimed orphan a superadmin has not assigned yet.
             const targetOrgId = isSuper ? f.orgId : orgId
             const spec = targetOrgId ? specByKey[specKeyOf(targetOrgId, f.domain)] : undefined
             const specLabelOf = (k: string) => spec?.labels[k] || schemaLabel(f.domain as SensorDomain, k)
-            // Fields the org's spec expects for this product that this device
-            // has not actually sent yet — worth a flag, not a block: a unit can
-            // be missing an optional sensor and still be worth approving.
-            const missingFromSpec = spec ? spec.paramKeys.filter((k) => !sampleKeys.has(k)) : []
             return (
               <div key={n.id} className="p-4 rounded-xl" style={surface}>
                 <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -567,55 +564,31 @@ export default function PendingDevicesPage() {
                   </div>
                 )}
 
-                {/* Latest telemetry sample so the admin can sanity-check readings */}
-                {sample.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                    <Activity size={12} className="text-slate-500" />
-                    {sample.map(([k, v]) => (
-                      <span key={k} className="text-[11px] px-2 py-0.5 rounded-md font-mono" style={inset}>
-                        <span className="text-slate-500">{k}</span> <span className="text-slate-200">{typeof v === 'number' ? v : String(v)}</span>
-                      </span>
-                    ))}
-                  </div>
-                )}
+                {/* Actual-vs-expected payload cross-check. The spec side is what
+                    a superadmin sets up front (display_params/param_labels,
+                    org-wide default) — not something inferred from whichever
+                    device happened to connect first. Shown to every approver as
+                    a reference; only a superadmin gets the button to change it,
+                    per how licensing (Feature Entitlements) already works here.
 
-                {/* Expected payload for this product+org — the spec a superadmin
-                    sets up front (display_params/param_labels, org-wide default),
-                    not something inferred from whichever device happened to
-                    connect first. Shown to every approver as a reference; only a
-                    superadmin gets the button to change it, per how licensing
-                    (Feature Entitlements) already works on this platform. */}
-                {targetOrgId && (
-                  <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                    <span className="text-[10px] text-slate-600 uppercase tracking-wider flex-shrink-0">Expected payload</span>
-                    {spec && spec.paramKeys.length > 0 ? (
-                      spec.paramKeys.map((k) => {
-                        const present = sampleKeys.has(k)
-                        return (
-                          <span key={k} title={present ? 'reported in the last sample' : 'not seen in the last sample — may be optional on this unit'}
-                            className="text-[11px] px-2 py-0.5 rounded-md" style={present ? inset : { background: 'rgba(251,191,36,0.08)', border: '1px dashed #92702c' }}>
-                            <span className={present ? 'text-slate-200' : 'text-amber-500'}>{specLabelOf(k)}</span>
-                            <span className="text-slate-600 font-mono ml-1">{k}</span>
-                          </span>
-                        )
-                      })
-                    ) : (
-                      <span className="text-[11px] text-slate-600">not configured yet — approving will show every field this device sends</span>
-                    )}
-                    {isSuper && (
-                      <button onClick={() => setSpecEditor({ node: n, orgId: targetOrgId, domain: f.domain as SensorDomain })}
-                        className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={inset}>
-                        <Settings2 size={10} /> Configure
-                      </button>
-                    )}
-                  </div>
-                )}
-                {missingFromSpec.length > 0 && (
-                  <div className="flex items-center gap-1.5 mb-3 text-[11px] text-amber-500">
-                    <AlertTriangle size={11} className="flex-shrink-0" />
-                    <span>{missingFromSpec.length} expected field{missingFromSpec.length === 1 ? '' : 's'} not in the last sample — confirm this unit&apos;s spec before approving, or it may just be an optional sensor.</span>
-                  </div>
-                )}
+                    Shared with admin/fleet: the same question ("is this device
+                    sending what we expect?") gets the same answer in the same
+                    colours whether it's asked at approval or six months later. */}
+                <PayloadCrossCheck
+                  sample={sample}
+                  specKeys={targetOrgId ? (spec?.paramKeys ?? []) : []}
+                  labelOf={specLabelOf}
+                  unconfiguredHint={targetOrgId
+                    ? 'not configured yet — approving will show every field this device sends'
+                    : 'select an organization above to see what it expects'}
+                  missingNote="confirm this unit's spec before approving, or it may just be an optional sensor."
+                  action={isSuper && targetOrgId ? (
+                    <button onClick={() => setSpecEditor({ node: n, orgId: targetOrgId, domain: f.domain as SensorDomain })}
+                      className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={inset}>
+                      <Settings2 size={10} /> Configure
+                    </button>
+                  ) : undefined}
+                />
 
                 {/* What the thing actually is. Readings say a device is alive;
                     they do not say whether it is the pole-mount at Gate 3 or a

@@ -31,9 +31,12 @@ import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive, type DevicePresence } from '@/lib/api'
 import {
-  Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2, Plug, Construction,
+  Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2, Plug, Construction, ListChecks,
 } from 'lucide-react'
 import SensorDetailsModal from '@/components/SensorDetailsModal'
+import PayloadCrossCheck from '@/components/device/PayloadCrossCheck'
+import { useParamLabels } from '@/lib/useParamLabels'
+import type { SensorDomain } from '@/types/fleet'
 import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -115,6 +118,29 @@ export default function FleetPage() {
 
   const online = presence?.online === 1
 
+  // Actual-vs-expected payload, the same cross-check admin/pending runs at
+  // approval time. It belongs here too, and arguably matters MORE here: at
+  // approval the device is new and someone is already looking closely, whereas
+  // a parameter that silently stops arriving six months later — a dead sensor,
+  // a firmware regression that renamed a key — has no other place in the
+  // product that would show it. Before this, the check simply disappeared the
+  // moment a device was approved.
+  //
+  // Scoped to the active device (nodeId passed through), so a per-device
+  // display_params override shows that device's real spec rather than the
+  // org-wide default it may deliberately differ from.
+  const activeDomain = active?.domain as SensorDomain | undefined
+  const { labelOf } = useParamLabels(orgId, activeDomain, activeId || undefined)
+  const [specKeys, setSpecKeys] = useState<string[]>([])
+  useEffect(() => {
+    if (!live || !activeId || !activeDomain) { setSpecKeys([]); return }
+    let cancelled = false
+    api.displayParams(orgId, activeDomain, activeId).then((r) => {
+      if (!cancelled) setSpecKeys(r?.paramKeys ?? [])
+    })
+    return () => { cancelled = true }
+  }, [live, orgId, activeId, activeDomain])
+
   return (
     <div className="p-6 space-y-5">
       <div>
@@ -187,6 +213,35 @@ export default function FleetPage() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* Telemetry parameters — actual vs expected, shared with
+                admin/pending so the colours mean the same thing on both. */}
+            <div className="rounded-xl p-5" style={surface}>
+              <h3 className="text-sm font-semibold text-white mb-1 flex items-center gap-2">
+                <ListChecks size={14} className="text-amber-400" /> Telemetry Parameters
+                <a href="/admin/pending" className="ml-auto text-xs text-indigo-400 hover:text-indigo-300 transition-colors font-normal">MQTT setup</a>
+              </h3>
+              <p className="text-xs text-slate-500 mb-3">
+                What this device last reported, against what this organization expects it to send. Amber on both
+                rows is a matched parameter; rose is expected but absent.
+              </p>
+              {detailLoading ? (
+                <p className="text-xs text-slate-600">Loading…</p>
+              ) : !live ? (
+                <p className="text-xs text-slate-600">Demo mode — switch to Live to cross-check real telemetry.</p>
+              ) : (
+                <PayloadCrossCheck
+                  sample={Object.entries(values)}
+                  specKeys={specKeys}
+                  labelOf={labelOf}
+                  unconfiguredHint="no payload spec configured for this product — every field the device sends is shown as-is"
+                  missingNote="check the sensor, or whether this unit's firmware still reports it."
+                />
+              )}
+              {live && !detailLoading && Object.keys(values).length === 0 && (
+                <p className="text-xs text-slate-600">No readings recorded for this device yet.</p>
+              )}
             </div>
 
             {/* Interfaces — declared placeholder, see PLANNED_INTERFACE_KINDS */}
