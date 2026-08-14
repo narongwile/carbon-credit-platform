@@ -4665,6 +4665,49 @@ const settingsPutFunc = CORS + `const pool=global.get('pool'); const b=msg.paylo
   global.set('__mailCfg', null); global.set('__notifyCfg', null);   // invalidate caches
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
+// --- MQTT connection info shown on admin/pending's "MQTT setup" card --------
+// Deliberately a SEPARATE endpoint from /api/platform/settings, not a field
+// added to it: that endpoint is policy 'super' end to end, but this one has to
+// be readable by every ORG ADMIN — they are the ones who actually go program a
+// device with it — while only a superadmin may change it. One route cannot
+// carry two different read policies for different fields of the same body, so
+// this is its own GET (policy 'admin') and PUT (policy 'super').
+//
+// Unlike smtp.pass, the password IS returned in plaintext to any admin who can
+// call the GET — it is not a server-side-only secret an org never needs to see
+// again, it is a credential they must copy into firmware. Still stored
+// encrypted at rest (same encryptSecret/decryptSecret as smtp.pass) as
+// defense-in-depth against a DB-only compromise, not to hide it from the
+// customers it exists for.
+//
+// Falls back to the values this platform shipped with (27.254.143.144:1883,
+// device/iothub.2026) when nothing has been configured yet, so an unconfigured
+// install shows the same thing admin/pending always has instead of blanks —
+// the same "DB row wins, env/default is the fallback" shape mailConfig uses.
+const mqttConnGetFunc = CORS + `const pool=global.get('pool');
+(async()=>{
+  const m={}; try{const[r]=await pool.query("SELECT skey,sval FROM platform_settings WHERE skey LIKE 'mqtt.%'"); for(const x of r) m[x.skey]=x.sval;}catch(e){}
+  const dec = global.get('decryptSecret');
+  msg.headers=__CORS; msg.payload={
+    host: m['mqtt.host'] || env.get('MQTT_PUBLIC_HOST') || '27.254.143.144',
+    port: m['mqtt.port'] || env.get('MQTT_PUBLIC_PORT') || '1883',
+    username: m['mqtt.username'] || env.get('MQTT_PUBLIC_USER') || 'device',
+    password: m['mqtt.password'] ? dec(m['mqtt.password']) : (env.get('MQTT_PUBLIC_PASS') || 'iothub.2026'),
+    tls: m['mqtt.tls'] === '1',
+  }; node.send(msg);})()` + bbErr
+
+const mqttConnPutFunc = CORS + `const pool=global.get('pool'); const b=msg.payload||{};
+(async()=>{
+  await pool.query(${JSON.stringify(SETTINGS_DDL)});
+  const set=async(k,v)=>{ await pool.query("INSERT INTO platform_settings (skey,sval) VALUES (?,?) ON DUPLICATE KEY UPDATE sval=VALUES(sval)",[k, v==null?'':String(v)]); };
+  if(b.host!==undefined) await set('mqtt.host', b.host);
+  if(b.port!==undefined) await set('mqtt.port', b.port);
+  if(b.username!==undefined) await set('mqtt.username', b.username);
+  if(b.password) await set('mqtt.password', global.get('encryptSecret')(b.password));
+  else if(b.clearPassword) await set('mqtt.password', '');
+  if(b.tls!==undefined) await set('mqtt.tls', b.tls ? '1' : '0');
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
+
 // POST /api/nodes/:id/send-export — deliver a device's exported data over one
 // of the configured channels, with the files attached.
 //
@@ -5374,6 +5417,11 @@ const flow = [
   ...endpoint('settingsget', 'get', '/api/platform/settings', settingsGetFunc, 'super'),
   ...endpoint('settingsput', 'put', '/api/platform/settings', settingsPutFunc, 'super'),
   ...endpoint('settingstest', 'post', '/api/platform/settings/test', settingsTestFunc, 'super'),
+  // 'admin', not 'super' — every org admin has to read this to program a
+  // device; only a superadmin may write it. See mqttConnGetFunc's own comment
+  // for why this cannot just be a field on /api/platform/settings.
+  ...endpoint('mqttconnget', 'get', '/api/platform/mqtt', mqttConnGetFunc, 'admin'),
+  ...endpoint('mqttconnput', 'put', '/api/platform/mqtt', mqttConnPutFunc, 'super'),
   ...endpoint('entget', 'get', '/api/orgs/:orgId/entitlements', entGetFunc),
   ...endpoint('entput', 'put', '/api/orgs/:orgId/entitlements', entPutFunc, 'super'),
   // Maintenance kill switch + the audit trail that records using it.

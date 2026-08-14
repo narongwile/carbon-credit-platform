@@ -854,6 +854,17 @@ export const api = {
   testPlatformChannel: (channel: string, to?: string) =>
     req<{ ok: boolean; from?: string }>(`/api/platform/settings/test`, { method: 'POST', body: JSON.stringify({ channel, to }) }),
 
+  // ---- MQTT connection info shown on admin/pending's "MQTT setup" card.
+  // Separate from platformSettings above: readable by EVERY admin (policy
+  // 'admin', not 'super') — they are the ones who go program a device with
+  // it — only writable by a superadmin. The password comes back in plaintext
+  // on purpose; unlike smtp.pass this is a credential admins must copy into
+  // firmware, not a server-side-only secret.
+  mqttConnection: () =>
+    req<{ host: string; port: string; username: string; password: string; tls: boolean }>(`/api/platform/mqtt`),
+  saveMqttConnection: (body: { host?: string; port?: string; username?: string; password?: string; clearPassword?: boolean; tls?: boolean }) =>
+    req<{ ok: boolean }>(`/api/platform/mqtt`, { method: 'PUT', body: JSON.stringify(body) }),
+
   // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
   orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number; lng?: number; show_3d_fallback?: number }[]>(`/api/orgs`),
 

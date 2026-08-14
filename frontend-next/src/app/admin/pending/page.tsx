@@ -13,6 +13,7 @@ import type { SensorDomain } from '@/types/fleet'
 import PhotoStrip from '@/components/device/PhotoStrip'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import OrgPayloadSpecPicker from '@/components/device/OrgPayloadSpecPicker'
+import MqttConnectionEditor, { type MqttConnection } from '@/components/MqttConnectionEditor'
 import { PlugZap, Check, X, RefreshCw, Building2, Activity, Hash, Settings2, AlertTriangle, Radio, Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -141,6 +142,20 @@ export default function PendingDevicesPage() {
   // Same idea, but for the org-wide reference section below — no specific
   // device involved, so no PendingNode to carry.
   const [orgSpecEditor, setOrgSpecEditor] = useState<{ orgId: string; domain: SensorDomain } | null>(null)
+
+  // MQTT broker connection shown on the setup card. Starts at the platform's
+  // shipped defaults — same values GET /api/platform/mqtt itself falls back
+  // to when unconfigured — so the card shows something correct even before
+  // the fetch resolves, in demo mode, or if the fetch fails, rather than
+  // blanking out fields every admin needs to read.
+  const [mqttConn, setMqttConn] = useState<MqttConnection>({ host: '27.254.143.144', port: '1883', username: 'device', password: 'iothub.2026', tls: false })
+  const [mqttEditorOpen, setMqttEditorOpen] = useState(false)
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.mqttConnection().then((r) => { if (!cancelled && r) setMqttConn(r) })
+    return () => { cancelled = true }
+  }, [])
 
   const load = useCallback(async () => {
     if (!isLive()) {
@@ -379,12 +394,20 @@ export default function PendingDevicesPage() {
               stated as plainly as the topic itself, not left for someone to
               guess from a support ticket. */}
           <div className="rounded-lg p-3 space-y-1.5" style={inset}>
-            <div className="text-[10px] text-slate-600 uppercase tracking-wider">Broker connection</div>
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] text-slate-600 uppercase tracking-wider">Broker connection</div>
+              {isSuper && (
+                <button onClick={() => setMqttEditorOpen(true)}
+                  className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={surface}>
+                  <Settings2 size={10} /> Edit
+                </button>
+              )}
+            </div>
             {([
-              ['Host', '27.254.143.144'],
-              ['Port', '1883 (plain TCP, no TLS)'],
-              ['Username', 'device'],
-              ['Password', 'iothub.2026'],
+              ['Host', mqttConn.host],
+              ['Port', `${mqttConn.port} (${mqttConn.tls ? 'TLS' : 'plain TCP, no TLS'})`],
+              ['Username', mqttConn.username],
+              ['Password', mqttConn.password],
               ['MQTT Client ID', cardOrgId],
             ] as const).map(([label, value]) => (
               <div key={label} className="flex items-center gap-1.5 text-[11px]">
@@ -723,6 +746,14 @@ export default function PendingDevicesPage() {
           domain={orgSpecEditor.domain}
           onClose={() => setOrgSpecEditor(null)}
           onSaved={() => refetchSpec(orgSpecEditor.orgId, orgSpecEditor.domain)}
+        />
+      )}
+
+      {mqttEditorOpen && (
+        <MqttConnectionEditor
+          current={mqttConn}
+          onClose={() => setMqttEditorOpen(false)}
+          onSaved={setMqttConn}
         />
       )}
     </div>
