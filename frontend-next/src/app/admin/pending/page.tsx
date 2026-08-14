@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useAppStore } from '@/lib/store'
 import { useSessionRole, useSessionOrgId } from '@/lib/auth'
 import { api, isLive } from '@/lib/api'
@@ -14,6 +14,7 @@ import PhotoStrip from '@/components/device/PhotoStrip'
 import DisplayParamPicker from '@/components/device/DisplayParamPicker'
 import OrgPayloadSpecPicker from '@/components/device/OrgPayloadSpecPicker'
 import PayloadCrossCheck from '@/components/device/PayloadCrossCheck'
+import { subscribeTelemetry, subscribeConnection } from '@/lib/telemetryBus'
 import MqttConnectionEditor, { type MqttConnection } from '@/components/MqttConnectionEditor'
 import { PlugZap, Check, X, RefreshCw, Building2, Hash, Settings2, Radio, Copy } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -209,8 +210,56 @@ export default function PendingDevicesPage() {
   useEffect(() => {
     load()
     if (!isLive()) return               // demo mode: no polling (would re-seed the mock)
-    const t = setInterval(load, 10000)    // poll so newly-connected devices appear
+    const t = setInterval(load, 10000)    // fallback below the live socket, see next effect
     return () => clearInterval(t)
+  }, [load])
+
+  // --- Live telemetry ------------------------------------------------------
+  // The 10s poll above is fine for noticing a device appear or get approved,
+  // but it is not what this page needs while someone is actually watching it:
+  // readings sat up to ten seconds stale, and a device that had just started
+  // publishing could take that long to show up at all.
+  //
+  // The worker already republishes every frame onto internal/telemetry/live/#
+  // — including PENDING devices', which it deliberately does not drop (see the
+  // status=="pending" branch in worker/main.go: "Process telemetry even while
+  // pending so admins see live values during approval") — and Node-RED fans
+  // that out per-org over the same /ws/telemetry socket the rest of the app
+  // already uses. So there is nothing new to build server-side: subscribe, and
+  // merge each frame into the row it belongs to.
+  const [wsLive, setWsLive] = useState(false)
+  useEffect(() => subscribeConnection(setWsLive), [])
+
+  // Read rows through a ref inside the socket handler. Subscribing on every
+  // rows change would tear down and rebuild the subscription several times a
+  // second under live traffic; this keeps one subscription for the page's life
+  // while still seeing current rows.
+  const rowsRef = useRef<PendingNode[]>([])
+  useEffect(() => { rowsRef.current = rows }, [rows])
+  // A frame from a node this page has never heard of is the strongest signal
+  // available that a brand-new device just auto-registered — reload at once
+  // rather than waiting out the poll. Frames from ALREADY-APPROVED devices
+  // arrive on this socket too and are equally unknown here, so without the
+  // seen-set they would each trigger a reload on every frame; with it, any
+  // given id can cost at most one.
+  const reloadedFor = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!isLive()) return
+    return subscribeTelemetry((f) => {
+      if (f.type === 'alarm' || !f.id) return
+      if (!rowsRef.current.some((n) => n.id === f.id)) {
+        if (!reloadedFor.current.has(f.id)) { reloadedFor.current.add(f.id); load() }
+        return
+      }
+      setRows((prev) => prev.map((n) => n.id !== f.id ? n : {
+        ...n,
+        online: 1,
+        last_seen: f.timestamp || new Date().toISOString(),
+        // A presence/heartbeat frame carries no values — keep the last real
+        // sample rather than blanking the cross-check chips on every heartbeat.
+        last_sample: f.values && Object.keys(f.values).length > 0 ? f.values : n.last_sample,
+      }))
+    })
   }, [load])
 
   // Fetch entitlements once per distinct set of orgs in view — an admin only
@@ -330,6 +379,16 @@ export default function PendingDevicesPage() {
     else toast.error('Approve failed')
   }
   const reject = async (n: PendingNode) => {
+    // Rejecting is not "dismiss from this list" — the backend sets
+    // status='rejected' permanently (so the worker's INSERT IGNORE can't
+    // re-create the row), and the worker then drops every future frame from
+    // that id on the floor. There is no un-reject anywhere in the product, and
+    // a device that comes back afterwards is invisible: no error, no log the
+    // admin can see, it simply never reappears here. That is far too much
+    // consequence for an unlabelled X, so say it out loud first.
+    if (!window.confirm(
+      `Reject ${n.id}?\n\nThis is permanent. This device id is blocked from now on — if it publishes again it will be ignored silently and will NOT come back to this list. Re-using the same id later requires a change in the database.\n\nTo just clear it for now, leave it pending instead.`
+    )) return
     if (!isLive()) { toast.success(`Rejected ${n.id} (demo)`); setRows((r) => r.filter((x) => x.id !== n.id)); return }
     setBusy(n.id)
     const res = await api.rejectNode(n.id)
@@ -353,9 +412,24 @@ export default function PendingDevicesPage() {
           <h1 className="text-xl font-bold text-white flex items-center gap-2"><PlugZap size={20} className="text-indigo-400" /> Pending Devices</h1>
           <p className="text-sm text-slate-500 mt-0.5">Devices that connected and auto-registered — approve to add them to your fleet, or reject.</p>
         </div>
-        <button onClick={load} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:text-white" style={surface}>
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Whether readings on this page are actually live. Without it, a
+              dropped socket is indistinguishable from a quiet device — the
+              numbers just stop moving and there is nothing to tell you the
+              page fell back to its 10s poll. */}
+          {isLive() && (
+            <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px]" style={inset}
+              title={wsLive
+                ? 'Connected to the live telemetry stream — readings below update as frames arrive'
+                : 'Live stream not connected — falling back to a refresh every 10 seconds'}>
+              <span className={`w-1.5 h-1.5 rounded-full ${wsLive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+              <span className={wsLive ? 'text-emerald-400' : 'text-slate-500'}>{wsLive ? 'Live' : 'Polling'}</span>
+            </span>
+          )}
+          <button onClick={load} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-300 hover:text-white" style={surface}>
+            <RefreshCw size={14} /> Refresh
+          </button>
+        </div>
       </div>
 
       {!isLive() && (
@@ -684,8 +758,9 @@ export default function PendingDevicesPage() {
                       <Check size={14} /> Approve
                     </button>
                     <button disabled={busy === n.id} onClick={() => reject(n)}
+                      title={`Reject ${n.id} permanently — it will be ignored from now on and will not reappear here`}
                       className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-md text-sm text-red-400 hover:bg-red-400/10 disabled:opacity-50" style={inset}>
-                      <X size={14} />
+                      <X size={14} /> Reject
                     </button>
                   </div>
                 </div>
