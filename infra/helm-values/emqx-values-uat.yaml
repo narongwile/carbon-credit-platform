@@ -296,8 +296,17 @@ extraDeploy:
           {"user_id":"admin",   "password":"iothub.2026", "is_superuser":true},
           {"user_id":"backend", "password":"iothub.2026", "is_superuser":false},
           {"user_id":"nodered", "password":"iothub.2026", "is_superuser":false},
-          {"user_id":"device",  "password":"iothub.2026", "is_superuser":false}
+          {"user_id":"device",  "password":"iothub.2026", "is_superuser":false},
+          {"user_id":"ingest",  "password":"iothub.2026", "is_superuser":true}
         ]
+      # ingest = the ingest-worker's own MQTT_USER (custom-apps/base/ingest-worker.yaml,
+      # which documents this exact user/password in its own comment). It was ONLY ever
+      # seeded by infra/k8s/platform-services-uat/emqx-extras-uat.yaml — a file no
+      # ArgoCD Application deploys (confirmed: the only two Applications pointed at that
+      # directory use `directory: {include: 'mysql.yaml'}` / `'phpmyadmin.yaml'}`, which
+      # excludes every other file in it, emqx-extras-uat.yaml included). Superuser like
+      # `admin`, matching what the worker needs to bypass ACL and subscribe telemetry/#
+      # across every tenant's topics.
 
   # ── Seeder Job: POSTs users to EMQX REST API after pod is ready ──
   # Idempotent — POST returns 409 on existing user, we ignore.
@@ -378,10 +387,20 @@ extraDeploy:
                 items: [{ key: users.json, path: users.json }]
 
   # ── External-facing Service: binds 1883/8883 on the node IP ──────
-  # kube-proxy installs iptables rules: <NODE_IP>:1883 → pod:1883.
-  # Replace `externalIPs` with the actual public IP of every node that
-  # should accept MQTT traffic. On a single-node cluster, set the one
-  # node IP. CHANGE THIS when you reprovision.
+  # kube-proxy installs iptables rules: <NODE_IP>:1883 → pod:1883. Same
+  # externalIPs pattern as node-red-external in custom-apps/base/node-red.yaml
+  # (proven working there). CHANGE THIS when you reprovision.
+  #
+  # externalIPs was UNSET here until now — the comment told the next person to
+  # fill it in, and nobody had. Without it this Service was ClusterIP-only:
+  # not reachable from outside the cluster by any path. The only manifest that
+  # DID expose MQTT externally (NodePort 30883, same name+namespace) was
+  # infra/k8s/platform-services-uat/emqx-extras-uat.yaml, which no ArgoCD
+  # Application deploys — so it either only ever worked because someone
+  # kubectl-applied it by hand outside GitOps, or it never worked at all. This
+  # is now the one real definition; that file is deleted (see its removal in
+  # this same change) rather than left as a second, conflicting declaration of
+  # the same Service name.
   - apiVersion: v1
     kind: Service
     metadata:
@@ -391,6 +410,8 @@ extraDeploy:
         app.kubernetes.io/component: external-listener
     spec:
       type: ClusterIP
+      externalIPs:
+        - 27.254.143.144
       selector:
         app.kubernetes.io/name: emqx
         app.kubernetes.io/instance: emqx
@@ -431,8 +452,12 @@ extraDeploy:
         %% Placeholders: ${username}, ${clientid}, ${peerhost}
         %% ─────────────────────────────────────────────────────────
 
-        %% Superuser
+        %% Superusers
         {allow, {user, "admin"}, all, ["#"]}.
+        %% ingest-worker: must SUBSCRIBE telemetry/# across every tenant's
+        %% topics, which no per-clientid scoped rule can express — hence
+        %% superuser, same as admin, not a scoped allow like backend/nodered.
+        {allow, {user, "ingest"}, all, ["#"]}.
 
         %% Internal services
         {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
