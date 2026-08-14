@@ -142,6 +142,16 @@ export async function upsertOrg(b: { id?: string; name: string; status?: string;
     { id, n: b.name, s: b.status ?? 'active', l: b.logoUrl ?? null })
   return id
 }
+// One organization by id, or null. routes.ts has called this since
+// self-service registration was added ("does the ?org=... on the signup link
+// name a real organization?") but it was never actually defined here — the
+// build has failed on `Cannot find name 'getOrg'` ever since, which is why
+// the migrate-service image (built from this same tree) could not be rebuilt
+// and stayed pinned to a commit predating migrate-v46.sql.
+export async function getOrg(id: string): Promise<RowDataPacket | null> {
+  const [r] = await pool.query<RowDataPacket[]>('SELECT * FROM organizations WHERE id=:id', { id })
+  return r.length ? r[0] : null
+}
 export async function deleteOrg(id: string): Promise<void> { await pool.query('DELETE FROM organizations WHERE id=:id', { id }) }
 export async function updateOrgLogo(orgId: string, logoUrl: string | null): Promise<void> {
   await pool.query('UPDATE organizations SET logo_url=:l WHERE id=:id', { l: logoUrl, id: orgId })

@@ -6,7 +6,7 @@ import {
   fleetByOrg, latestReadings, mqttPrefix,
   listSchedules, upsertSchedule, deleteSchedule,
   getUser, getPrefs, putPrefs,
-  listOrgs, upsertOrg, deleteOrg, getEntitlements, setEntitlements,
+  listOrgs, getOrg, upsertOrg, deleteOrg, getEntitlements, setEntitlements,
   listEventProblems, upsertEventProblem, deleteEventProblem,
   listDepartments, upsertDepartment, deleteDepartment,
   listUsers, upsertUser, deleteUser, updateUserPassword, updateOrgLogo, getProductAccess, putProductAccess, provisionNode,
