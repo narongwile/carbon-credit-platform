@@ -54,6 +54,46 @@ interface Loaded { id: string; name: string; rows: Row[] }
 // dropping the most recent ~7 hours of every chart ending "now".
 const toUTC = (ms: number) => new Date(ms).toISOString()
 
+/** Recharts' own legend renders swatches with no interaction — with up to 6
+ * near-identical traces sharing one axis, "which line is that?" needs an
+ * answer the default legend can't give. This one doubles as the control:
+ * hover/tap an entry to isolate its line, click again to hide it outright. */
+function TrendsLegend({
+  payload, focusId, hiddenIds, onFocus, onToggleHidden,
+}: {
+  payload?: { value?: string; dataKey?: unknown; color?: string }[]
+  focusId: string | null
+  hiddenIds: Set<string>
+  onFocus: (id: string | null) => void
+  onToggleHidden: (id: string) => void
+}) {
+  if (!payload?.length) return null
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2" role="group" aria-label="Devices — click to hide, hover to isolate">
+      {payload.map((entry) => {
+        const id = String(entry.dataKey ?? entry.value ?? '')
+        const hidden = hiddenIds.has(id)
+        const active = focusId === id
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onToggleHidden(id)}
+            onMouseEnter={() => !hidden && onFocus(id)}
+            onMouseLeave={() => onFocus(null)}
+            title={hidden ? `${entry.value} — hidden, click to show` : `${entry.value} — click to hide, hover to isolate`}
+            className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md transition-opacity"
+            style={{ opacity: hidden ? 0.35 : 1, background: active ? 'rgba(255,255,255,0.06)' : 'transparent' }}
+          >
+            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: entry.color, textDecoration: hidden ? 'line-through' : 'none' }} />
+            <span className="text-slate-300" style={{ textDecoration: hidden ? 'line-through' : 'none' }}>{entry.value}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export default function TrendsPage() {
   const live = useIsLive()
   const selectedOrgId = useAppStore((s) => s.selectedOrgId)
@@ -67,6 +107,14 @@ export default function TrendsPage() {
   const [loaded, setLoaded] = useState<Loaded[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [win, setWin] = useState({ from: Date.now() - 1440 * 60_000, to: Date.now() })
+  // Overlapping lines are the normal case here, not a bug to design away —
+  // several transformers running the same load genuinely draw near-identical
+  // traces. The fix isn't fewer lines, it's a way to tell them apart on
+  // demand: hovering (or tapping) a legend entry dims every OTHER line, and
+  // clicking one hides it entirely — both wired to the legend so the reader
+  // never has to leave the chart to isolate one trace from a tangle.
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
 
   const schema = ALARM_SCHEMA[domain]
   const param = schema.params.find((p) => p.key === paramKey) ?? schema.params[0]
@@ -103,6 +151,24 @@ export default function TrendsPage() {
     setPicked((cur) => (cur.includes(id)
       ? cur.filter((x) => x !== id)
       : cur.length >= MAX_DEVICES ? cur : [...cur, id]))
+
+  // A device chip removed from `picked` must not leave a stale isolate/hide
+  // behind it — otherwise re-adding the same device later could silently
+  // come back hidden with no visible control explaining why.
+  useEffect(() => {
+    setHiddenIds((cur) => {
+      const next = new Set(Array.from(cur).filter((id) => picked.includes(id)))
+      return next.size === cur.size ? cur : next
+    })
+    setFocusId((cur) => (cur && !picked.includes(cur) ? null : cur))
+  }, [picked])
+
+  const toggleHidden = (id: string) =>
+    setHiddenIds((cur) => {
+      const next = new Set(cur)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
 
   const load = useCallback(() => {
     if (!live || !picked.length || !paramKey) { setLoaded(null); return }
@@ -292,27 +358,72 @@ export default function TrendsPage() {
               <YAxis tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
               <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
                 labelFormatter={(v) => fmtDateTime(Number(v))}
-                formatter={(v: number | string, name: string) => [`${v}${param?.unit ? ` ${param.unit}` : ''}`, name]} />
-              <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                // Hidden lines carry no data to report, and with several
+                // near-identical traces the tooltip's own draw order is what
+                // decides which value sits on top — worth sorting so the
+                // currently focused device (if any) reads first regardless.
+                itemSorter={(item) => (item.dataKey === focusId ? -1 : 0)}
+                formatter={(v: number | string, name: string, item: { dataKey?: string | number }) =>
+                  hiddenIds.has(String(item?.dataKey)) ? [null, null] : [`${v}${param?.unit ? ` ${param.unit}` : ''}`, name]}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }}
+                // An EXPLICIT payload in `picked` order, not left to Recharts'
+                // default of deriving it from the <Line> children below — those
+                // are deliberately re-ORDERED for z-index (the focused line
+                // drawn last, on top), and letting the legend inherit that same
+                // order meant every hover shuffled its own buttons out from
+                // under the pointer mid-interaction.
+                payload={picked.map((id, i) => ({ value: devices.find((d) => d.id === id)?.name ?? id, dataKey: id, color: LINE_COLORS[i % LINE_COLORS.length] }))}
+                content={(props) => (
+                  <TrendsLegend
+                    {...props}
+                    focusId={focusId} hiddenIds={hiddenIds}
+                    onFocus={setFocusId} onToggleHidden={toggleHidden}
+                  />
+                )}
+              />
               {/* Shared thresholds: the point of one axis is seeing which device
                   crosses the line the others do not. */}
               {param && <ReferenceLine y={param.warn} stroke="#fbbf24" strokeDasharray="4 4" strokeWidth={1} />}
               {param && <ReferenceLine y={param.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} />}
-              {picked.map((id, i) => (
-                <Line
-                  key={id}
-                  type="monotone"
-                  dataKey={id}
-                  name={devices.find((d) => d.id === id)?.name ?? id}
-                  stroke={LINE_COLORS[i % LINE_COLORS.length]}
-                  strokeWidth={1.6}
-                  dot={false}
-                  // A device that stopped reporting must leave a gap, not a
-                  // straight line pretending it kept the last value.
-                  connectNulls={false}
-                  isAnimationActive={false}
-                />
-              ))}
+              {/* Every picked device stays mounted as a <Line>, hidden ones
+                  included — Recharts' Legend payload is built from these
+                  children, so dropping a Line to "hide" it would also drop
+                  its own legend entry and break the click-to-restore cycle.
+                  Hidden lines are made invisible (opacity 0, hit-testing
+                  off) instead of unmounted.
+                  Render order is z-order (later = on top), so the focused
+                  line moves to the end of the list — otherwise "highlight
+                  this one" would still leave it buried under whichever
+                  device happens to be plotted last. */}
+              {picked
+                .map((id, i) => ({ id, color: LINE_COLORS[i % LINE_COLORS.length] }))
+                .sort((a, b) => (a.id === focusId ? 1 : b.id === focusId ? -1 : 0))
+                .map(({ id, color }) => {
+                  const hidden = hiddenIds.has(id)
+                  // Any OTHER visible line is dimmed while one is focused —
+                  // the whole point of hover-to-isolate is telling
+                  // near-overlapping traces apart without hiding the rest.
+                  const dimmed = !hidden && focusId !== null && focusId !== id
+                  return (
+                    <Line
+                      key={id}
+                      type="monotone"
+                      dataKey={id}
+                      name={devices.find((d) => d.id === id)?.name ?? id}
+                      stroke={color}
+                      strokeWidth={focusId === id ? 2.6 : 1.6}
+                      strokeOpacity={hidden ? 0 : dimmed ? 0.18 : 1}
+                      dot={false}
+                      activeDot={hidden ? false : { r: focusId === id ? 4 : 3 }}
+                      // A device that stopped reporting must leave a gap, not a
+                      // straight line pretending it kept the last value.
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  )
+                })}
             </LineChart>
           </ResponsiveContainer>
         )}
