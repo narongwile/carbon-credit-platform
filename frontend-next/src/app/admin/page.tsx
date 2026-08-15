@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
-import { getGeoNodes } from '@/lib/geoNodes'
+import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
@@ -261,7 +262,14 @@ const DASH_TABS = [
   { id: 'alarm', label: 'Alarm', icon: Bell },
 ] as const
 
+// Same split /admin/map and superadmin/monitoring use: transformer keeps its
+// dedicated dashboard, everything else shares the generic node twin.
+function monitorRoute(domain: GeoNode['domain'], id: string): string {
+  return domain === 'transformer' ? `/admin/transformers/detail?id=${encodeURIComponent(id)}` : `/admin/nodes/detail?id=${encodeURIComponent(id)}`
+}
+
 export default function AdminDashboardPage() {
+  const router = useRouter()
   const { selectedOrgId } = useAppStore()
   const [tab, setTab] = useState<'overview' | 'location' | 'alarm'>('overview')
   // Live coordinates from /api/fleet when the backend has them; the seed map
@@ -298,7 +306,8 @@ export default function AdminDashboardPage() {
               <MapIcon size={12} /> Set device positions →
             </Link>
           </div>
-          <LiveSensorMap nodes={nodes} height="62vh" photoCovers={covers} onOpenPhotos={setPreviewId} />
+          <LiveSensorMap nodes={nodes} height="62vh" photoCovers={covers} onOpenPhotos={setPreviewId}
+            onOpenDevice={(id, domain) => router.push(monitorRoute(domain, id))} />
           {previewId && (
             <NodePhotoPreview nodeId={previewId} canEdit onClose={() => setPreviewId(null)} />
           )}

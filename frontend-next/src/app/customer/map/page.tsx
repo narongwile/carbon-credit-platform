@@ -3,7 +3,8 @@
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
-import { getGeoNodes } from '@/lib/geoNodes'
+import { useRouter } from 'next/navigation'
+import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useAppStore } from '@/lib/store'
@@ -21,7 +22,13 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
+// Same split the two list views below already use (their <Link> hrefs).
+function customerMonitorRoute(domain: GeoNode['domain'], id: string): string {
+  return domain === 'transformer' ? `/customer/transformers/detail?id=${encodeURIComponent(id)}` : `/customer/devices/detail?id=${encodeURIComponent(id)}`
+}
+
 export default function CustomerMapPage() {
+  const router = useRouter()
   const live = useIsLive()
   // The real session's org, not the demo "acting viewer" picker's mock user.
   const orgId = useSessionOrgId()
@@ -60,7 +67,8 @@ export default function CustomerMapPage() {
 
       {tab === 'map' ? (
         <>
-          <LiveSensorMap nodes={nodes} photoCovers={covers} onOpenPhotos={setPreviewId} />
+          <LiveSensorMap nodes={nodes} photoCovers={covers} onOpenPhotos={setPreviewId}
+            onOpenDevice={(id, domain) => router.push(customerMonitorRoute(domain, id))} />
           {previewId && (
             <NodePhotoPreview nodeId={previewId} onClose={() => setPreviewId(null)} />
           )}

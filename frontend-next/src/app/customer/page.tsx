@@ -3,13 +3,14 @@
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { useOrgAlarms } from '@/lib/useOrgAlarms'
 import { useSessionOrgId } from '@/lib/auth'
 import { useIsLive } from '@/lib/api'
 import { viewerDomains } from '@/lib/viewer'
-import { getGeoNodes } from '@/lib/geoNodes'
+import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
@@ -160,7 +161,15 @@ function OverviewTab() {
 // just links there rather than duplicating it. Viewers never get pin-drop or
 // coordinate entry (that's an admin/superadmin capability), so unlike
 // admin/page.tsx there is no "set device positions" link here.
+// Same split every other monitor-route helper in this codebase uses
+// (admin/page.tsx, admin/map, superadmin/monitoring): transformer keeps its
+// dedicated dashboard, everything else shares the generic node twin.
+function customerMonitorRoute(domain: GeoNode['domain'], id: string): string {
+  return domain === 'transformer' ? `/customer/transformers/detail?id=${encodeURIComponent(id)}` : `/customer/devices/detail?id=${encodeURIComponent(id)}`
+}
+
 function LocationTab() {
+  const router = useRouter()
   const orgId = useSessionOrgId()
   const { viewerUserId } = useAppStore()
   const live = useIsLive()
@@ -177,7 +186,8 @@ function LocationTab() {
           <MapIcon size={12} /> Full map &amp; layout view →
         </Link>
       </div>
-      <LiveSensorMap nodes={nodes} height="62vh" photoCovers={covers} onOpenPhotos={setPreviewId} />
+      <LiveSensorMap nodes={nodes} height="62vh" photoCovers={covers} onOpenPhotos={setPreviewId}
+        onOpenDevice={(id, domain) => router.push(customerMonitorRoute(domain, id))} />
       {previewId && (
         <NodePhotoPreview nodeId={previewId} onClose={() => setPreviewId(null)} />
       )}

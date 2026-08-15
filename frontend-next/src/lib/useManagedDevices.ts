@@ -172,18 +172,22 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
     const hosts = nodes.map((n): SensorHost => {
       const seed = byId.get(n.id)
       const status = statusFromLive(n)
+      // n.sensor_count (device_presence.last_sample's key count) is the real
+      // reading — preferred over the mock seed's fixed per-domain number even
+      // when an id happens to collide with one, so a real device's page never
+      // shows a made-up sensor count just because its id looks like a demo one.
       if (seed) {
         if (seed.domain === 'transformer') {
           const np = nameplates[n.id]
           return {
-            ...seed, status, name: n.name || seed.name,
+            ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount,
             model: np?.model || seed.model, kva: np?.ratedKva ?? seed.kva, voltage: np?.voltageClass || seed.voltage,
           }
         }
-        return { ...seed, status, name: n.name || seed.name }
+        return { ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount }
       }
       const base = {
-        id: n.id, orgId, siteId: n.site_id ?? '—', name: n.name || n.id, status, sensorCount: 0,
+        id: n.id, orgId, siteId: n.site_id ?? '—', name: n.name || n.id, status, sensorCount: n.sensor_count ?? 0,
       }
       if (n.domain === 'transformer') {
         const np = nameplates[n.id]

@@ -2835,7 +2835,7 @@ const pool=global.get('resolvePool')(orgId);   // org DB for the fleet query (ac
   // GPS-less device silently vanished from the map, however carefully the admin
   // set the pin. The org row is read from the CONTROL pool below and applied in
   // JS instead, which is correct in both modes.
-  const sql="SELECT n.id,n.name,n.domain,n.org_id,n.site_id,n.department_id,n.lat,n.lng,__GRAFANA__,p.online,p.last_seen,p.rssi,p.fw,"+
+  const sql="SELECT n.id,n.name,n.domain,n.org_id,n.site_id,n.department_id,n.lat,n.lng,__GRAFANA__,p.online,p.last_seen,p.rssi,p.fw,p.last_sample,"+
     "(SELECT e.severity FROM alarm_events e WHERE e.node_id=n.id AND e.acknowledged_at IS NULL AND e.cleared_at IS NULL ORDER BY FIELD(e.severity,'CRITICAL','WARNING') LIMIT 1) AS alarm "+
     // merge_into IS NULL: a secondary feed (the environmental half of a
     // transformer that publishes on two topics) is not its own device — the
@@ -2895,6 +2895,17 @@ const pool=global.get('resolvePool')(orgId);   // org DB for the fleet query (ac
         }
       }
     }catch(e){ node.warn('fleet: factory-pin fallback skipped for '+orgId+': '+e.message); }
+  }
+  // Real sensor/parameter count, not a hardcoded guess: device_presence.last_sample
+  // (migrate-v14) is the same latest-values JSON the pending-devices screen already
+  // reads, so "N sensors" reflects exactly what this device is actually reporting —
+  // and moves the moment its wire payload gains or drops a parameter, unlike a
+  // fixed per-domain number that was true only for whatever seeded the demo fleet.
+  for(const n of vis){
+    let sample=n.last_sample;
+    try{ if(typeof sample==='string') sample=JSON.parse(sample); }catch(e){ sample=null; }
+    n.sensor_count = sample && typeof sample==='object' ? Object.keys(sample).length : 0;
+    delete n.last_sample;
   }
   msg.headers=__CORS; msg.payload=vis; node.send(msg);})()` + bbErr
 

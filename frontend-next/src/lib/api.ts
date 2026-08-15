@@ -1155,6 +1155,10 @@ export interface FleetNode {
   approx?: 0 | 1
   /** Admin-set Free-Style dashboard link (migrate-v45). Null = not configured. */
   grafana_url?: string | null
+  /** Number of distinct parameter keys in this device's last reported sample
+   * (device_presence.last_sample) — the real count of what it's actually
+   * publishing right now, not a fixed per-domain guess. */
+  sensor_count?: number
 }
 
 /** How a schedule decides who receives it. See migrate-v41. */
