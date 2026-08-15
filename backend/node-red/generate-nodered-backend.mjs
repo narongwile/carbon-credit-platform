@@ -2291,6 +2291,51 @@ const pkArgs = onlyKeys;
       "GROUP BY param_key, FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(taken_at)/?)*?) ORDER BY taken_at ASC",
       [bucket,bucket,id,...winArgs,...pkArgs,bucket,bucket]);
     for(const row of r){ row.value=Number(row.value); row.v_min=Number(row.v_min); row.v_max=Number(row.v_max); row.n=Number(row.n); }
+    // --- readings_rollup for the part of the window raw rows no longer cover --
+    // The retention tick (retentionFunc) rolls readings older than
+    // READINGS_RETENTION_DAYS into HOURLY readings_rollup buckets and then
+    // DELETES the raw rows. So a long window is physically split: recent hours
+    // exist only in \`readings\`, older ones only in \`readings_rollup\`. Reading
+    // just one table is wrong in both directions — raw alone silently truncates
+    // a 90-day chart to its last 30 days, rollup alone returns nothing at all
+    // for "last 7 days".
+    //
+    // Only consulted when the caller asked for a bucket at least as coarse as
+    // the rollup's own hour: re-expanding hourly means into 5-minute points
+    // would invent detail that was never stored.
+    //
+    // The two sets cannot overlap (a bucket only reaches the rollup once its
+    // raw rows are past the cut), but they are deduped by (param_key, bucket)
+    // anyway, preferring raw — retention could run between these two queries.
+    if(bucket>=3600){
+      try{
+        const rwin = from ? ' AND bucket>=? AND bucket<=?' : ' AND bucket>(NOW(3)-INTERVAL ? MINUTE)';
+        // SUM(v_avg*n)/SUM(n), not AVG(v_avg): re-aggregating pre-averaged
+        // buckets needs their sample counts as weights, or an hour with 3
+        // readings would count the same as one with 2400.
+        const[ru]=await pool.query(
+          "SELECT param_key, FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(bucket)/?)*?) AS taken_at, "+
+          "SUM(v_avg*n)/NULLIF(SUM(n),0) AS value, MIN(v_min) AS v_min, MAX(v_max) AS v_max, SUM(n) AS n "+
+          "FROM readings_rollup WHERE node_id=?"+rwin+pk+" "+
+          "GROUP BY param_key, FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(bucket)/?)*?) ORDER BY taken_at ASC",
+          [bucket,bucket,id,...winArgs,...pkArgs,bucket,bucket]);
+        if(ru.length){
+          const seen=new Set(r.map(x=>x.param_key+'@'+new Date(x.taken_at).getTime()));
+          for(const row of ru){
+            const k=row.param_key+'@'+new Date(row.taken_at).getTime();
+            if(seen.has(k)) continue;
+            row.value=Number(row.value); row.v_min=Number(row.v_min); row.v_max=Number(row.v_max); row.n=Number(row.n);
+            r.push(row);
+          }
+          r.sort((a,b)=> new Date(a.taken_at)-new Date(b.taken_at));
+        }
+      }catch(e){
+        // No rollup table on this database yet — the raw rows above are still a
+        // correct answer for everything inside the retention window.
+        if(String(e&&e.message||'').indexOf('readings_rollup')<0) throw e;
+        node.warn('readings: readings_rollup absent, serving raw only');
+      }
+    }
   } else {
     [r]=await pool.query('SELECT param_key,value,taken_at FROM readings WHERE node_id=?'+win+pk+' ORDER BY taken_at ASC',[id,...winArgs,...pkArgs]);
   }
