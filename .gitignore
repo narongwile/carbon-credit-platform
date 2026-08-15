@@ -7,3 +7,8 @@ tsconfig.tsbuildinfo
 .env
 .DS_Store
 *.secrets.txt
+
+# Claude Code isolated-agent worktrees (Agent tool, isolation:"worktree") —
+# ephemeral checkouts for a background research/edit agent, auto-removed
+# when the agent finishes with no changes. Never project content.
+.claude/worktrees/
