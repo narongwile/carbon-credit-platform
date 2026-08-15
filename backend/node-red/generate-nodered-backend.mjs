@@ -275,12 +275,50 @@ const MOVE_TABLE_RULES = {
 // Returns per-table counts as well as warnings: "how many rows actually
 // moved" is the only way a caller can tell a genuine no-op from a silent
 // skip.
+// A device that has been streaming telemetry for a long time before a move
+// can have MILLIONS of readings rows. Two safeguards, confirmed against real
+// MySQL at 200,000 rows (real device: 1,658,651):
+//   RELOCATE_BATCH_SIZE   rows per round trip. The original implementation
+//                         did one INSERT per row — measured on a real table
+//                         this size, that took long enough to blow through
+//                         nginx's proxy read timeout while the copy was
+//                         still in progress server-side, with no way for the
+//                         caller to tell "still running" from "died".
+//                         Batching alone took 200,000 rows from an operation
+//                         nginx times out on to ~10 seconds.
+//   RELOCATE_TIME_BUDGET_MS  even batched, a device large enough (the
+//                         1.65M-row case this was written for extrapolates
+//                         to ~85 seconds locally, on zero-latency loopback —
+//                         a production DB hop would only add to that) can
+//                         still outrun a 60s gateway timeout. Rather than
+//                         retune the batch size around a timeout this code
+//                         cannot see, cap the WORK per call: each call moves
+//                         what it can in the budget and returns truncated:true
+//                         when there is more, since deleting as it goes
+//                         already makes every call safe to simply repeat —
+//                         it always operates on whatever remains.
+const RELOCATE_BATCH_SIZE = 1000;
+const RELOCATE_TIME_BUDGET_MS = 20000;
+
 global.set('relocateNodeRows', async function(id, oldPool, newPool, targetOrgId){
+  const deadline = Date.now() + RELOCATE_TIME_BUDGET_MS;
   const warnings = [];
   const counts = {};
+  let truncated = false;
   const colsOf = async (p, table) => {
     const [c] = await p.query(
       "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND EXTRA NOT LIKE '%GENERATED%' ORDER BY ORDINAL_POSITION",
+      [table]);
+    return c.map(x => x.COLUMN_NAME);
+  };
+  // The primary key, whatever shape it has — readings/readings_rollup key on
+  // (node_id,param_key,taken_at), most others on a single id column. Needed
+  // to delete EXACTLY the batch just inserted, by identity, rather than
+  // re-running the WHERE node_id=? filter (which after a partial batch would
+  // also match rows not yet copied).
+  const pkOf = async (p, table) => {
+    const [c] = await p.query(
+      "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND CONSTRAINT_NAME='PRIMARY' ORDER BY ORDINAL_POSITION",
       [table]);
     return c.map(x => x.COLUMN_NAME);
   };
@@ -299,6 +337,7 @@ global.set('relocateNodeRows', async function(id, oldPool, newPool, targetOrgId)
   };
 
   for (const [table, rule] of Object.entries(MOVE_TABLE_RULES)) {
+    if (Date.now() > deadline) { truncated = true; break; }
     const nodeIdFilter = rule.requireNodeId ? ' AND node_id IS NOT NULL' : '';
     try {
       if (rule.dropOnly) {
@@ -319,22 +358,40 @@ global.set('relocateNodeRows', async function(id, oldPool, newPool, targetOrgId)
         continue;
       }
       // Genuinely different databases: copy across with overrides applied,
-      // then remove the source rows so the device's history lives in exactly
-      // one place — the org it now belongs to.
+      // batch by batch, deleting each batch (by primary key, not by the
+      // node_id filter — a re-run of that filter after a partial pass would
+      // also match rows not yet copied) before pulling the next one. A batch
+      // that returns fewer than RELOCATE_BATCH_SIZE rows is the last one —
+      // no COUNT(*) needed up front, and no OFFSET, which would only get
+      // slower as the table drains.
       const colNames = await colsOf(oldPool, table);
       if (!colNames.length) continue; // table not present on this schema version
-      const [srcRows] = await oldPool.query(
-        'SELECT '+colNames.map(c => '\`'+c+'\`').join(',')+' FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
-      if (srcRows.length) {
-        const placeholders = '('+colNames.map(() => '?').join(',')+')';
-        const colList = colNames.map(c => '\`'+c+'\`').join(',');
-        for (const row of srcRows) {
-          const vals = colNames.map(c => valueFor(rule, c, row));
-          await newPool.query('INSERT IGNORE INTO \`'+table+'\` ('+colList+') VALUES '+placeholders, vals);
-        }
-        counts[table] = srcRows.length;
+      const pkCols = await pkOf(oldPool, table);
+      const colList = colNames.map(c => '\`'+c+'\`').join(',');
+      const selectSQL = 'SELECT '+colList+' FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter+' LIMIT '+RELOCATE_BATCH_SIZE;
+      const pkList = pkCols.map(c => '\`'+c+'\`').join(',');
+      const pkGroup = '('+pkCols.map(() => '?').join(',')+')';
+      let moved = 0;
+      for (;;) {
+        if (Date.now() > deadline) { truncated = true; break; }
+        const [batch] = await oldPool.query(selectSQL, [id]);
+        if (!batch.length) break;
+        const placeholders = batch.map(() => '('+colNames.map(() => '?').join(',')+')').join(',');
+        const insertVals = [];
+        for (const row of batch) for (const c of colNames) insertVals.push(valueFor(rule, c, row));
+        await newPool.query('INSERT IGNORE INTO \`'+table+'\` ('+colList+') VALUES '+placeholders, insertVals);
+
+        const deleteVals = [];
+        for (const row of batch) for (const c of pkCols) deleteVals.push(row[c]);
+        await oldPool.query(
+          'DELETE FROM \`'+table+'\` WHERE ('+pkList+') IN ('+batch.map(() => pkGroup).join(',')+')',
+          deleteVals);
+
+        moved += batch.length;
+        if (batch.length < RELOCATE_BATCH_SIZE) break; // last batch — nothing left to fetch
       }
-      await oldPool.query('DELETE FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
+      if (moved) counts[table] = moved;
+      if (truncated) break; // ran out of time mid-table — stop rather than skip ahead to the next one
     } catch (e) {
       // Tolerate a table this schema version doesn't have yet on one side (an
       // org DB behind on migrations) — same "skip on missing table" pattern
@@ -343,7 +400,7 @@ global.set('relocateNodeRows', async function(id, oldPool, newPool, targetOrgId)
       warnings.push(table+' skipped — not present on this schema version (run migrations for this organization)');
     }
   }
-  return { counts, warnings };
+  return { counts, warnings, truncated };
 });
 
 // Clean up per-device rows stranded in the CONTROL database for a device
@@ -384,8 +441,13 @@ global.set('repairNodeOrphans', async function(id, actorLabel, dryRun){
   const total = Object.values(found).reduce((a, b) => a + b, 0);
   if (dryRun || total === 0) return { nodeId: id, ok: true, orgId, repaired: false, dryRun: !!dryRun, found, total };
   const r = await global.get('relocateNodeRows')(id, pool, orgPool, orgId);
-  global.get('auditLog')(actorLabel, 'nodes.repairOrphans', 'node', id, { orgId, moved: r.counts, total });
-  return { nodeId: id, ok: true, orgId, repaired: true, found, total, moved: r.counts, warnings: r.warnings };
+  global.get('auditLog')(actorLabel, 'nodes.repairOrphans', 'node', id, { orgId, moved: r.counts, total, truncated: r.truncated });
+  // truncated: a device with enough backlog can outrun the per-call time
+  // budget (relocateNodeRows' own comment has the numbers). This is not a
+  // failure — deleting each row as it's moved means every remaining row is
+  // still exactly where the next call will look for it. Surfaced explicitly
+  // so the caller knows to call again rather than assuming one call means done.
+  return { nodeId: id, ok: true, orgId, repaired: true, found, total, moved: r.counts, warnings: r.warnings, truncated: !!r.truncated };
 });
 global.set('moveNodeToOrg', async function(id, targetOrgId, actorLabel){
   const pool = global.get('pool');
