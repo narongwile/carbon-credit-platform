@@ -9,6 +9,7 @@ import { useIsLive } from '@/lib/api'
 import { useSessionRole } from '@/lib/auth'
 import { usePlacementSession } from '@/lib/usePlacementSession'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
+import { useOrgNameplates } from '@/lib/useNodeNameplate'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import DevicePlacementPanel from '@/components/map/DevicePlacementPanel'
 import { X, SkipForward, Crosshair, Check } from 'lucide-react'
@@ -81,6 +82,7 @@ export default function MapPage() {
   const nodes = live ? placement.nodes : getGeoNodes(orgId)
 
   const covers = useOrgPhotoCovers(orgId)
+  const nameplates = useOrgNameplates(orgId)
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [panelOpen, setPanelOpen] = useState(false)
 
@@ -96,7 +98,7 @@ export default function MapPage() {
 
       <div className="relative">
         <LiveSensorMap
-          nodes={nodes} photoCovers={covers} onOpenPhotos={setPreviewId}
+          nodes={nodes} photoCovers={covers} nameplates={nameplates} onOpenPhotos={setPreviewId}
           editable={canEdit && live}
           onReposition={(id) => { setPanelOpen(false); placement.start([id], 'sequential') }}
           pickActive={!!session}

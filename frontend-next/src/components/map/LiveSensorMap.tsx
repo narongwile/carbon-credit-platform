@@ -3,11 +3,57 @@
 import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
-import { api } from '@/lib/api'
+import { api, type NodeLatest } from '@/lib/api'
+import { ALARM_SCHEMA } from '@/lib/alarmParams'
+import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
 
 /** Cover photo id per device — see useOrgPhotoCovers. One request for the whole map. */
 export type PhotoCovers = Record<string, { photoId: string; v: string }>
+/** Nameplate essentials per device — see useOrgNameplates. Transformers only in practice. */
+export type NameplateMap = Record<string, { model: string | null; ratedKva: number | null; voltageClass: string | null }>
+
+// Popup content is a raw HTML string handed to Leaflet, so every interpolated
+// value has to be escaped: device names, models and voltage classes are all
+// operator-entered free text, and one containing a quote or an angle bracket
+// would otherwise break the markup — or worse, inject into it.
+const esc = (v: unknown): string =>
+  String(v ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
+  ))
+
+/** "5 min ago" / "2 h ago" — the question a map popup answers is "is this
+ * current?", which a raw timestamp makes the reader compute for themselves. */
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const t = new Date(iso).getTime()
+  if (!Number.isFinite(t)) return String(iso)
+  const secs = Math.round((Date.now() - t) / 1000)
+  if (secs < 0) return 'just now'
+  if (secs < 60) return `${secs}s ago`
+  if (secs < 3600) return `${Math.floor(secs / 60)} min ago`
+  if (secs < 86400) return `${Math.floor(secs / 3600)} h ago`
+  return `${Math.floor(secs / 86400)} d ago`
+}
+
+/** Friendly label + unit for a raw wire key, from the product's alarm schema.
+ * An unrecognised key keeps its own name rather than being hidden — a real
+ * transformer reports plenty of keys the schema never enumerated. */
+function paramMeta(domain: GeoNode['domain'], key: string): { label: string; unit: string } {
+  const p = ALARM_SCHEMA[domain]?.params.find((x) => x.key === key)
+  return { label: p?.label ?? key, unit: p?.unit ?? '' }
+}
+
+const SECTION = 'color:#64748b;font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;margin:10px 0 4px'
+const ROW = 'display:flex;justify-content:space-between;gap:12px;font-size:11px;line-height:1.6'
+const ROW_K = 'color:#94a3b8;white-space:nowrap'
+const ROW_V = 'color:#e2e8f0;font-weight:600;text-align:right'
+
+/** One "key   value" line, rendered only when the value is actually present. */
+const row = (k: string, v: string | number | null | undefined, suffix = ''): string =>
+  v === null || v === undefined || v === '' || v === '—'
+    ? ''
+    : `<div style="${ROW}"><span style="${ROW_K}">${esc(k)}</span><span style="${ROW_V}">${esc(v)}${esc(suffix)}</span></div>`
 
 // Real geographic Live Sensor Map (Leaflet + OpenStreetMap tiles).
 // The map is created ONCE and markers are updated in place — previously the whole
@@ -16,12 +62,14 @@ export type PhotoCovers = Record<string, { photoId: string; v: string }>
 // "refreshing every second". Now data updates only re-sync markers; the user's
 // pan/zoom and any open popup are preserved.
 export default function LiveSensorMap({
-  nodes, height = '70vh', photoCovers, onOpenPhotos, editable, onReposition, pickActive, onPick, onOpenDevice,
+  nodes, height = '70vh', photoCovers, nameplates, onOpenPhotos, editable, onReposition, pickActive, onPick, onOpenDevice,
 }: {
   nodes: GeoNode[]
   height?: string
   /** Thumbnail shown in the popup, keyed by node id. Omit to render the popup exactly as before. */
   photoCovers?: PhotoCovers
+  /** Model/rating/voltage per device — see useOrgNameplates. Omit to skip that popup section. */
+  nameplates?: NameplateMap
   /** Fired when the popup thumbnail is clicked — the caller owns the lightbox. */
   onOpenPhotos?: (nodeId: string) => void
   /** Adds a "Reposition" button to every popup — ETERNITY has no Floor Plans feature, so this map IS how a device's position gets set. */
@@ -45,6 +93,13 @@ export default function LiveSensorMap({
   nodesRef.current = nodes
   const coversRef = useRef(photoCovers)
   coversRef.current = photoCovers
+  const nameplatesRef = useRef(nameplates)
+  nameplatesRef.current = nameplates
+  // Live readings are fetched per device the first time its popup is opened —
+  // /api/fleet/:id/latest is one request per device, so fetching for every pin
+  // up front would be dozens of requests for data nobody has asked to see.
+  const latestRef = useRef<Map<string, NodeLatest>>(new Map())
+  const inFlightRef = useRef<Set<string>>(new Set())
   const onOpenPhotosRef = useRef(onOpenPhotos)
   onOpenPhotosRef.current = onOpenPhotos
   const editableRef = useRef(editable)
@@ -95,26 +150,129 @@ export default function LiveSensorMap({
     // real status in both modes.
     const statusColor = healthColor[n.health]
     const statusLabel = n.health === 'critical' ? 'Critical' : n.health === 'warning' ? 'Warning' : 'Healthy'
-    const statusBadge = `<div style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:0.02em;margin-bottom:6px;background:${statusColor}22;color:${statusColor}">
-         <span style="width:6px;height:6px;border-radius:999px;background:${statusColor}"></span>${statusLabel}
+    // Presence is a SEPARATE fact from alarm health: a device can be perfectly
+    // healthy and simply offline, which the single health pill alone reads as
+    // "Warning" with no hint of why. Shown side by side so the popup answers
+    // "is it reporting?" and "is it alarming?" independently.
+    const offline = n.online === 0
+    const presenceColor = offline ? '#64748b' : '#22c55e'
+    const badges = `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">
+         <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${statusColor}22;color:${statusColor}">
+           <span style="width:6px;height:6px;border-radius:999px;background:${statusColor}"></span>${statusLabel}
+         </span>
+         ${n.online === undefined || n.online === null ? '' : `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${presenceColor}22;color:${presenceColor}">
+           <span style="width:6px;height:6px;border-radius:999px;background:${presenceColor}"></span>${offline ? 'Offline' : 'Online'}
+         </span>`}
+         ${n.alarm ? `<span style="padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${statusColor}22;color:${statusColor}">${esc(n.alarm)} alarm</span>` : ''}
        </div>`
+
+    // Live sensor readings — the single biggest thing missing from this popup:
+    // the map showed a colour and a status word for a transformer whose actual
+    // oil temperature, load and gas levels were one page away. Fetched lazily
+    // on popup open (see the popupopen handler); until it lands, the popup
+    // says so rather than silently rendering an empty section.
+    const latest = latestRef.current.get(n.id)
+    const values = latest?.values ?? {}
+    const keys = Object.keys(values)
+    let readings = ''
+    if (keys.length) {
+      // A popup is not a dashboard: the first handful of parameters, then an
+      // honest count of what was left out, with the full set one click away
+      // via View Dashboard below.
+      const SHOWN = 6
+      const rows = keys.slice(0, SHOWN).map((k) => {
+        const { label, unit } = paramMeta(n.domain, k)
+        const v = values[k]
+        const num = typeof v === 'number' ? (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)) : v
+        return row(label, num, unit ? ` ${unit}` : '')
+      }).join('')
+      const more = keys.length > SHOWN
+        ? `<div style="color:#64748b;font-size:10px;margin-top:3px">+ ${keys.length - SHOWN} more parameter${keys.length - SHOWN === 1 ? '' : 's'}</div>`
+        : ''
+      readings = `<div style="${SECTION}">Live readings</div>${rows}${more}`
+    } else if (latest) {
+      readings = `<div style="${SECTION}">Live readings</div><div style="color:#64748b;font-size:11px">This device has not reported any values yet.</div>`
+    } else if (n.deviceId) {
+      // Only in live mode (deviceId is set by fleetToGeoNodes) — a demo pin has
+      // nothing to load and must not claim to be loading forever.
+      readings = `<div style="${SECTION}">Live readings</div><div style="color:#64748b;font-size:11px">Loading…</div>`
+    }
+
+    // Which unit this is, physically. For a transformer "TR-004" means nothing
+    // on approach; "2500 kVA, 22kV/0.4kV" is what tells a technician they are
+    // at the right asset before they open anything.
+    const np = nameplatesRef.current?.[n.id]
+    const asset = np && (np.model || np.ratedKva || np.voltageClass)
+      ? `<div style="${SECTION}">Asset</div>${row('Model', np.model)}${row('Rating', np.ratedKva, ' kVA')}${row('Voltage', np.voltageClass)}`
+      : ''
+
+    // Presence/link detail. rssi and fw come straight off the fleet row; the
+    // battery and transport are only known once latest has been fetched.
+    const pres = latest?.presence
+    const connectivity = [
+      row('Device ID', n.deviceId),
+      row('Last seen', n.lastSeen ? relativeTime(n.lastSeen) : (n.deviceId ? undefined : n.updated)),
+      row('Signal', n.rssi, ' dBm'),
+      row('Battery', pres?.batt, '%'),
+      row('Link', pres?.transport),
+      row('Firmware', n.fw),
+      row('Parameters', n.sensorCount),
+    ].join('')
+    const connectivitySection = connectivity
+      ? `<div style="${SECTION}">Device</div>${connectivity}`
+      : `<div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${esc(n.updated)}</div>`
+
     const openBtn = `<button type="button" class="gsm-open-btn" data-node-id="${n.id}" data-domain="${n.domain}"
-         style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;margin-top:8px;padding:6px 8px;border-radius:6px;border:none;background:#6366f1;color:#ffffff;font-size:11px;font-weight:700;cursor:pointer">
+         style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;margin-top:6px;padding:6px 8px;border-radius:6px;border:none;background:#6366f1;color:#ffffff;font-size:11px;font-weight:700;cursor:pointer">
          View Dashboard →
        </button>`
-    return `<div style="min-width:180px">
-       ${photo}
-       <div style="font-weight:700;font-size:14px;margin-bottom:4px">${n.name}</div>
-       ${statusBadge}
-       <div style="display:flex;gap:16px;font-size:12px">
-         <div><div style="color:#64748b">${n.metricLabel}</div><div style="font-weight:700">${n.metricValue}</div></div>
-         <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${n.accent}">${n.platform}</div></div>
+    // The detail rows scroll; the actions do NOT. Before this split, a
+    // transformer with a photo, six readings, a nameplate and seven device rows
+    // pushed "View Dashboard" past the popup's own max-height — the primary
+    // action on the popup was reachable only by scrolling inside it, which is
+    // exactly the thing a map popup must never hide.
+    return `<div style="min-width:236px;max-width:272px;display:flex;flex-direction:column">
+       <div style="overflow-y:auto;max-height:min(46vh,360px);padding-right:2px">
+         ${photo}
+         <div style="font-weight:700;font-size:14px;margin-bottom:4px;color:#f1f5f9">${esc(n.name)}</div>
+         ${badges}
+         <div style="display:flex;gap:16px;font-size:12px">
+           <div><div style="color:#64748b">${esc(n.metricLabel)}</div><div style="font-weight:700;color:#e2e8f0">${esc(n.metricValue)}</div></div>
+           <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${esc(n.accent)}">${esc(n.platform)}</div></div>
+         </div>
+         ${readings}
+         ${asset}
+         ${connectivitySection}
+         ${latest?.lastReadingAt ? `<div style="color:#64748b;font-size:10px;margin-top:6px">Last reading ${esc(fmtDateTime(latest.lastReadingAt))}</div>` : ''}
+         ${approxLine}
        </div>
-       <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
-       ${approxLine}
-       ${repositionBtn}
-       ${openBtn}
+       <div style="flex-shrink:0;border-top:1px solid #1e2433;margin-top:8px;padding-top:8px">
+         ${repositionBtn}
+         ${openBtn}
+       </div>
      </div>`
+  }
+
+  /** Fetch (or refresh) one device's real readings and re-render its popup.
+   * `force` is what keeps an OPEN popup live: the cache short-circuits the
+   * first-open case, but a popup left open through several fleet polls should
+   * keep showing current values rather than the ones from when it opened. */
+  const loadLatest = (id: string, force = false) => {
+    if (inFlightRef.current.has(id)) return
+    if (!force && latestRef.current.has(id)) return
+    // A demo/seed pin has no real device behind it — skipping keeps the
+    // "Loading…" line off a node that would never resolve.
+    if (!nodesRef.current.find((n) => n.id === id)?.deviceId) return
+    inFlightRef.current.add(id)
+    api.latest(id)
+      .then((r) => {
+        if (!r) return
+        latestRef.current.set(id, r)
+        const marker = markersRef.current.get(id)
+        const fresh = nodesRef.current.find((n) => n.id === id)
+        if (marker && fresh) marker.setPopupContent(popupHtml(fresh))
+      })
+      .finally(() => { inFlightRef.current.delete(id) })
   }
 
   // Add/update/remove markers to match the current nodes — reusing the map.
@@ -137,10 +295,17 @@ export default function LiveSensorMap({
         existing.setLatLng([n.lat, n.lng])
         existing.setStyle(style)
         existing.setPopupContent(popupHtml(n))
+        // Keep an open popup's readings as live as its status dot: this runs on
+        // every fleet poll, and setPopupContent alone would only re-render the
+        // values fetched when the popup first opened.
+        if (existing.isPopupOpen?.()) loadLatest(n.id, true)
       } else {
         const m = L.circleMarker([n.lat, n.lng], { radius: 9, ...style })
           .addTo(map)
           .bindPopup(popupHtml(n))
+        // The popup is a raw HTML string with no back-reference to its node, so
+        // the popupopen handler below reads the id from the marker itself.
+        m._gsmNodeId = n.id
         markers.set(n.id, m)
       }
     })
@@ -191,6 +356,16 @@ export default function LiveSensorMap({
           if (id && domain) onOpenDeviceRef.current?.(id, domain)
         }
       })
+      // Lazily load this device's real readings the first time its popup opens,
+      // then re-render just that popup. Fetching for every pin on mount would
+      // be one request per device for detail nobody has looked at yet; fetching
+      // on every open would re-request the same device on each glance. Cached
+      // per node id for the life of the map, and refreshed by the marker sync
+      // below whenever the fleet poll brings new data.
+      map.on('popupopen', (e: any) => {
+        const id: string | undefined = e?.popup?._source?._gsmNodeId
+        if (id) loadLatest(id)
+      })
       // Pick mode: a click on open ground (Leaflet does not fire 'click' on the
       // map when a marker or popup consumed it) reports the coordinate. This is
       // the whole placement mechanism — ETERNITY has no Floor Plans feature, so
@@ -220,7 +395,7 @@ export default function LiveSensorMap({
   // what lets a photo just uploaded on the device page appear here without a
   // reload.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { syncMarkers() }, [nodes, photoCovers, editable])
+  useEffect(() => { syncMarkers() }, [nodes, photoCovers, nameplates, editable])
 
   // The one visible sign a click will do something other than pan: a crosshair
   // instead of the open hand, and a border that says "you are placing a pin".

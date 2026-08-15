@@ -23,6 +23,23 @@ export interface GeoNode {
   updated: string
   /** Position is the org's factory pin, not one an admin set for this device. */
   approx?: boolean
+
+  // --- Real per-device detail, populated from /api/fleet in LIVE mode only ---
+  // All optional: the demo/seed nodes below have no real device behind them, and
+  // the map popup renders each of these only when it is actually present rather
+  // than inventing a plausible-looking value for a device that never reported.
+  /** The raw node id, kept apart from `name` — fleetToGeoNodes puts the site
+   * label into `name`, so the id an operator would quote on the phone is
+   * otherwise not visible anywhere on the map. */
+  deviceId?: string
+  online?: 0 | 1 | null
+  lastSeen?: string | null
+  rssi?: number | null
+  fw?: string | null
+  /** Distinct parameter keys in the device's last sample (see fleetListFunc). */
+  sensorCount?: number
+  alarm?: 'WARNING' | 'CRITICAL' | null
+  siteId?: string | null
 }
 
 const CITIES: [number, number, string][] = [

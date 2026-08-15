@@ -10,6 +10,7 @@ import { useSessionOrgId } from '@/lib/auth'
 import { useIsLive } from '@/lib/api'
 import { viewerDomains } from '@/lib/viewer'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
+import { useOrgNameplates } from '@/lib/useNodeNameplate'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
@@ -28,6 +29,7 @@ export default function CustomerMapPage() {
   const liveNodes = useLiveGeoNodes(orgId)
   const nodes = live && liveNodes ? liveNodes : getGeoNodes(orgId).filter((n) => allowed.includes(n.domain))
   const covers = useOrgPhotoCovers(orgId)
+  const nameplates = useOrgNameplates(orgId)
   const [previewId, setPreviewId] = useState<string | null>(null)
 
   return (
@@ -42,6 +44,7 @@ export default function CustomerMapPage() {
       <LiveSensorMap
         nodes={nodes}
         photoCovers={covers}
+        nameplates={nameplates}
         onOpenPhotos={setPreviewId}
         onOpenDevice={(id, domain) => router.push(customerMonitorRoute(domain, id))}
       />

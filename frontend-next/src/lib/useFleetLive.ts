@@ -68,6 +68,13 @@ export function fleetToGeoNodes(byId: Map<string, FleetNode>, orgId: string): Ge
       lat: Number(n.lat), lng: Number(n.lng), approx: n.approx === 1,
       metricLabel: 'Status', metricValue: n.alarm ?? (n.online === 0 ? 'Offline' : 'Online'),
       updated: n.last_seen ?? '—',
+      // Everything the fleet row already carries, passed through rather than
+      // discarded — the map popup is the one place an operator looks at a
+      // device without first knowing which device they want, so identity,
+      // presence and link quality belong there.
+      deviceId: n.id,
+      online: n.online, lastSeen: n.last_seen, rssi: n.rssi, fw: n.fw,
+      sensorCount: n.sensor_count, alarm: n.alarm, siteId: n.site_id,
     })
   }
   return geo

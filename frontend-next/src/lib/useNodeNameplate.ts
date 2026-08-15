@@ -90,3 +90,22 @@ export function useTransformerModels(orgId: string): { models: TransformerModel[
 
   return { models, loading, refetch: load }
 }
+
+/**
+ * Nameplate essentials for a WHOLE org, keyed by node id — one request for a
+ * list/map surface instead of one per device, the same shape and reasoning as
+ * useOrgPhotoCovers. Used by the Live Sensor Map popup, where "which unit is
+ * this?" is answered by model/rating/voltage rather than by its id.
+ */
+export function useOrgNameplates(orgId: string | null | undefined) {
+  const [nameplates, setNameplates] = useState<Record<string, { model: string | null; ratedKva: number | null; voltageClass: string | null }>>({})
+
+  useEffect(() => {
+    if (!isLive() || !orgId) { setNameplates({}); return }
+    let cancelled = false
+    api.orgNameplates(orgId).then((r) => { if (!cancelled) setNameplates(r ?? {}) })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  return nameplates
+}

@@ -62,3 +62,37 @@ body {
     border: 1px solid rgba(30, 36, 51, 0.8);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Leaflet popups — dark, to match the app they sit in.
+ * ---------------------------------------------------------------------------
+ * Leaflet ships a white popup with #333 text. In a product whose every other
+ * surface is #0d1117 that was already the one stark-white card on screen, and
+ * it became a correctness problem once the Live Sensor Map popup grew real
+ * detail rows: readings/nameplate/link values are rendered in the same
+ * near-white (#e2e8f0) the rest of the UI uses for values, which on Leaflet's
+ * default white is invisible rather than merely inconsistent.
+ * Scoped to the popup chrome only — marker/tile/control styling is untouched.
+ */
+/* Two classes deep on purpose: leaflet.css is imported by the map component
+ * and so ships in a LATER chunk than this file, which means a single-class
+ * rule here loses to Leaflet's own `.leaflet-popup-content-wrapper{background:#fff}`
+ * no matter what it says. Popups always render inside `.leaflet-container`,
+ * so this simply outranks it instead of resorting to !important. */
+.leaflet-container .leaflet-popup-content-wrapper,
+.leaflet-container .leaflet-popup-tip {
+  background: #0d1117;
+  color: #e2e8f0;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+.leaflet-container .leaflet-popup-content-wrapper {
+  border: 1px solid #1e2433;
+  border-radius: 12px;
+}
+.leaflet-container a.leaflet-popup-close-button {
+  color: #64748b;
+}
+.leaflet-container a.leaflet-popup-close-button:hover {
+  color: #ffffff;
+  background: transparent;
+}
