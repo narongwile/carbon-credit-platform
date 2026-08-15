@@ -16,6 +16,7 @@ import NameplateEditor from '@/components/device/NameplateEditor'
 import DepartmentAccessEditor from '@/components/device/DepartmentAccessEditor'
 import DeviceExportDialog from '@/components/device/DeviceExportDialog'
 import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
+import DeviceLocationCard from '@/components/device/DeviceLocationCard'
 import SensorListSection from '@/components/device/SensorList'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
@@ -600,6 +601,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     if (fromBackend) return undefined
     return transformers.find((t) => t.id === id)
   }, [transformers, hosts, id, fromBackend])
+  // makeTransformer doesn't carry siteId onto the Transformer it returns (only
+  // a jittered lat/lng — see DeviceLocationCard's header comment for why that
+  // never was this device's real position). Pulled separately so the real
+  // per-device coordinate widget below can resolve the site it belongs to.
+  const siteId = useMemo(() => hosts.find((h) => h.id === id && h.domain === 'transformer')?.siteId, [hosts, id])
   const { transformer, live, online, lastReadingAt, values, series } = useLiveTransformer(base)
   const [openParam, setOpenParam] = useState<string | null>(null)
   const [showKeys, setShowKeys] = useState<string[] | null>(null)
@@ -978,17 +984,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             ))}
           </div>
 
-          {/* Location */}
-          <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-            <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-2">Location</div>
-            <div className="flex items-start gap-2">
-              <MapPin size={10} className="text-slate-500 mt-0.5 flex-shrink-0" />
-              <span className="text-[11px] text-slate-300">{transformer.location}</span>
-            </div>
-            <div className="mt-2 text-[10px] text-slate-600">
-              {transformer.lat.toFixed(4)}, {transformer.lng.toFixed(4)}
-            </div>
-          </div>
+          {/* Device Location — a real map + the device's own coordinate (with
+              a site fallback), not the text-only jittered mock this used to
+              show. See DeviceLocationCard for why two coordinates exist. */}
+          <DeviceLocationCard nodeId={transformer.id} orgId={orgId} siteId={siteId} canConfigure={canConfigure} />
 
           {/* Active Alarms */}
           <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>

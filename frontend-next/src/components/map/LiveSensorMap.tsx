@@ -15,7 +15,7 @@ export type PhotoCovers = Record<string, { photoId: string; v: string }>
 // "refreshing every second". Now data updates only re-sync markers; the user's
 // pan/zoom and any open popup are preserved.
 export default function LiveSensorMap({
-  nodes, height = '70vh', photoCovers, onOpenPhotos, editable, onReposition, pickActive, onPick,
+  nodes, height = '70vh', photoCovers, onOpenPhotos, editable, onReposition, pickActive, onPick, onOpenDevice,
 }: {
   nodes: GeoNode[]
   height?: string
@@ -30,6 +30,9 @@ export default function LiveSensorMap({
   /** While true, clicking open ground (not a marker) reports a coordinate instead of doing nothing. */
   pickActive?: boolean
   onPick?: (lat: number, lng: number) => void
+  /** Fired when "View Dashboard" is clicked in a popup — the caller owns
+   * routing (transformer vs the shared node twin differ by domain). */
+  onOpenDevice?: (nodeId: string, domain: GeoNode['domain']) => void
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -49,6 +52,8 @@ export default function LiveSensorMap({
   onRepositionRef.current = onReposition
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+  const onOpenDeviceRef = useRef(onOpenDevice)
+  onOpenDeviceRef.current = onOpenDevice
 
   // A responder walking up to the wrong grey box at 2am is the whole reason the
   // device photo exists (see DevicePhotoGallery) — the map popup is exactly
@@ -79,9 +84,27 @@ export default function LiveSensorMap({
            📍 ${n.approx ? 'Set position' : 'Reposition'}
          </button>`
       : ''
+    // Same color the marker itself uses (healthColor[n.health]) — the badge
+    // reads as "this pin, described", not a second, disagreeing opinion.
+    // Derived from n.health specifically, NOT metricValue: in live mode
+    // metricValue genuinely is the alarm/status text (CRITICAL/WARNING/
+    // Online/Offline — fleetToGeoNodes), but in demo mode it's a real
+    // per-domain sensor reading (oil temp, cabinet temp — geoNodes.ts's
+    // metric()) that would read as nonsense inside a status pill. health is
+    // real status in both modes.
+    const statusColor = healthColor[n.health]
+    const statusLabel = n.health === 'critical' ? 'Critical' : n.health === 'warning' ? 'Warning' : 'Healthy'
+    const statusBadge = `<div style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:0.02em;margin-bottom:6px;background:${statusColor}22;color:${statusColor}">
+         <span style="width:6px;height:6px;border-radius:999px;background:${statusColor}"></span>${statusLabel}
+       </div>`
+    const openBtn = `<button type="button" class="gsm-open-btn" data-node-id="${n.id}" data-domain="${n.domain}"
+         style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;margin-top:8px;padding:6px 8px;border-radius:6px;border:none;background:#6366f1;color:#ffffff;font-size:11px;font-weight:700;cursor:pointer">
+         View Dashboard →
+       </button>`
     return `<div style="min-width:180px">
        ${photo}
-       <div style="font-weight:700;font-size:14px;margin-bottom:6px">${n.name}</div>
+       <div style="font-weight:700;font-size:14px;margin-bottom:4px">${n.name}</div>
+       ${statusBadge}
        <div style="display:flex;gap:16px;font-size:12px">
          <div><div style="color:#64748b">${n.metricLabel}</div><div style="font-weight:700">${n.metricValue}</div></div>
          <div><div style="color:#64748b">Platform</div><div style="font-weight:700;color:${n.accent}">${n.platform}</div></div>
@@ -89,6 +112,7 @@ export default function LiveSensorMap({
        <div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${n.updated}</div>
        ${approxLine}
        ${repositionBtn}
+       ${openBtn}
      </div>`
   }
 
@@ -157,6 +181,13 @@ export default function LiveSensorMap({
         if (repoBtn) {
           const id = repoBtn.getAttribute('data-node-id')
           if (id) { map.closePopup(); onRepositionRef.current?.(id) }
+          return
+        }
+        const openBtn = target.closest<HTMLElement>('.gsm-open-btn')
+        if (openBtn) {
+          const id = openBtn.getAttribute('data-node-id')
+          const domain = openBtn.getAttribute('data-domain') as GeoNode['domain'] | null
+          if (id && domain) onOpenDeviceRef.current?.(id, domain)
         }
       })
       // Pick mode: a click on open ground (Leaflet does not fire 'click' on the

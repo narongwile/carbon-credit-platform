@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
+import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
-import { getGeoNodes } from '@/lib/geoNodes'
+import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useIsLive } from '@/lib/api'
 import { useSessionRole } from '@/lib/auth'
 import { usePlacementSession } from '@/lib/usePlacementSession'
@@ -16,6 +17,12 @@ import toast from 'react-hot-toast'
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
+
+// transformer keeps its dedicated rich twin; other domains use the shared
+// node twin — same split superadmin/monitoring/page.tsx's monitorRoute uses.
+function monitorRoute(domain: GeoNode['domain'], id: string): string {
+  return domain === 'transformer' ? `/admin/transformers/detail?id=${encodeURIComponent(id)}` : `/admin/nodes/detail?id=${encodeURIComponent(id)}`
+}
 
 // Typed lat/lng, alongside the existing click-to-pin flow — usePlacementSession's
 // pick() is the same commit path either way (api.setNodeLocation under the
@@ -54,6 +61,7 @@ function ManualCoordEntry({ onSet, busy }: { onSet: (lat: number, lng: number) =
 }
 
 export default function MapPage() {
+  const router = useRouter()
   // Select only selectedOrgId — subscribing to the whole store re-rendered this
   // page on every telemetry tick, which cascaded into the map rebuilding.
   const selectedOrgId = useAppStore((s) => s.selectedOrgId)
@@ -93,6 +101,7 @@ export default function MapPage() {
           onReposition={(id) => { setPanelOpen(false); placement.start([id], 'sequential') }}
           pickActive={!!session}
           onPick={(lat, lng) => placement.pick(lat, lng)}
+          onOpenDevice={(id, domain) => router.push(monitorRoute(domain, id))}
         />
 
         {canEdit && live && (
