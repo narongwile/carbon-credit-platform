@@ -1,0 +1,57 @@
+{
+  "build": {
+    "arduino": {
+      "memory_type": "qio_opi"
+    },
+    "core": "esp32",
+    "cpu": "esp32s3",
+    "f_cpu": 240000000,
+    "f_flash": 80000000,
+    "flash_mode": "qio",
+    "flash_size": "16MB",
+    "hwids": [
+      ["0x303a", "0x1001"]
+    ],
+    "mcu": "esp32s3",
+    "variant": "esp32s3"
+  },
+  "connectivity": [
+    "wifi",
+    "bluetooth",
+    "ble"
+  ],
+  "debug": {
+    "default_tool": "esp-builtin",
+    "onboard_tools": [
+      "esp-builtin"
+    ],
+    "tools": {
+      "esp-builtin": {
+        "hwids": [
+          ["0x303a", "0x1001"]
+        ],
+        "server_arguments": [
+          "--target", "esp32s3",
+          "-c", "tcl/esp32s3.tcl"
+        ]
+      }
+    }
+  },
+  "frameworks": [
+    "arduino",
+    "espidf"
+  ],
+  "name": "ESP32-S3-WROOM-1 (N16R8 - 16MB Flash + 8MB PSRAM)",
+  "upload": {
+    "flash_size": "16MB",
+    "maximum_ram_size": 327680,
+    "maximum_size": 16777216,
+    "require_upload_port": true,
+    "speed": 921600,
+    "use_1200bps_touch": false,
+    "wait_for_upload_port": true,
+    "protocol": "esptool"
+  },
+  "url": "https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/esp32s3/user-guide-devkitc-1-v1.1.html",
+  "vendor": "Espressif"
+}

@@ -381,6 +381,12 @@ global.set('relocateNodeRows', async function(id, oldPool, newPool, targetOrgId)
         for (const row of batch) for (const c of colNames) insertVals.push(valueFor(rule, c, row));
         await newPool.query('INSERT IGNORE INTO \`'+table+'\` ('+colList+') VALUES '+placeholders, insertVals);
 
+        if (!pkCols.length) {
+          await oldPool.query('DELETE FROM \`'+table+'\` WHERE node_id=?'+nodeIdFilter, [id]);
+          moved += batch.length;
+          break;
+        }
+
         const deleteVals = [];
         for (const row of batch) for (const c of pkCols) deleteVals.push(row[c]);
         await oldPool.query(

@@ -50,11 +50,9 @@ HDR
   node -e 'const fs=require("fs");process.stdout.write("    "+JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],"utf8")))+"\n")' "$SRC"
 } > "$CM"
 
-# 2) Refresh the checksum annotation on the pod template
-SHA="$(sha256sum "$SRC" | cut -c1-16)"
-# GNU sed (Linux/CI runners) — do NOT use BSD `sed -i ''`, which errors on GNU
-# sed (treats '' as the script) and silently leaves checksum/flow stale, so the
-# pod template never changes and ArgoCD never rolls the new flow.
-sed -i -E "s|(checksum/flow: \").*(\")|\1${SHA}\2|" "$DEP"
+# Refresh the checksum annotation on the pod template
+SHA="$(node -e 'const fs=require("fs"),crypto=require("crypto");console.log(crypto.createHash("sha256").update(fs.readFileSync(process.argv[1])).digest("hex").slice(0,16))' "$SRC")"
+sed -i.bak -E "s|(checksum/flow: \").*(\")|\1${SHA}\2|" "$DEP"
+rm -f "$DEP.bak"
 
 echo "flow synced → $CM ($(wc -l < "$SRC") lines), checksum/flow=$SHA in $DEP"
