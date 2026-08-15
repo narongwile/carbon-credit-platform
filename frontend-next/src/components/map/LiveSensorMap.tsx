@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
 import { api } from '@/lib/api'
+import MapSearchBar from '@/components/map/MapSearchBar'
 
 /** Cover photo id per device — see useOrgPhotoCovers. One request for the whole map. */
 export type PhotoCovers = Record<string, { photoId: string; v: string }>
@@ -228,10 +229,21 @@ export default function LiveSensorMap({
     elRef.current.style.cursor = pickActive ? 'crosshair' : ''
   }, [pickActive])
 
+  const handleSearchPlace = (lat: number, lng: number) => {
+    if (mapRef.current) {
+      mapRef.current.flyTo([lat, lng], 15, { duration: 1.2 })
+    }
+  }
+
   return (
     <div className="relative">
+      {/* Search Bar */}
+      <div className="absolute top-3 left-3 z-[1000]">
+        <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
+      </div>
+
       {/* Legend */}
-      <div className="absolute top-3 right-3 z-[1000] flex items-center gap-4 px-4 py-2 rounded-xl shadow-lg" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      <div className="absolute top-3 right-3 z-[1000] hidden sm:flex items-center gap-4 px-4 py-2 rounded-xl shadow-lg" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
         {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => (
           <span key={k} className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
             <span className="w-2.5 h-2.5 rounded-full" style={{ background: healthColor[k] }} /> {label}

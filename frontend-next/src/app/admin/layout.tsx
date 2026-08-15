@@ -34,7 +34,6 @@ const NAV: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
 
   { href: '/admin/sites', label: 'Sites (Unified)', icon: Building2, section: 'Sites & Location' },
-  { href: '/admin/floorplans', label: 'Floor Plans', icon: LayoutGrid, child: true },
   { href: '/admin/map', label: 'Live Sensor Map', icon: Map },
 
   { href: '/admin/fleet', label: 'Fleet (Devices)', icon: Cpu, section: 'Devices' },

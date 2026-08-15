@@ -22,7 +22,6 @@ import clsx from 'clsx'
 const NAV: NavEntry[] = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/customer/map', label: 'Live Sensor Map', icon: Map, section: 'Sites & Location' },
-  { href: '/customer/floorplans', label: 'Floor Plans', icon: LayoutGrid },
   { href: '/customer/devices', label: 'Devices', icon: HardDrive, section: 'Monitoring' },
   { href: '/customer/alarms', label: 'Alarms', icon: Bell },
   { href: '/customer/reports', label: 'Reports', icon: FileBarChart },

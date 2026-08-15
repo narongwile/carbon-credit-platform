@@ -277,6 +277,7 @@ const MOVE_TABLE_RULES = {
   node_nameplates: { nullCols: ['model_id'] },
   alarm_rules: { resetOrg: 'org_id' },
   alarm_events: { resetOrg: 'org_id', nullCols: ['department_id'] },
+  chart_definitions: { resetOrg: 'org_id' },
   documents: {},
   display_params: { resetOrg: 'org_id', nullCols: ['department_id'], requireNodeId: true },
   param_labels: { resetOrg: 'org_id', requireNodeId: true },

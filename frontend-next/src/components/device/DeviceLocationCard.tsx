@@ -24,7 +24,8 @@ import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { api } from '@/lib/api'
 import { useFleetLive } from '@/lib/useFleetLive'
-import { MapPin, ExternalLink, Crosshair, Loader2, LocateFixed, Maximize2, X, Check } from 'lucide-react'
+import { useReverseAddress } from '@/lib/geoAddress'
+import { MapPin, ExternalLink, Crosshair, Loader2, LocateFixed, Maximize2, X, Check, Building } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const LocationPicker = dynamic(() => import('@/components/map/LocationPicker'), { ssr: false })
@@ -37,9 +38,7 @@ function googleMapsUrl(lat: number, lng: number) {
 }
 
 /** Plain lat/lng number entry, for a precise reading (nameplate, handheld
- * GPS, "copy coordinates" from Google Maps) rather than eyeballing a click —
- * the same alternate-input idea admin/map's ManualCoordEntry already offers
- * for bulk device placement, here for one device's own position. */
+ * GPS, "copy coordinates" from Google Maps) rather than eyeballing a click. */
 function ManualCoordInputs({ onSet, busy }: { onSet: (lat: number, lng: number) => void; busy: boolean }) {
   const [lat, setLat] = useState('')
   const [lng, setLng] = useState('')
@@ -80,8 +79,6 @@ export default function DeviceLocationCard({
   /** Gate editing behind the same role check the rest of this page uses. */
   canConfigure: boolean
 }) {
-  // This device's OWN coordinate — the same source the Live Sensor Map reads,
-  // so a pin set there (or here) shows up in both places without a reload.
   const { byId, reload } = useFleetLive(orgId)
   const deviceNode = byId.get(nodeId)
   const deviceCoord = deviceNode?.lat != null && deviceNode?.lng != null
@@ -100,29 +97,15 @@ export default function DeviceLocationCard({
   }, [orgId, siteId])
 
   const siteCoord = site?.lat != null && site?.lng != null ? { lat: Number(site.lat), lng: Number(site.lng) } : null
-  // What's actually shown: this device's own pin if it has one, else the
-  // site's as an approximation, else nothing.
   const shown = deviceCoord ? { ...deviceCoord, source: 'device' as const } : siteCoord ? { ...siteCoord, source: 'site' as const } : null
 
-  // 'device' | 'site' | null — which coordinate an edit in progress targets.
-  // Defaults to whichever makes sense for the current state: refine the
-  // device's own pin if it already has one; otherwise the natural first
-  // step is the site's shared pin.
+  // Reverse geocoded address calculated from coordinates
+  const { address: computedAddress, loading: addressLoading } = useReverseAddress(shown?.lat, shown?.lng)
+
   const [editing, setEditing] = useState<'device' | 'site' | null>(null)
   const [saving, setSaving] = useState(false)
-  // The map widget's own inline size is tight (160px) — enough to confirm a
-  // pin lands in the right building, not enough to tell two nearby streets
-  // apart. Fullscreen is a bigger version of the SAME editor, not a
-  // different flow.
   const [expanded, setExpanded] = useState(false)
 
-  // A field technician opening this card is usually standing at the device
-  // right now — asking the browser for that position up front turns
-  // "eyeball a map click" into "confirm the GPS reading", which is both
-  // faster and more accurate. Fired the moment editing starts; a denial or
-  // an insecure/unsupported context just leaves the button enabled to retry
-  // (getCurrentPosition requires HTTPS in most browsers, so this silently
-  // does nothing over plain HTTP rather than erroring the whole card).
   const [geoPos, setGeoPos] = useState<{ lat: number; lng: number } | null>(null)
   const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'denied' | 'unsupported'>('idle')
   const requestGeolocation = useCallback(() => {
@@ -159,8 +142,7 @@ export default function DeviceLocationCard({
     setExpanded(false)
   }
 
-  // Shared between the compact inline editor and the expanded modal — same
-  // controls either way, just more room to work with when expanded.
+  // Shared between the compact inline editor and the expanded modal
   const editorBody = (target: 'device' | 'site', pickerHeight: string) => (
     <div className="space-y-2">
       <p className="text-[10px] text-slate-500">
@@ -188,6 +170,7 @@ export default function DeviceLocationCard({
           lng={(target === 'device' ? deviceCoord?.lng : siteCoord?.lng) ?? shown?.lng ?? null}
           height={pickerHeight}
           zoom={shown ? 14 : 6}
+          showSearch={true}
           onChange={(lat, lng) => save(target, lat, lng)}
         />
         {saving && (
@@ -196,8 +179,6 @@ export default function DeviceLocationCard({
           </div>
         )}
       </div>
-      {/* Alternative to clicking the map — a precise reading from a
-          nameplate, handheld GPS, or "copy coordinates" off Google Maps. */}
       <ManualCoordInputs onSet={(lat, lng) => save(target, lat, lng)} busy={saving} />
       <button onClick={() => { setEditing(null); setExpanded(false) }} disabled={saving}
         className="text-[10px] px-2 py-1 rounded-md text-slate-400 hover:text-white disabled:opacity-50" style={inset}>
@@ -210,12 +191,24 @@ export default function DeviceLocationCard({
     <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
       <div className="flex items-center justify-between mb-2">
         <div className="text-[10px] text-slate-600 uppercase tracking-wider">Device Location</div>
-        {shown && (
-          <a href={googleMapsUrl(shown.lat, shown.lng)} target="_blank" rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300">
-            Google Maps <ExternalLink size={9} />
-          </a>
-        )}
+        <div className="flex items-center gap-2">
+          {shown && (
+            <button
+              onClick={() => setExpanded(true)}
+              className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-white px-1.5 py-0.5 rounded transition-colors"
+              style={inset}
+              title="Expand map view"
+            >
+              <Maximize2 size={10} /> Expand
+            </button>
+          )}
+          {shown && (
+            <a href={googleMapsUrl(shown.lat, shown.lng)} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300">
+              Google Maps <ExternalLink size={9} />
+            </a>
+          )}
+        </div>
       </div>
 
       {editing ? (
@@ -225,27 +218,23 @@ export default function DeviceLocationCard({
       ) : shown ? (
         <div className="space-y-2">
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-            {/* Keyed by the coordinate itself: LocationPicker only reads its
-                lat/lng props at mount (see its own comment), so if this pin
-                moves via a concurrent edit elsewhere (e.g. the Live Sensor
-                Map) while this card is just sitting here, a plain re-render
-                would leave the old position on screen — the key forces a
-                remount instead. */}
             <LocationPicker key={`${shown.lat},${shown.lng}`} lat={shown.lat} lng={shown.lng} height="120px" zoom={14} interactive={false} onChange={() => {}} />
           </div>
           <div className="flex items-start gap-2">
-            <MapPin size={10} className="text-slate-500 mt-0.5 flex-shrink-0" />
+            <MapPin size={11} className="text-slate-500 mt-0.5 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] text-slate-300">{shown.lat.toFixed(5)}, {shown.lng.toFixed(5)}</div>
+              <div className="text-[11px] text-slate-300 font-mono">{shown.lat.toFixed(5)}, {shown.lng.toFixed(5)}</div>
+              {computedAddress && (
+                <div className="text-[10px] text-slate-400 mt-0.5 leading-snug line-clamp-2" title={computedAddress}>
+                  {computedAddress}
+                </div>
+              )}
               {shown.source === 'site' && (
                 <div className="text-[10px] text-amber-400 mt-0.5">Approximate — {site?.name}&apos;s location, not this device&apos;s own.</div>
               )}
             </div>
           </div>
           {canConfigure && (
-            // Both branches edit the DEVICE's own coordinate — even when
-            // `shown` is currently the site's fallback pin, the point of this
-            // button is to give this specific device its own precise one.
             <button onClick={() => setEditing('device')}
               className="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded-md text-indigo-300 hover:text-indigo-200" style={inset}>
               <Crosshair size={11} /> {shown.source === 'device' ? 'Adjust this device’s position' : 'Set this device’s exact position'}
@@ -271,22 +260,72 @@ export default function DeviceLocationCard({
         </div>
       )}
 
-      {editing && expanded && (
+      {/* Expanded Modal for ANY user (Admin, Customer, Viewer) */}
+      {expanded && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center p-4"
           style={{ background: 'rgba(2,6,23,0.75)', backdropFilter: 'blur(2px)' }}
           onClick={() => setExpanded(false)}
         >
-          <div className="w-full max-w-2xl rounded-2xl p-4" style={surface} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-semibold text-white">
-                {editing === 'device' ? 'Adjust device position' : `Set ${site?.name ?? 'site'} location`}
+          <div className="w-full max-w-3xl rounded-2xl p-4 space-y-3" style={surface} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <div>
+                <div className="text-sm font-semibold text-white flex items-center gap-2">
+                  <MapPin size={14} className="text-indigo-400" />
+                  {editing === 'device' ? 'Adjust Device Position' : editing === 'site' ? `Set ${site?.name ?? 'Site'} Location` : 'Device Geographic Location'}
+                </div>
+                {shown && (
+                  <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2">
+                    <span className="font-mono text-slate-300">{shown.lat.toFixed(5)}, {shown.lng.toFixed(5)}</span>
+                    {computedAddress && <span>· {computedAddress}</span>}
+                  </div>
+                )}
               </div>
-              <button onClick={() => setExpanded(false)} className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5" aria-label="Close">
-                <X size={16} />
-              </button>
+              <div className="flex items-center gap-2">
+                {shown && (
+                  <a href={googleMapsUrl(shown.lat, shown.lng)} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 px-2 py-1 rounded" style={inset}>
+                    Open in Google Maps <ExternalLink size={10} />
+                  </a>
+                )}
+                <button onClick={() => setExpanded(false)} className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5" aria-label="Close">
+                  <X size={16} />
+                </button>
+              </div>
             </div>
-            {editorBody(editing, '60vh')}
+
+            {editing ? (
+              editorBody(editing, '60vh')
+            ) : shown ? (
+              <div className="space-y-3">
+                <div className="relative rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+                  <LocationPicker
+                    key={`modal-${shown.lat},${shown.lng}`}
+                    lat={shown.lat}
+                    lng={shown.lng}
+                    height="60vh"
+                    zoom={15}
+                    interactive={false}
+                    showSearch={true}
+                    onChange={() => {}}
+                  />
+                </div>
+                {canConfigure && (
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[11px] text-slate-500">Need to update this position?</span>
+                    <button
+                      onClick={() => setEditing('device')}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-white font-medium shadow"
+                      style={{ background: '#6366f1' }}
+                    >
+                      <Crosshair size={12} /> Adjust this device’s position
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 py-8 text-center">No location set yet.</p>
+            )}
           </div>
         </div>
       )}

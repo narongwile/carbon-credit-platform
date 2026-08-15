@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import MapSearchBar from '@/components/map/MapSearchBar'
 import 'leaflet/dist/leaflet.css'
 
 export default function LocationPicker({
@@ -10,6 +11,7 @@ export default function LocationPicker({
   height = '300px',
   interactive = true,
   zoom = 8,
+  showSearch = false,
 }: {
   lat: number | null
   lng: number | null
@@ -21,10 +23,12 @@ export default function LocationPicker({
    * in sync with it. */
   interactive?: boolean
   zoom?: number
+  showSearch?: boolean
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const markerRef = useRef<any>(null)
+  const LRef = useRef<any>(null)
   const onChangeRef = useRef(onChange)
 
   useEffect(() => {
@@ -36,16 +40,9 @@ export default function LocationPicker({
     let map: any
     ;(async () => {
       const L = (await import('leaflet')).default
+      LRef.current = L
       if (cancelled || !elRef.current || mapRef.current) return
 
-      // Leaflet's default marker icon resolves its 3 image URLs (pin, 2x pin,
-      // shadow) via its own bundled path detection, which breaks under
-      // Webpack/Next.js — the bundler doesn't ship those PNGs at the path
-      // Leaflet computes, so every L.marker() rendered a blank/broken icon
-      // (visible in the Factory Location picker: no pin, just an empty spot).
-      // Pointing at the CDN — pinned to the installed version, matching how
-      // the tile layer below already points at a public tile server — sidesteps
-      // the bundler entirely instead of fighting webpack asset-loader config.
       delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
       L.Icon.Default.mergeOptions({
         iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -77,7 +74,6 @@ export default function LocationPicker({
       }
 
       // Click to place/move marker — view mode leaves the map itself pannable
-      // (dragging: true above) but never lets a click relocate the pin.
       if (interactive) {
         map.on('click', (e: any) => {
           const { lat, lng } = e.latlng
@@ -103,7 +99,33 @@ export default function LocationPicker({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Mount once to avoid map flickering — lat/lng/interactive/zoom are read at creation time only; a caller that needs a different one remounts via key
+  }, [])
 
-  return <div ref={elRef} style={{ width: '100%', height, borderRadius: '0.75rem', zIndex: 0 }} />
+  const handlePlaceSelect = (targetLat: number, targetLng: number) => {
+    if (!mapRef.current) return
+    mapRef.current.flyTo([targetLat, targetLng], 15, { duration: 1.2 })
+    if (interactive) {
+      if (markerRef.current) {
+        markerRef.current.setLatLng([targetLat, targetLng])
+      } else if (LRef.current) {
+        markerRef.current = LRef.current.marker([targetLat, targetLng], { draggable: true }).addTo(mapRef.current)
+        markerRef.current.on('dragend', (ev: any) => {
+          const pos = ev.target.getLatLng()
+          onChangeRef.current(pos.lat, pos.lng)
+        })
+      }
+      onChangeRef.current(targetLat, targetLng)
+    }
+  }
+
+  return (
+    <div className="relative" style={{ width: '100%', height }}>
+      {showSearch && (
+        <div className="absolute top-2 left-2 z-[500] max-w-[280px] sm:max-w-xs">
+          <MapSearchBar onSelectPlace={handlePlaceSelect} placeholder="Search place or address…" />
+        </div>
+      )}
+      <div ref={elRef} style={{ width: '100%', height: '100%', borderRadius: '0.75rem', zIndex: 0 }} />
+    </div>
+  )
 }
