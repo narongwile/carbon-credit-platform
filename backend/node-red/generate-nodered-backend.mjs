@@ -2123,9 +2123,10 @@ const chartsGetFunc = CORS + `const id=msg.req.params.id;
 // CURRENT org, not a value that may have gone stale since the last move.
 const chartsPostFunc = CORS + `const id=msg.req.params.id; const b=msg.payload||{};
 const title=String(b.title||'').trim().slice(0,120);
-// No fixed ceiling on "how many parameters in one chart" — capped only high
-// enough to stop a malformed payload from writing an unbounded JSON blob.
-const paramKeys=Array.isArray(b.paramKeys)?b.paramKeys.map(String).filter(Boolean).slice(0,50):[];
+// No ceiling on how many parameters one chart can plot — same as dpPutFunc's
+// paramKeys, which this mirrors. A device can report several dozen; an admin
+// combining "all of them" into one chart is a legitimate use, not abuse.
+const paramKeys=Array.isArray(b.paramKeys)?b.paramKeys.map(String).filter(Boolean):[];
 if(!title){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'title required'};return msg;}
 if(!paramKeys.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'select at least one parameter'};return msg;}
 (async()=>{
@@ -2147,7 +2148,7 @@ const chartsPutFunc = CORS + `const id=msg.req.params.id; const chartId=msg.req.
   const sets=[]; const vals=[];
   if(typeof b.title==='string' && b.title.trim()){ sets.push('title=?'); vals.push(b.title.trim().slice(0,120)); }
   if(Array.isArray(b.paramKeys)){
-    const pk=b.paramKeys.map(String).filter(Boolean).slice(0,50);
+    const pk=b.paramKeys.map(String).filter(Boolean);
     if(!pk.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'select at least one parameter'};node.send(msg);return;}
     sets.push('param_keys=?'); vals.push(JSON.stringify(pk));
   }
