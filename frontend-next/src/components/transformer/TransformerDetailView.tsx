@@ -17,6 +17,7 @@ import DepartmentAccessEditor from '@/components/device/DepartmentAccessEditor'
 import DeviceExportDialog from '@/components/device/DeviceExportDialog'
 import DevicePhotoGallery from '@/components/device/DevicePhotoGallery'
 import DeviceLocationCard from '@/components/device/DeviceLocationCard'
+import CustomChartsSection from '@/components/device/CustomChartsSection'
 import SensorListSection from '@/components/device/SensorList'
 import { useShow3dFallback } from '@/lib/useOrgDisplaySettings'
 import { useNodeNameplate } from '@/lib/useNodeNameplate'
@@ -907,6 +908,14 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               )
             })}
           </div>
+
+          <CustomChartsSection
+            nodeId={transformer.id}
+            orgId={transformer.orgId}
+            domain="transformer"
+            availableParams={modalParams}
+            canConfigure={canConfigure}
+          />
         </div>
 
         {/* Right panel - info + health + alarms */}

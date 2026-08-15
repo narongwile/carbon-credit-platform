@@ -8,6 +8,21 @@
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { useAppStore } from './store'
 
+/** An admin-defined, per-device chart: a named, ordered selection of this
+ * device's own parameter keys to plot together (migrate-v47). Alarm
+ * thresholds for those keys are NOT stored here — they live in the same
+ * NodeAlarmRule every other parameter uses, edited through the same PUT
+ * /api/nodes/:id/rule call, so a value alarms identically whether it's
+ * viewed alone or as part of a combined chart. */
+export interface ChartDefinition {
+  id: string
+  title: string
+  paramKeys: string[]
+  sortOrder: number
+  createdBy?: string | null
+  updatedAt?: string
+}
+
 /** device_presence as served alongside the latest readings. */
 export interface DevicePresence {
   online: number
@@ -338,6 +353,15 @@ export const api = {
   getOrgRule: (orgId: string, domain: string) =>
     req<{ rule: NodeAlarmRule | null; updatedBy?: string | null; updatedAt?: string | null }>(
       `/api/orgs/${orgId}/rule?domain=${encodeURIComponent(domain)}`),
+
+  /** Admin-configurable multi-parameter trend charts for one device (migrate-v47). */
+  listCharts: (nodeId: string) => req<ChartDefinition[]>(`/api/nodes/${nodeId}/charts`),
+  createChart: (nodeId: string, body: { title: string; paramKeys: string[] }) =>
+    req<{ ok: boolean; id: string }>(`/api/nodes/${nodeId}/charts`, { method: 'POST', body: JSON.stringify(body) }),
+  updateChart: (nodeId: string, chartId: string, body: { title?: string; paramKeys?: string[]; sortOrder?: number }) =>
+    req<{ ok: boolean }>(`/api/nodes/${nodeId}/charts/${encodeURIComponent(chartId)}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteChart: (nodeId: string, chartId: string) =>
+    req<{ ok: boolean; deleted: boolean }>(`/api/nodes/${nodeId}/charts/${encodeURIComponent(chartId)}`, { method: 'DELETE' }),
 
   /**
    * The SAME readings summary downloadReport() streams as a CSV, parsed into

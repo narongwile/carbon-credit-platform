@@ -2088,6 +2088,96 @@ if(!domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'domain req
   msg.headers=__CORS; msg.payload={rule,updatedBy:row.updated_by,updatedAt:row.updated_at}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
+// --- Custom multi-parameter trend charts (migrate-v47) ----------------------
+// Admin-defined, per-device: any number of charts, each plotting any number of
+// this device's own parameters together. Deliberately NOT a new alarm system —
+// a chart is just a saved, named selection of parameter keys. Thresholds for
+// those keys stay exactly where every other parameter's already live
+// (alarm_rules.rule_json, edited by the same PUT /api/nodes/:id/rule this
+// device's per-parameter history modal already uses), so a value alarms
+// identically whether it's viewed alone or as part of a combined chart —
+// nothing duplicated, nothing that can drift out of sync with itself.
+//
+// Table is created on first write rather than depending on migrate-v47 having
+// run — the same self-heal every other optional table in this file uses (see
+// org_domain_rules above), because a fresh chart is useless if it 503s until
+// an operator remembers to run a migration.
+const CHART_DEFINITIONS_DDL = "CREATE TABLE IF NOT EXISTS chart_definitions (id VARCHAR(64) PRIMARY KEY, org_id VARCHAR(64) NOT NULL, node_id VARCHAR(64) NOT NULL, title VARCHAR(120) NOT NULL, param_keys JSON NOT NULL, sort_order INT NOT NULL DEFAULT 0, created_by VARCHAR(120), created_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3), updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), INDEX idx_chart_definitions_node (node_id))";
+
+const chartsGetFunc = CORS + `const id=msg.req.params.id;
+(async()=>{
+  const pool=await global.get('poolForNode')(id, msg.auth);
+  let r;
+  try{
+    [r]=await pool.query('SELECT id,title,param_keys,sort_order,created_by,updated_at FROM chart_definitions WHERE node_id=? ORDER BY sort_order,created_at',[id]);
+  }catch(e){
+    if(String(e&&e.message||'').indexOf('chart_definitions')<0) throw e;
+    r=[]; // table not created yet on this DB — no charts, not an error
+  }
+  const out=r.map(x=>({ id:x.id, title:x.title, paramKeys: typeof x.param_keys==='string'?JSON.parse(x.param_keys):x.param_keys, sortOrder:x.sort_order, createdBy:x.created_by, updatedAt:x.updated_at }));
+  msg.headers=__CORS; msg.payload=out; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+// org_id resolved from a direct nodes query (control pool), not orgOfNode's
+// cache — same reasoning as putRuleFunc: a write needs the device's real
+// CURRENT org, not a value that may have gone stale since the last move.
+const chartsPostFunc = CORS + `const id=msg.req.params.id; const b=msg.payload||{};
+const title=String(b.title||'').trim().slice(0,120);
+// No fixed ceiling on "how many parameters in one chart" — capped only high
+// enough to stop a malformed payload from writing an unbounded JSON blob.
+const paramKeys=Array.isArray(b.paramKeys)?b.paramKeys.map(String).filter(Boolean).slice(0,50):[];
+if(!title){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'title required'};return msg;}
+if(!paramKeys.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'select at least one parameter'};return msg;}
+(async()=>{
+  const[__n]=await global.get('pool').query('SELECT org_id FROM nodes WHERE id=?',[id]);
+  if(!__n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found'};node.send(msg);return;}
+  const org=__n[0].org_id;
+  const pool=global.get('resolvePool')(org);
+  await pool.query(${JSON.stringify(CHART_DEFINITIONS_DDL)});
+  const [cnt]=await pool.query('SELECT COUNT(*) n FROM chart_definitions WHERE node_id=?',[id]);
+  const chartId='chart-'+Date.now()+'-'+Math.random().toString(36).slice(2,6);
+  await pool.query('INSERT INTO chart_definitions (id,org_id,node_id,title,param_keys,sort_order,created_by) VALUES (?,?,?,?,?,?,?)',
+    [chartId,org,id,title,JSON.stringify(paramKeys),cnt[0].n,(msg.auth&&(msg.auth.name||msg.auth.userId))||null]);
+  msg.headers=__CORS; msg.payload={ok:true,id:chartId}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const chartsPutFunc = CORS + `const id=msg.req.params.id; const chartId=msg.req.params.chartId; const b=msg.payload||{};
+(async()=>{
+  const pool=await global.get('poolForNode')(id, msg.auth);
+  const sets=[]; const vals=[];
+  if(typeof b.title==='string' && b.title.trim()){ sets.push('title=?'); vals.push(b.title.trim().slice(0,120)); }
+  if(Array.isArray(b.paramKeys)){
+    const pk=b.paramKeys.map(String).filter(Boolean).slice(0,50);
+    if(!pk.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'select at least one parameter'};node.send(msg);return;}
+    sets.push('param_keys=?'); vals.push(JSON.stringify(pk));
+  }
+  if(typeof b.sortOrder==='number'){ sets.push('sort_order=?'); vals.push(b.sortOrder); }
+  if(!sets.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'nothing to update'};node.send(msg);return;}
+  vals.push(chartId, id);
+  let r;
+  try{
+    [r]=await pool.query('UPDATE chart_definitions SET '+sets.join(',')+' WHERE id=? AND node_id=?',vals);
+  }catch(e){
+    if(String(e&&e.message||'').indexOf('chart_definitions')<0) throw e;
+    msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'chart not found'};node.send(msg);return;
+  }
+  if(!r.affectedRows){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'chart not found'};node.send(msg);return;}
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+const chartsDelFunc = CORS + `const id=msg.req.params.id; const chartId=msg.req.params.chartId;
+(async()=>{
+  const pool=await global.get('poolForNode')(id, msg.auth);
+  let r;
+  try{
+    [r]=await pool.query('DELETE FROM chart_definitions WHERE id=? AND node_id=?',[chartId,id]);
+  }catch(e){
+    if(String(e&&e.message||'').indexOf('chart_definitions')<0) throw e;
+    r={affectedRows:0};
+  }
+  msg.headers=__CORS; msg.payload={ok:true, deleted: r.affectedRows>0}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
 // pool resolved via orgOfNode — alarm_events moves with the device on a
 // cross-org move (MOVE_TABLE_RULES), same reasoning as getRuleFunc above.
 // This is what backs the device page's "Active Alarms" panel; a hardcoded
@@ -2163,11 +2253,14 @@ const clean=global.get('dbWallClock');
 const from=q.from?clean(q.from):null; const to=q.to?clean(q.to):null;
 const win = from ? ' AND taken_at>=? AND taken_at<=?' : ' AND taken_at>(NOW(3)-INTERVAL ? MINUTE)';
 const winArgs = from ? [from, to || clean(new Date().toISOString())] : [since];
-// Only the parameter being charted, when asked — a modal for one metric has no
-// use for the other five the device publishes.
-const only = q.paramKey ? String(q.paramKey) : '';
-const pk = only ? ' AND param_key=?' : '';
-const pkArgs = only ? [only] : [];
+// Only the parameter(s) being charted, when asked — a modal for one metric has
+// no use for the other five the device publishes. A comma-separated list lets
+// a multi-parameter custom chart fetch every one of its series in a single
+// round trip instead of one request per line; a single key behaves exactly as
+// before (IN (?) with one value is equivalent to =?).
+const onlyKeys = q.paramKey ? String(q.paramKey).split(',').map((s) => s.trim()).filter(Boolean) : [];
+const pk = onlyKeys.length ? ' AND param_key IN ('+onlyKeys.map(()=>'?').join(',')+')' : '';
+const pkArgs = onlyKeys;
 (async()=>{
   const pool=await global.get('poolForNode')(id, msg.auth);
   let r;
@@ -5771,6 +5864,13 @@ const flow = [
   ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),
   // Read back what the PUT above stored, so the editor shows the live values.
   ...endpoint('orgruleget', 'get', '/api/orgs/:orgId/rule', orgRuleGetFunc, 'admin'),
+  // Admin-configurable multi-parameter trend charts (migrate-v47). Any signed-in
+  // viewer with access to the device may read the charts an admin configured;
+  // only 'node:manage' may create/edit/delete them.
+  ...endpoint('chartsget', 'get', '/api/nodes/:id/charts', chartsGetFunc, 'node'),
+  ...endpoint('chartspost', 'post', '/api/nodes/:id/charts', chartsPostFunc, 'node:manage'),
+  ...endpoint('chartsput', 'put', '/api/nodes/:id/charts/:chartId', chartsPutFunc, 'node:manage'),
+  ...endpoint('chartsdel', 'delete', '/api/nodes/:id/charts/:chartId', chartsDelFunc, 'node:manage'),
   ...endpoint('events', 'get', '/api/nodes/:id/events', getEventsFunc, 'node'),
   ...endpoint('orgalarms', 'get', '/api/orgs/:orgId/alarms', orgAlarmsGetFunc, 'org'),
   ...endpoint('transport', 'get', '/api/nodes/:id/transport', transportFunc, 'node'),
