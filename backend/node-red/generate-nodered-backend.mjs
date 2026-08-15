@@ -171,6 +171,24 @@ global.set('mirrorUserToTenantDb', async function(pool, orgId, userRecord){
     }
   }
 });
+// registerFunc/loginFunc used to probe for the users.status column (migrate-v46,
+// the pending-approval gate) by try/catching the query and falling back to a
+// query that hardcodes user_status='active' on ANY failure. That fallback is
+// what let a brand-new self-registration log in immediately whenever v46
+// hadn't been applied yet: the INSERT silently dropped status, and the SELECT
+// silently pretended everyone is active — the approval gate failed open
+// instead of failing closed. Checking column existence explicitly (cached,
+// since it never changes without a redeploy) lets both functions know for
+// certain whether status is enforceable, instead of guessing from a caught
+// error that could just as easily mean "the connection dropped".
+global.set('usersHasStatusColumn', async function(pool){
+  const cached = global.get('_usersHasStatusColumn');
+  if (cached !== undefined) return cached;
+  const [r] = await pool.query("SELECT COUNT(*) c FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='users' AND column_name='status'");
+  const has = r[0].c > 0;
+  global.set('_usersHasStatusColumn', has);
+  return has;
+});
 // The claimable pool an auto-registered device lands in when its MQTT topic's
 // org segment doesn't match a known active org (worker/main.go: UnassignedOrg).
 // It is a sentinel, not a real organizations row with its own tenant database —
@@ -991,8 +1009,10 @@ if(rec && now<rec.resetAt && rec.n>=max){msg.headers=__CORS;msg.statusCode=429;m
   }
 
   let u = [];
+  const hasStatusCol = await global.get('usersHasStatusColumn')(pool);
+  const statusSel = hasStatusCol ? "COALESCE(u.status,'active') AS user_status" : "'active' AS user_status";
   try {
-    let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash,COALESCE(u.status,'active') AS user_status,o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=? OR u.id=?)";
+    let userQuery = "SELECT u.id,u.org_id,u.role,u.name,u.email,u.password_hash," + statusSel + ",o.status FROM users u LEFT JOIN organizations o ON u.org_id=o.id WHERE (u.email=? OR u.username=? OR u.id=?)";
     let userArgs = [ident, ident, ident];
     if (canonicalReqOrg) {
       userQuery += " AND (u.org_id=? OR u.role='superadmin')";
@@ -1142,12 +1162,20 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
     }
   }
 
+  const hasStatusCol = await global.get('usersHasStatusColumn')(pool);
+  if (!hasStatusCol && userStatus === 'pending') {
+    // Can't persist "pending" without the column that enforces it — creating
+    // the account anyway would silently grant access nobody approved.
+    msg.headers=__CORS; msg.statusCode=503;
+    msg.payload={error:'Registration approval needs migrate-v46 — ask your platform administrator to run the migration, then try registering again.'};
+    node.send(msg); return;
+  }
+
   const hash = await bcrypt.hash(b.password, 10);
   const userId = 'u-'+Date.now();
-  try {
+  if (hasStatusCol) {
     await pool.query("INSERT INTO users (id,org_id,department_id,email,phone,name,role,status,password_hash) VALUES (?,?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, userStatus, hash]);
-  } catch(colErr) {
-    // If status column not yet migrated, fall back gracefully
+  } else {
     await pool.query("INSERT INTO users (id,org_id,department_id,email,phone,name,role,password_hash) VALUES (?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, hash]);
   }
 
