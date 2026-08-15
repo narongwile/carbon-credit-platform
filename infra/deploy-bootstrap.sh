@@ -369,6 +369,38 @@ EOF
   ensure_secret iiot-uat mailpit-auth "htpasswd=${mp_line}"
   record_secret "mailpit UI ${ADMIN_USER}@iiot-uat" "${pw}"
 
+  # ─ Mailpit SMTP relay (UAT mail sink → real outbound delivery) ─
+  # mailpit.yaml mounts 7 keys from this secret non-optionally (host, port,
+  # starttls, username, password, allowed-recipients, override-from) — a
+  # real external mail account, so unlike mailpit-auth's htpasswd there is no
+  # safe value this script can generate on its own. Left unset, the mailpit
+  # pod sits in ContainerCreateConfigError ("secret mailpit-relay not found")
+  # forever, which is intentional (see mailpit.yaml) but was previously
+  # undiagnosable from this script alone — nothing here even mentioned that
+  # the secret was expected. Set MAILPIT_RELAY_HOST (and friends, below)
+  # before running this script to seed it for real; otherwise this now warns
+  # instead of silently leaving the operator to find the missing-secret error
+  # in `kubectl describe pod` on their own.
+  if [[ -n "${MAILPIT_RELAY_HOST:-}" ]]; then
+    ensure_secret iiot-uat mailpit-relay \
+      "host=${MAILPIT_RELAY_HOST}" \
+      "port=${MAILPIT_RELAY_PORT:-587}" \
+      "starttls=${MAILPIT_RELAY_STARTTLS:-true}" \
+      "username=${MAILPIT_RELAY_USERNAME:-}" \
+      "password=${MAILPIT_RELAY_PASSWORD:-}" \
+      "allowed-recipients=${MAILPIT_RELAY_ALLOWED_RECIPIENTS:-^$}" \
+      "override-from=${MAILPIT_RELAY_OVERRIDE_FROM:-${MAILPIT_RELAY_USERNAME:-}}"
+  else
+    warn "mailpit-relay secret NOT seeded — MAILPIT_RELAY_HOST is unset."
+    warn "The mailpit pod in iiot-uat will not start until it exists (by design — see mailpit.yaml)."
+    warn "Re-run with MAILPIT_RELAY_HOST=smtp.example.com MAILPIT_RELAY_USERNAME=... MAILPIT_RELAY_PASSWORD=... set,"
+    warn "or create it directly:"
+    warn "  ${KUBECTL} create secret generic mailpit-relay -n iiot-uat \\"
+    warn "    --from-literal=host=smtp.example.com --from-literal=port=587 --from-literal=starttls=true \\"
+    warn "    --from-literal=username=YOUR_USER --from-literal=password=YOUR_PASS \\"
+    warn "    --from-literal=allowed-recipients='^\$' --from-literal=override-from=YOUR_USER"
+  fi
+
   log "Secrets seeded → ${SECRETS_LOG}"
 }
 
