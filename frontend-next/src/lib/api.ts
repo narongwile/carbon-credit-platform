@@ -952,9 +952,27 @@ export const api = {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(tok ? { authorization: `Bearer ${tok}` } : {}) },
       })
-      const body = await r.json().catch(() => null) as MigrationRunResult | null
-      if (body) return body
-      return { ok: false, httpStatus: r.status, migrated: [], failed: [], skipped: [], error: `HTTP ${r.status} with no readable response body` }
+      const body = await r.json().catch(() => null) as Partial<MigrationRunResult> | null
+      // Every field is normalized here, not trusted from the body as-is:
+      // migrationsRunFunc's OWN 502 path (the migrate service itself
+      // unreachable/timed out) sends only `{error}` — no ok/migrated/
+      // failed/skipped at all — and a genuine infra-level 502 (an
+      // ingress/proxy in front of Node-RED, not Node-RED itself) could
+      // return anything, JSON or not. MigrationsPanel reads .length on
+      // migrated/failed/skipped unconditionally, so a body missing any of
+      // them used to throw "Cannot read properties of undefined" as an
+      // uncaught promise rejection — the whole page then showed Next's
+      // generic "Application error" with the real cause buried one level
+      // down in the console. Confirmed reproducing exactly that crash
+      // against migrationsRunFunc's real 502 shape before this fix.
+      return {
+        ok: !!body?.ok,
+        httpStatus: r.status,
+        migrated: Array.isArray(body?.migrated) ? body.migrated : [],
+        failed: Array.isArray(body?.failed) ? body.failed : [],
+        skipped: Array.isArray(body?.skipped) ? body.skipped : [],
+        error: body?.error ?? (body ? null : `HTTP ${r.status} with no readable response body`),
+      }
     } catch (err: any) {
       return { ok: false, httpStatus: 0, migrated: [], failed: [], skipped: [], error: err?.message || 'network error' }
     }
