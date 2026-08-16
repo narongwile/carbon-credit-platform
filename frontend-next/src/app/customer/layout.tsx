@@ -13,16 +13,14 @@ import { getUsersByOrg, roleLabels } from '@/lib/orgData'
 import api, { isLive, useIsLive } from '@/lib/api'
 import { viewerDepartments } from '@/lib/viewer'
 import { useMyAccess } from '@/lib/useMyAccess'
-import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle, LayoutGrid } from 'lucide-react'
+import { Boxes, LayoutDashboard, Bell, FileBarChart, LogOut, ChevronRight, Map, HardDrive, UserCircle, LayoutGrid, TrendingUp } from 'lucide-react'
 import clsx from 'clsx'
 
-// Floor Plans is grouped with the map under Sites & Location — it is
-// site-scoped (site -> building -> floor), the same relationship the admin nav
-// now shows.
 const NAV: NavEntry[] = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/customer/map', label: 'Live Sensor Map', icon: Map, section: 'Sites & Location' },
   { href: '/customer/devices', label: 'Devices', icon: HardDrive, section: 'Monitoring' },
+  { href: '/customer/trends', label: 'Compare Devices', icon: TrendingUp },
   { href: '/customer/alarms', label: 'Alarms', icon: Bell },
   { href: '/customer/reports', label: 'Reports', icon: FileBarChart },
   { href: '/customer/profile', label: 'Profile', icon: UserCircle, section: 'Account' },
