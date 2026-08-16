@@ -13,10 +13,11 @@ import { api, useIsLive, type ChartDefinition } from '@/lib/api'
 import type { SensorDomain } from '@/types/fleet'
 import { fmtHM, fmtDayMonth } from '@/lib/displayTime'
 import ChartBuilderModal, { type AvailableParam } from './ChartBuilderModal'
+import ChartAnalysisModal from './ChartAnalysisModal'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { Plus, Pencil, LayoutDashboard } from 'lucide-react'
+import { Plus, Pencil, LayoutDashboard, Maximize2 } from 'lucide-react'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const tooltipStyle = { background: '#0d1117', border: '1px solid #1e2433', borderRadius: '8px', fontSize: '11px' }
@@ -33,23 +34,6 @@ const QUICK = [
 
 interface Row { param_key: string; value: number; taken_at: string }
 
-// ---------------------------------------------------------------------------
-// How several parameters with different units share one chart
-// ---------------------------------------------------------------------------
-// A single shared Y axis is only honest when every series has a comparable
-// range. Put hydrogen (200–1000 ppm) next to oil temperature (30–80 °C) and
-// load (0–100 %) on one axis and the axis spans 0–1000: temperature and load
-// collapse onto the bottom gridline as flat lines, and a real excursion in
-// either is invisible. Hence two modes beyond the plain shared axis:
-//
-//   dual      two axes. Series are grouped by UNIT — the first unit owns the
-//             left axis, everything else the right. Values stay real and
-//             readable off an axis; the honest limit is that a third unit
-//             shares the right axis with the second.
-//   normalize every series rescaled to 0–100% of its OWN min–max across the
-//             window. Units stop being comparable on purpose — this answers
-//             "did these move together?", not "what was the value?", so the
-//             tooltip keeps showing the real reading underneath.
 type AxisMode = 'dual' | 'shared' | 'normalize'
 
 const AXIS_MODES: { id: AxisMode; label: string; title: string }[] = [
@@ -58,7 +42,17 @@ const AXIS_MODES: { id: AxisMode; label: string; title: string }[] = [
   { id: 'normalize', label: 'Normalize %', title: 'Each series scaled to 0–100% of its own range — compare trends across units' },
 ]
 
-function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart: ChartDefinition; paramByKey: Map<string, AvailableParam> }) {
+function MultiParamChart({
+  nodeId,
+  chart,
+  paramByKey,
+  onExpand,
+}: {
+  nodeId: string
+  chart: ChartDefinition
+  paramByKey: Map<string, AvailableParam>
+  onExpand?: () => void
+}) {
   const [quick, setQuick] = useState<(typeof QUICK)[number]['id']>('24h')
   const [axisMode, setAxisMode] = useState<AxisMode>('dual')
   const [rows, setRows] = useState<Row[] | null>(null)
@@ -95,9 +89,6 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
     return p ? (p.unit ? `${p.label} (${p.unit})` : p.label) : key
   }
 
-  /** Which Y axis each series belongs to, grouped by unit (dual mode only).
-   * The first unit encountered keeps the left axis so a chart's primary
-   * series does not jump sides when another parameter is added to it. */
   const axisOf = useMemo(() => {
     const m = new Map<string, 'L' | 'R'>()
     if (axisMode !== 'dual') { chart.paramKeys.forEach((k) => m.set(k, 'L')); return m }
@@ -112,8 +103,6 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
 
   const usesRightAxis = axisMode === 'dual' && Array.from(axisOf.values()).includes('R')
 
-  /** Per-series min/max across the window — the scale normalize mode maps onto
-   * 0–100%, and what the tooltip uses to report the real value back. */
   const ranges = useMemo(() => {
     const m = new Map<string, { min: number; max: number }>()
     for (const k of chart.paramKeys) {
@@ -129,9 +118,6 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
     return m
   }, [data, chart.paramKeys])
 
-  /** In normalize mode every series is replaced by its 0–100 position within
-   * its own range. A flat series (min === max) sits at 50% rather than
-   * dividing by zero — it genuinely has no trend to show. */
   const plotted = useMemo(() => {
     if (axisMode !== 'normalize') return data
     return data.map((d) => {
@@ -142,7 +128,6 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
         const r = ranges.get(k)
         if (!r) continue
         out[k] = r.max === r.min ? 50 : ((v - r.min) / (r.max - r.min)) * 100
-        // Kept alongside so the tooltip can show what the % actually was.
         out[`${k}__raw`] = v
       }
       return out
@@ -151,29 +136,40 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
 
   return (
     <div>
-      <div className="flex items-center gap-1 mb-2 flex-wrap">
-        {QUICK.map((q) => (
-          <button key={q.id} onClick={() => setQuick(q.id)}
-            className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${quick === q.id ? 'text-white' : 'text-slate-500'}`}
-            style={quick === q.id ? { background: '#6366f1' } : inset}>
-            {q.label}
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
+          {QUICK.map((q) => (
+            <button key={q.id} onClick={() => setQuick(q.id)}
+              className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${quick === q.id ? 'text-white' : 'text-slate-500'}`}
+              style={quick === q.id ? { background: '#6366f1' } : inset}>
+              {q.label}
+            </button>
+          ))}
+          {chart.paramKeys.length > 1 && (
+            <div className="flex items-center gap-1 ml-1 pl-1" style={{ borderLeft: '1px solid #1e2433' }}>
+              {AXIS_MODES.map((m) => (
+                <button key={m.id} onClick={() => setAxisMode(m.id)} title={m.title}
+                  className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${axisMode === m.id ? 'text-white' : 'text-slate-500'}`}
+                  style={axisMode === m.id ? { background: '#4b5563' } : inset}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          )}
+          {loading && <span className="text-[10px] text-slate-600 ml-1">loading…</span>}
+        </div>
+
+        {onExpand && (
+          <button
+            onClick={onExpand}
+            title="Expand & Analyze Chart"
+            className="flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium px-1.5 py-0.5 rounded hover:bg-indigo-500/10 transition-colors"
+          >
+            <Maximize2 size={10} /> Expand
           </button>
-        ))}
-        {/* Only worth offering when the chart actually mixes series — a
-            single-parameter chart has nothing to reconcile. */}
-        {chart.paramKeys.length > 1 && (
-          <div className="flex items-center gap-1 ml-1 pl-1" style={{ borderLeft: '1px solid #1e2433' }}>
-            {AXIS_MODES.map((m) => (
-              <button key={m.id} onClick={() => setAxisMode(m.id)} title={m.title}
-                className={`text-[10px] px-2 py-0.5 rounded-md font-medium ${axisMode === m.id ? 'text-white' : 'text-slate-500'}`}
-                style={axisMode === m.id ? { background: '#4b5563' } : inset}>
-                {m.label}
-              </button>
-            ))}
-          </div>
         )}
-        {loading && <span className="text-[10px] text-slate-600 ml-1">loading…</span>}
       </div>
+
       {!data.length ? (
         <div className="h-[140px] flex items-center justify-center text-[11px] text-slate-600">
           {loading ? 'Loading…' : 'No stored readings in this period'}
@@ -190,9 +186,6 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
               <YAxis yAxisId="R" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
             )}
             <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
-              // In normalize mode the plotted number is a percentage of each
-              // series' own range — reporting only that would hide the reading
-              // the operator actually needs, so the real value comes with it.
               formatter={axisMode === 'normalize'
                 ? (v: unknown, name: string, item: { payload?: Record<string, unknown>; dataKey?: string | number }) => {
                     const key = String(item?.dataKey ?? '')
@@ -232,6 +225,7 @@ export default function CustomChartsSection({
   const live = useIsLive()
   const [charts, setCharts] = useState<ChartDefinition[] | null>(null)
   const [editing, setEditing] = useState<ChartDefinition | 'new' | null>(null)
+  const [analyzing, setAnalyzing] = useState<ChartDefinition | null>(null)
 
   const reload = useCallback(() => {
     if (!live) { setCharts([]); return }
@@ -246,8 +240,6 @@ export default function CustomChartsSection({
     return m
   }, [availableParams])
 
-  // Nothing configured and the viewer cannot add one — no point showing an
-  // empty section header on every device page that has never used this.
   if (!canConfigure && charts !== null && charts.length === 0) return null
 
   return (
@@ -258,7 +250,7 @@ export default function CustomChartsSection({
         </div>
         {canConfigure && live && (
           <button onClick={() => setEditing('new')} title="Add a chart"
-            className="ml-auto flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400">
+            className="ml-auto flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400 transition-colors">
             <Plus size={11} /> Add chart
           </button>
         )}
@@ -278,19 +270,56 @@ export default function CustomChartsSection({
             <div key={c.id} className="rounded-xl p-3" style={inset}>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[11px] font-medium text-slate-200 truncate">{c.title}</div>
-                {canConfigure && (
-                  <button onClick={() => setEditing(c)} title="Edit this chart"
-                    className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5 shrink-0">
-                    <Pencil size={11} />
+                <div className="flex items-center gap-1">
+                  {/* Universal Expand button for BOTH admin and viewer/customer */}
+                  <button
+                    onClick={() => setAnalyzing(c)}
+                    title="Expand & Analyze Chart"
+                    className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 shrink-0 transition-colors"
+                  >
+                    <Maximize2 size={12} />
                   </button>
-                )}
+                  {canConfigure && (
+                    <button
+                      onClick={() => setEditing(c)}
+                      title="Edit this chart"
+                      className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5 shrink-0 transition-colors"
+                    >
+                      <Pencil size={11} />
+                    </button>
+                  )}
+                </div>
               </div>
-              <MultiParamChart nodeId={nodeId} chart={c} paramByKey={paramByKey} />
+              <MultiParamChart
+                nodeId={nodeId}
+                chart={c}
+                paramByKey={paramByKey}
+                onExpand={() => setAnalyzing(c)}
+              />
             </div>
           ))}
         </div>
       )}
 
+      {/* Deep Visualizer & Analysis Studio Modal */}
+      {analyzing && (
+        <ChartAnalysisModal
+          nodeId={nodeId}
+          orgId={orgId}
+          domain={domain}
+          chart={analyzing}
+          availableParams={availableParams}
+          canConfigure={canConfigure}
+          onClose={() => setAnalyzing(null)}
+          onEdit={canConfigure ? () => {
+            const target = analyzing
+            setAnalyzing(null)
+            setEditing(target)
+          } : undefined}
+        />
+      )}
+
+      {/* Chart Builder / Editor Modal */}
       {editing && (
         <ChartBuilderModal
           nodeId={nodeId}
@@ -305,3 +334,4 @@ export default function CustomChartsSection({
     </div>
   )
 }
+
