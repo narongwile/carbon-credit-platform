@@ -4890,6 +4890,11 @@ const migrationsRunFunc = CORS + `const au=msg.auth||{};
   }catch(e){
     const timedOut = e && (e.name==='TimeoutError' || e.name==='AbortError');
     const reason = timedOut ? 'timed out after 10 minutes waiting for a response' : String(e&&e.message||e);
+    // This used to only ever reach the caller's HTTP response — nothing about
+    // it touched the pod's own log stream, so "did this fail, and why" was
+    // unanswerable from kubectl logs alone; a superadmin's browser was the
+    // only place the reason ever appeared, however many times it happened.
+    node.warn('migrations.run: could not reach '+murl+' — '+reason);
     msg.headers=__CORS;msg.statusCode=502;msg.payload={error:'could not reach the migrate service: '+reason};node.send(msg);return;
   }
   // auditLog JSON.stringifies its detail argument itself — pass the object,
