@@ -36,6 +36,7 @@ export default function LocationPicker({
   interactive = true,
   zoom = 8,
   showSearch = false,
+  showLayerSwitcher = true,
   defaultLayer = 'streets',
 }: {
   lat: number | null
@@ -45,6 +46,7 @@ export default function LocationPicker({
   interactive?: boolean
   zoom?: number
   showSearch?: boolean
+  showLayerSwitcher?: boolean
   defaultLayer?: LayerKey
 }) {
   const elRef = useRef<HTMLDivElement>(null)
@@ -160,39 +162,41 @@ export default function LocationPicker({
       )}
 
       {/* Layer Switcher (Streets / Esri Satellite / Dark) */}
-      <div className="absolute top-2 right-2 z-[500] flex items-center p-0.5 rounded-lg shadow-lg"
-        style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
-        <button
-          type="button"
-          onClick={() => switchLayer('streets')}
-          title="Street map (OpenStreetMap)"
-          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
-            currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <MapIcon size={11} /> Streets
-        </button>
-        <button
-          type="button"
-          onClick={() => switchLayer('satellite')}
-          title="Satellite imagery (Esri World Imagery / ArcGIS)"
-          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
-            currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Globe size={11} /> Satellite
-        </button>
-        <button
-          type="button"
-          onClick={() => switchLayer('dark')}
-          title="Dark map (CARTO Dark Matter)"
-          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
-            currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <Moon size={11} /> Dark
-        </button>
-      </div>
+      {showLayerSwitcher && (
+        <div className="absolute top-2 right-2 z-[500] flex items-center p-0.5 rounded-lg shadow-lg"
+          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
+          <button
+            type="button"
+            onClick={() => switchLayer('streets')}
+            title="Street map (OpenStreetMap)"
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+              currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <MapIcon size={11} /> Streets
+          </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('satellite')}
+            title="Satellite imagery (Esri World Imagery / ArcGIS)"
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+              currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Globe size={11} /> Satellite
+          </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('dark')}
+            title="Dark map (CARTO Dark Matter)"
+            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+              currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Moon size={11} /> Dark
+          </button>
+        </div>
+      )}
 
       <div ref={elRef} style={{ width: '100%', height: '100%', borderRadius: '0.75rem', zIndex: 0 }} />
     </div>

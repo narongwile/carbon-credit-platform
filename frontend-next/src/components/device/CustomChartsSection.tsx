@@ -92,11 +92,18 @@ function MultiParamChart({
   const axisOf = useMemo(() => {
     const m = new Map<string, 'L' | 'R'>()
     if (axisMode !== 'dual') { chart.paramKeys.forEach((k) => m.set(k, 'L')); return m }
-    let leftUnit: string | null = null
-    for (const k of chart.paramKeys) {
-      const unit = paramByKey.get(k)?.unit ?? ''
-      if (leftUnit === null) leftUnit = unit
-      m.set(k, unit === leftUnit ? 'L' : 'R')
+    const distinctUnits = new Set(chart.paramKeys.map((k) => paramByKey.get(k)?.unit ?? ''))
+    if (distinctUnits.size > 1) {
+      let leftUnit: string | null = null
+      for (const k of chart.paramKeys) {
+        const unit = paramByKey.get(k)?.unit ?? ''
+        if (leftUnit === null) leftUnit = unit
+        m.set(k, unit === leftUnit ? 'L' : 'R')
+      }
+    } else {
+      chart.paramKeys.forEach((k, idx) => {
+        m.set(k, idx === 0 ? 'L' : 'R')
+      })
     }
     return m
   }, [axisMode, chart.paramKeys, paramByKey])
@@ -133,6 +140,11 @@ function MultiParamChart({
       return out
     })
   }, [axisMode, data, chart.paramKeys, ranges])
+
+  const leftKey = chart.paramKeys.find((k) => axisOf.get(k) === 'L')
+  const rightKey = chart.paramKeys.find((k) => axisOf.get(k) === 'R')
+  const leftColor = usesRightAxis && leftKey ? PALETTE[chart.paramKeys.indexOf(leftKey) % PALETTE.length] : '#64748b'
+  const rightColor = usesRightAxis && rightKey ? PALETTE[chart.paramKeys.indexOf(rightKey) % PALETTE.length] : '#64748b'
 
   return (
     <div>
@@ -179,22 +191,23 @@ function MultiParamChart({
           <LineChart data={plotted} margin={{ top: 5, right: usesRightAxis ? 4 : 10, bottom: 0, left: -20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
             <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={28} />
-            <YAxis yAxisId="L" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false}
+            <YAxis yAxisId="L" tick={{ fill: leftColor, fontSize: 10 }} tickLine={false} axisLine={false}
               domain={axisMode === 'normalize' ? [0, 100] : ['auto', 'auto']}
               tickFormatter={axisMode === 'normalize' ? (v) => `${v}%` : undefined} />
             {usesRightAxis && (
-              <YAxis yAxisId="R" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+              <YAxis yAxisId="R" orientation="right" tick={{ fill: rightColor, fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
             )}
             <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
-              formatter={axisMode === 'normalize'
-                ? (v: unknown, name: string, item: { payload?: Record<string, unknown>; dataKey?: string | number }) => {
-                    const key = String(item?.dataKey ?? '')
-                    const raw = item?.payload?.[`${key}__raw`]
-                    const unit = paramByKey.get(key)?.unit ?? ''
-                    const pct = typeof v === 'number' ? `${v.toFixed(0)}%` : String(v)
-                    return [typeof raw === 'number' ? `${raw}${unit ? ` ${unit}` : ''} · ${pct}` : pct, name]
-                  }
-                : undefined} />
+              formatter={(v: unknown, name: string, item: { payload?: Record<string, unknown>; dataKey?: string | number }) => {
+                const key = String(item?.dataKey ?? '')
+                const unit = paramByKey.get(key)?.unit ?? ''
+                if (axisMode === 'normalize') {
+                  const raw = item?.payload?.[`${key}__raw`]
+                  const pct = typeof v === 'number' ? `${v.toFixed(0)}%` : String(v)
+                  return [typeof raw === 'number' ? `${raw}${unit ? ` ${unit}` : ''} · ${pct}` : pct, name]
+                }
+                return [typeof v === 'number' ? `${v.toFixed(2)}${unit ? ` ${unit}` : ''}` : String(v), name]
+              }} />
             <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
             {chart.paramKeys.map((key, i) => (
               <Line key={key} yAxisId={usesRightAxis ? (axisOf.get(key) ?? 'L') : 'L'}

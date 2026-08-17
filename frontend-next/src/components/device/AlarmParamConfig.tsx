@@ -1,29 +1,59 @@
-'use client'
-
-import { useEffect, useState } from 'react'
-import { getAlarmSchema, defaultNodeRule } from '@/lib/alarmParams'
+import { useEffect, useMemo, useState } from 'react'
+import { getAlarmSchema, defaultNodeRule, type AlarmParam } from '@/lib/alarmParams'
 import { useAlarmDB } from '@/server/alarmStore'
+import { useParamLabels } from '@/lib/useParamLabels'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { api } from '@/lib/api'
 import type { SensorDomain } from '@/types/fleet'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
-import { ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Save } from 'lucide-react'
+import { ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Save, Plus, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
-// Renders the alarm-parameter form for a product domain (driven by ALARM_SCHEMA).
+// Renders the alarm-parameter form for a product domain (driven by ALARM_SCHEMA + real sensor readings).
 // When `nodeId` is given, Save persists the rule to that node; without one this
 // is the ORG-level editor and loads/saves the org+domain default instead.
-//
-// An `advanced` prop used to gate a "Severity Routing & Escalation" panel here.
-// That panel was removed (see the note further down — every control in it was
-// unpersisted local state duplicating a real setting that had no UI), so the
-// prop no longer selected anything and is gone rather than left as a
-// parameter callers still pass and nothing reads.
 export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: { domain?: SensorDomain; nodeId?: string; orgId?: string; onApplyAll?: (rule: NodeAlarmRule) => void }) {
   const schema = getAlarmSchema(domain)
   const setRule = useAlarmDB((s) => s.setRule)
   const hasHydrated = useAlarmDB((s) => s.hasHydrated)
+  const { labelOf } = useParamLabels(orgId || '', domain, nodeId)
+  const { devices } = useManagedDevices(orgId || '')
+
+  // Discovered sensor parameters from real device telemetry / last sample
+  const activeParams: AlarmParam[] = useMemo(() => {
+    if (!schema) return []
+    const baseParams = schema.params.map((p) => ({ ...p, label: labelOf(p.key) }))
+    const baseKeys = new Set(schema.params.map((p) => p.key))
+
+    // If nodeId is selected, find its real device sample keys
+    const device = nodeId ? devices.find((d) => d.id === nodeId) : null
+    const sampleKeys = Object.keys(device?.lastSample ?? {})
+
+    const extraKeys = new Set<string>()
+    for (const k of sampleKeys) {
+      if (!baseKeys.has(k) && k !== 'time' && k !== 'ts' && k !== 'id' && k !== 'nodeId' && k !== 'orgId' && k !== 'domain' && k !== 'status' && k !== 'alarm') {
+        extraKeys.add(k)
+      }
+    }
+
+    const dynamicParams: AlarmParam[] = Array.from(extraKeys).map((k) => {
+      const lower = k.toLowerCase()
+      const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
+      const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') ? 'low' : 'high'
+      return {
+        key: k,
+        label: labelOf(k),
+        unit,
+        direction,
+        warn: direction === 'high' ? 80 : 20,
+        critical: direction === 'high' ? 100 : 10,
+      }
+    })
+
+    return [...baseParams, ...dynamicParams]
+  }, [schema, nodeId, devices, labelOf])
 
   // generic low/high fallback for unknown domains
   const [generic, setGeneric] = useState({ low: 2, high: 8 })
@@ -38,11 +68,7 @@ export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: 
   const setVal = (key: string, field: 'warn' | 'critical' | 'rate', v: number) =>
     setVals((s) => ({ ...s, [key]: { ...s[key], [field]: v } }))
 
-  // Reset to THIS domain's schema defaults whenever the domain changes. The
-  // useState initializers above run once, so switching the product tab
-  // otherwise left the previous domain's numbers in place — and any key the
-  // two domains happen to share would silently carry its old threshold over.
-  // Runs before the load effects below, which then overlay whatever is stored.
+  // Reset to THIS domain's schema defaults whenever the domain changes
   useEffect(() => {
     const s = getAlarmSchema(domain)
     setVals(Object.fromEntries((s?.params ?? []).map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])))
@@ -70,12 +96,6 @@ export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, hasHydrated])
 
-  // No nodeId = this is the ORG-level editor (admin Alarm & Notify). It had no
-  // load path at all: the effect above returns early without a nodeId, so the
-  // form always rendered the hardcoded schema defaults from lib/alarmParams.ts
-  // however many times an admin had saved real thresholds. They were stored in
-  // org_domain_rules and pushed to every node — the editor just never showed
-  // them, which reads as "this screen is mock data".
   const [orgRuleState, setOrgRuleState] = useState<'idle' | 'loading' | 'custom' | 'default'>('idle')
   const [orgRuleMeta, setOrgRuleMeta] = useState<{ updatedBy?: string | null; updatedAt?: string | null } | null>(null)
   useEffect(() => {
@@ -95,7 +115,7 @@ export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: 
     if (!schema || !domain) return null
     return {
       domain,
-      params: schema.params.map((p) => ({
+      params: activeParams.map((p) => ({
         ...p,
         warn: vals[p.key]?.warn ?? p.warn,
         critical: vals[p.key]?.critical ?? p.critical,
@@ -145,7 +165,7 @@ export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: 
             </tr>
           </thead>
           <tbody>
-            {schema.params.map((p) => (
+            {activeParams.map((p) => (
               <tr key={p.key} style={{ borderTop: '1px solid #1e2433' }}>
                 <td className="py-2 px-3">
                   <div className="flex items-center gap-1.5 text-slate-200">

@@ -36,6 +36,9 @@ interface HostBase {
   domain: SensorDomain
   status: 'NORMAL' | 'WARNING' | 'CRITICAL' | 'OFFLINE'
   sensorCount: number
+  lat?: number | null
+  lng?: number | null
+  location?: string
 }
 
 // transformers (ERD #1)

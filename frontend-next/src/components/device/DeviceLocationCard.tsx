@@ -218,7 +218,7 @@ export default function DeviceLocationCard({
       ) : shown ? (
         <div className="space-y-2">
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-            <LocationPicker key={`${shown.lat},${shown.lng}`} lat={shown.lat} lng={shown.lng} height="120px" zoom={14} interactive={false} onChange={() => {}} />
+            <LocationPicker key={`${shown.lat},${shown.lng}`} lat={shown.lat} lng={shown.lng} height="120px" zoom={14} interactive={false} showLayerSwitcher={false} onChange={() => {}} />
           </div>
           <div className="flex items-start gap-2">
             <MapPin size={11} className="text-slate-500 mt-0.5 flex-shrink-0" />

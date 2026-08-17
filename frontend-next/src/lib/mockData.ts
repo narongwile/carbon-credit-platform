@@ -175,13 +175,17 @@ export function makeTransformer(host: TransformerHost): Transformer {
   const seed = host.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
   const jitter = ((seed % 20) - 10) / 5000
 
+  const hasRealCoords = host.lat != null && host.lng != null
+  const coordStr = hasRealCoords ? `${Number(host.lat).toFixed(4)}, ${Number(host.lng).toFixed(4)}` : undefined
+  const location = site ? site.name : (host.siteId && host.siteId !== '—' ? host.siteId : coordStr ?? '—')
+
   return {
     id: host.id,
     name: host.name,
     orgId: host.orgId,
-    location: site ? site.name : host.siteId,
-    lat: (site?.lat ?? 13.7) + jitter,
-    lng: (site?.lng ?? 100.5) + jitter,
+    location,
+    lat: host.lat != null ? Number(host.lat) : (site?.lat ?? 13.7) + jitter,
+    lng: host.lng != null ? Number(host.lng) : (site?.lng ?? 100.5) + jitter,
     status,
     healthIndex: host.healthIndex,
     kva: host.kva,

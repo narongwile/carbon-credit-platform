@@ -189,23 +189,35 @@ export default function ChartAnalysisModal({
     return { data: sorted, rawByTime: rawMap }
   }, [rows, quick, customRange])
 
-  // Axis determination (dual axis groups by unit)
+  // Axis determination (dual axis groups by unit, or splits series if same unit)
   const axisOf = useMemo(() => {
     const m = new Map<string, 'L' | 'R'>()
     if (axisMode !== 'dual') {
       chart.paramKeys.forEach((k) => m.set(k, 'L'))
       return m
     }
-    let leftUnit: string | null = null
-    for (const k of chart.paramKeys) {
-      const unit = unitOf(k)
-      if (leftUnit === null) leftUnit = unit
-      m.set(k, unit === leftUnit ? 'L' : 'R')
+    const distinctUnits = new Set(chart.paramKeys.map((k) => unitOf(k)))
+    if (distinctUnits.size > 1) {
+      let leftUnit: string | null = null
+      for (const k of chart.paramKeys) {
+        const unit = unitOf(k)
+        if (leftUnit === null) leftUnit = unit
+        m.set(k, unit === leftUnit ? 'L' : 'R')
+      }
+    } else {
+      // All have the same unit: assign 1st param to Left, and remaining to Right
+      chart.paramKeys.forEach((k, idx) => {
+        m.set(k, idx === 0 ? 'L' : 'R')
+      })
     }
     return m
   }, [axisMode, chart.paramKeys, unitOf])
 
   const usesRightAxis = axisMode === 'dual' && Array.from(axisOf.values()).includes('R')
+  const leftKey = chart.paramKeys.find((k) => axisOf.get(k) === 'L')
+  const rightKey = chart.paramKeys.find((k) => axisOf.get(k) === 'R')
+  const leftColor = usesRightAxis && leftKey ? PALETTE[chart.paramKeys.indexOf(leftKey) % PALETTE.length] : '#64748b'
+  const rightColor = usesRightAxis && rightKey ? PALETTE[chart.paramKeys.indexOf(rightKey) % PALETTE.length] : '#64748b'
 
   // Min / Max ranges per series for normalization and stats
   const ranges = useMemo(() => {
@@ -550,9 +562,9 @@ export default function ChartAnalysisModal({
                         />
                         <YAxis
                           yAxisId="L"
-                          tick={{ fill: '#64748b', fontSize: 11 }}
+                          tick={{ fill: leftColor, fontSize: 11 }}
                           tickLine={false}
-                          axisLine={{ stroke: '#1e2433' }}
+                          axisLine={{ stroke: usesRightAxis ? leftColor : '#1e2433' }}
                           domain={axisMode === 'normalize' ? [0, 100] : ['auto', 'auto']}
                           tickFormatter={axisMode === 'normalize' ? (v) => `${v}%` : undefined}
                         />
@@ -560,9 +572,9 @@ export default function ChartAnalysisModal({
                           <YAxis
                             yAxisId="R"
                             orientation="right"
-                            tick={{ fill: '#64748b', fontSize: 11 }}
+                            tick={{ fill: rightColor, fontSize: 11 }}
                             tickLine={false}
-                            axisLine={{ stroke: '#1e2433' }}
+                            axisLine={{ stroke: rightColor }}
                             domain={['auto', 'auto']}
                           />
                         )}

@@ -20,6 +20,7 @@ import Link from 'next/link'
 import { api, useIsLive } from '@/lib/api'
 import { useSessionRole } from '@/lib/auth'
 import { useManagedDevices } from '@/lib/useManagedDevices'
+import type { SensorDomain } from '@/types/fleet'
 import { MapPin, Building2, Loader2, Plus, ExternalLink, Check } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -29,11 +30,12 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 interface Site { id: string; name: string; address: string | null; lat: number | null; lng: number | null }
 
 export default function NodeSitePanel({
-  nodeId, orgId, currentSiteId, deviceHref = '/admin/nodes/detail',
+  nodeId, orgId, currentSiteId, domain, deviceHref = '/admin/nodes/detail',
 }: {
   nodeId: string
   orgId: string
   currentSiteId?: string
+  domain?: SensorDomain
   /** Route the sibling links point at, so the customer side stays on its own. */
   deviceHref?: string
 }) {
@@ -46,6 +48,9 @@ export default function NodeSitePanel({
   const [adding, setAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const { devices } = useManagedDevices(orgId)
+
+  const currentDevice = useMemo(() => devices.find((d) => d.id === nodeId), [devices, nodeId])
+  const effDomain: SensorDomain = domain || (currentDevice?.domain as SensorDomain) || (nodeId.startsWith('tr-') || nodeId.startsWith('tr') ? 'transformer' : 'carbonNode')
 
   // The roster is the source of truth for the current assignment; seeding state
   // from a prop that arrives after the first render would leave the select on
@@ -155,11 +160,21 @@ export default function NodeSitePanel({
                 </div>
               </div>
             )}
-            {canEdit && (
-              <Link href="/admin/floorplans" className="inline-flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300">
+            {effDomain === 'transformer' ? (
+              <Link
+                href={role === 'admin' || role === 'superadmin' ? `/admin/map?focus=${encodeURIComponent(nodeId)}` : `/customer/map?focus=${encodeURIComponent(nodeId)}`}
+                className="inline-flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300"
+              >
+                <ExternalLink size={11} /> View on Geographic Map
+              </Link>
+            ) : canEdit ? (
+              <Link
+                href={role === 'admin' || role === 'superadmin' ? '/admin/floorplans' : '/customer/floorplans'}
+                className="inline-flex items-center gap-1.5 text-[11px] text-indigo-400 hover:text-indigo-300"
+              >
                 <ExternalLink size={11} /> Pin this unit on the site’s floor plan
               </Link>
-            )}
+            ) : null}
             {sites.length === 0 && canEdit && !adding && (
               <p className="text-[11px] text-slate-600">
                 This organization has no sites yet. Create one and every device you assign to it groups here.

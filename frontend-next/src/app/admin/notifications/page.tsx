@@ -289,10 +289,17 @@ export default function AlarmNotificationPage() {
             </div>
             <div>
               <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply to device</label>
-              <select value={scope} onChange={(e) => setScope(e.target.value)}
+              <select value={scope} onChange={(e) => {
+                const val = e.target.value
+                setScope(val)
+                if (val !== 'all') {
+                  const dev = devices.find((d) => d.id === val)
+                  if (dev?.domain) setProduct(dev.domain)
+                }
+              }}
                 className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
                 <option value="all">All devices ({devices.length})</option>
-                {devices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
               </select>
             </div>
           </div>
@@ -311,7 +318,7 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          <AlarmParamConfig domain={product} orgId={orgId} onApplyAll={applyRuleToOrg} />
+          <AlarmParamConfig domain={product} nodeId={scope !== 'all' ? scope : undefined} orgId={orgId} onApplyAll={applyRuleToOrg} />
         </div>
 
         {/* Event selection & edit */}

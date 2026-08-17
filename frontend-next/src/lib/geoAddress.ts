@@ -112,7 +112,7 @@ export async function searchPlaces(query: string): Promise<PlaceSearchResult[]> 
 
   try {
     const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5&addressdetails=1`,
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=th&limit=5&addressdetails=1`,
       { headers: { 'Accept-Language': 'th,en;q=0.8' } }
     )
     if (!res.ok) return []

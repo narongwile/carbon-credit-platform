@@ -171,8 +171,10 @@ function useLiveTransformer(base: Transformer | undefined) {
     const loadLatest = () => {
       api.latest(id).then((r) => {
         if (cancelled || !r) return
-        if (r.values) setValues(r.values)
-        setLastReadingAt(r.lastReadingAt ?? null)
+        if (r.values && Object.keys(r.values).length > 0) {
+          setValues((prev) => ({ ...(prev || {}), ...r.values }))
+        }
+        if (r.lastReadingAt) setLastReadingAt(r.lastReadingAt)
       })
     }
     // 48 buckets over 12h = one point per 15 minutes, which is exactly what the
@@ -188,8 +190,8 @@ function useLiveTransformer(base: Transformer | undefined) {
     // fallback for when it is down. A frame lands the moment the device
     // publishes, with no interval in between.
     const off = subscribeTelemetry((f) => {
-      if (f.id !== id || f.type === 'alarm' || !f.values) return
-      setValues(f.values)
+      if (f.id !== id || f.type === 'alarm' || !f.values || !Object.keys(f.values).length) return
+      setValues((prev) => ({ ...(prev || {}), ...f.values }))
       setLastReadingAt(new Date().toISOString())
     })
     // A tab in the background has its timers throttled to ~1/min by the
@@ -609,6 +611,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // per-device coordinate widget below can resolve the site it belongs to.
   const siteId = useMemo(() => hosts.find((h) => h.id === id && h.domain === 'transformer')?.siteId, [hosts, id])
   const { transformer, live, online, lastReadingAt, values, series } = useLiveTransformer(base)
+  const displayLocation = useMemo(() => {
+    if (transformer?.location && transformer.location !== '—') return transformer.location
+    const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
+    if (host?.lat != null && host?.lng != null) {
+      return `${Number(host.lat).toFixed(4)}, ${Number(host.lng).toFixed(4)}`
+    }
+    if (transformer?.lat != null && transformer?.lng != null) {
+      return `${Number(transformer.lat).toFixed(4)}, ${Number(transformer.lng).toFixed(4)}`
+    }
+    return '—'
+  }, [transformer?.location, transformer?.lat, transformer?.lng, hosts, id])
   const [openParam, setOpenParam] = useState<string | null>(null)
   const [showKeys, setShowKeys] = useState<string[] | null>(null)
   const [picking, setPicking] = useState(false)
@@ -818,7 +831,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         <div className="h-4 w-px" style={{ background: '#1e2433' }} />
         <div className="flex items-center gap-1.5 text-xs text-slate-500">
           <MapPin size={11} />
-          {transformer.location}
+          {displayLocation}
         </div>
         <div className="ml-auto flex items-center gap-3">
           {/* Was a permanently spinning "Live" — it said nothing about the device. */}
@@ -1047,7 +1060,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       {/* Site management + Alarm event log + transport/connectivity timeline (same components the
           generic node page uses, so both routes stay in step). */}
       <div className="p-4 space-y-4">
-        <NodeSitePanel nodeId={transformer.id} orgId={transformer.orgId} currentSiteId={siteId} deviceHref="/admin/transformers/detail" />
+        <NodeSitePanel nodeId={transformer.id} orgId={transformer.orgId} currentSiteId={siteId} domain="transformer" deviceHref="/admin/transformers/detail" />
         <NodeDocuments nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name} />
         <NodeEventLog
           nodeId={transformer.id}

@@ -61,6 +61,8 @@ export function fleetNodeToDevice(
   siteName?: string,
 ): ManagedDevice {
   const domain = n.domain
+  const coordStr = (n.lat != null && n.lng != null) ? `${Number(n.lat).toFixed(4)}, ${Number(n.lng).toFixed(4)}` : undefined
+  const loc = siteName ?? (n.site_id && n.site_id !== '—' ? n.site_id : undefined) ?? coordStr ?? (mock?.location && mock.location !== '—' ? mock.location : undefined) ?? '—'
   return {
     id: n.id,
     orgId,
@@ -69,7 +71,7 @@ export function fleetNodeToDevice(
     deviceType: DEVICE_TYPE[domain] ?? mock?.deviceType ?? 'Sensor Node',
     domain,
     siteId: n.site_id ?? mock?.siteId,
-    location: siteName ?? mock?.location ?? n.site_id ?? '—',
+    location: loc,
     theme: mock?.theme ?? 'fix',
     departmentIds: n.department_id ? [n.department_id] : (mock?.departmentIds ?? []),
     status: n.online === 0 ? 'offline' : 'online',
@@ -172,6 +174,7 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
     const hosts = nodes.map((n): SensorHost => {
       const seed = byId.get(n.id)
       const status = statusFromLive(n)
+      const coordStr = (n.lat != null && n.lng != null) ? `${Number(n.lat).toFixed(4)}, ${Number(n.lng).toFixed(4)}` : undefined
       // n.sensor_count (device_presence.last_sample's key count) is the real
       // reading — preferred over the mock seed's fixed per-domain number even
       // when an id happens to collide with one, so a real device's page never
@@ -184,12 +187,14 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
             ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount,
             healthIndex: computedHealth,
             model: np?.model || seed.model, kva: np?.ratedKva ?? seed.kva, voltage: np?.voltageClass || seed.voltage,
+            lat: n.lat ?? seed.lat, lng: n.lng ?? seed.lng,
           }
         }
-        return { ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount }
+        return { ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount, lat: n.lat ?? seed.lat, lng: n.lng ?? seed.lng }
       }
       const base = {
         id: n.id, orgId, siteId: n.site_id ?? '—', name: n.name || n.id, status, sensorCount: n.sensor_count ?? 0,
+        lat: n.lat, lng: n.lng, location: coordStr ?? (n.site_id && n.site_id !== '—' ? n.site_id : '—'),
       }
       if (n.domain === 'transformer') {
         const np = nameplates[n.id]

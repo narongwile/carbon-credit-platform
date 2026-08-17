@@ -158,7 +158,7 @@ export default function LiveSensorMap({
     const approxLine = n.approx
       ? editableRef.current
         ? `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location.</div>`
-        : `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on its floor plan.</div>`
+        : `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on the map.</div>`
       : ''
     const repositionBtn = editableRef.current
       ? `<button type="button" class="gsm-reposition-btn" data-node-id="${n.id}"
