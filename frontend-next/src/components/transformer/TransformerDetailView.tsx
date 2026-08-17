@@ -7,6 +7,7 @@ import { makeTransformer } from '@/lib/mockData'
 import type { TransformerHost } from '@/types/fleet'
 import NodeEventLog from '@/components/device/NodeEventLog'
 import NodeDocuments from '@/components/device/NodeDocuments'
+import NodeSitePanel from '@/components/device/NodeSitePanel'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
 import MyAlertSettings from '@/components/device/MyAlertSettings'
@@ -1043,9 +1044,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         />
       )}
 
-      {/* Alarm event log + transport/connectivity timeline (same component the
+      {/* Site management + Alarm event log + transport/connectivity timeline (same components the
           generic node page uses, so both routes stay in step). */}
       <div className="p-4 space-y-4">
+        <NodeSitePanel nodeId={transformer.id} orgId={transformer.orgId} currentSiteId={siteId} deviceHref="/admin/transformers/detail" />
         <NodeDocuments nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name} />
         <NodeEventLog
           nodeId={transformer.id}
