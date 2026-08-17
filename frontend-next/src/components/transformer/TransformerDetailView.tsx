@@ -242,7 +242,7 @@ function useLiveTransformer(base: Transformer | undefined) {
     return {
       ...base,
       sensors,
-      healthIndex: healthFromValues(values, 'transformer') ?? base.healthIndex,
+      healthIndex: healthFromValues(values, 'transformer') ?? (online ? 100 : (base?.healthIndex || 0)),
       status: online ? worst : 'OFFLINE',
       lastUpdated: lastReadingAt ?? base.lastUpdated,
     } as Transformer

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
@@ -10,6 +10,8 @@ import { useFleetHosts } from '@/lib/useManagedDevices'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
+import { useIsLive } from '@/lib/api'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock } from 'lucide-react'
@@ -131,7 +133,7 @@ function HostCard({ host, href, liveStatus }: { host: SensorHost; href: string; 
       <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
         <div className="flex items-start justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: statusColorH(status), boxShadow: `0 0 6px ${statusColorH(status)}` }} />
+            <span className={`w-2.5 h-2.5 rounded-full ${status === 'NORMAL' ? 'animate-pulse' : ''}`} style={{ background: statusColorH(status), boxShadow: `0 0 6px ${statusColorH(status)}` }} />
             <div className="text-sm font-bold text-white">{host.name}</div>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span>
@@ -148,12 +150,35 @@ function HostCard({ host, href, liveStatus }: { host: SensorHost; href: string; 
 function OverviewTab() {
   const { selectedOrgId, getAlarmsByOrg } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
+  const live = useIsLive()
   // Roster AND status from /api/fleet in Live mode (mock when the API is off),
   // so a device registered by its first telemetry frame is counted here.
   const { hosts, fromBackend } = useFleetHosts(orgId)
   const alarms = getAlarmsByOrg(orgId)
+  const [liveFrames, setLiveFrames] = useState<Record<string, number>>({})
+  const [, tick] = useState(0)
 
-  const eff = (h: SensorHost): string => h.status
+  useEffect(() => {
+    if (!live) return
+    const off = subscribeTelemetry((f) => {
+      if (f?.id && f.type !== 'alarm') {
+        setLiveFrames((prev) => ({ ...prev, [f.id]: Date.now() }))
+      }
+    })
+    const timer = setInterval(() => tick((n) => n + 1), 5000)
+    return () => {
+      off()
+      clearInterval(timer)
+    }
+  }, [live])
+
+  const eff = (h: SensorHost): string => {
+    const lastFrame = liveFrames[h.id]
+    if (lastFrame && Date.now() - lastFrame < 90_000) {
+      return h.status === 'CRITICAL' || h.status === 'WARNING' ? h.status : 'NORMAL'
+    }
+    return h.status
+  }
 
   const byDomain = (d: SensorDomain) => hosts.filter((h) => h.domain === d)
   const normal = hosts.filter((h) => eff(h) === 'NORMAL').length
@@ -202,7 +227,7 @@ function OverviewTab() {
             <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} liveStatus={fromBackend ? eff(h) : undefined} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : `/admin/nodes/detail?id=${h.id}`} />
+                <HostCard key={h.id} host={h} liveStatus={eff(h)} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : `/admin/nodes/detail?id=${h.id}`} />
               ))}
             </div>
           </div>

@@ -176,11 +176,13 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
       // reading — preferred over the mock seed's fixed per-domain number even
       // when an id happens to collide with one, so a real device's page never
       // shows a made-up sensor count just because its id looks like a demo one.
+      const computedHealth = status === 'CRITICAL' ? 50 : status === 'WARNING' ? 80 : status === 'NORMAL' ? 100 : (seed?.domain === 'transformer' ? seed.healthIndex : 0)
       if (seed) {
         if (seed.domain === 'transformer') {
           const np = nameplates[n.id]
           return {
             ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount,
+            healthIndex: computedHealth,
             model: np?.model || seed.model, kva: np?.ratedKva ?? seed.kva, voltage: np?.voltageClass || seed.voltage,
           }
         }
@@ -193,7 +195,7 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
         const np = nameplates[n.id]
         return {
           ...base, domain: 'transformer', model: np?.model || '—', serial: n.id.toUpperCase(),
-          kva: np?.ratedKva ?? 0, voltage: np?.voltageClass || '—', healthIndex: 0, openAlarms: 0,
+          kva: np?.ratedKva ?? 0, voltage: np?.voltageClass || '—', healthIndex: computedHealth, openAlarms: n.alarm ? 1 : 0,
         }
       }
       if (n.domain === 'carbonNode') {

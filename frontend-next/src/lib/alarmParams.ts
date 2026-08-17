@@ -97,19 +97,17 @@ export function paramStatus(value: number, p: AlarmParam): ParamStatus {
  * keeps its own placeholder rather than showing a misleading 100.
  */
 export function healthFromValues(values: Record<string, number>, domain?: SensorDomain): number | null {
+  if (!values || !Object.keys(values).length) return null
   const schema = getAlarmSchema(domain)
-  if (!schema) return null
+  if (!schema) return 100
   let penalty = 0
-  let seen = 0
   for (const p of schema.params) {
     const v = values[p.key]
     if (v === undefined) continue
-    seen++
     const st = paramStatus(v, p)
     if (st === 'CRITICAL') penalty += 25
     else if (st === 'WARNING') penalty += 10
   }
-  if (!seen) return null
   return Math.max(0, Math.min(100, 100 - penalty))
 }
 
