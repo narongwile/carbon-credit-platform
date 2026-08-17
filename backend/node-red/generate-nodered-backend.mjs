@@ -2169,9 +2169,27 @@ const chartsDelFunc = CORS + `const id=msg.req.params.id; const chartId=msg.req.
 // control pool silently showed nothing for any moved device, forever.
 const getEventsFunc = CORS + `const id=msg.req.params.id;
 (async()=>{
-  const org=(await global.get('orgOfNode')(id))||'';
-  const pool=global.get('resolvePool')(org);
-  const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+  const ctl = global.get('pool');
+  const org = (await global.get('orgOfNode')(id)) || (msg.auth && msg.auth.orgId) || '';
+  const tenantPool = global.get('resolvePool')(org);
+  const pools = Array.from(new Set([tenantPool, ctl].filter(Boolean)));
+  const out = [];
+  const seen = new Set();
+  for (const pool of pools) {
+    try {
+      const [r] = await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50', [id]);
+      for (const row of r) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        out.push(row);
+      }
+    } catch(e) {}
+  }
+  out.sort((a,b) => new Date(b.raised_at) - new Date(a.raised_at));
+  msg.headers = __CORS;
+  msg.payload = out.slice(0, 50);
+  node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 // Transport/connectivity timeline for a device: link switches (transport_events,
 // written by the firmware's transport handler) merged with offline backlog
