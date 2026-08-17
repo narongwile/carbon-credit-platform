@@ -29,7 +29,7 @@ export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: 
 
     // If nodeId is selected, find its real device sample keys
     const device = nodeId ? devices.find((d) => d.id === nodeId) : null
-    const sampleKeys = Object.keys(device?.lastSample ?? {})
+    const sampleKeys = Object.keys((device as any)?.lastSample ?? {})
 
     const extraKeys = new Set<string>()
     for (const k of sampleKeys) {
