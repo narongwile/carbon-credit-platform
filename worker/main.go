@@ -797,12 +797,28 @@ func updatePresence(t TelemetryPayload) {
 			t.NodeID, "none", transport, "recovered", rssi); err != nil {
 			log.Printf("Recovery event failed for %s: %v", t.NodeID, err)
 		}
-		// Close the open offline alarm so the device stops looking down.
+		// Close the open offline alarm in control DB so the device stops looking down.
 		if _, err := controlDB.Exec(
 			"UPDATE alarm_events SET cleared_at = NOW(3) WHERE node_id = ? AND kind = 'offline' AND cleared_at IS NULL",
 			t.NodeID); err != nil {
 			log.Printf("Clear offline alarm failed for %s: %v", t.NodeID, err)
 		}
+
+		// Also mirror recovery transport event and clear alarm in tenant DB
+		var orgID string
+		var depID sql.NullString
+		if err := controlDB.QueryRow("SELECT org_id, department_id FROM nodes WHERE id = ?", t.NodeID).Scan(&orgID, &depID); err == nil {
+			tenantDB := resolvePool(orgID)
+			if tenantDB != nil && tenantDB != controlDB {
+				_, _ = tenantDB.Exec(
+					"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+					t.NodeID, "none", transport, "recovered", rssi)
+				_, _ = tenantDB.Exec(
+					"UPDATE alarm_events SET cleared_at = NOW(3) WHERE node_id = ? AND kind = 'offline' AND cleared_at IS NULL",
+					t.NodeID)
+			}
+		}
+
 		if downFor > 0 {
 			log.Printf("Device back online: %s (was down %s)", t.NodeID, downFor)
 		} else {
@@ -828,8 +844,16 @@ func updatePresence(t TelemetryPayload) {
 		var depID sql.NullString
 		if err := controlDB.QueryRow("SELECT org_id, department_id FROM nodes WHERE id = ?", t.NodeID).Scan(&orgID, &depID); err == nil {
 			tenantDB := resolvePool(orgID)
-			if tenantDB != nil {
-				alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
+			alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
+			// Write offline alarm to controlDB
+			_, _ = controlDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
+				alarmID, t.NodeID, orgID, nullableStr(depID), "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
+
+			// Write offline alarm and transport event to tenantDB if separate
+			if tenantDB != nil && tenantDB != controlDB {
+				_, _ = tenantDB.Exec(
+					"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+					t.NodeID, transport, "none", "lwt", rssi)
 				_, err := tenantDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
 					alarmID, t.NodeID, orgID, nullableStr(depID), "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
 				if err != nil {
