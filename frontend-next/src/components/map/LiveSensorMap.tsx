@@ -109,9 +109,11 @@ export default function LiveSensorMap({
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
+  const tileLayerRef = useRef<any>(null)
   const LRef = useRef<any>(null)
   const markersRef = useRef<Map<string, any>>(new Map())
   const fittedRef = useRef(false)
+  const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
   // Always read the latest nodes (avoids a stale closure in the mount effect).
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
