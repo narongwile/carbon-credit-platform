@@ -2187,26 +2187,69 @@ const getEventsFunc = CORS + `const id=msg.req.params.id;
 // own database.
 const transportFunc = CORS + `const id=msg.req.params.id;
 (async()=>{
-  const org=(await global.get('orgOfNode')(id))||(msg.auth&&msg.auth.orgId)||'';
-  const pool=global.get('resolvePool')(org);
-  const out=[];
-  try{ const [t]=await pool.query("SELECT id,from_transport,to_transport,reason,rssi,ts FROM transport_events WHERE node_id=? ORDER BY ts DESC LIMIT 25",[id]);
-    for(const r of t) out.push({ id:'tr-'+r.id, ts:r.ts, type: r.to_transport==='none' ? 'LINK_LOST' : (r.from_transport==='none' ? 'LINK_RESTORE' : 'FALLBACK_'+String(r.to_transport||'').toUpperCase()),
-      desc: 'Link '+r.from_transport+' → '+r.to_transport+(r.reason?' ('+r.reason+')':'')+(r.rssi!=null?' · RSSI '+r.rssi:''), isOfflineSync:false });
-  }catch(e){ node.warn('transport_events: '+e.message); }
-  // Connectivity alarms (raised by the offline sweep) belong on this timeline,
-  // not in the threshold alarm log — "Device Offline" is a link event.
-  try{ const [o]=await pool.query("SELECT id,severity,raised_at FROM alarm_events WHERE node_id=? AND kind='offline' ORDER BY raised_at DESC LIMIT 25",[id]);
-    for(const r of o) out.push({ id:'off-'+r.id, ts:r.raised_at, type:'DEVICE_OFFLINE',
-      desc:'Device stopped reporting — marked offline by the presence sweep', isOfflineSync:false });
-  }catch(e){ node.warn('offline alarm_events: '+e.message); }
-  try{ const [s]=await pool.query("SELECT id,records_count,oldest_ts,newest_ts,sync_at FROM offline_sync_log WHERE node_id=? ORDER BY sync_at DESC LIMIT 25",[id]);
-    for(const r of s) out.push({ id:'os-'+r.id, ts:r.sync_at, type:'OFFLINE_SYNC',
-      desc:'Flushed '+r.records_count+' offline record'+(r.records_count===1?'':'s')+' to cloud', isOfflineSync:true });
-  }catch(e){ node.warn('offline_sync_log: '+e.message); }
-  out.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
-  msg.headers=__CORS; msg.payload=out.slice(0,25); node.send(msg);
-})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+  const ctl = global.get('pool');
+  const org = (await global.get('orgOfNode')(id)) || (msg.auth && msg.auth.orgId) || '';
+  const tenantPool = global.get('resolvePool')(org);
+  const pools = Array.from(new Set([tenantPool, ctl].filter(Boolean)));
+  const out = [];
+  const seenIds = new Set();
+
+  for (const pool of pools) {
+    try {
+      const [t] = await pool.query("SELECT id,from_transport,to_transport,reason,rssi,ts FROM transport_events WHERE node_id=? ORDER BY ts DESC LIMIT 25", [id]);
+      for (const r of t) {
+        const key = 'tr-' + r.id + '-' + (r.ts ? new Date(r.ts).getTime() : '');
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        out.push({
+          id: 'tr-' + r.id,
+          ts: r.ts,
+          type: r.to_transport === 'none' ? 'LINK_LOST' : (r.from_transport === 'none' ? 'LINK_RESTORE' : 'FALLBACK_' + String(r.to_transport || '').toUpperCase()),
+          desc: 'Link ' + r.from_transport + ' → ' + r.to_transport + (r.reason ? ' (' + r.reason + ')' : '') + (r.rssi != null ? ' · RSSI ' + r.rssi : ''),
+          isOfflineSync: false
+        });
+      }
+    } catch(e) {}
+
+    try {
+      const [o] = await pool.query("SELECT id,severity,raised_at FROM alarm_events WHERE node_id=? AND kind='offline' ORDER BY raised_at DESC LIMIT 25", [id]);
+      for (const r of o) {
+        const key = 'off-' + r.id;
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        out.push({
+          id: 'off-' + r.id,
+          ts: r.raised_at,
+          type: 'DEVICE_OFFLINE',
+          desc: 'Device stopped reporting — marked offline by the presence sweep',
+          isOfflineSync: false
+        });
+      }
+    } catch(e) {}
+
+    try {
+      const [s] = await pool.query("SELECT id,records_count,oldest_ts,newest_ts,sync_at FROM offline_sync_log WHERE node_id=? ORDER BY sync_at DESC LIMIT 25", [id]);
+      for (const r of s) {
+        const key = 'os-' + r.id;
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        out.push({
+          id: 'os-' + r.id,
+          ts: r.sync_at,
+          type: 'OFFLINE_SYNC',
+          desc: 'Flushed ' + r.records_count + ' offline record' + (r.records_count === 1 ? '' : 's') + ' to cloud',
+          isOfflineSync: true
+        });
+      }
+    } catch(e) {}
+  }
+
+  out.sort((a,b) => new Date(b.ts) - new Date(a.ts));
+  msg.headers = __CORS;
+  msg.payload = out.slice(0, 25);
+  node.send(msg);
+})().catch(e => { msg.headers=__CORS; msg.statusCode=500; msg.payload={error:e.message}; node.send(msg); });
+return null;`
 
 const ackFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};
 (async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
