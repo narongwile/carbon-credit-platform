@@ -15,7 +15,7 @@ db:
 
 extraEnvVars:
   - name: PHPMYADMIN_ABSOLUTE_URI
-    value: "/"
+    value: https://pma.thermexpertise.com/
   - name: PHP_UPLOAD_MAX_FILESIZE
     value: 256M
   - name: PHP_POST_MAX_SIZE
