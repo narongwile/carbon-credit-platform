@@ -111,9 +111,11 @@ function PlatformHealth({
   migration: MigrationStatus | null
 }) {
   const live = useIsLive()
-  const dbCount = migration?.total ?? stats?.orgs ?? 1
-  const migratedCount = migration?.migrated?.length ?? dbCount
-  const isDbHealthy = migratedCount >= dbCount && (!migration?.failed || migration.failed.length === 0)
+  const dbCount = migration?.orgs?.length ?? stats?.orgs ?? 1
+  const behindCount = (migration?.orgsBehind ?? 0) + (migration?.controlBehind ?? 0)
+  const isDbHealthy = behindCount === 0 && (!migration?.orgs?.some((o) => !!o.error))
+  const dbLatency = `${dbCount} DBs`
+  const dbDetail = isDbHealthy ? '100% Up to date' : `${behindCount} Migration Pending`
 
   const services = [
     {
@@ -126,8 +128,8 @@ function PlatformHealth({
     {
       name: 'Multi-Tenant Database Pool',
       status: isDbHealthy ? ('operational' as const) : ('degraded' as const),
-      latency: `${migratedCount}/${dbCount} DBs`,
-      detail: isDbHealthy ? '100% Up to date' : 'Migration Pending',
+      latency: dbLatency,
+      detail: dbDetail,
       icon: Database,
     },
     {
@@ -354,8 +356,14 @@ export default function SuperAdminPage() {
         <StatCard
           icon={<Database size={18} />}
           label="Database Isolation"
-          value={migration ? `${migration.migrated.length} DBs` : 'Multi-Tenant'}
-          sub={migration?.failed?.length ? `${migration.failed.length} migration error` : 'Isolated DB per customer'}
+          value={migration ? `${migration.orgs.length} DBs` : 'Multi-Tenant'}
+          sub={
+            migration
+              ? (migration.orgsBehind > 0 || migration.controlBehind > 0)
+                ? `${migration.orgsBehind + migration.controlBehind} pending updates`
+                : 'Isolated DB per customer'
+              : 'Isolated DB per customer'
+          }
           color="#a78bfa"
           href="/superadmin/migrations"
         />
