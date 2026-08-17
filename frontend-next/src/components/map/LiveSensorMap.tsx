@@ -277,91 +277,20 @@ export default function LiveSensorMap({
      </div>`
   }
 
-  /** Fetch (or refresh) one device's real readings and re-render its popup.
-   * `force` is what keeps an OPEN popup live: the cache short-circuits the
-   * first-open case, but a popup left open through several fleet polls should
-   * keep showing current values rather than the ones from when it opened. */
-    // Transformer nameplate essentials — model, rated kVA and voltage class.
-    // Only rendered when AT LEAST ONE is present, so a node with no nameplate
-    // doesn't show a block of empty dashes.
-    const hasNameplate = np && (np.model || np.ratedKva != null || np.voltageClass)
-    const nameplateSection = hasNameplate
-      ? `<div style="${SECTION}">Nameplate</div>` +
-        row('Model', np.model) +
-        row('Rating', np.ratedKva != null ? `${np.ratedKva} kVA` : null) +
-        row('Voltage', np.voltageClass)
-      : ''
-    // Live readings fetched on first open. In-flight shows a subtle placeholder;
-    // once cached, the top 4 readings from this domain's alarm schema render as
-    // key/value rows.
-    const latData = latestRef.current.get(n.id)
-    const loadingLatest = inFlightRef.current.has(n.id)
-    const readingsSection = (() => {
-      if (loadingLatest) {
-        return `<div style="${SECTION}">Live Readings</div><div style="color:#64748b;font-size:11px;font-style:italic">Fetching readings…</div>`
-      }
-      if (!latData || !latData.values || Object.keys(latData.values).length === 0) return ''
-      // Pick up to 4 parameters that have values, in schema order
-      const schemaParams = ALARM_SCHEMA[n.domain]?.params ?? []
-      const entries: { label: string; value: string }[] = []
-      schemaParams.forEach((p) => {
-        const v = latData.values[p.key]
-        if (v != null && entries.length < 4) {
-          entries.push({ label: p.label, value: `${Number(v.toFixed?.(2) ?? v)} ${p.unit}`.trim() })
-        }
-      })
-      // Fallback: any keys present if schema didn't match
-      if (entries.length === 0) {
-        Object.entries(latData.values).slice(0, 4).forEach(([k, v]) => {
-          if (v != null) {
-            const meta = paramMeta(n.domain, k)
-            entries.push({ label: meta.label, value: `${Number((v as number).toFixed?.(2) ?? v)} ${meta.unit}`.trim() })
-          }
-        })
-      }
-      if (entries.length === 0) return ''
-      const timeLine = latData.time ? `<div style="color:#64748b;font-size:10px;margin-bottom:4px">Reading from ${esc(relativeTime(latData.time))}</div>` : ''
-      return `<div style="${SECTION}">Live Readings</div>${timeLine}` +
-        entries.map((e) => row(e.label, e.value)).join('')
-    })()
-    // Open full detail: transformer vs other domains route differently (rich
-    // transformer twin vs shared node twin).
-    const openBtn = onOpenDeviceRef.current
-      ? `<button type="button" class="gsm-open-btn" data-node-id="${n.id}" data-domain="${n.domain}"
-           style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;margin-top:6px;padding:6px 8px;border-radius:6px;border:1px solid #1e2433;background:#0d1117;color:#e2e8f0;font-size:11px;font-weight:600;cursor:pointer">
-           View Dashboard →
-         </button>`
-      : ''
-    return `
-      <div style="font-family:ui-sans-serif,system-ui,sans-serif;color:#f8fafc;min-width:210px;max-width:260px;padding:2px">
-        ${photo}
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
-          <div style="font-weight:700;font-size:13px;color:#ffffff;line-height:1.2">${esc(n.name)}</div>
-          ${badge}
-        </div>
-        <div style="color:#94a3b8;font-size:11px">${esc(n.location)} · <span style="font-family:monospace;font-size:10px">${esc(n.id)}</span></div>
-        ${approxLine}
-        ${nameplateSection}
-        ${readingsSection}
-        <div style="color:#64748b;font-size:10px;margin-top:6px">${esc(n.metricLabel)}: <b style="color:#cbd5e1">${esc(n.metricValue)}</b> · ${esc(fmtDateTime(n.lastSeen))}</div>
-        ${repositionBtn}
-        ${openBtn}
-      </div>
-    `
-  }
-
   const loadLatest = (id: string, force = false) => {
-    if (!force && (latestRef.current.has(id) || inFlightRef.current.has(id))) return
+    if (inFlightRef.current.has(id)) return
+    if (!force && latestRef.current.has(id)) return
+    if (!nodesRef.current.find((n) => n.id === id)?.deviceId) return
     inFlightRef.current.add(id)
-    api.fleetLatest(id).then((r) => {
-      inFlightRef.current.delete(id)
-      if (r) {
+    api.latest(id)
+      .then((r) => {
+        if (!r) return
         latestRef.current.set(id, r)
         const marker = markersRef.current.get(id)
-        const node = nodesRef.current.find((x) => x.id === id)
-        if (marker && node) marker.setPopupContent(popupHtml(node))
-      }
-    })
+        const fresh = nodesRef.current.find((n) => n.id === id)
+        if (marker && fresh) marker.setPopupContent(popupHtml(fresh))
+      })
+      .finally(() => { inFlightRef.current.delete(id) })
   }
 
   const syncMarkers = () => {
@@ -373,9 +302,6 @@ export default function LiveSensorMap({
       seen.add(n.id)
       const color = healthColor[n.health]
       const existing = markers.get(n.id)
-      // A device with no coordinate of its own is shown at the org's factory pin.
-      // It must not look like a surveyed position: hollow, dashed and dimmer, so
-      // "roughly at this site" is visibly different from "here".
       const style = n.approx
         ? { fillColor: color, fillOpacity: 0.25, color, weight: 2, dashArray: '3 3' }
         : { fillColor: color, fillOpacity: 1, color: '#ffffff', weight: 2, dashArray: undefined }
@@ -383,16 +309,11 @@ export default function LiveSensorMap({
         existing.setLatLng([n.lat, n.lng])
         existing.setStyle(style)
         existing.setPopupContent(popupHtml(n))
-        // Keep an open popup's readings as live as its status dot: this runs on
-        // every fleet poll, and setPopupContent alone would only re-render the
-        // values fetched when the popup first opened.
         if (existing.isPopupOpen?.()) loadLatest(n.id, true)
       } else {
         const m = L.circleMarker([n.lat, n.lng], { radius: 9, ...style })
           .addTo(map)
           .bindPopup(popupHtml(n))
-        // The popup is a raw HTML string with no back-reference to its node, so
-        // the popupopen handler below reads the id from the marker itself.
         m._gsmNodeId = n.id
         markers.set(n.id, m)
       }
@@ -400,7 +321,6 @@ export default function LiveSensorMap({
     markers.forEach((m, id) => {
       if (!seen.has(id)) { map.removeLayer(m); markers.delete(id) }
     })
-    // Fit the view to the markers only once, so live updates don't yank the map.
     if (!fittedRef.current && markers.size) {
       try { map.fitBounds(L.featureGroup(Array.from(markers.values())).getBounds().pad(0.3)); fittedRef.current = true } catch { /* single point */ }
     }
