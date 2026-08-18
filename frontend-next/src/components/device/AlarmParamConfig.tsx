@@ -11,7 +11,7 @@ import type { SensorDomain } from '@/types/fleet'
 import type { NodeAlarmRule, ParamRule } from '@/server/alarmEngine'
 import {
   ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Save, Plus, Trash2,
-  Search, SlidersHorizontal, Check, AlertTriangle, RefreshCw, X, ShieldAlert,
+  Search, Sliders, SlidersHorizontal, Check, AlertTriangle, RefreshCw, X, ShieldAlert,
   Gauge, Zap, Droplet, Radio, Thermometer, Box, Filter
 } from 'lucide-react'
 import clsx from 'clsx'
