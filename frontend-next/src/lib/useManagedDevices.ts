@@ -19,7 +19,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, useIsLive, type FleetNode } from './api'
 import { allManagedDevices, managedDevicesFromFleet, getSitesByOrg, getHostsByOrg } from './fleetData'
 import { statusFromLive } from './useFleetLive'
-import type { SensorHost } from '@/types/fleet'
+import { healthFromValues } from './alarmParams'
+import type { SensorHost, SensorDomain } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
 
 const DEVICE_TYPE: Record<NonNullable<ManagedDevice['domain']>, string> = {
@@ -179,7 +180,10 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
       // reading — preferred over the mock seed's fixed per-domain number even
       // when an id happens to collide with one, so a real device's page never
       // shows a made-up sensor count just because its id looks like a demo one.
-      const computedHealth = status === 'CRITICAL' ? 50 : status === 'WARNING' ? 80 : status === 'NORMAL' ? 100 : (seed?.domain === 'transformer' ? seed.healthIndex : 0)
+      const sample = n.last_sample || {}
+      const dynamicHealth = healthFromValues(sample, n.domain as SensorDomain)
+      const fallbackHealth = status === 'CRITICAL' ? 45 : status === 'WARNING' ? 75 : status === 'NORMAL' ? (seed?.healthIndex || 95) : 0
+      const computedHealth = dynamicHealth !== null ? dynamicHealth : fallbackHealth
       if (seed) {
         if (seed.domain === 'transformer') {
           const np = nameplates[n.id]

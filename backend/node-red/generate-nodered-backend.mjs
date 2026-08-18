@@ -2745,33 +2745,28 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 const pool=global.get('resolvePool')(orgId);
 (async()=>{
   const acc = (au.role==='superadmin'||au.role==='admin') ? null : await global.get('accessFor')(au.userId);
-  let sql = "SELECT e.id,e.node_id,e.org_id,e.department_id,e.param_key,e.param_label,e.severity,e.kind,e.value,e.threshold,e.unit,e.raised_at,e.acknowledged_at,e.acknowledged_by,e.event_problem_id,e.cleared_at,n.domain,n.site_id,n.department_id AS node_department_id,n.name AS node_name FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.org_id=?";
-  const args=[orgId];
+  let sql = "SELECT e.id,e.node_id,e.org_id,e.department_id,e.param_key,e.param_label,e.severity,e.kind,e.value,e.threshold,e.unit,e.raised_at,e.acknowledged_at,e.acknowledged_by,e.event_problem_id,e.cleared_at,n.domain,n.site_id,n.department_id AS node_department_id,n.name AS node_name FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE (e.org_id=? OR e.org_id IS NULL OR n.org_id=? OR n.org_id IS NULL)";
+  const args=[orgId, orgId];
   if(openOnly){ sql+=" AND e.cleared_at IS NULL AND e.acknowledged_at IS NULL"; }
   sql += " ORDER BY e.raised_at DESC";
-  // Admin/superadmin (unscoped, whole org) gets the same cap fleetListFunc-
-  // style endpoints elsewhere in this file use for an unbounded query. A
-  // scoped (non-admin) caller does NOT get this cap in SQL: it used to apply
-  // here too, before the visibility filter below ever ran — so a busier
-  // department/domain the caller cannot even see could fill the cap on its
-  // own and silently push the caller's own real, open alarms out of the
-  // result entirely. In practice every scoped caller already asks with
-  // open=1 (unacknowledged+uncleared, a naturally bounded set), so this
-  // stays bounded in memory without a SQL-level cap; the JS filter's own
-  // .slice(0,300) below is the caller-visible cap instead.
   if(!acc) sql += " LIMIT 300";
-  const[rows]=await pool.query(sql,args);
+  let rows = [];
+  try {
+    const [r] = await pool.query(sql, args);
+    rows = r || [];
+  } catch(err) {
+    try {
+      const [r2] = await global.get('pool').query(sql, args);
+      rows = r2 || [];
+    } catch(e2) {
+      node.warn('orgAlarms query error: ' + (e2.message || err.message));
+    }
+  }
   const grants = acc ? await global.get('nodeDeptMap')(pool, orgId) : {};
   const vis = acc ? rows.filter(r=>{
     const lvl=acc.levels[r.domain]||'none'; if(lvl==='none') return false;
     if(!global.get('deptVisible')(acc, r.node_department_id, grants[r.node_id])) return false;
     if(!global.get('siteVisible')(acc, r.site_id)) return false;
-    // Per-user device restriction (migrate-v42). Missing here while every
-    // other read path had it, which broke this function's own stated rule
-    // that "which alarms can I see" must never disagree with "which devices
-    // can I see": a user limited to three devices still saw the whole org's
-    // alarm feed, including device names and fault text for devices they
-    // cannot open.
     if(!global.get('nodeVisible')(acc, r.node_id)) return false;
     return true;
   }).slice(0,300) : rows;
@@ -2995,7 +2990,7 @@ const pool=global.get('resolvePool')(orgId);   // org DB for the fleet query (ac
     let sample=n.last_sample;
     try{ if(typeof sample==='string') sample=JSON.parse(sample); }catch(e){ sample=null; }
     n.sensor_count = sample && typeof sample==='object' ? Object.keys(sample).length : 0;
-    delete n.last_sample;
+    n.last_sample = sample && typeof sample==='object' ? sample : null;
   }
   msg.headers=__CORS; msg.payload=vis; node.send(msg);})()` + bbErr
 

@@ -14,9 +14,10 @@ import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
-import CustomerAlarmsView from '@/components/CustomerAlarmsView'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
-import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon } from 'lucide-react'
+import { healthFromValues } from '@/lib/alarmParams'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
+import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert } from 'lucide-react'
 import { fmtHM } from '@/lib/displayTime'
 import clsx from 'clsx'
 
@@ -26,10 +27,18 @@ const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet }
 const statusColor = (s: string) => (s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280')
 
-function metric(h: SensorHost): string {
-  if (h.domain === 'transformer') return `Health ${h.healthIndex}`
-  if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C`
-  return `set ${h.setLowC}–${h.setHighC}°C`
+function metric(h: SensorHost, liveVal?: Record<string, number>): string {
+  if (h.domain === 'transformer') {
+    const dyn = liveVal ? healthFromValues(liveVal, 'transformer') : null
+    const health = dyn ?? h.healthIndex ?? 95
+    return `Health ${health}%`
+  }
+  if (h.domain === 'carbonNode') {
+    const t = liveVal?.chamberTemp ?? liveVal?.tempHigh
+    return `${t != null ? `${t.toFixed(1)}°C · ` : ''}${h.targetMinC}–${h.targetMaxC}°C`
+  }
+  const t = liveVal?.bloodTemp ?? liveVal?.tempHigh
+  return `${t != null ? `${t.toFixed(1)}°C · ` : ''}set ${h.setLowC}–${h.setHighC}°C`
 }
 
 // --- Overview tab (the page's original content) ----------------------------
@@ -41,21 +50,11 @@ const DASH_TABS = [
 
 function OverviewTab() {
   const live = useIsLive()
-  // The real session's org — getViewerUser(viewerUserId)?.orgId used to
-  // resolve this, but viewerUserId is the customer portal's DEMO "acting
-  // viewer" picker (defaults to a persona id a real login never sets), so it
-  // silently fell back to the 'org-1' literal for every real viewer whose
-  // org was not org-1.
-  const orgId = useSessionOrgId()
+  const sessionOrgId = useSessionOrgId()
+  const storeOrgId = useAppStore((s) => s.selectedOrgId)
+  const orgId = (sessionOrgId && sessionOrgId !== 'org-1') ? sessionOrgId : (storeOrgId || sessionOrgId || 'org-1')
   const { viewerUserId } = useAppStore()
 
-  // Roster and status both from /api/fleet in Live mode. The backend already
-  // scopes this to the products the SIGNED-IN viewer's department(s) may
-  // access (accessFor(), the same rule fleetListFunc's own visibility filter
-  // uses) — re-filtering by the mock viewerDomains() on top of a real,
-  // already-scoped list only ever narrowed it to nothing, since that helper
-  // never recognizes a real user id. Only the demo/offline fallback (the
-  // seed hosts, unscoped) still needs it.
   const { hosts, fromBackend } = useFleetHosts(orgId)
   const allowed = viewerDomains(viewerUserId)
   const devices = fromBackend ? hosts : hosts.filter((h) => allowed.includes(h.domain))
@@ -64,17 +63,47 @@ function OverviewTab() {
   const warning = devices.filter((d) => d.status === 'WARNING').length
   const critical = devices.filter((d) => d.status === 'CRITICAL' || d.status === 'OFFLINE').length
 
-  // Real, open alarms for this org (department/domain-scoped server-side) —
-  // useAppStore().alarms is seeded once from mockData.ts and never refreshed,
-  // so it never showed a real alarm regardless of mode.
-  const { alarms: liveAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 20000 })
+  // Real, open alarms for this org (department/domain-scoped server-side)
+  const { alarms: liveAlarms, refetch: refetchAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 5000 })
   const { alarms: mockAlarms } = useAppStore()
+  const [liveFrames, setLiveFrames] = useState<Record<string, Record<string, number>>>({})
+  const [, tick] = useState(0)
+
+  useEffect(() => {
+    if (!live) return
+    const off = subscribeTelemetry((f) => {
+      if (f?.id) {
+        if (f.values) {
+          setLiveFrames((prev) => ({ ...prev, [f.id]: f.values }))
+        }
+        if (f.type === 'alarm' || f.alarm) {
+          refetchAlarms()
+        }
+      }
+    })
+    const timer = setInterval(() => tick((n) => n + 1), 5000)
+    return () => {
+      off()
+      clearInterval(timer)
+    }
+  }, [live, refetchAlarms])
+
   const orgAlarms = live
     ? liveAlarms.map((a) => ({
-        id: a.id, message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
-        transformerName: a.nodeName, timestamp: a.raisedAt, acknowledged: !!a.acknowledgedAt, severity: a.severity,
+        id: a.id,
+        nodeId: a.nodeId,
+        message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
+        transformerName: a.nodeName,
+        timestamp: a.raisedAt,
+        acknowledged: !!a.acknowledgedAt,
+        severity: a.severity,
+        domain: a.domain,
       }))
-    : mockAlarms.filter((a) => a.orgId === orgId)
+    : mockAlarms.filter((a) => a.orgId === orgId).map((a) => ({
+        ...a,
+        nodeId: a.transformerId,
+        domain: 'transformer' as SensorDomain,
+      }))
 
   return (
     <div className="space-y-6">
@@ -104,6 +133,11 @@ function OverviewTab() {
               {devices.map((d) => {
                 const meta = DOMAIN_META[d.domain]
                 const Icon = domainIcon[d.domain]
+                const liveVal = liveFrames[d.id]
+                const dynHealth = d.domain === 'transformer' ? (liveVal ? healthFromValues(liveVal, 'transformer') : null) : null
+                const healthVal = dynHealth ?? d.healthIndex ?? 95
+                const hColor = healthVal >= 80 ? '#4ade80' : healthVal >= 60 ? '#fbbf24' : '#ef4444'
+
                 return (
                   <Link key={d.id} href={d.domain === 'transformer' ? `/customer/transformers/detail?id=${d.id}` : `/customer/devices/detail?id=${d.id}`}>
                     <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={surface}>
@@ -115,12 +149,26 @@ function OverviewTab() {
                             <div className="text-[10px]" style={{ color: meta.accent }}>{meta.platform}</div>
                           </div>
                         </div>
-                        <span className="w-2.5 h-2.5 rounded-full" style={{ background: statusColor(d.status), boxShadow: `0 0 6px ${statusColor(d.status)}` }} />
+                        <span className={`w-2.5 h-2.5 rounded-full ${d.status === 'NORMAL' ? 'animate-pulse' : ''}`} style={{ background: statusColor(d.status), boxShadow: `0 0 6px ${statusColor(d.status)}` }} />
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-slate-400">{metric(d)}</span>
+                        <span className="text-xs text-slate-400">{metric(d, liveVal)}</span>
                         <ChevronRight size={15} className="text-slate-600" />
                       </div>
+                      {d.domain === 'transformer' && (
+                        <div className="mt-2.5 pt-2 border-t border-slate-800/60 flex items-center justify-between">
+                          <span className="text-[10px] text-slate-500">Health Index</span>
+                          <div className="flex items-center gap-2">
+                            <div className="w-20 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all duration-500"
+                                style={{ width: `${healthVal}%`, background: hColor }}
+                              />
+                            </div>
+                            <span className="text-[10px] font-bold" style={{ color: hColor }}>{healthVal}%</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </Link>
                 )
@@ -133,21 +181,47 @@ function OverviewTab() {
 
         {/* All notification alarms */}
         <div className="space-y-3">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2"><Bell size={14} className="text-indigo-400" /> All Notifications</h3>
-          <div className="space-y-2 max-h-[460px] overflow-auto">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Bell size={14} className="text-indigo-400" /> All Notifications
+            </h3>
+            {orgAlarms.length > 0 && (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-400 font-semibold">
+                {orgAlarms.length}
+              </span>
+            )}
+          </div>
+          <div className="space-y-2 max-h-[480px] overflow-auto pr-1">
             {orgAlarms.length ? orgAlarms.map((a) => {
               const c = statusColor(a.severity === 'CRITICAL' ? 'CRITICAL' : a.severity === 'WARNING' ? 'WARNING' : 'NORMAL')
+              const linkHref = a.domain === 'transformer' ? `/customer/transformers/detail?id=${a.nodeId}` : `/customer/devices/detail?id=${a.nodeId}`
               return (
-                <div key={a.id} className="p-3 rounded-xl" style={{ background: `${c}10`, border: `1px solid ${c}26`, opacity: a.acknowledged ? 0.6 : 1 }}>
-                  <div className="text-sm text-slate-200 leading-snug">{a.message}</div>
-                  <div className="flex items-center gap-2 mt-1.5 text-[11px] text-slate-500">
-                    <span>{a.transformerName}</span>
-                    <span className="flex items-center gap-1"><Clock size={9} />{fmtHM(a.timestamp)}</span>
-                    {a.acknowledged && <span className="text-green-400">· ACK</span>}
+                <Link key={a.id} href={linkHref}>
+                  <div
+                    className="p-3 rounded-xl hover:border-indigo-500/40 transition-all cursor-pointer mb-2"
+                    style={{ background: `${c}10`, border: `1px solid ${c}26`, opacity: a.acknowledged ? 0.6 : 1 }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="text-sm text-slate-200 leading-snug font-medium">{a.message}</div>
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                        style={{ background: `${c}22`, color: c, border: `1px solid ${c}44` }}
+                      >
+                        {a.severity}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 mt-2 text-[11px] text-slate-500">
+                      <span className="text-slate-400 font-medium">{a.transformerName}</span>
+                      <div className="flex items-center gap-1.5">
+                        <Clock size={10} />
+                        <span>{fmtHM(a.timestamp)}</span>
+                        {a.acknowledged && <span className="text-green-400 font-semibold">· ACK</span>}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </Link>
               )
-            }) : <div className="rounded-xl p-4 text-center text-slate-600 text-xs" style={surface}>No notifications.</div>}
+            }) : <div className="rounded-xl p-6 text-center text-slate-600 text-xs" style={surface}>No active notifications for this organization.</div>}
           </div>
         </div>
       </div>

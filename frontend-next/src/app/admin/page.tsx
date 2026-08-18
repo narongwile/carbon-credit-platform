@@ -12,6 +12,7 @@ import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { useIsLive } from '@/lib/api'
+import { healthFromValues } from '@/lib/alarmParams'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock } from 'lucide-react'
@@ -120,14 +121,22 @@ function TransformerCard({ transformer }: { transformer: Transformer }) {
 function statusColorH(s: string) {
   return s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280'
 }
-function hostMetric(h: SensorHost): string {
-  if (h.domain === 'transformer') return `Health ${h.healthIndex}`
+function hostMetric(h: SensorHost, liveVal?: Record<string, number>): string {
+  if (h.domain === 'transformer') {
+    const dyn = liveVal ? healthFromValues(liveVal, 'transformer') : null
+    const health = dyn ?? h.healthIndex ?? 95
+    return `Health ${health}%`
+  }
   if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} cr`
   return `set ${h.setLowC}–${h.setHighC}°C`
 }
-function HostCard({ host, href, liveStatus }: { host: SensorHost; href: string; liveStatus?: string }) {
+function HostCard({ host, href, liveStatus, liveVal }: { host: SensorHost; href: string; liveStatus?: string; liveVal?: Record<string, number> }) {
   const meta = DOMAIN_META[host.domain]
   const status = liveStatus ?? host.status
+  const dynHealth = host.domain === 'transformer' ? (liveVal ? healthFromValues(liveVal, 'transformer') : null) : null
+  const healthVal = dynHealth ?? host.healthIndex ?? 95
+  const hColor = healthVal >= 80 ? '#4ade80' : healthVal >= 60 ? '#fbbf24' : '#ef4444'
+
   return (
     <Link href={href}>
       <div className="rounded-xl p-4 cursor-pointer hover:border-indigo-500/40 transition-all hover:-translate-y-0.5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -139,9 +148,20 @@ function HostCard({ host, href, liveStatus }: { host: SensorHost; href: string; 
           <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold" style={{ color: meta.accent, background: `${meta.accent}1f` }}>{meta.platform}</span>
         </div>
         <div className="flex items-center justify-between">
-          <span className="text-xs text-slate-400">{hostMetric(host)}</span>
+          <span className="text-xs text-slate-400">{hostMetric(host, liveVal)}</span>
           <span className="text-[10px] text-slate-600">{host.sensorCount} sensors</span>
         </div>
+        {host.domain === 'transformer' && (
+          <div className="mt-2.5 pt-2 border-t border-slate-800/60 flex items-center justify-between">
+            <span className="text-[10px] text-slate-500">Health Index</span>
+            <div className="flex items-center gap-2">
+              <div className="w-16 h-1 rounded-full bg-slate-800 overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${healthVal}%`, background: hColor }} />
+              </div>
+              <span className="text-[10px] font-bold" style={{ color: hColor }}>{healthVal}%</span>
+            </div>
+          </div>
+        )}
       </div>
     </Link>
   )
@@ -156,6 +176,7 @@ function OverviewTab() {
   const { hosts, fromBackend } = useFleetHosts(orgId)
   const alarms = getAlarmsByOrg(orgId)
   const [liveFrames, setLiveFrames] = useState<Record<string, number>>({})
+  const [liveValues, setLiveValues] = useState<Record<string, Record<string, number>>>({})
   const [, tick] = useState(0)
 
   useEffect(() => {
@@ -163,6 +184,9 @@ function OverviewTab() {
     const off = subscribeTelemetry((f) => {
       if (f?.id && f.type !== 'alarm') {
         setLiveFrames((prev) => ({ ...prev, [f.id]: Date.now() }))
+        if (f.values) {
+          setLiveValues((prev) => ({ ...prev, [f.id]: f.values }))
+        }
       }
     })
     const timer = setInterval(() => tick((n) => n + 1), 5000)
@@ -193,7 +217,7 @@ function OverviewTab() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-white">All Devices Overview</h2>
-          <p className="text-sm text-slate-500">Every sensor across every product in your organization</p>
+          <p className="text-sm text-slate-500">Every sensor across your organization</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs"><CheckCircle size={12} className="text-green-400" /><span className="text-slate-400">{normal} Normal</span></div>
@@ -202,12 +226,11 @@ function OverviewTab() {
         </div>
       </div>
 
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* Summary stats — Products card removed per specification */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           { label: 'Total Devices', value: hosts.length, color: '#6366f1' },
           { label: 'Total Sensors', value: totalSensors, color: '#06b6d4' },
-          { label: 'Products', value: new Set(hosts.map((h) => h.domain)).size, color: '#a78bfa' },
           { label: 'Active Alarms', value: unacked, color: unacked > 0 ? '#ef4444' : '#4ade80' },
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -227,7 +250,7 @@ function OverviewTab() {
             <h3 className="text-sm font-bold" style={{ color: meta.accent }}>{meta.platform} — {meta.label}s ({list.length})</h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} liveStatus={eff(h)} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : `/admin/nodes/detail?id=${h.id}`} />
+                <HostCard key={h.id} host={h} liveStatus={eff(h)} liveVal={liveValues[h.id]} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : `/admin/nodes/detail?id=${h.id}`} />
               ))}
             </div>
           </div>

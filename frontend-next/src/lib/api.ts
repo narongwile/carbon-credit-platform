@@ -1177,6 +1177,8 @@ export interface FleetNode {
    * (device_presence.last_sample) — the real count of what it's actually
    * publishing right now, not a fixed per-domain guess. */
   sensor_count?: number
+  /** Real sensor values from device_presence.last_sample */
+  last_sample?: Record<string, number> | null
 }
 
 /** How a schedule decides who receives it. See migrate-v41. */
