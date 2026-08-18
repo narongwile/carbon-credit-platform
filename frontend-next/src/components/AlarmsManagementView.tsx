@@ -9,6 +9,7 @@ import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
 import { fmtDateTime, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
+import toast from 'react-hot-toast'
 
 // Only id/label are ever read (the ack picker); department_id/domain came
 // along in the API response but nothing here scopes by them — this page is
@@ -161,9 +162,26 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   const onAck = async (id: string, problemId?: string) => {
     // Guarded here as well as on the button: a disabled attribute is a UI
     // affordance, not a rule — this is the one path that actually writes.
-    if (problems.length > 0 && !problemId) return
-    if (live) { await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId }); refetchAlarms(); return }
-    acknowledgeAlarm(id, 'admin')
+    if (problems.length > 0 && !problemId) {
+      toast.error('Please select a root cause first')
+      return
+    }
+    try {
+      if (live) {
+        const r = await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId })
+        if (!r?.ok && r?.status && r.status >= 400) {
+          toast.error('Failed to acknowledge alarm')
+          return
+        }
+        toast.success('Alarm acknowledged')
+        refetchAlarms()
+        return
+      }
+      acknowledgeAlarm(id, 'admin')
+      toast.success('Alarm acknowledged')
+    } catch {
+      toast.error('Failed to acknowledge alarm')
+    }
   }
 
   const EXPORT_HEADERS = ['Severity', 'Transformer', 'Message', 'Sensor', 'Value', 'Unit', 'Timestamp', 'Status', 'Acknowledged By']
