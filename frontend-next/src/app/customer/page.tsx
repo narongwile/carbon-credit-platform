@@ -30,7 +30,7 @@ const statusColor = (s: string) => (s === 'NORMAL' ? '#4ade80' : s === 'WARNING'
 function metric(h: SensorHost, liveVal?: Record<string, number>): string {
   if (h.domain === 'transformer') {
     const dyn = liveVal ? healthFromValues(liveVal, 'transformer') : null
-    const health = dyn ?? h.healthIndex ?? 95
+    const health = dyn ?? (h.domain === 'transformer' ? h.healthIndex : 95)
     return `Health ${health}%`
   }
   if (h.domain === 'carbonNode') {
@@ -135,7 +135,7 @@ function OverviewTab() {
                 const Icon = domainIcon[d.domain]
                 const liveVal = liveFrames[d.id]
                 const dynHealth = d.domain === 'transformer' ? (liveVal ? healthFromValues(liveVal, 'transformer') : null) : null
-                const healthVal = dynHealth ?? d.healthIndex ?? 95
+                const healthVal = dynHealth ?? (d.domain === 'transformer' ? d.healthIndex : 95)
                 const hColor = healthVal >= 80 ? '#4ade80' : healthVal >= 60 ? '#fbbf24' : '#ef4444'
 
                 return (

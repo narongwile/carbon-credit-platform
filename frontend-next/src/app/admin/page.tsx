@@ -124,7 +124,7 @@ function statusColorH(s: string) {
 function hostMetric(h: SensorHost, liveVal?: Record<string, number>): string {
   if (h.domain === 'transformer') {
     const dyn = liveVal ? healthFromValues(liveVal, 'transformer') : null
-    const health = dyn ?? h.healthIndex ?? 95
+    const health = dyn ?? (h.domain === 'transformer' ? h.healthIndex : 95)
     return `Health ${health}%`
   }
   if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} cr`
@@ -134,7 +134,7 @@ function HostCard({ host, href, liveStatus, liveVal }: { host: SensorHost; href:
   const meta = DOMAIN_META[host.domain]
   const status = liveStatus ?? host.status
   const dynHealth = host.domain === 'transformer' ? (liveVal ? healthFromValues(liveVal, 'transformer') : null) : null
-  const healthVal = dynHealth ?? host.healthIndex ?? 95
+  const healthVal = dynHealth ?? (host.domain === 'transformer' ? host.healthIndex : 95)
   const hColor = healthVal >= 80 ? '#4ade80' : healthVal >= 60 ? '#fbbf24' : '#ef4444'
 
   return (
