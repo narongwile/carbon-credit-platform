@@ -182,7 +182,8 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
       // shows a made-up sensor count just because its id looks like a demo one.
       const sample = n.last_sample || {}
       const dynamicHealth = healthFromValues(sample, n.domain as SensorDomain)
-      const fallbackHealth = status === 'CRITICAL' ? 45 : status === 'WARNING' ? 75 : status === 'NORMAL' ? (seed?.healthIndex || 95) : 0
+      const seedHealth = (seed && seed.domain === 'transformer') ? seed.healthIndex : 95
+      const fallbackHealth = status === 'CRITICAL' ? 45 : status === 'WARNING' ? 75 : status === 'NORMAL' ? seedHealth : 0
       const computedHealth = dynamicHealth !== null ? dynamicHealth : fallbackHealth
       if (seed) {
         if (seed.domain === 'transformer') {
