@@ -205,7 +205,7 @@
     "type": "function",
     "z": "be",
     "name": "notify (Email/LINE/Telegram/GChat · per-tenant)",
-    "func": "\nconst e = msg.payload;\nif (!e) return null;\n// DB-per-tenant: notification_channels live in the alarm's org DB (control pool when flag off).\nconst pool = global.get('resolvePool')(e.orgId);\n// users + user_prefs are ALWAYS control-DB (accessFor/meGetFunc/mePutFunc all read/write\n// them via global.get('pool'), never resolvePool) — the per-user channel lookup below must\n// use the same pool those writes went to, or it joins against an empty/unmirrored table in\n// the tenant DB and silently notifies nobody.\nconst controlPool = global.get('pool');\nconst __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}\n\n// Domain-aware category & condition risk insight from industrial spec\nconst __RISK_MAP = {\n  oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },\n  windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },\n  overVoltage: { cat: 'Voltage', critRisk: 'Equipment damage risk (>+10% rated voltage)', warnRisk: 'Over voltage warning (>+5% rated voltage)' },\n  underVoltage: { cat: 'Voltage', critRisk: 'Low voltage operational trip (<-10% rated voltage)', warnRisk: 'Under voltage warning (<-5% rated voltage)' },\n  voltageA: { cat: 'Voltage', critRisk: 'Phase A equipment damage risk (>253V)', warnRisk: 'Phase A over voltage (>241.5V)' },\n  voltageB: { cat: 'Voltage', critRisk: 'Phase B equipment damage risk (>253V)', warnRisk: 'Phase B over voltage (>241.5V)' },\n  voltageC: { cat: 'Voltage', critRisk: 'Phase C equipment damage risk (>253V)', warnRisk: 'Phase C over voltage (>241.5V)' },\n  load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },\n  voltageUnbalance: { cat: 'Power Quality', critRisk: 'Phase unbalance critical (>5%)', warnRisk: 'Voltage unbalance high (>2%)' },\n  externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },\n  online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },\n};\nconst __info = __RISK_MAP[e.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };\nconst __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;\nconst __catText = __info.cat;\nconst __sevEmoji = e.severity === 'CRITICAL' ? '🔴' : '🟡';\n\nconst __isOffline = e.kind === 'offline';\nconst __valueLine = __isOffline ? 'No telemetry received' : (e.value + (e.unit||''));\nconst __limitLine = __isOffline ? '—' : (e.threshold + (e.unit||''));\nconst text = '\\n' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + '\\n'\n  + '🏷 Category: ' + __catText + '\\n'\n  + '⚡️ Device: ' + e.nodeId + '\\n'\n  + '📊 Value: ' + __valueLine + ' (Limit: ' + __limitLine + ')\\n'\n  + '💡 Risk: ' + __riskText + '\\n'\n  + '🕒 Time: ' + when;\nconst subject = 'ONEOPS ' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + ' (' + __catText + ')';\n\n// --- Rich message payloads --------------------------------------------------\nconst __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(/\\/+$/,'');\nconst __linkFor = (role) => {\n  if (!__base || __base === '*') return '';\n  const viewer = role === 'viewer' || role === 'customer';\n  return __base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId);\n};\nconst __sevColor = e.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';\nconst __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\n\n// LINE Flex bubble (Messaging API push only; LINE Notify takes plain text).\nconst __flex = (link) => ({ type:'flex', altText: text, contents: { type:'bubble',\n  header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[\n    { type:'text', text: e.severity + ' · ' + __catText, color:'#FFFFFF', size:'xs', weight:'bold' },\n    { type:'text', text: String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },\n  body: { type:'box', layout:'vertical', spacing:'sm', contents: [\n    ['Category', String(__catText)],\n    ['Device', String(e.nodeId)],\n    ['Value', String(__valueLine)],\n    ['Limit', String(__limitLine)],\n    ['Risk/Condition', String(__riskText)],\n    ['Time', String(when)],\n  ].map(([k,v]) => ({ type:'box', layout:'baseline', spacing:'sm', contents:[\n    { type:'text', text:k, size:'sm', color:'#94A3B8', flex:3 },\n    { type:'text', text:v, size:'sm', color:'#0F172A', flex:5, weight: k==='Risk/Condition'?'bold':'regular', wrap:true } ] })) },\n  footer: link ? { type:'box', layout:'vertical', contents:[\n    { type:'button', style:'primary', color:'#6366F1', height:'sm',\n      action:{ type:'uri', label:'Open device', uri: link } } ] } : undefined } });\n\n// Telegram: HTML text + a URL button under the message.\nconst __tgText = '<b>' + __sevEmoji + ' [' + __esc(e.severity) + '] ' + __esc(e.paramLabel || 'Alarm') + '</b>\\n'\n  + '🏷 <b>Category:</b> ' + __esc(__catText) + '\\n'\n  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n'\n  + '📊 <b>Value:</b> ' + __esc(__valueLine) + ' (Limit: ' + __esc(__limitLine) + ')\\n'\n  + '💡 <b>Risk/Condition:</b> ' + __esc(__riskText) + '\\n'\n  + '🕒 <b>Time:</b> ' + __esc(when);\nconst __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',\n  reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined });\n\n// Google Chat cardsV2 — 'text' rides along so notifications and clients that\n// cannot render cards still show something useful.\nconst __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {\n  header: { title: (e.severity==='CRITICAL'?'🔴 ':'🟠 ') + String(e.paramLabel||'Alarm'), subtitle: __catText + ' · ' + String(e.nodeId) },\n  sections: [{ widgets: [\n    { decoratedText: { topLabel:'Category', text: String(__catText) } },\n    { decoratedText: { topLabel:'Value', text: String(__valueLine) } },\n    { decoratedText: { topLabel:'Limit', text: String(__limitLine) } },\n    { decoratedText: { topLabel:'Condition / Risk', text: String(__riskText) } },\n    { decoratedText: { topLabel:'Time', text: String(when) } },\n    ...(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : []),\n  ] }] } }] });\n(async () => {\n  try {\n    // Per-tenant channels (org + dept) from DB — same routing as the Express service.\n    let channels = [];\n    if (pool && e.orgId) {\n      const [rows] = await pool.query(\"SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)\", [e.orgId, e.departmentId || null]);\n      channels = rows;\n    }\n    const nc = await global.get('notifyConfig')();\n    // Fallback: DB/env single destination when no per-org DB channels are configured.\n    if (!channels.length) {\n      if (nc.lineToken) channels.push({ channel:'line', target:'' });\n      if (nc.telegramToken) channels.push({ channel:'telegram', target:'' });\n      if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });\n    }\n    for (const c of channels) {\n      if (c.min_severity === 'CRITICAL' && e.severity !== 'CRITICAL') continue;   // severity filter\n      try {\n        if (c.channel === 'email') {\n          const mc = await global.get('mailConfig')();\n          if (!mc.transport || !c.target) { node.warn('notify:email skipped — SMTP not configured / target missing'); continue; }\n          await mc.transport.sendMail({ from: mc.from, to: c.target, subject, text });\n        } else if (c.channel === 'line') {\n          // An org target may be \"channelAccessToken@userId\" (Messaging API push,\n          // which carries the Flex card) or a bare LINE Notify token (text only).\n          const raw = String(c.target || nc.lineToken || '');\n          const at = raw.lastIndexOf('@');\n          const tok = at > 0 ? raw.slice(0, at) : raw;\n          const to  = at > 0 ? raw.slice(at + 1) : '';\n          if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});\n          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});\n        } else if (c.channel === 'telegram') {\n          const tg = nc.telegramToken; const chat = c.target || nc.telegramChatId;\n          if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});\n        } else if (c.channel === 'googlechat') {\n          const url = c.target || nc.googleChatWebhook;\n          if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});\n        }\n      } catch(err){ node.error('notify:'+c.channel+' '+err.message); }\n    }\n\n    // --- Per-user channels (user_prefs) -------------------------------------\n    // The device pages let a user pick which of their own channels should alert\n    // them about a given node (\"My Alert Settings\"); until now that selection\n    // was stored and never read, so those switches did nothing.\n    //\n    // Strictly opt-in: only users with a saved selection for THIS node are\n    // contacted. Notifying everyone whose profile happens to hold a token would\n    // turn switching this on into a mass mailing.\n    try {\n      const [urows] = await controlPool.query(\n        \"SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?\",\n        [e.orgId]);\n      for (const u of urows) {\n        let pf = {};\n        try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { continue; }\n        const sel = (pf.alertChannels || {})[e.nodeId];\n        if (!sel) continue;\n        // A user attached to a department only hears about that department's\n        // devices; admins (and users with no department) hear everything.\n        const isAdmin = u.role === 'admin' || u.role === 'superadmin';\n        if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;\n\n        if (sel.email && u.email) {\n          try {\n            const mc = await global.get('mailConfig')();\n            if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject, text });\n            else node.warn('notify:user email skipped — SMTP not configured');\n          } catch(err){ node.error('notify:user-email '+err.message); }\n        }\n        // Deep link points at the page this user can actually open: a viewer\n        // following an /admin/ link would just be bounced by the portal guard.\n        const link = __linkFor(u.role);\n        if (sel.telegram && pf.telegramBotApi) {\n          try {\n            // Profile field accepts \"botToken\" or \"botToken@chat_id\" (the token\n            // alone needs the platform-wide chat id to have somewhere to go).\n            const at = String(pf.telegramBotApi).lastIndexOf('@');\n            const tok = at > 0 ? String(pf.telegramBotApi).slice(0, at) : String(pf.telegramBotApi);\n            const chat = at > 0 ? String(pf.telegramBotApi).slice(at + 1) : nc.telegramChatId;\n            if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, link))});\n            else node.warn('notify:user telegram skipped — no chat id for '+u.id);\n          } catch(err){ node.error('notify:user-telegram '+err.message); }\n        }\n        if (sel.line && pf.lineMsgApi) {\n          try {\n            // \"channelAccessToken@userId\" → Messaging API push, which is the only\n            // form that can carry the Flex card (LINE Notify was retired in 2025\n            // and only ever accepted plain text).\n            const at = String(pf.lineMsgApi).lastIndexOf('@');\n            const tok = at > 0 ? String(pf.lineMsgApi).slice(0, at) : String(pf.lineMsgApi);\n            const to  = at > 0 ? String(pf.lineMsgApi).slice(at + 1) : '';\n            if (to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(link)]})});\n            else await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});\n          } catch(err){ node.error('notify:user-line '+err.message); }\n        }\n        if (sel.googlechat && pf.googleChatApi) {\n          try {\n            await fetch(String(pf.googleChatApi),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(link))});\n          } catch(err){ node.error('notify:user-googlechat '+err.message); }\n        }\n      }\n    } catch(err){ node.warn('notify:user-prefs '+err.message); }\n  } catch(err){ node.error('notify: '+err.message); }\n})();\nreturn null;\n",
+    "func": "\nconst e = msg.payload;\nif (!e) return null;\n// DB-per-tenant: notification_channels live in the alarm's org DB (control pool when flag off).\nconst pool = global.get('resolvePool')(e.orgId);\n// users + user_prefs are ALWAYS control-DB (accessFor/meGetFunc/mePutFunc all read/write\n// them via global.get('pool'), never resolvePool) — the per-user channel lookup below must\n// use the same pool those writes went to, or it joins against an empty/unmirrored table in\n// the tenant DB and silently notifies nobody.\nconst controlPool = global.get('pool');\nconst __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}\n\n// Domain-aware category & condition risk insight from industrial spec\nconst __RISK_MAP = {\n  oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },\n  windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },\n  overVoltage: { cat: 'Voltage', critRisk: 'Equipment damage risk (>+10% rated voltage)', warnRisk: 'Over voltage warning (>+5% rated voltage)' },\n  underVoltage: { cat: 'Voltage', critRisk: 'Low voltage operational trip (<-10% rated voltage)', warnRisk: 'Under voltage warning (<-5% rated voltage)' },\n  voltageA: { cat: 'Voltage', critRisk: 'Phase A equipment damage risk (>253V)', warnRisk: 'Phase A over voltage (>241.5V)' },\n  voltageB: { cat: 'Voltage', critRisk: 'Phase B equipment damage risk (>253V)', warnRisk: 'Phase B over voltage (>241.5V)' },\n  voltageC: { cat: 'Voltage', critRisk: 'Phase C equipment damage risk (>253V)', warnRisk: 'Phase C over voltage (>241.5V)' },\n  load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },\n  voltageUnbalance: { cat: 'Power Quality', critRisk: 'Phase unbalance critical (>5%)', warnRisk: 'Voltage unbalance high (>2%)' },\n  externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },\n  online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },\n};\nconst __info = __RISK_MAP[e.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };\nconst __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;\nconst __catText = __info.cat;\nconst __sevEmoji = e.severity === 'CRITICAL' ? '🔴' : '🟡';\n\nconst __isOffline = e.kind === 'offline';\nconst __valueLine = __isOffline ? 'No telemetry received' : (e.value + (e.unit||''));\nconst __limitLine = __isOffline ? '—' : (e.threshold + (e.unit||''));\nconst text = '\\n' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + '\\n'\n  + '🏷 Category: ' + __catText + '\\n'\n  + '⚡️ Device: ' + e.nodeId + '\\n'\n  + '📊 Value: ' + __valueLine + ' (Limit: ' + __limitLine + ')\\n'\n  + '💡 Risk: ' + __riskText + '\\n'\n  + '🕒 Time: ' + when;\nconst subject = 'ONEOPS ' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + ' (' + __catText + ')';\n\n// --- Rich message payloads & Dynamic Email Templates -----------------------\nconst __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(/\\/+$/,'');\nconst __linkFor = (role) => {\n  if (!__base || __base === '*') return '';\n  const viewer = role === 'viewer' || role === 'customer';\n  return __base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId);\n};\nconst __sevColor = e.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';\nconst __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\n\n// LINE Flex bubble (Messaging API push only; LINE Notify takes plain text).\nconst __flex = (link) => ({ type:'flex', altText: text, contents: { type:'bubble',\n  header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[\n    { type:'text', text: e.severity + ' · ' + __catText, color:'#FFFFFF', size:'xs', weight:'bold' },\n    { type:'text', text: String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },\n  body: { type:'box', layout:'vertical', spacing:'sm', contents: [\n    ['Category', String(__catText)],\n    ['Device', String(e.nodeId)],\n    ['Value', String(__valueLine)],\n    ['Limit', String(__limitLine)],\n    ['Risk/Condition', String(__riskText)],\n    ['Time', String(when)],\n  ].map(([k,v]) => ({ type:'box', layout:'baseline', spacing:'sm', contents:[\n    { type:'text', text:k, size:'sm', color:'#94A3B8', flex:3 },\n    { type:'text', text:v, size:'sm', color:'#0F172A', flex:5, weight: k==='Risk/Condition'?'bold':'regular', wrap:true } ] })) },\n  footer: link ? { type:'box', layout:'vertical', contents:[\n    { type:'button', style:'primary', color:'#6366F1', height:'sm',\n      action:{ type:'uri', label:'Open device', uri: link } } ] } : undefined } });\n\n// Telegram: HTML text + a URL button under the message.\nconst __tgText = '<b>' + __sevEmoji + ' [' + __esc(e.severity) + '] ' + __esc(e.paramLabel || 'Alarm') + '</b>\\n'\n  + '🏷 <b>Category:</b> ' + __esc(__catText) + '\\n'\n  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n'\n  + '📊 <b>Value:</b> ' + __esc(__valueLine) + ' (Limit: ' + __esc(__limitLine) + ')\\n'\n  + '💡 <b>Risk/Condition:</b> ' + __esc(__riskText) + '\\n'\n  + '🕒 <b>Time:</b> ' + __esc(when);\nconst __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',\n  reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined });\n\n// Google Chat cardsV2 — 'text' rides along so notifications and clients that\n// cannot render cards still show something useful.\nconst __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {\n  header: { title: (e.severity==='CRITICAL'?'🔴 ':'🟠 ') + String(e.paramLabel||'Alarm'), subtitle: __catText + ' · ' + String(e.nodeId) },\n  sections: [{ widgets: [\n    { decoratedText: { topLabel:'Category', text: String(__catText) } },\n    { decoratedText: { topLabel:'Value', text: String(__valueLine) } },\n    { decoratedText: { topLabel:'Limit', text: String(__limitLine) } },\n    { decoratedText: { topLabel:'Condition / Risk', text: String(__riskText) } },\n    { decoratedText: { topLabel:'Time', text: String(when) } },\n    ...(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : []),\n  ] }] } }] });\n(async () => {\n  try {\n    // --- Org Email Template Load & Render ----------------------------------\n    let emailTpl = null;\n    try {\n      const [tRows] = await controlPool.query(\"SELECT sval FROM platform_settings WHERE skey=?\", ['email_template.' + e.orgId]);\n      if (tRows.length && tRows[0].sval) emailTpl = JSON.parse(tRows[0].sval);\n    } catch(_) {}\n    if (!emailTpl) {\n      emailTpl = {\n        subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',\n        customHeaderNote: '',\n        customFooterSop: '',\n        includeActionLink: true,\n        format: 'html',\n      };\n    }\n\n    const __templateVars = {\n      device_name: e.nodeId,\n      node_id: e.nodeId,\n      org_id: e.orgId,\n      severity: e.severity,\n      category: __catText,\n      param_label: e.paramLabel || 'Alarm',\n      param_key: e.paramKey,\n      value: __valueLine,\n      threshold: __limitLine,\n      risk_insight: __riskText,\n      time: when,\n      sevEmoji: __sevEmoji,\n    };\n\n    const __renderTpl = (str) => String(str || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => (__templateVars[k] !== undefined ? __templateVars[k] : ''));\n\n    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})');\n    const emailHeaderNote = __renderTpl(emailTpl.customHeaderNote);\n    const emailFooterSop = __renderTpl(emailTpl.customFooterSop);\n\n    const emailHtml = (link) => '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'\n      + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'\n      + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'\n      + '<div style=\"background-color: ' + __sevColor + '; padding: 18px 24px;\">'\n      + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">' + e.severity + ' · ' + __esc(__catText) + '</div>'\n      + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + __esc(e.paramLabel || 'Industrial Alarm') + '</div>'\n      + '</div>'\n      + (emailHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + __esc(emailHeaderNote) + '</div>' : '')\n      + '<div style=\"padding: 24px;\">'\n      + '<table style=\"width: 100%; border-collapse: collapse; font-size: 13px;\">'\n      + '<tbody>'\n      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b; width: 140px;\">Device / Asset</td><td style=\"padding: 10px 0; color: #ffffff; font-weight: 600; font-family: monospace;\">' + __esc(e.nodeId) + '</td></tr>'\n      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Category</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + __esc(__catText) + '</td></tr>'\n      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Live Value</td><td style=\"padding: 10px 0; color: ' + __sevColor + '; font-weight: 700; font-size: 15px;\">' + __esc(__valueLine) + '</td></tr>'\n      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Alarm Limit</td><td style=\"padding: 10px 0; color: #cbd5e1;\">' + __esc(__limitLine) + '</td></tr>'\n      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Risk &amp; Condition</td><td style=\"padding: 10px 0; color: #f59e0b; font-weight: 600;\">💡 ' + __esc(__riskText) + '</td></tr>'\n      + '<tr><td style=\"padding: 10px 0; color: #64748b;\">Timestamp</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + __esc(when) + '</td></tr>'\n      + '</tbody></table>'\n      + (emailFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + __esc(emailFooterSop) + '</div></div>' : '')\n      + (emailTpl.includeActionLink && link ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')\n      + '</div>'\n      + '<div style=\"background-color: #070a12; border-top: 1px solid #1e2433; padding: 14px 24px; font-size: 11px; color: #475569; text-align: center;\">Automated alert from ONEOPS Unified Industrial Monitoring Platform.</div>'\n      + '</div></body></html>';\n\n    const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');\n\n    // Per-tenant channels (org + dept) from DB — same routing as the Express service.\n    let channels = [];\n    if (pool && e.orgId) {\n      const [rows] = await pool.query(\"SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)\", [e.orgId, e.departmentId || null]);\n      channels = rows;\n    }\n    const nc = await global.get('notifyConfig')();\n    // Fallback: DB/env single destination when no per-org DB channels are configured.\n    if (!channels.length) {\n      if (nc.lineToken) channels.push({ channel:'line', target:'' });\n      if (nc.telegramToken) channels.push({ channel:'telegram', target:'' });\n      if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });\n    }\n    for (const c of channels) {\n      if (c.min_severity === 'CRITICAL' && e.severity !== 'CRITICAL') continue;   // severity filter\n      try {\n        if (c.channel === 'email') {\n          const mc = await global.get('mailConfig')();\n          if (!mc.transport || !c.target) { node.warn('notify:email skipped — SMTP not configured / target missing'); continue; }\n          await mc.transport.sendMail({\n            from: mc.from,\n            to: c.target,\n            subject: emailSubject,\n            text: emailPlain,\n            html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')),\n          });\n        } else if (c.channel === 'line') {\n          // An org target may be \"channelAccessToken@userId\" (Messaging API push,\n          // which carries the Flex card) or a bare LINE Notify token (text only).\n          const raw = String(c.target || nc.lineToken || '');\n          const at = raw.lastIndexOf('@');\n          const tok = at > 0 ? raw.slice(0, at) : raw;\n          const to  = at > 0 ? raw.slice(at + 1) : '';\n          if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});\n          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});\n        } else if (c.channel === 'telegram') {\n          const tg = nc.telegramToken; const chat = c.target || nc.telegramChatId;\n          if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});\n        } else if (c.channel === 'googlechat') {\n          const url = c.target || nc.googleChatWebhook;\n          if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});\n        }\n      } catch(err){ node.error('notify:'+c.channel+' '+err.message); }\n    }\n\n    // --- Per-user channels (user_prefs) -------------------------------------\n    // The device pages let a user pick which of their own channels should alert\n    // them about a given node (\"My Alert Settings\"); until now that selection\n    // was stored and never read, so those switches did nothing.\n    //\n    // Strictly opt-in: only users with a saved selection for THIS node are\n    // contacted. Notifying everyone whose profile happens to hold a token would\n    // turn switching this on into a mass mailing.\n    try {\n      const [urows] = await controlPool.query(\n        \"SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?\",\n        [e.orgId]);\n      for (const u of urows) {\n        let pf = {};\n        try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { continue; }\n        const sel = (pf.alertChannels || {})[e.nodeId];\n        if (!sel) continue;\n        // A user attached to a department only hears about that department's\n        // devices; admins (and users with no department) hear everything.\n        const isAdmin = u.role === 'admin' || u.role === 'superadmin';\n        if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;\n\n        if (sel.email && u.email) {\n          try {\n            const mc = await global.get('mailConfig')();\n            const link = __linkFor(u.role);\n            if (mc.transport) await mc.transport.sendMail({\n              from: mc.from,\n              to: u.email,\n              subject: emailSubject,\n              text: emailPlain,\n              html: emailTpl.format === 'text' ? undefined : emailHtml(link),\n            });\n            else node.warn('notify:user email skipped — SMTP not configured');\n          } catch(err){ node.error('notify:user-email '+err.message); }\n        }\n        // Deep link points at the page this user can actually open: a viewer\n        // following an /admin/ link would just be bounced by the portal guard.\n        const link = __linkFor(u.role);\n        if (sel.telegram && pf.telegramBotApi) {\n          try {\n            // Profile field accepts \"botToken\" or \"botToken@chat_id\" (the token\n            // alone needs the platform-wide chat id to have somewhere to go).\n            const at = String(pf.telegramBotApi).lastIndexOf('@');\n            const tok = at > 0 ? String(pf.telegramBotApi).slice(0, at) : String(pf.telegramBotApi);\n            const chat = at > 0 ? String(pf.telegramBotApi).slice(at + 1) : nc.telegramChatId;\n            if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, link))});\n            else node.warn('notify:user telegram skipped — no chat id for '+u.id);\n          } catch(err){ node.error('notify:user-telegram '+err.message); }\n        }\n        if (sel.line && pf.lineMsgApi) {\n          try {\n            // \"channelAccessToken@userId\" → Messaging API push, which is the only\n            // form that can carry the Flex card (LINE Notify was retired in 2025\n            // and only ever accepted plain text).\n            const at = String(pf.lineMsgApi).lastIndexOf('@');\n            const tok = at > 0 ? String(pf.lineMsgApi).slice(0, at) : String(pf.lineMsgApi);\n            const to  = at > 0 ? String(pf.lineMsgApi).slice(at + 1) : '';\n            if (to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(link)]})});\n            else await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});\n          } catch(err){ node.error('notify:user-line '+err.message); }\n        }\n        if (sel.googlechat && pf.googleChatApi) {\n          try {\n            await fetch(String(pf.googleChatApi),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(link))});\n          } catch(err){ node.error('notify:user-googlechat '+err.message); }\n        }\n      }\n    } catch(err){ node.warn('notify:user-prefs '+err.message); }\n  } catch(err){ node.error('notify: '+err.message); }\n})();\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -6404,6 +6404,141 @@
     "wires": []
   },
   {
+    "id": "emailtplget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/email-template",
+    "method": "get",
+    "x": 150,
+    "y": 6710,
+    "wires": [
+      [
+        "emailtplget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "emailtplget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/email-template",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','auth',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  let template = null;\n  try {\n    const [r] = await pool.query(\"SELECT sval FROM platform_settings WHERE skey=?\", ['email_template.' + orgId]);\n    if(r.length && r[0].sval) template = JSON.parse(r[0].sval);\n  } catch(e){}\n  if(!template) {\n    template = {\n      subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',\n      customHeaderNote: '',\n      customFooterSop: 'SOP Protocol: For Critical Alarms, contact the Substation Control Room at 02-xxx-xxxx immediately.',\n      includeActionLink: true,\n      format: 'html',\n    };\n  }\n  msg.headers=__CORS; msg.payload=template; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 6710,
+    "wires": [
+      [
+        "emailtplget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "emailtplget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 6710,
+    "wires": []
+  },
+  {
+    "id": "emailtplput_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/email-template",
+    "method": "put",
+    "x": 150,
+    "y": 6760,
+    "wires": [
+      [
+        "emailtplput_fn"
+      ]
+    ]
+  },
+  {
+    "id": "emailtplput_fn",
+    "type": "function",
+    "z": "be",
+    "name": "PUT /api/orgs/:orgId/email-template",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const sval = JSON.stringify({\n    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})').slice(0, 300),\n    customHeaderNote: String(b.customHeaderNote || '').slice(0, 500),\n    customFooterSop: String(b.customFooterSop || '').slice(0, 1000),\n    includeActionLink: b.includeActionLink !== false,\n    format: b.format === 'text' ? 'text' : 'html',\n  });\n  await pool.query(\"INSERT INTO platform_settings (skey, sval) VALUES (?, ?) ON DUPLICATE KEY UPDATE sval=VALUES(sval)\", ['email_template.' + orgId, sval]);\n  msg.headers=__CORS; msg.payload={ok:true, template: JSON.parse(sval)}; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 6760,
+    "wires": [
+      [
+        "emailtplput_resp"
+      ]
+    ]
+  },
+  {
+    "id": "emailtplput_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 6760,
+    "wires": []
+  },
+  {
+    "id": "emailtpltest_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/email-template/test",
+    "method": "post",
+    "x": 150,
+    "y": 6810,
+    "wires": [
+      [
+        "emailtpltest_fn"
+      ]
+    ]
+  },
+  {
+    "id": "emailtpltest_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/email-template/test",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const targetEmail = String(b.targetEmail || au.email || '').trim();\n  if(!targetEmail) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'Please provide a target email address'}; return msg; }\n  const mc = await global.get('mailConfig')();\n  if(!mc.transport) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'SMTP server is not configured in platform settings'}; return msg; }\n\n  const tpl = {\n    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})'),\n    customHeaderNote: String(b.customHeaderNote || ''),\n    customFooterSop: String(b.customFooterSop || ''),\n    includeActionLink: b.includeActionLink !== false,\n    format: b.format === 'text' ? 'text' : 'html',\n  };\n\n  // Mock simulation variables for testing\n  const sampleData = {\n    device_name: 'TR-SUBSTATION-01',\n    node_id: 'TR-SUBSTATION-01',\n    org_id: orgId,\n    severity: 'CRITICAL',\n    category: 'Thermal & Oil',\n    param_label: 'Top Oil Temperature',\n    param_key: 'oilTemp',\n    value: '92.5°C',\n    threshold: '90.0°C',\n    risk_insight: 'Winding / insulation degradation risk (>90°C)',\n    time: new Date().toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' }) + ' (Asia/Bangkok)',\n    link: mc.frontendUrl + '/admin/nodes/detail/?id=TR-SUBSTATION-01',\n    sevEmoji: '🔴',\n  };\n\n  const render = (s) => String(s || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => sampleData[k] ?? '');\n  const subject = '[TEST] ' + render(tpl.subjectTemplate);\n  const text = '[TEST SIMULATION]\\n' + render(tpl.subjectTemplate) + '\\n\\n'\n    + 'Device: ' + sampleData.device_name + '\\n'\n    + 'Value: ' + sampleData.value + ' (Limit: ' + sampleData.threshold + ')\\n'\n    + 'Risk: ' + sampleData.risk_insight + '\\n'\n    + (tpl.customHeaderNote ? '\\nNotice: ' + render(tpl.customHeaderNote) + '\\n' : '')\n    + (tpl.customFooterSop ? '\\nSOP Protocol: ' + render(tpl.customFooterSop) + '\\n' : '');\n\n  const html = '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'\n    + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'\n    + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'\n    + '<div style=\"background: #ef4444; padding: 18px 24px;\">'\n    + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">CRITICAL · ' + sampleData.category + ' (TEST SIMULATION)</div>'\n    + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + sampleData.param_label + '</div>'\n    + '</div>'\n    + (tpl.customHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + render(tpl.customHeaderNote) + '</div>' : '')\n    + '<div style=\"padding: 24px;\">'\n    + '<table style=\"width: 100%; border-collapse: collapse; font-size: 13px;\">'\n    + '<tbody>'\n    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b; width: 140px;\">Device / Asset</td><td style=\"padding: 10px 0; color: #ffffff; font-weight: 600; font-family: monospace;\">' + sampleData.device_name + '</td></tr>'\n    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Category</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + sampleData.category + '</td></tr>'\n    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Live Value</td><td style=\"padding: 10px 0; color: #ef4444; font-weight: 700; font-size: 15px;\">' + sampleData.value + '</td></tr>'\n    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Alarm Limit</td><td style=\"padding: 10px 0; color: #cbd5e1;\">' + sampleData.threshold + '</td></tr>'\n    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Risk &amp; Condition</td><td style=\"padding: 10px 0; color: #f59e0b; font-weight: 600;\">💡 ' + sampleData.risk_insight + '</td></tr>'\n    + '<tr><td style=\"padding: 10px 0; color: #64748b;\">Timestamp</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + sampleData.time + '</td></tr>'\n    + '</tbody></table>'\n    + (tpl.customFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + render(tpl.customFooterSop) + '</div></div>' : '')\n    + (tpl.includeActionLink ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + sampleData.link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')\n    + '</div>'\n    + '<div style=\"background-color: #070a12; border-top: 1px solid #1e2433; padding: 14px 24px; font-size: 11px; color: #475569; text-align: center;\">Test Notification from ONEOPS Unified Industrial Monitoring Platform.</div>'\n    + '</div></body></html>';\n\n  await mc.transport.sendMail({\n    from: mc.from,\n    to: targetEmail,\n    subject,\n    text,\n    html: tpl.format === 'text' ? undefined : html,\n  });\n\n  msg.headers=__CORS; msg.payload={ok:true, sentTo: targetEmail, subject}; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 6810,
+    "wires": [
+      [
+        "emailtpltest_resp"
+      ]
+    ]
+  },
+  {
+    "id": "emailtpltest_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 6810,
+    "wires": []
+  },
+  {
     "id": "dtget_in",
     "type": "http in",
     "z": "be",
@@ -6411,7 +6546,7 @@
     "url": "/api/orgs/:orgId/department-themes",
     "method": "get",
     "x": 150,
-    "y": 6710,
+    "y": 6860,
     "wires": [
       [
         "dtget_fn"
@@ -6432,7 +6567,7 @@
       }
     ],
     "x": 420,
-    "y": 6710,
+    "y": 6860,
     "wires": [
       [
         "dtget_resp"
@@ -6445,7 +6580,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6710,
+    "y": 6860,
     "wires": []
   },
   {
@@ -6456,7 +6591,7 @@
     "url": "/api/orgs/:orgId/department-themes",
     "method": "put",
     "x": 150,
-    "y": 6760,
+    "y": 6910,
     "wires": [
       [
         "dtput_fn"
@@ -6477,7 +6612,7 @@
       }
     ],
     "x": 420,
-    "y": 6760,
+    "y": 6910,
     "wires": [
       [
         "dtput_resp"
@@ -6490,7 +6625,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6760,
+    "y": 6910,
     "wires": []
   },
   {
@@ -6501,7 +6636,7 @@
     "url": "/api/orgs/:orgId/theme-grants",
     "method": "get",
     "x": 150,
-    "y": 6810,
+    "y": 6960,
     "wires": [
       [
         "tgget_fn"
@@ -6522,7 +6657,7 @@
       }
     ],
     "x": 420,
-    "y": 6810,
+    "y": 6960,
     "wires": [
       [
         "tgget_resp"
@@ -6535,7 +6670,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6810,
+    "y": 6960,
     "wires": []
   },
   {
@@ -6546,7 +6681,7 @@
     "url": "/api/orgs/:orgId/theme-grants",
     "method": "put",
     "x": 150,
-    "y": 6860,
+    "y": 7010,
     "wires": [
       [
         "tgput_fn"
@@ -6567,7 +6702,7 @@
       }
     ],
     "x": 420,
-    "y": 6860,
+    "y": 7010,
     "wires": [
       [
         "tgput_resp"
@@ -6580,7 +6715,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6860,
+    "y": 7010,
     "wires": []
   },
   {
@@ -6591,7 +6726,7 @@
     "url": "/api/orgs/:orgId/department-sites",
     "method": "get",
     "x": 150,
-    "y": 6910,
+    "y": 7060,
     "wires": [
       [
         "dsget_fn"
@@ -6612,7 +6747,7 @@
       }
     ],
     "x": 420,
-    "y": 6910,
+    "y": 7060,
     "wires": [
       [
         "dsget_resp"
@@ -6625,7 +6760,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6910,
+    "y": 7060,
     "wires": []
   },
   {
@@ -6636,7 +6771,7 @@
     "url": "/api/orgs/:orgId/department-sites",
     "method": "put",
     "x": 150,
-    "y": 6960,
+    "y": 7110,
     "wires": [
       [
         "dsput_fn"
@@ -6657,7 +6792,7 @@
       }
     ],
     "x": 420,
-    "y": 6960,
+    "y": 7110,
     "wires": [
       [
         "dsput_resp"
@@ -6670,7 +6805,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6960,
+    "y": 7110,
     "wires": []
   },
   {
@@ -6681,7 +6816,7 @@
     "url": "/api/orgs/:orgId/sites",
     "method": "get",
     "x": 150,
-    "y": 7010,
+    "y": 7160,
     "wires": [
       [
         "sitesget_fn"
@@ -6702,7 +6837,7 @@
       }
     ],
     "x": 420,
-    "y": 7010,
+    "y": 7160,
     "wires": [
       [
         "sitesget_resp"
@@ -6715,7 +6850,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7010,
+    "y": 7160,
     "wires": []
   },
   {
@@ -6726,7 +6861,7 @@
     "url": "/api/orgs/:orgId/sites",
     "method": "post",
     "x": 150,
-    "y": 7060,
+    "y": 7210,
     "wires": [
       [
         "sitespost_fn"
@@ -6747,7 +6882,7 @@
       }
     ],
     "x": 420,
-    "y": 7060,
+    "y": 7210,
     "wires": [
       [
         "sitespost_resp"
@@ -6760,7 +6895,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7060,
+    "y": 7210,
     "wires": []
   },
   {
@@ -6771,7 +6906,7 @@
     "url": "/api/sites/:id",
     "method": "delete",
     "x": 150,
-    "y": 7110,
+    "y": 7260,
     "wires": [
       [
         "sitesdel_fn"
@@ -6792,7 +6927,7 @@
       }
     ],
     "x": 420,
-    "y": 7110,
+    "y": 7260,
     "wires": [
       [
         "sitesdel_resp"
@@ -6805,7 +6940,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7110,
+    "y": 7260,
     "wires": []
   },
   {
@@ -6816,7 +6951,7 @@
     "url": "/api/orgs/:orgId/floorplans/:floorId/geo",
     "method": "put",
     "x": 150,
-    "y": 7160,
+    "y": 7310,
     "wires": [
       [
         "fpgeo_fn"
@@ -6837,7 +6972,7 @@
       }
     ],
     "x": 420,
-    "y": 7160,
+    "y": 7310,
     "wires": [
       [
         "fpgeo_resp"
@@ -6850,7 +6985,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7160,
+    "y": 7310,
     "wires": []
   },
   {
@@ -6861,7 +6996,7 @@
     "url": "/api/nodes/:id/config",
     "method": "put",
     "x": 150,
-    "y": 7210,
+    "y": 7360,
     "wires": [
       [
         "cfgput_fn"
@@ -6882,7 +7017,7 @@
       }
     ],
     "x": 420,
-    "y": 7210,
+    "y": 7360,
     "wires": [
       [
         "cfgput_resp"
@@ -6899,7 +7034,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7210,
+    "y": 7360,
     "wires": []
   },
   {
@@ -6910,7 +7045,7 @@
     "url": "/api/nodes/:id/cmd",
     "method": "post",
     "x": 150,
-    "y": 7260,
+    "y": 7410,
     "wires": [
       [
         "cmdpost_fn"
@@ -6931,7 +7066,7 @@
       }
     ],
     "x": 420,
-    "y": 7260,
+    "y": 7410,
     "wires": [
       [
         "cmdpost_resp"
@@ -6948,7 +7083,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7260,
+    "y": 7410,
     "wires": []
   },
   {
@@ -6959,7 +7094,7 @@
     "url": "/api/nodes/:id/ota",
     "method": "post",
     "x": 150,
-    "y": 7310,
+    "y": 7460,
     "wires": [
       [
         "otapost_fn"
@@ -6980,7 +7115,7 @@
       }
     ],
     "x": 420,
-    "y": 7310,
+    "y": 7460,
     "wires": [
       [
         "otapost_resp"
@@ -6997,7 +7132,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7310,
+    "y": 7460,
     "wires": []
   },
   {
@@ -7008,7 +7143,7 @@
     "url": "/api/ota/releases",
     "method": "get",
     "x": 150,
-    "y": 7360,
+    "y": 7510,
     "wires": [
       [
         "otarellist_fn"
@@ -7029,7 +7164,7 @@
       }
     ],
     "x": 420,
-    "y": 7360,
+    "y": 7510,
     "wires": [
       [
         "otarellist_resp"
@@ -7042,7 +7177,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7360,
+    "y": 7510,
     "wires": []
   },
   {
@@ -7053,7 +7188,7 @@
     "url": "/api/ota/releases",
     "method": "post",
     "x": 150,
-    "y": 7410,
+    "y": 7560,
     "wires": [
       [
         "otarelpost_fn"
@@ -7074,7 +7209,7 @@
       }
     ],
     "x": 420,
-    "y": 7410,
+    "y": 7560,
     "wires": [
       [
         "otarelpost_resp"
@@ -7087,7 +7222,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7410,
+    "y": 7560,
     "wires": []
   },
   {
@@ -7098,7 +7233,7 @@
     "url": "/api/ota/releases/:id",
     "method": "delete",
     "x": 150,
-    "y": 7460,
+    "y": 7610,
     "wires": [
       [
         "otareldel_fn"
@@ -7119,7 +7254,7 @@
       }
     ],
     "x": 420,
-    "y": 7460,
+    "y": 7610,
     "wires": [
       [
         "otareldel_resp"
@@ -7132,7 +7267,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7460,
+    "y": 7610,
     "wires": []
   },
   {
@@ -7143,7 +7278,7 @@
     "url": "/api/ota/deployments",
     "method": "get",
     "x": 150,
-    "y": 7510,
+    "y": 7660,
     "wires": [
       [
         "otadeplist_fn"
@@ -7164,7 +7299,7 @@
       }
     ],
     "x": 420,
-    "y": 7510,
+    "y": 7660,
     "wires": [
       [
         "otadeplist_resp"
@@ -7177,7 +7312,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7510,
+    "y": 7660,
     "wires": []
   },
   {
@@ -7188,7 +7323,7 @@
     "url": "/api/ota/deploy-fleet",
     "method": "post",
     "x": 150,
-    "y": 7560,
+    "y": 7710,
     "wires": [
       [
         "otafleet_fn"
@@ -7209,7 +7344,7 @@
       }
     ],
     "x": 420,
-    "y": 7560,
+    "y": 7710,
     "wires": [
       [
         "otafleet_resp"
@@ -7226,7 +7361,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7560,
+    "y": 7710,
     "wires": []
   },
   {
@@ -7237,7 +7372,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 7610,
+    "y": 7760,
     "wires": [
       [
         "cors_fn"
@@ -7253,7 +7388,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 7610,
+    "y": 7760,
     "wires": [
       [
         "cors_resp"
@@ -7266,7 +7401,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7610,
+    "y": 7760,
     "wires": []
   },
   {
@@ -7277,7 +7412,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 7660,
+    "y": 7810,
     "wires": [
       [
         "readpost_fn"
@@ -7293,7 +7428,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 7660,
+    "y": 7810,
     "wires": [
       [
         "ingest"
@@ -7306,7 +7441,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7660,
+    "y": 7810,
     "wires": []
   }
 ]

@@ -1543,7 +1543,7 @@ const text = '\\n' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'A
   + '🕒 Time: ' + when;
 const subject = 'ONEOPS ' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + ' (' + __catText + ')';
 
-// --- Rich message payloads --------------------------------------------------
+// --- Rich message payloads & Dynamic Email Templates -----------------------
 const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(/\\/+$/,'');
 const __linkFor = (role) => {
   if (!__base || __base === '*') return '';
@@ -1596,6 +1596,69 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
   ] }] } }] });
 (async () => {
   try {
+    // --- Org Email Template Load & Render ----------------------------------
+    let emailTpl = null;
+    try {
+      const [tRows] = await controlPool.query("SELECT sval FROM platform_settings WHERE skey=?", ['email_template.' + e.orgId]);
+      if (tRows.length && tRows[0].sval) emailTpl = JSON.parse(tRows[0].sval);
+    } catch(_) {}
+    if (!emailTpl) {
+      emailTpl = {
+        subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',
+        customHeaderNote: '',
+        customFooterSop: '',
+        includeActionLink: true,
+        format: 'html',
+      };
+    }
+
+    const __templateVars = {
+      device_name: e.nodeId,
+      node_id: e.nodeId,
+      org_id: e.orgId,
+      severity: e.severity,
+      category: __catText,
+      param_label: e.paramLabel || 'Alarm',
+      param_key: e.paramKey,
+      value: __valueLine,
+      threshold: __limitLine,
+      risk_insight: __riskText,
+      time: when,
+      sevEmoji: __sevEmoji,
+    };
+
+    const __renderTpl = (str) => String(str || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => (__templateVars[k] !== undefined ? __templateVars[k] : ''));
+
+    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})');
+    const emailHeaderNote = __renderTpl(emailTpl.customHeaderNote);
+    const emailFooterSop = __renderTpl(emailTpl.customFooterSop);
+
+    const emailHtml = (link) => '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'
+      + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'
+      + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'
+      + '<div style=\"background-color: ' + __sevColor + '; padding: 18px 24px;\">'
+      + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">' + e.severity + ' · ' + __esc(__catText) + '</div>'
+      + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + __esc(e.paramLabel || 'Industrial Alarm') + '</div>'
+      + '</div>'
+      + (emailHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + __esc(emailHeaderNote) + '</div>' : '')
+      + '<div style=\"padding: 24px;\">'
+      + '<table style=\"width: 100%; border-collapse: collapse; font-size: 13px;\">'
+      + '<tbody>'
+      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b; width: 140px;\">Device / Asset</td><td style=\"padding: 10px 0; color: #ffffff; font-weight: 600; font-family: monospace;\">' + __esc(e.nodeId) + '</td></tr>'
+      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Category</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + __esc(__catText) + '</td></tr>'
+      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Live Value</td><td style=\"padding: 10px 0; color: ' + __sevColor + '; font-weight: 700; font-size: 15px;\">' + __esc(__valueLine) + '</td></tr>'
+      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Alarm Limit</td><td style=\"padding: 10px 0; color: #cbd5e1;\">' + __esc(__limitLine) + '</td></tr>'
+      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Risk &amp; Condition</td><td style=\"padding: 10px 0; color: #f59e0b; font-weight: 600;\">💡 ' + __esc(__riskText) + '</td></tr>'
+      + '<tr><td style=\"padding: 10px 0; color: #64748b;\">Timestamp</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + __esc(when) + '</td></tr>'
+      + '</tbody></table>'
+      + (emailFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + __esc(emailFooterSop) + '</div></div>' : '')
+      + (emailTpl.includeActionLink && link ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')
+      + '</div>'
+      + '<div style=\"background-color: #070a12; border-top: 1px solid #1e2433; padding: 14px 24px; font-size: 11px; color: #475569; text-align: center;\">Automated alert from ONEOPS Unified Industrial Monitoring Platform.</div>'
+      + '</div></body></html>';
+
+    const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');
+
     // Per-tenant channels (org + dept) from DB — same routing as the Express service.
     let channels = [];
     if (pool && e.orgId) {
@@ -1615,7 +1678,13 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
         if (c.channel === 'email') {
           const mc = await global.get('mailConfig')();
           if (!mc.transport || !c.target) { node.warn('notify:email skipped — SMTP not configured / target missing'); continue; }
-          await mc.transport.sendMail({ from: mc.from, to: c.target, subject, text });
+          await mc.transport.sendMail({
+            from: mc.from,
+            to: c.target,
+            subject: emailSubject,
+            text: emailPlain,
+            html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')),
+          });
         } else if (c.channel === 'line') {
           // An org target may be "channelAccessToken@userId" (Messaging API push,
           // which carries the Flex card) or a bare LINE Notify token (text only).
@@ -1660,7 +1729,14 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
         if (sel.email && u.email) {
           try {
             const mc = await global.get('mailConfig')();
-            if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject, text });
+            const link = __linkFor(u.role);
+            if (mc.transport) await mc.transport.sendMail({
+              from: mc.from,
+              to: u.email,
+              subject: emailSubject,
+              text: emailPlain,
+              html: emailTpl.format === 'text' ? undefined : emailHtml(link),
+            });
             else node.warn('notify:user email skipped — SMTP not configured');
           } catch(err){ node.error('notify:user-email '+err.message); }
         }
@@ -3928,6 +4004,118 @@ const dept=(b.departmentId===''||b.departmentId===undefined||b.departmentId===nu
   msg.headers=__CORS; msg.payload={ok:true,count:list.length,departmentId:dept}; node.send(msg);
 })()` + bbErr
 
+// --- Org Email Alarm Template Config (GET / PUT / TEST) --------------------
+const emailTplGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  let template = null;
+  try {
+    const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['email_template.' + orgId]);
+    if(r.length && r[0].sval) template = JSON.parse(r[0].sval);
+  } catch(e){}
+  if(!template) {
+    template = {
+      subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',
+      customHeaderNote: '',
+      customFooterSop: 'SOP Protocol: For Critical Alarms, contact the Substation Control Room at 02-xxx-xxxx immediately.',
+      includeActionLink: true,
+      format: 'html',
+    };
+  }
+  msg.headers=__CORS; msg.payload=template; node.send(msg);
+})()` + bbErr
+
+const emailTplPutFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  const sval = JSON.stringify({
+    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})').slice(0, 300),
+    customHeaderNote: String(b.customHeaderNote || '').slice(0, 500),
+    customFooterSop: String(b.customFooterSop || '').slice(0, 1000),
+    includeActionLink: b.includeActionLink !== false,
+    format: b.format === 'text' ? 'text' : 'html',
+  });
+  await pool.query("INSERT INTO platform_settings (skey, sval) VALUES (?, ?) ON DUPLICATE KEY UPDATE sval=VALUES(sval)", ['email_template.' + orgId, sval]);
+  msg.headers=__CORS; msg.payload={ok:true, template: JSON.parse(sval)}; node.send(msg);
+})()` + bbErr
+
+const emailTplTestFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  const targetEmail = String(b.targetEmail || au.email || '').trim();
+  if(!targetEmail) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'Please provide a target email address'}; return msg; }
+  const mc = await global.get('mailConfig')();
+  if(!mc.transport) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'SMTP server is not configured in platform settings'}; return msg; }
+
+  const tpl = {
+    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})'),
+    customHeaderNote: String(b.customHeaderNote || ''),
+    customFooterSop: String(b.customFooterSop || ''),
+    includeActionLink: b.includeActionLink !== false,
+    format: b.format === 'text' ? 'text' : 'html',
+  };
+
+  // Mock simulation variables for testing
+  const sampleData = {
+    device_name: 'TR-SUBSTATION-01',
+    node_id: 'TR-SUBSTATION-01',
+    org_id: orgId,
+    severity: 'CRITICAL',
+    category: 'Thermal & Oil',
+    param_label: 'Top Oil Temperature',
+    param_key: 'oilTemp',
+    value: '92.5°C',
+    threshold: '90.0°C',
+    risk_insight: 'Winding / insulation degradation risk (>90°C)',
+    time: new Date().toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' }) + ' (Asia/Bangkok)',
+    link: mc.frontendUrl + '/admin/nodes/detail/?id=TR-SUBSTATION-01',
+    sevEmoji: '🔴',
+  };
+
+  const render = (s) => String(s || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => sampleData[k] ?? '');
+  const subject = '[TEST] ' + render(tpl.subjectTemplate);
+  const text = '[TEST SIMULATION]\\n' + render(tpl.subjectTemplate) + '\\n\\n'
+    + 'Device: ' + sampleData.device_name + '\\n'
+    + 'Value: ' + sampleData.value + ' (Limit: ' + sampleData.threshold + ')\\n'
+    + 'Risk: ' + sampleData.risk_insight + '\\n'
+    + (tpl.customHeaderNote ? '\\nNotice: ' + render(tpl.customHeaderNote) + '\\n' : '')
+    + (tpl.customFooterSop ? '\\nSOP Protocol: ' + render(tpl.customFooterSop) + '\\n' : '');
+
+  const html = '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'
+    + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'
+    + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'
+    + '<div style=\"background: #ef4444; padding: 18px 24px;\">'
+    + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">CRITICAL · ' + sampleData.category + ' (TEST SIMULATION)</div>'
+    + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + sampleData.param_label + '</div>'
+    + '</div>'
+    + (tpl.customHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + render(tpl.customHeaderNote) + '</div>' : '')
+    + '<div style=\"padding: 24px;\">'
+    + '<table style=\"width: 100%; border-collapse: collapse; font-size: 13px;\">'
+    + '<tbody>'
+    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b; width: 140px;\">Device / Asset</td><td style=\"padding: 10px 0; color: #ffffff; font-weight: 600; font-family: monospace;\">' + sampleData.device_name + '</td></tr>'
+    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Category</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + sampleData.category + '</td></tr>'
+    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Live Value</td><td style=\"padding: 10px 0; color: #ef4444; font-weight: 700; font-size: 15px;\">' + sampleData.value + '</td></tr>'
+    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Alarm Limit</td><td style=\"padding: 10px 0; color: #cbd5e1;\">' + sampleData.threshold + '</td></tr>'
+    + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Risk &amp; Condition</td><td style=\"padding: 10px 0; color: #f59e0b; font-weight: 600;\">💡 ' + sampleData.risk_insight + '</td></tr>'
+    + '<tr><td style=\"padding: 10px 0; color: #64748b;\">Timestamp</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + sampleData.time + '</td></tr>'
+    + '</tbody></table>'
+    + (tpl.customFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + render(tpl.customFooterSop) + '</div></div>' : '')
+    + (tpl.includeActionLink ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + sampleData.link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')
+    + '</div>'
+    + '<div style=\"background-color: #070a12; border-top: 1px solid #1e2433; padding: 14px 24px; font-size: 11px; color: #475569; text-align: center;\">Test Notification from ONEOPS Unified Industrial Monitoring Platform.</div>'
+    + '</div></body></html>';
+
+  await mc.transport.sendMail({
+    from: mc.from,
+    to: targetEmail,
+    subject,
+    text,
+    html: tpl.format === 'text' ? undefined : html,
+  });
+
+  msg.headers=__CORS; msg.payload={ok:true, sentTo: targetEmail, subject}; node.send(msg);
+})()` + bbErr
+
 // --- Which themes an ORGANIZATION is entitled to (superadmin-owned) ----------
 // This lived in a frontend const (orgThemes.ts) listing org-1/2/3 and nothing
 // else, so every other organization fell back to ['th-overview'] — its admin
@@ -6142,6 +6330,9 @@ const flow = [
   ...endpoint('plput', 'put', '/api/orgs/:orgId/param-labels', plPutFunc, 'admin'),
   ...endpoint('chget', 'get', '/api/orgs/:orgId/channels', chGetFunc),
   ...endpoint('chput', 'put', '/api/orgs/:orgId/channels', chPutFunc, 'admin'),
+  ...endpoint('emailtplget', 'get', '/api/orgs/:orgId/email-template', emailTplGetFunc),
+  ...endpoint('emailtplput', 'put', '/api/orgs/:orgId/email-template', emailTplPutFunc, 'admin'),
+  ...endpoint('emailtpltest', 'post', '/api/orgs/:orgId/email-template/test', emailTplTestFunc, 'admin'),
   ...endpoint('dtget', 'get', '/api/orgs/:orgId/department-themes', dtGetFunc),
   ...endpoint('dtput', 'put', '/api/orgs/:orgId/department-themes', dtPutFunc, 'admin'),
   // The org's theme entitlement: readable by its admin (to allocate from),

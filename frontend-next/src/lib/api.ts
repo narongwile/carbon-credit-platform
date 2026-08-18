@@ -415,6 +415,18 @@ export const api = {
     req<{ ok: boolean; count: number; departmentId: string | null }>(
       `/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels, departmentId: departmentId ?? null }) }),
   /**
+   * Enterprise Email Alarm Template & Custom SOP Message Configuration
+   */
+  emailTemplate: (orgId: string) =>
+    req<{ subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' }>(
+      `/api/orgs/${orgId}/email-template`),
+  putEmailTemplate: (orgId: string, template: { subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' }) =>
+    req<{ ok: boolean; template: { subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' } }>(
+      `/api/orgs/${orgId}/email-template`, { method: 'PUT', body: JSON.stringify(template) }),
+  testEmailTemplate: (orgId: string, payload: { targetEmail: string; subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' }) =>
+    req<{ ok: boolean; sentTo: string; subject: string }>(
+      `/api/orgs/${orgId}/email-template/test`, { method: 'POST', body: JSON.stringify(payload) }),
+  /**
    * Which parameters SENSOR READINGS shows. Resolved per department, most
    * specific first: device+department -> device -> organization+department ->
    * organization -> none. A user in several departments gets the union, the

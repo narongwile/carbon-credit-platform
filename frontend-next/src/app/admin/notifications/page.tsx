@@ -6,6 +6,7 @@ import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDep
 import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
 import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import EmailTemplateConfigurator from '@/components/notifications/EmailTemplateConfigurator'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive, useIsLive } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
@@ -398,6 +399,11 @@ export default function AlarmNotificationPage() {
               )
             })}
           </div>
+        </div>
+
+        {/* Enterprise Email Alarm Template & Custom SOP Configurator */}
+        <div className="lg:col-span-2">
+          <EmailTemplateConfigurator orgId={orgId} />
         </div>
 
         {/* Create Event in each department */}
