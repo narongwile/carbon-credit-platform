@@ -496,6 +496,7 @@ export default function LiveSensorMap({
 
       // 1. Update cached latest values
       const cur = latestRef.current.get(id) || {
+        nodeId: id,
         values: {},
         lastReadingAt: null,
         presence: { online: 1, last_seen: f.timestamp || new Date().toISOString(), rssi: null, batt: null, fw: null, transport: null },
@@ -505,6 +506,7 @@ export default function LiveSensorMap({
         ...(f.values || (f.temperature != null ? { temperature: f.temperature } : {})),
       }
       const updatedLatest: NodeLatest = {
+        nodeId: id,
         ...cur,
         values: newVals,
         lastReadingAt: f.timestamp || new Date().toISOString(),
