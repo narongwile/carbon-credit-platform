@@ -1,101 +1,381 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getAlarmSchema, defaultNodeRule, type AlarmParam } from '@/lib/alarmParams'
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { getAlarmSchema, defaultNodeRule, type AlarmParam, ALARM_SCHEMA } from '@/lib/alarmParams'
 import { useAlarmDB } from '@/server/alarmStore'
-import { useParamLabels } from '@/lib/useParamLabels'
+import { useParamLabels, schemaLabel } from '@/lib/useParamLabels'
 import { useManagedDevices } from '@/lib/useManagedDevices'
-import { api } from '@/lib/api'
+import { api, isLive, useIsLive } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
 import type { SensorDomain } from '@/types/fleet'
-import type { NodeAlarmRule } from '@/server/alarmEngine'
-import { ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Save, Plus, Trash2 } from 'lucide-react'
+import type { NodeAlarmRule, ParamRule } from '@/server/alarmEngine'
+import {
+  ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Save, Plus, Trash2,
+  Search, SlidersHorizontal, Check, AlertTriangle, RefreshCw, X, ShieldAlert,
+  Gauge, Zap, Droplet, Radio, Thermometer, Box, Filter
+} from 'lucide-react'
+import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
+const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
+const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
-// Renders the alarm-parameter form for a product domain (driven by ALARM_SCHEMA + real sensor readings).
-// When `nodeId` is given, Save persists the rule to that node; without one this
-// is the ORG-level editor and loads/saves the org+domain default instead.
-export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: { domain?: SensorDomain; nodeId?: string; orgId?: string; onApplyAll?: (rule: NodeAlarmRule) => void }) {
+export type ParamCategory = 'all' | 'temperature' | 'electrical' | 'dga_oil' | 'mechanical_env' | 'custom'
+
+interface CategoryTab {
+  id: ParamCategory
+  label: string
+  icon: React.ElementType
+}
+
+const CATEGORY_TABS: CategoryTab[] = [
+  { id: 'all', label: 'All Parameters', icon: Filter },
+  { id: 'temperature', label: 'Temperature', icon: Thermometer },
+  { id: 'electrical', label: 'Electrical & Power', icon: Zap },
+  { id: 'dga_oil', label: 'DGA & Oil Quality', icon: Droplet },
+  { id: 'mechanical_env', label: 'Mechanical & Environment', icon: Gauge },
+  { id: 'custom', label: 'Custom / Other', icon: Box },
+]
+
+/** Comprehensive Expected Payload Catalog for standard industrial sensor domains */
+export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, AlarmParam[]> = {
+  transformer: [
+    // 🌡️ Thermal & Temperature
+    { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 80, critical: 95, rate: { unit: '°C/h', warn: 3 } },
+    { key: 'windingTemp', label: 'Winding / Hot-Spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110, rate: { unit: '°C/h', warn: 5 } },
+    { key: 'ambientTemp', label: 'Ambient Temperature', unit: '°C', direction: 'high', warn: 45, critical: 55 },
+    { key: 'bottomOilTemp', label: 'Bottom Oil Temperature', unit: '°C', direction: 'high', warn: 70, critical: 85 },
+    { key: 'coreTemp', label: 'Core Temperature', unit: '°C', direction: 'high', warn: 90, critical: 105 },
+
+    // ⚡️ Electrical & Power
+    { key: 'load', label: 'Load Factor', unit: '%', direction: 'high', warn: 80, critical: 95 },
+    { key: 'currentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
+    { key: 'currentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
+    { key: 'currentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
+    { key: 'currentN', label: 'Neutral Current', unit: 'A', direction: 'high', warn: 50, critical: 100 },
+    { key: 'voltageA', label: 'Phase A Voltage (V_an)', unit: 'V', direction: 'high', warn: 245, critical: 260 },
+    { key: 'voltageB', label: 'Phase B Voltage (V_bn)', unit: 'V', direction: 'high', warn: 245, critical: 260 },
+    { key: 'voltageC', label: 'Phase C Voltage (V_cn)', unit: 'V', direction: 'high', warn: 245, critical: 260 },
+    { key: 'powerFactor', label: 'Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75 },
+    { key: 'frequency', label: 'Frequency', unit: 'Hz', direction: 'high', warn: 51.5, critical: 52.5 },
+    { key: 'thd_v', label: 'Voltage THD', unit: '%', direction: 'high', warn: 5, critical: 8 },
+    { key: 'thd_i', label: 'Current THD', unit: '%', direction: 'high', warn: 10, critical: 20 },
+    { key: 'activePower', label: 'Active Power', unit: 'kW', direction: 'high', warn: 800, critical: 1000 },
+    { key: 'apparentPower', label: 'Apparent Power', unit: 'kVA', direction: 'high', warn: 1000, critical: 1250 },
+
+    // 🧪 DGA & Oil Quality
+    { key: 'hydrogen', label: 'Hydrogen H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 150, critical: 300, rate: { unit: 'ppm/day', warn: 10 } },
+    { key: 'methane', label: 'Methane CH₄ (DGA)', unit: 'ppm', direction: 'high', warn: 120, critical: 400 },
+    { key: 'acetylene', label: 'Acetylene C₂H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 5, critical: 35 },
+    { key: 'ethylene', label: 'Ethylene C₂H₄ (DGA)', unit: 'ppm', direction: 'high', warn: 100, critical: 200 },
+    { key: 'ethane', label: 'Ethane C₂H₆ (DGA)', unit: 'ppm', direction: 'high', warn: 65, critical: 150 },
+    { key: 'co', label: 'Carbon Monoxide CO', unit: 'ppm', direction: 'high', warn: 500, critical: 1000 },
+    { key: 'co2', label: 'Carbon Dioxide CO₂', unit: 'ppm', direction: 'high', warn: 5000, critical: 10000 },
+    { key: 'tdcg', label: 'Total Combustible Gas (TDCG)', unit: 'ppm', direction: 'high', warn: 720, critical: 1920 },
+    { key: 'moisture', label: 'Moisture in Oil', unit: 'ppm', direction: 'high', warn: 25, critical: 35 },
+    { key: 'oilLevel', label: 'Oil Level', unit: '%', direction: 'low', warn: 70, critical: 60 },
+    { key: 'bdv', label: 'Breakdown Voltage (BDV)', unit: 'kV', direction: 'low', warn: 40, critical: 30 },
+    { key: 'acidity', label: 'Oil Acidity', unit: 'mg KOH/g', direction: 'high', warn: 0.15, critical: 0.3 },
+
+    // 🛡️ Mechanical & Condition
+    { key: 'pressure', label: 'Tank Pressure', unit: 'kPa', direction: 'high', warn: 35, critical: 50 },
+    { key: 'partialDischarge', label: 'Partial Discharge (PD)', unit: 'pC', direction: 'high', warn: 200, critical: 500 },
+    { key: 'vibration', label: 'Vibration Velocity', unit: 'mm/s', direction: 'high', warn: 4.5, critical: 7.1 },
+  ],
+  carbonNode: [
+    { key: 'tempHigh', label: 'Chamber High Temperature', unit: '°C', direction: 'high', warn: 8, critical: 10 },
+    { key: 'tempLow', label: 'Chamber Low Temperature', unit: '°C', direction: 'low', warn: 2, critical: 0 },
+    { key: 'door', label: 'Door-open Duration', unit: 'min', direction: 'high', warn: 5, critical: 15 },
+    { key: 'current', label: 'Compressor Current', unit: 'A', direction: 'high', warn: 5, critical: 10 },
+    { key: 'rh', label: 'Relative Humidity', unit: '%', direction: 'high', warn: 85, critical: 95 },
+    { key: 'defrostTemp', label: 'Defrost Sensor Temp', unit: '°C', direction: 'high', warn: 15, critical: 25 },
+    { key: 'power', label: 'Power Consumption', unit: 'kW', direction: 'high', warn: 3.5, critical: 5.0 },
+  ],
+  bloodBox: [
+    { key: 'tempHigh', label: 'Blood Storage High Temp', unit: '°C', direction: 'high', warn: 6, critical: 8 },
+    { key: 'tempLow', label: 'Blood Storage Low Temp', unit: '°C', direction: 'low', warn: 2, critical: 1 },
+    { key: 'battery', label: 'Battery Level', unit: '%', direction: 'low', warn: 30, critical: 15 },
+    { key: 'excursion', label: 'Excursion Duration', unit: 'min', direction: 'high', warn: 10, critical: 30 },
+    { key: 'ambientTemp', label: 'External Ambient Temp', unit: '°C', direction: 'high', warn: 38, critical: 45 },
+    { key: 'impact', label: 'Shock / Impact Sensor', unit: 'g', direction: 'high', warn: 2.5, critical: 4.0 },
+    { key: 'baroAlt', label: 'Barometric Altitude', unit: 'm', direction: 'high', warn: 2500, critical: 3500 },
+    { key: 'rssi', label: 'Cellular Signal Strength', unit: 'dBm', direction: 'low', warn: -95, critical: -110 },
+  ],
+}
+
+/** Categorize any parameter key into one of the standard tabs */
+export function classifyParam(key: string, domain?: SensorDomain): ParamCategory {
+  const k = key.toLowerCase()
+
+  // 1. Temperature
+  if (
+    k.includes('temp') || k.includes('hotspot') || k.includes('cooler') ||
+    k === 'thigh' || k === 'tlow' || k.startsWith('t_') || k.endsWith('_temp')
+  ) {
+    return 'temperature'
+  }
+
+  // 2. Electrical
+  if (
+    k.includes('volt') || k.includes('curr') || k.includes('amp') ||
+    k.includes('freq') || k.includes('hz') || k.includes('pf') ||
+    k.includes('power') || k.includes('load') || k.includes('thd') ||
+    k === 'kw' || k === 'kva' || k === 'kvar' || k === 'kwh' ||
+    k.startsWith('v_') || k.startsWith('i_') || k.startsWith('voltage') || k.startsWith('current')
+  ) {
+    return 'electrical'
+  }
+
+  // 3. DGA & Oil Quality
+  if (
+    k.includes('dga') || k.includes('hydrogen') || k === 'h2' ||
+    k.includes('methane') || k === 'ch4' || k.includes('acetylene') || k === 'c2h2' ||
+    k.includes('ethylene') || k === 'c2h4' || k.includes('ethane') || k === 'c2h6' ||
+    k.includes('carbon') || k === 'co' || k === 'co2' || k.includes('tdcg') ||
+    k.includes('moist') || k.includes('oil') || k.includes('bdv') ||
+    k.includes('breakdown') || k.includes('dielectric') || k.includes('acidity') || k.includes('ift')
+  ) {
+    return 'dga_oil'
+  }
+
+  // 4. Mechanical & Environmental
+  if (
+    k.includes('press') || k.includes('baro') || k.includes('alt') ||
+    k.includes('vib') || k.includes('pd') || k.includes('partial') ||
+    k.includes('sound') || k.includes('noise') || k.includes('door') ||
+    k.includes('batt') || k.includes('excursion') || k.includes('rssi') ||
+    k.includes('humid') || k.includes('rh') || k.includes('tilt') || k.includes('impact')
+  ) {
+    return 'mechanical_env'
+  }
+
+  return 'custom'
+}
+
+export default function AlarmParamConfig({
+  domain = 'transformer',
+  nodeId,
+  orgId = 'org-1',
+  onApplyAll,
+}: {
+  domain?: SensorDomain
+  nodeId?: string
+  orgId?: string
+  onApplyAll?: (rule: NodeAlarmRule) => void
+}) {
+  const live = useIsLive()
   const schema = getAlarmSchema(domain)
   const setRule = useAlarmDB((s) => s.setRule)
   const hasHydrated = useAlarmDB((s) => s.hasHydrated)
   const { labelOf } = useParamLabels(orgId || '', domain, nodeId)
   const { devices } = useManagedDevices(orgId || '')
 
-  // Discovered sensor parameters from real device telemetry / last sample
-  const activeParams: AlarmParam[] = useMemo(() => {
-    if (!schema) return []
-    const baseParams = schema.params.map((p) => ({ ...p, label: labelOf(p.key) }))
-    const baseKeys = new Set(schema.params.map((p) => p.key))
+  // Current live sensor readings polled or subscribed
+  const [liveReadings, setLiveReadings] = useState<Record<string, number>>({})
+  const [configuredDisplayKeys, setConfiguredDisplayKeys] = useState<string[]>([])
+  const [discoveredWireKeys, setDiscoveredWireKeys] = useState<string[]>([])
+  const [customParams, setCustomParams] = useState<AlarmParam[]>([])
 
-    // If nodeId is selected, find its real device sample keys
-    const device = nodeId ? devices.find((d) => d.id === nodeId) : null
-    const sampleKeys = Object.keys((device as any)?.lastSample ?? {})
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeTab, setActiveTab] = useState<ParamCategory>('all')
 
-    const extraKeys = new Set<string>()
-    for (const k of sampleKeys) {
-      if (!baseKeys.has(k) && k !== 'time' && k !== 'ts' && k !== 'id' && k !== 'nodeId' && k !== 'orgId' && k !== 'domain' && k !== 'status' && k !== 'alarm') {
-        extraKeys.add(k)
-      }
+  // New Custom Parameter Form Drawer
+  const [showAddParam, setShowAddParam] = useState(false)
+  const [newKey, setNewKey] = useState('')
+  const [newLabel, setNewLabel] = useState('')
+  const [newUnit, setNewUnit] = useState('')
+  const [newDirection, setNewDirection] = useState<'high' | 'low'>('high')
+  const [newWarn, setNewWarn] = useState<number>(80)
+  const [newCritical, setNewCritical] = useState<number>(100)
+
+  // -------------------------------------------------------------------------
+  // Fetch Real Live Telemetry & Discovered Parameters
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!live || !nodeId) {
+      setLiveReadings({})
+      return
     }
+    let cancelled = false
+    const fetchLatest = () => {
+      api.latest(nodeId).then((r) => {
+        if (cancelled || !r?.values) return
+        setLiveReadings(r.values)
+        setDiscoveredWireKeys(Object.keys(r.values))
+      })
+    }
+    fetchLatest()
+    const pollId = setInterval(fetchLatest, 5000)
 
-    const dynamicParams: AlarmParam[] = Array.from(extraKeys).map((k) => {
-      const lower = k.toLowerCase()
-      const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
-      const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') ? 'low' : 'high'
-      return {
-        key: k,
-        label: labelOf(k),
-        unit,
-        direction,
-        warn: direction === 'high' ? 80 : 20,
-        critical: direction === 'high' ? 100 : 10,
+    // Telemetry WS stream
+    const unsubscribe = subscribeTelemetry((frame) => {
+      if (frame.id === nodeId && frame.values && Object.keys(frame.values).length > 0) {
+        setLiveReadings((prev) => ({ ...prev, ...frame.values }))
+        setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
       }
     })
 
-    return [...baseParams, ...dynamicParams]
-  }, [schema, nodeId, devices, labelOf])
+    return () => {
+      cancelled = true
+      clearInterval(pollId)
+      unsubscribe()
+    }
+  }, [live, nodeId])
 
-  // generic low/high fallback for unknown domains
-  const [generic, setGeneric] = useState({ low: 2, high: 8 })
-  const [vals, setVals] = useState(() =>
-    Object.fromEntries((schema?.params ?? []).map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])) as Record<string, { warn: number; critical: number; rate?: number }>,
-  )
+  // Fetch configured display parameters from SENSOR READINGS
+  useEffect(() => {
+    if (!live || !orgId || !domain) return
+    let cancelled = false
+    api.displayParams(orgId, domain, nodeId).then((res) => {
+      if (cancelled || !res?.paramKeys) return
+      setConfiguredDisplayKeys(res.paramKeys)
+    })
+    return () => { cancelled = true }
+  }, [live, orgId, domain, nodeId])
+
+  // Discover parameters across the entire fleet if org-level
+  useEffect(() => {
+    if (nodeId || !devices.length) return
+    const keys = new Set<string>()
+    for (const d of devices) {
+      if (d.domain === domain && (d as any).lastSample) {
+        Object.keys((d as any).lastSample).forEach((k) => keys.add(k))
+      }
+    }
+    if (keys.size > 0) {
+      setDiscoveredWireKeys(Array.from(keys))
+    }
+  }, [nodeId, devices, domain])
+
+  // -------------------------------------------------------------------------
+  // Unified Parameter List: Catalog + Live Samples + Display Params + Custom
+  // -------------------------------------------------------------------------
+  const allParams: AlarmParam[] = useMemo(() => {
+    const map = new Map<string, AlarmParam>()
+
+    // 1. Expected catalog for this domain
+    const catalog = EXPECTED_PAYLOAD_CATALOG[domain] || schema?.params || []
+    for (const p of catalog) {
+      map.set(p.key, { ...p, label: labelOf(p.key) })
+    }
+
+    // 2. Add keys configured in SENSOR READINGS (DisplayParamPicker)
+    for (const k of configuredDisplayKeys) {
+      if (!map.has(k)) {
+        const lower = k.toLowerCase()
+        const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
+        const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') || lower.includes('pf') || lower.includes('bdv') ? 'low' : 'high'
+        map.set(k, {
+          key: k,
+          label: labelOf(k),
+          unit,
+          direction,
+          warn: direction === 'high' ? 80 : 20,
+          critical: direction === 'high' ? 100 : 10,
+        })
+      }
+    }
+
+    // 3. Add any dynamically discovered wire keys from live telemetry / lastSample
+    for (const k of discoveredWireKeys) {
+      if (k === 'time' || k === 'ts' || k === 'id' || k === 'nodeId' || k === 'orgId' || k === 'domain' || k === 'status' || k === 'alarm') continue
+      if (!map.has(k)) {
+        const lower = k.toLowerCase()
+        const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
+        const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') || lower.includes('pf') || lower.includes('bdv') ? 'low' : 'high'
+        map.set(k, {
+          key: k,
+          label: labelOf(k),
+          unit,
+          direction,
+          warn: direction === 'high' ? 80 : 20,
+          critical: direction === 'high' ? 100 : 10,
+        })
+      }
+    }
+
+    // 4. User-created custom parameters
+    for (const cp of customParams) {
+      map.set(cp.key, cp)
+    }
+
+    return Array.from(map.values())
+  }, [domain, schema, configuredDisplayKeys, discoveredWireKeys, customParams, labelOf])
+
+  // Active parameter configuration values
+  const [vals, setVals] = useState<Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }>>({})
   const [dbVals, setDbVals] = useState<Record<string, { dwell_min?: number; cooldown_s?: number }>>({})
   const [dwell, setDwell] = useState(schema?.dwellMin ?? 3)
   const [hyst, setHyst] = useState(schema?.hysteresis ?? 1)
   const [healthIdx, setHealthIdx] = useState(schema?.healthIndexWarn ?? 60)
 
+  // Seed default values when allParams changes
+  useEffect(() => {
+    setVals((prev) => {
+      const next = { ...prev }
+      for (const p of allParams) {
+        if (!next[p.key]) {
+          next[p.key] = {
+            warn: p.warn,
+            critical: p.critical,
+            rate: p.rate?.warn,
+            enabled: true,
+          }
+        }
+      }
+      return next
+    })
+  }, [allParams])
+
   const setVal = (key: string, field: 'warn' | 'critical' | 'rate', v: number) =>
     setVals((s) => ({ ...s, [key]: { ...s[key], [field]: v } }))
 
-  // Reset to THIS domain's schema defaults whenever the domain changes
-  useEffect(() => {
-    const s = getAlarmSchema(domain)
-    setVals(Object.fromEntries((s?.params ?? []).map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])))
-    setDbVals({})
-    setDwell(s?.dwellMin ?? 3)
-    setHyst(s?.hysteresis ?? 1)
-    setHealthIdx(s?.healthIndexWarn ?? 60)
-  }, [domain])
+  const toggleEnabled = (key: string) =>
+    setVals((s) => ({ ...s, [key]: { ...s[key], enabled: s[key]?.enabled === false ? true : false } }))
 
-  // Apply a stored rule (per-node override or the org+domain default) over the
-  // schema defaults this component seeded itself with.
+  const toggleDirection = (key: string) => {
+    // Invert direction and flip default warn/critical
+    setVals((s) => {
+      const current = s[key]
+      return {
+        ...s,
+        [key]: {
+          ...current,
+          warn: current?.critical ?? 80,
+          critical: current?.warn ?? 100,
+        },
+      }
+    })
+  }
+
+  // Apply stored rule (from node or org)
   const applyRule = (saved: NodeAlarmRule) => {
-    setVals(Object.fromEntries((saved.params ?? []).map((p) => [p.key, { warn: p.warn, critical: p.critical, rate: p.rate?.warn }])))
+    const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }> = {}
+    for (const p of saved.params ?? []) {
+      nextVals[p.key] = {
+        warn: p.warn,
+        critical: p.critical,
+        rate: p.rate?.warn,
+        enabled: (p as any).enabled !== false,
+      }
+    }
+    setVals((prev) => ({ ...prev, ...nextVals }))
     if (saved.debounceJson) setDbVals(saved.debounceJson)
     if (saved.dwellMin !== undefined) setDwell(saved.dwellMin)
     if (saved.hysteresis !== undefined) setHyst(saved.hysteresis)
     if (saved.healthIndexWarn !== undefined) setHealthIdx(saved.healthIndexWarn)
   }
 
-  // Load a saved per-node override after hydration (avoids SSR mismatch).
+  // Load per-node saved rule
   useEffect(() => {
     if (!nodeId || !hasHydrated) return
     const saved = useAlarmDB.getState().rules[nodeId]
     if (saved) applyRule(saved)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, hasHydrated])
 
+  // Load org-level saved rule
   const [orgRuleState, setOrgRuleState] = useState<'idle' | 'loading' | 'custom' | 'default'>('idle')
   const [orgRuleMeta, setOrgRuleMeta] = useState<{ updatedBy?: string | null; updatedAt?: string | null } | null>(null)
   useEffect(() => {
@@ -104,163 +384,612 @@ export default function AlarmParamConfig({ domain, nodeId, orgId, onApplyAll }: 
     setOrgRuleState('loading')
     api.getOrgRule(orgId, domain).then((r) => {
       if (cancelled) return
-      if (r?.rule) { applyRule(r.rule); setOrgRuleMeta({ updatedBy: r.updatedBy, updatedAt: r.updatedAt }); setOrgRuleState('custom') }
-      else setOrgRuleState('default')
+      if (r?.rule) {
+        applyRule(r.rule)
+        setOrgRuleMeta({ updatedBy: r.updatedBy, updatedAt: r.updatedAt })
+        setOrgRuleState('custom')
+      } else {
+        setOrgRuleState('default')
+      }
     })
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, orgId, domain])
 
+  // -------------------------------------------------------------------------
+  // Filtering & Category Tabs
+  // -------------------------------------------------------------------------
+  const categoryCounts = useMemo(() => {
+    const counts: Record<ParamCategory, number> = {
+      all: allParams.length,
+      temperature: 0,
+      electrical: 0,
+      dga_oil: 0,
+      mechanical_env: 0,
+      custom: 0,
+    }
+    for (const p of allParams) {
+      const cat = classifyParam(p.key, domain)
+      counts[cat] = (counts[cat] || 0) + 1
+    }
+    return counts
+  }, [allParams, domain])
+
+  const filteredParams = useMemo(() => {
+    let list = allParams
+    if (activeTab !== 'all') {
+      list = list.filter((p) => classifyParam(p.key, domain) === activeTab)
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase()
+      list = list.filter((p) => p.label.toLowerCase().includes(q) || p.key.toLowerCase().includes(q) || p.unit.toLowerCase().includes(q))
+    }
+    return list
+  }, [allParams, activeTab, searchQuery, domain])
+
+  // Build current rule for persistence
   const buildRule = (): NodeAlarmRule | null => {
-    if (!schema || !domain) return null
+    if (!domain) return null
+    const paramsOut: ParamRule[] = allParams.map((p) => {
+      const v = vals[p.key]
+      return {
+        key: p.key,
+        label: p.label,
+        unit: p.unit,
+        direction: p.direction,
+        warn: v?.warn ?? p.warn,
+        critical: v?.critical ?? p.critical,
+        rate: p.rate ? { ...p.rate, warn: v?.rate ?? p.rate.warn } : undefined,
+        enabled: v?.enabled !== false,
+      } as ParamRule
+    })
+
     return {
       domain,
-      params: activeParams.map((p) => ({
-        ...p,
-        warn: vals[p.key]?.warn ?? p.warn,
-        critical: vals[p.key]?.critical ?? p.critical,
-        rate: p.rate ? { ...p.rate, warn: vals[p.key]?.rate ?? p.rate.warn } : undefined,
-      })),
+      params: paramsOut,
       dwellMin: dwell,
       hysteresis: hyst,
-      healthIndexWarn: schema.healthIndexWarn !== undefined ? healthIdx : undefined,
+      healthIndexWarn: schema?.healthIndexWarn !== undefined ? healthIdx : undefined,
       debounceJson: Object.keys(dbVals).length ? dbVals : undefined,
     }
   }
-  const persist = () => {
-    const rule = buildRule()
-    if (!nodeId || !rule) return
-    setRule(nodeId, rule, orgId)
-    toast.success('Alarm rules saved — event log updated')
-  }
-  const applyAll = () => { const rule = buildRule(); if (rule && onApplyAll) onApplyAll(rule) }
 
-  if (!schema) {
+  const persist = async () => {
+    const rule = buildRule()
+    if (!rule) return
+    if (nodeId) {
+      setRule(nodeId, rule, orgId)
+      if (isLive()) {
+        await api.putRule(nodeId, { orgId, rule })
+      }
+      toast.success('Alarm rules saved for this device')
+    }
+  }
+
+  const applyAll = () => {
+    const rule = buildRule()
+    if (rule && onApplyAll) onApplyAll(rule)
+  }
+
+  const handleAddCustomParam = () => {
+    if (!newKey.trim() || !newLabel.trim()) {
+      toast.error('Please enter both Parameter Key and Label')
+      return
+    }
+    const key = newKey.trim()
+    const p: AlarmParam = {
+      key,
+      label: newLabel.trim(),
+      unit: newUnit.trim(),
+      direction: newDirection,
+      warn: newWarn,
+      critical: newCritical,
+    }
+    setCustomParams((prev) => [...prev.filter((x) => x.key !== key), p])
+    setVals((prev) => ({
+      ...prev,
+      [key]: { warn: newWarn, critical: newCritical, enabled: true },
+    }))
+    setNewKey('')
+    setNewLabel('')
+    setNewUnit('')
+    setShowAddParam(false)
+    toast.success(`Parameter "${p.label}" added to configuration`)
+  }
+
+  const resetToFactoryDefaults = () => {
+    const catalog = EXPECTED_PAYLOAD_CATALOG[domain] || schema?.params || []
+    const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }> = {}
+    for (const p of catalog) {
+      nextVals[p.key] = { warn: p.warn, critical: p.critical, rate: p.rate?.warn, enabled: true }
+    }
+    setVals(nextVals)
+    setDwell(schema?.dwellMin ?? 3)
+    setHyst(schema?.hysteresis ?? 1)
+    setHealthIdx(schema?.healthIndexWarn ?? 60)
+    toast.success('Reset to standard factory defaults')
+  }
+
+  const toggleAll = (enable: boolean) => {
+    setVals((prev) => {
+      const next = { ...prev }
+      for (const k of Object.keys(next)) {
+        next[k] = { ...next[k], enabled: enable }
+      }
+      return next
+    })
+    toast.success(enable ? 'Enabled all alarm parameters' : 'Disabled all alarm parameters')
+  }
+
+  // Live status evaluation helper
+  const getLiveStatusBadge = (param: AlarmParam, liveVal?: number) => {
+    if (liveVal === undefined || liveVal === null || isNaN(liveVal)) {
+      return <span className="text-[10px] text-slate-600 font-mono">—</span>
+    }
+    const v = vals[param.key] ?? param
+    const isHigh = param.direction === 'high'
+    const isCrit = isHigh ? liveVal >= v.critical : liveVal <= v.critical
+    const isWarn = isHigh ? liveVal >= v.warn : liveVal <= v.warn
+
+    if (isCrit) {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-950/80 text-red-400 border border-red-800 text-[10px] font-semibold font-mono">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+          {liveVal.toFixed(1)} {param.unit} (CRIT)
+        </span>
+      )
+    }
+    if (isWarn) {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-400 border border-amber-800 text-[10px] font-semibold font-mono">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          {liveVal.toFixed(1)} {param.unit} (WARN)
+        </span>
+      )
+    }
     return (
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[10px] text-blue-400 mb-1 uppercase tracking-wider">Lower limit</label>
-          <input type="number" value={generic.low} onChange={(e) => setGeneric((g) => ({ ...g, low: +e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-        </div>
-        <div>
-          <label className="block text-[10px] text-red-400 mb-1 uppercase tracking-wider">Upper limit</label>
-          <input type="number" value={generic.high} onChange={(e) => setGeneric((g) => ({ ...g, high: +e.target.value }))} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-        </div>
-      </div>
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/80 text-[10px] font-semibold font-mono">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+        {liveVal.toFixed(1)} {param.unit}
+      </span>
     )
   }
 
   return (
-    <div className="space-y-3">
-      <div className="text-[11px] text-slate-500">Thresholds for <span className="text-slate-300">{schema.label}</span> — Warning &amp; Critical per parameter.</div>
-
-      {/* Parameter table */}
-      <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-        <table className="w-full text-sm">
-          <thead>
-            <tr style={{ background: '#0a0e1a' }}>
-              {['Parameter', 'Warning', 'Critical', 'Dwell (m)', 'Cooldown (s)', 'Rate-of-rise'].map((h) => (
-                <th key={h} className="text-left py-2 px-3 text-[10px] text-slate-500 font-medium uppercase tracking-wider">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {activeParams.map((p) => (
-              <tr key={p.key} style={{ borderTop: '1px solid #1e2433' }}>
-                <td className="py-2 px-3">
-                  <div className="flex items-center gap-1.5 text-slate-200">
-                    {p.direction === 'high' ? <ArrowUp size={12} className="text-red-400" /> : <ArrowDown size={12} className="text-blue-400" />}
-                    {p.label}
-                  </div>
-                  <div className="text-[10px] text-slate-600 ml-4">{p.unit} · {p.direction === 'high' ? 'alarm above' : 'alarm below'}</div>
-                </td>
-                <td className="py-2 px-3">
-                  <input type="number" value={vals[p.key]?.warn ?? p.warn} onChange={(e) => setVal(p.key, 'warn', +e.target.value)}
-                    className="w-20 rounded-md px-2 py-1 text-xs text-amber-300 outline-none focus:ring-1 focus:ring-amber-500" style={inset} />
-                </td>
-                <td className="py-2 px-3">
-                  <input type="number" value={vals[p.key]?.critical ?? p.critical} onChange={(e) => setVal(p.key, 'critical', +e.target.value)}
-                    className="w-16 sm:w-20 rounded-md px-2 py-1 text-xs text-red-300 outline-none focus:ring-1 focus:ring-red-500" style={inset} />
-                </td>
-                <td className="py-2 px-3">
-                  <input type="number" value={dbVals[p.key]?.dwell_min ?? ''} placeholder="-" onChange={(e) => setDbVals((s) => ({ ...s, [p.key]: { ...s[p.key], dwell_min: e.target.value ? +e.target.value : undefined } }))}
-                    className="w-12 sm:w-16 rounded-md px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500" style={inset} />
-                </td>
-                <td className="py-2 px-3">
-                  <input type="number" value={dbVals[p.key]?.cooldown_s ?? ''} placeholder="-" onChange={(e) => setDbVals((s) => ({ ...s, [p.key]: { ...s[p.key], cooldown_s: e.target.value ? +e.target.value : undefined } }))}
-                    className="w-12 sm:w-16 rounded-md px-2 py-1 text-xs text-white outline-none focus:ring-1 focus:ring-blue-500" style={inset} />
-                </td>
-                <td className="py-2 px-3">
-                  {p.rate ? (
-                    <div className="flex items-center gap-1">
-                      <TrendingUp size={11} className="text-indigo-400" />
-                      <input type="number" value={vals[p.key]?.rate ?? p.rate.warn} onChange={(e) => setVal(p.key, 'rate', +e.target.value)}
-                        className="w-16 rounded-md px-2 py-1 text-xs text-indigo-300 outline-none focus:ring-1 focus:ring-indigo-500" style={inset} />
-                      <span className="text-[10px] text-slate-600">{p.rate.unit}</span>
-                    </div>
-                  ) : <span className="text-[10px] text-slate-700">—</span>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Timing + composite */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+    <div className="space-y-4">
+      {/* Header Info & Actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1 border-b border-slate-800/80">
         <div>
-          <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider"><Timer size={11} /> Global Dwell (min)</label>
-          <input type="number" value={dwell} onChange={(e) => setDwell(+e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-        </div>
-        <div>
-          <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider"><Activity size={11} /> Hysteresis</label>
-          <input type="number" value={hyst} onChange={(e) => setHyst(+e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
-        </div>
-        {schema.healthIndexWarn !== undefined && (
-          <div>
-            <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider"><Activity size={11} /> Health Idx &lt;</label>
-            <input type="number" value={healthIdx} onChange={(e) => setHealthIdx(+e.target.value)} className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset} />
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-white">Alarm Thresholds &amp; Telemetry Payload</span>
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-950 text-indigo-300 border border-indigo-800/60">
+              {allParams.length} parameters mapped
+            </span>
           </div>
-        )}
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            {nodeId ? (
+              <span>Device-specific mapping for <strong className="text-indigo-300">{nodeId}</strong> (Live payload &amp; sensor readings)</span>
+            ) : (
+              <span>Organization-wide threshold baseline for <strong className="text-indigo-300">{schema?.label ?? domain}</strong></span>
+            )}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={resetToFactoryDefaults}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 border border-slate-800"
+            title="Reset all thresholds to factory baseline"
+          >
+            <RefreshCw size={11} /> Defaults
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAddParam(!showAddParam)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-indigo-300 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800/80"
+          >
+            <Plus size={12} /> Add Custom Param
+          </button>
+        </div>
       </div>
 
-      {/* Where these numbers came from. Without this the form looks identical
-          whether it is showing factory defaults or the org's saved values,
-          which is exactly what made a working save look like it did nothing. */}
+      {/* Add Custom Parameter Form Drawer */}
+      {showAddParam && (
+        <div className="p-3.5 rounded-xl border border-indigo-800/60 bg-indigo-950/20 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+              <Plus size={14} className="text-indigo-400" /> Add Custom Sensor / Wire Key
+            </div>
+            <button onClick={() => setShowAddParam(false)} className="text-slate-500 hover:text-white"><X size={14} /></button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+            <div>
+              <label className="block text-[10px] text-slate-400 mb-1">Parameter Key (MQTT Payload Key)</label>
+              <input
+                type="text"
+                placeholder="e.g. bearing_temp_c"
+                value={newKey}
+                onChange={(e) => setNewKey(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-white font-mono text-xs outline-none"
+                style={inset}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-400 mb-1">Display Label</label>
+              <input
+                type="text"
+                placeholder="e.g. Bearing Temperature"
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-white text-xs outline-none"
+                style={inset}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-400 mb-1">Unit</label>
+              <input
+                type="text"
+                placeholder="e.g. °C, V, A, ppm, %"
+                value={newUnit}
+                onChange={(e) => setNewUnit(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-white text-xs outline-none"
+                style={inset}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div>
+              <label className="block text-[10px] text-slate-400 mb-1">Alarm Direction</label>
+              <select
+                value={newDirection}
+                onChange={(e) => setNewDirection(e.target.value as any)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-white text-xs outline-none"
+                style={inset}
+              >
+                <option value="high">▲ High (Alarm Above)</option>
+                <option value="low">▼ Low (Alarm Below)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] text-amber-400 mb-1">Warning Threshold</label>
+              <input
+                type="number"
+                value={newWarn}
+                onChange={(e) => setNewWarn(+e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-amber-300 text-xs outline-none"
+                style={inset}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-red-400 mb-1">Critical Threshold</label>
+              <input
+                type="number"
+                value={newCritical}
+                onChange={(e) => setNewCritical(+e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-lg text-red-300 text-xs outline-none"
+                style={inset}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              onClick={() => setShowAddParam(false)}
+              className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAddCustomParam}
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500"
+            >
+              Add Parameter
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Category Tabs & Quick Search */}
+      <div className="space-y-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+          {/* Tabs */}
+          <div className="flex items-center gap-1 overflow-x-auto pb-1 max-w-full">
+            {CATEGORY_TABS.map((tab) => {
+              const count = categoryCounts[tab.id]
+              if (tab.id !== 'all' && count === 0) return null
+              const Icon = tab.icon
+              const active = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={clsx(
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all',
+                    active ? 'text-white bg-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+                  )}
+                  style={!active ? inset : {}}
+                >
+                  <Icon size={12} className={active ? 'text-white' : 'text-slate-400'} />
+                  {tab.label}
+                  <span className={clsx('ml-0.5 px-1.5 py-0.2 rounded-full text-[10px]', active ? 'bg-indigo-900 text-indigo-200' : 'bg-slate-800 text-slate-400')}>
+                    {count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Instant Search Bar */}
+          <div className="relative min-w-[200px] flex-shrink-0">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Search parameter..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-7 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
+              style={inset}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+              >
+                <X size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Parameter Table */}
+      <div className="rounded-xl overflow-hidden border border-slate-800/90" style={{ background: '#0a0e1a' }}>
+        <div className="overflow-x-auto max-h-[460px] overflow-y-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 z-10" style={{ background: '#0d1117', borderBottom: '1px solid #1e2433' }}>
+              <tr>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Active</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Parameter (Payload Key)</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Live Reading</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Direction</th>
+                <th className="py-2.5 px-3 text-[10px] text-amber-400 font-semibold uppercase tracking-wider">Warning</th>
+                <th className="py-2.5 px-3 text-[10px] text-red-400 font-semibold uppercase tracking-wider">Critical</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Dwell (m)</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Cooldown (s)</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Rate-of-Rise</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {filteredParams.map((p) => {
+                const current = vals[p.key] ?? { warn: p.warn, critical: p.critical, enabled: true, rate: p.rate?.warn }
+                const isEnabled = current.enabled !== false
+                const liveVal = liveReadings[p.key] ?? (devices.find((d) => d.id === nodeId) as any)?.lastSample?.[p.key]
+
+                return (
+                  <tr
+                    key={p.key}
+                    className={clsx(
+                      'transition-colors hover:bg-white/[0.02]',
+                      !isEnabled && 'opacity-40 bg-black/20'
+                    )}
+                  >
+                    {/* Enable Checkbox */}
+                    <td className="py-2 px-3">
+                      <input
+                        type="checkbox"
+                        checked={isEnabled}
+                        onChange={() => toggleEnabled(p.key)}
+                        className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+                    </td>
+
+                    {/* Parameter Label & Wire Key */}
+                    <td className="py-2 px-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-slate-200">{p.label}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                        <span>{p.key}</span>
+                        {p.unit && <span className="text-indigo-400/80">({p.unit})</span>}
+                      </div>
+                    </td>
+
+                    {/* Live Reading */}
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      {getLiveStatusBadge(p, liveVal)}
+                    </td>
+
+                    {/* Direction Toggle */}
+                    <td className="py-2 px-3 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => toggleDirection(p.key)}
+                        disabled={!isEnabled}
+                        className={clsx(
+                          'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition-all',
+                          p.direction === 'high'
+                            ? 'bg-red-950/40 border-red-800/80 text-red-300 hover:bg-red-900/60'
+                            : 'bg-blue-950/40 border-blue-800/80 text-blue-300 hover:bg-blue-900/60'
+                        )}
+                        title="Click to toggle High (Alarm above) vs Low (Alarm below)"
+                      >
+                        {p.direction === 'high' ? (
+                          <>
+                            <ArrowUp size={11} className="text-red-400" />
+                            <span>Alarm &gt;</span>
+                          </>
+                        ) : (
+                          <>
+                            <ArrowDown size={11} className="text-blue-400" />
+                            <span>Alarm &lt;</span>
+                          </>
+                        )}
+                      </button>
+                    </td>
+
+                    {/* Warning Input */}
+                    <td className="py-2 px-3">
+                      <input
+                        type="number"
+                        disabled={!isEnabled}
+                        value={current.warn}
+                        onChange={(e) => setVal(p.key, 'warn', +e.target.value)}
+                        className="w-20 rounded-md px-2 py-1 text-xs text-amber-300 font-mono outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
+                        style={inset}
+                      />
+                    </td>
+
+                    {/* Critical Input */}
+                    <td className="py-2 px-3">
+                      <input
+                        type="number"
+                        disabled={!isEnabled}
+                        value={current.critical}
+                        onChange={(e) => setVal(p.key, 'critical', +e.target.value)}
+                        className="w-20 rounded-md px-2 py-1 text-xs text-red-300 font-mono outline-none focus:ring-1 focus:ring-red-500 disabled:opacity-50"
+                        style={inset}
+                      />
+                    </td>
+
+                    {/* Dwell (min) */}
+                    <td className="py-2 px-3">
+                      <input
+                        type="number"
+                        disabled={!isEnabled}
+                        value={dbVals[p.key]?.dwell_min ?? ''}
+                        placeholder={String(dwell)}
+                        onChange={(e) => setDbVals((s) => ({ ...s, [p.key]: { ...s[p.key], dwell_min: e.target.value ? +e.target.value : undefined } }))}
+                        className="w-14 rounded-md px-2 py-1 text-xs text-slate-200 font-mono outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-600 disabled:opacity-50"
+                        style={inset}
+                      />
+                    </td>
+
+                    {/* Cooldown (s) */}
+                    <td className="py-2 px-3">
+                      <input
+                        type="number"
+                        disabled={!isEnabled}
+                        value={dbVals[p.key]?.cooldown_s ?? ''}
+                        placeholder="-"
+                        onChange={(e) => setDbVals((s) => ({ ...s, [p.key]: { ...s[p.key], cooldown_s: e.target.value ? +e.target.value : undefined } }))}
+                        className="w-14 rounded-md px-2 py-1 text-xs text-slate-200 font-mono outline-none focus:ring-1 focus:ring-indigo-500 placeholder-slate-600 disabled:opacity-50"
+                        style={inset}
+                      />
+                    </td>
+
+                    {/* Rate of Rise */}
+                    <td className="py-2 px-3">
+                      {p.rate ? (
+                        <div className="flex items-center gap-1">
+                          <TrendingUp size={11} className="text-indigo-400" />
+                          <input
+                            type="number"
+                            disabled={!isEnabled}
+                            value={current.rate ?? p.rate.warn}
+                            onChange={(e) => setVal(p.key, 'rate', +e.target.value)}
+                            className="w-14 rounded-md px-2 py-1 text-xs text-indigo-300 font-mono outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                            style={inset}
+                          />
+                          <span className="text-[10px] text-slate-500">{p.rate.unit}</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-slate-700">—</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+
+              {filteredParams.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="py-8 text-center text-slate-500">
+                    No matching parameters found for query &ldquo;{searchQuery}&rdquo;.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Global Timing & Composite Health Settings */}
+      <div className="p-3.5 rounded-xl border border-slate-800" style={surface}>
+        <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
+          <SlidersHorizontal size={13} className="text-indigo-400" /> Global Engine Debounce &amp; Hysteresis
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+              <Timer size={11} /> Global Dwell (min)
+            </label>
+            <input
+              type="number"
+              value={dwell}
+              onChange={(e) => setDwell(+e.target.value)}
+              className="w-full rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500"
+              style={inset}
+            />
+          </div>
+          <div>
+            <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+              <Activity size={11} /> Hysteresis / Deadband
+            </label>
+            <input
+              type="number"
+              value={hyst}
+              onChange={(e) => setHyst(+e.target.value)}
+              className="w-full rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500"
+              style={inset}
+            />
+          </div>
+          {schema?.healthIndexWarn !== undefined && (
+            <div>
+              <label className="flex items-center gap-1 text-[10px] text-slate-400 mb-1 uppercase tracking-wider">
+                <Gauge size={11} /> Health Index Alarm &lt;
+              </label>
+              <input
+                type="number"
+                value={healthIdx}
+                onChange={(e) => setHealthIdx(+e.target.value)}
+                className="w-full rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:ring-1 focus:ring-indigo-500"
+                style={inset}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Status info if org-level */}
       {!nodeId && orgRuleState !== 'idle' && (
         <p className="text-[11px] text-slate-500">
-          {orgRuleState === 'loading' ? 'Loading saved thresholds…'
+          {orgRuleState === 'loading'
+            ? 'Loading organization thresholds…'
             : orgRuleState === 'custom'
-              ? `Showing this organization's saved thresholds${orgRuleMeta?.updatedBy ? ` — last changed by ${orgRuleMeta.updatedBy}` : ''}.`
-              : 'No thresholds saved yet — showing the built-in defaults. Save to apply them to every device of this product.'}
+              ? `Showing saved baseline for ${schema?.label ?? domain}${orgRuleMeta?.updatedBy ? ` — last changed by ${orgRuleMeta.updatedBy}` : ''}.`
+              : 'No custom baseline saved yet — showing built-in industrial recommendations.'}
         </p>
       )}
 
-      {/* A "Severity Routing & Escalation" panel used to sit here: two channel
-          pickers, an escalate-after-N-minutes box and a "suppress during
-          maintenance window" checkbox. Every one of them was local useState —
-          none was in buildRule(), none was persisted, and nothing anywhere
-          read them. Setting them changed nothing and they reset on reload.
-          Removed rather than left as decoration, because:
-            · severity routing is ALREADY real and enforced — notify() skips a
-              channel whose min_severity is CRITICAL for a WARNING alarm — it
-              simply had no UI. That control now lives beside each channel in
-              Notification Setting, where the value is actually stored.
-            · escalation has a column (alarm_events.escalated) but no
-              configurable window, and
-            · maintenance windows do not exist in this schema at all.
-          Duplicating a working setting with a fake one is worse than either. */}
-
-      {nodeId && (
-        <button onClick={persist} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-          <Save size={14} /> Save Alarm Rules
-        </button>
-      )}
-      {onApplyAll && (
-        <button onClick={applyAll} className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
-          <Save size={14} /> Apply to all {domain ? '' : ''}org nodes
-        </button>
-      )}
+      {/* Save Action Buttons */}
+      <div className="flex flex-col sm:flex-row items-center gap-2 pt-1">
+        {nodeId && (
+          <button
+            onClick={persist}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white shadow-md hover:brightness-110 transition-all"
+            style={gradient}
+          >
+            <Save size={15} /> Save Device Alarm Rules
+          </button>
+        )}
+        {onApplyAll && (
+          <button
+            onClick={applyAll}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white shadow-md hover:brightness-110 transition-all"
+            style={gradient}
+          >
+            <Save size={15} /> Apply Baseline to All {schema?.label ?? domain} Devices
+          </button>
+        )}
+      </div>
     </div>
   )
 }
