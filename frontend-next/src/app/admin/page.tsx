@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
@@ -11,11 +11,12 @@ import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { useIsLive } from '@/lib/api'
+import { api, useIsLive } from '@/lib/api'
+import { getSession } from '@/lib/auth'
 import { healthFromValues } from '@/lib/alarmParams'
 import Link from 'next/link'
 import clsx from 'clsx'
-import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock, Search } from 'lucide-react'
+import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock, Search, Check } from 'lucide-react'
 import type { Transformer } from '@/types'
 import { fmtHM } from '@/lib/displayTime'
 
@@ -168,7 +169,7 @@ function HostCard({ host, href, liveStatus, liveVal }: { host: SensorHost; href:
 }
 
 function OverviewTab() {
-  const { selectedOrgId, getAlarmsByOrg } = useAppStore()
+  const { selectedOrgId, getAlarmsByOrg, acknowledgeAlarm } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const live = useIsLive()
   const { hosts, fromBackend } = useFleetHosts(orgId)
@@ -177,11 +178,15 @@ function OverviewTab() {
   const [liveValues, setLiveValues] = useState<Record<string, Record<string, number>>>({})
   const [searchQuery, setSearchQuery] = useState('')
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
+  const [msgRate, setMsgRate] = useState<number>(0)
+  const [ackingId, setAckingId] = useState<string | null>(null)
+  const msgCounterRef = useRef(0)
   const [, tick] = useState(0)
 
   useEffect(() => {
     if (!live) return
     const off = subscribeTelemetry((f) => {
+      msgCounterRef.current += 1
       if (f?.id && f.type !== 'alarm') {
         const id = f.id
         setLiveFrames((prev) => ({ ...prev, [id]: Date.now() }))
@@ -191,10 +196,14 @@ function OverviewTab() {
         }
       }
     })
-    const timer = setInterval(() => tick((n) => n + 1), 5000)
+    const rateTimer = setInterval(() => {
+      setMsgRate(msgCounterRef.current)
+      msgCounterRef.current = 0
+      tick((n) => n + 1)
+    }, 2000)
     return () => {
       off()
-      clearInterval(timer)
+      clearInterval(rateTimer)
     }
   }, [live])
 
@@ -240,6 +249,20 @@ function OverviewTab() {
 
   const byDomain = (d: SensorDomain) => filteredHosts.filter((h) => h.domain === d)
 
+  const handleAck = async (alarmId: string) => {
+    setAckingId(alarmId)
+    try {
+      if (live) {
+        await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Admin' })
+      }
+      acknowledgeAlarm(alarmId, getSession()?.name ?? 'Admin')
+    } catch (e) {
+      console.error('Ack error:', e)
+    } finally {
+      setAckingId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header with Live Heartbeat */}
@@ -247,8 +270,9 @@ function OverviewTab() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold text-white">Fleet Overview</h2>
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
+            <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live Telemetry {msgRate > 0 ? `(${(msgRate / 2).toFixed(1)} msg/s)` : 'Connected'}
             </span>
           </div>
           <p className="text-sm text-slate-500">Real-time status across {hosts.length} monitored assets</p>
@@ -307,7 +331,7 @@ function OverviewTab() {
             type="button"
             onClick={() => setDomainFilter('all')}
             className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-              domainFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              domainFilter === 'all' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
             }`}
           >
             All Assets ({hosts.length})
@@ -316,7 +340,7 @@ function OverviewTab() {
             type="button"
             onClick={() => setDomainFilter('transformer')}
             className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-              domainFilter === 'transformer' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              domainFilter === 'transformer' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
             }`}
           >
             <Zap size={12} className="text-amber-400" /> Transformers ({hosts.filter((h) => h.domain === 'transformer').length})
@@ -326,7 +350,7 @@ function OverviewTab() {
               type="button"
               onClick={() => setDomainFilter('carbonNode')}
               className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                domainFilter === 'carbonNode' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+                domainFilter === 'carbonNode' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
               }`}
             >
               <Thermometer size={12} className="text-emerald-400" /> CarbonBOX ({hosts.filter((h) => h.domain === 'carbonNode').length})
@@ -337,7 +361,7 @@ function OverviewTab() {
               type="button"
               onClick={() => setDomainFilter('bloodBox')}
               className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                domainFilter === 'bloodBox' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+                domainFilter === 'bloodBox' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
               }`}
             >
               <Droplets size={12} className="text-rose-400" /> BloodBOX ({hosts.filter((h) => h.domain === 'bloodBox').length})
@@ -385,35 +409,52 @@ function OverviewTab() {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <AlertTriangle size={14} className="text-red-400" />
-              <h3 className="text-sm font-semibold text-white">Active Alarms Requiring Attention</h3>
+              <h3 className="text-sm font-semibold text-white">Active Alarms Requiring Attention ({unacked})</h3>
             </div>
-            <Link href="/admin/alarms" className="text-xs text-indigo-400 hover:text-indigo-300">View All</Link>
+            <Link href="/admin/alarms" className="text-xs text-indigo-400 hover:text-indigo-300">View All →</Link>
           </div>
           <div className="space-y-2">
-            {alarms.filter((a) => !a.acknowledged).slice(0, 3).map((alarm) => (
+            {alarms.filter((a) => !a.acknowledged).slice(0, 4).map((alarm) => (
               <div
                 key={alarm.id}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg"
+                className="flex items-center justify-between gap-3 p-3 rounded-xl transition-all"
                 style={
                   alarm.severity === 'CRITICAL'
-                    ? { background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.15)' }
-                    : { background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.15)' }
+                    ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }
+                    : { background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.2)' }
                 }
               >
-                <div
-                  className="w-2 h-2 rounded-full flex-shrink-0"
-                  style={{ background: alarm.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24' }}
-                />
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm text-slate-300 truncate">{alarm.message}</span>
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div
+                    className="w-2 h-2 rounded-full flex-shrink-0 animate-pulse"
+                    style={{ background: alarm.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24' }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-200 truncate">{alarm.message}</div>
+                    <div className="text-xs text-slate-500 mt-0.5">{alarm.transformerName}</div>
+                  </div>
                 </div>
-                <div className="text-xs text-slate-600 flex-shrink-0">{alarm.transformerName}</div>
-                <span
-                  className="text-[10px] px-2 py-0.5 rounded-full font-bold flex-shrink-0"
-                  style={alarm.severity === 'CRITICAL' ? { color: '#ef4444', background: 'rgba(239,68,68,0.15)' } : { color: '#fbbf24', background: 'rgba(251,191,36,0.15)' }}
-                >
-                  {alarm.severity}
-                </span>
+
+                <div className="flex items-center gap-2.5 shrink-0">
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded font-bold"
+                    style={
+                      alarm.severity === 'CRITICAL'
+                        ? { color: '#ef4444', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)' }
+                        : { color: '#fbbf24', background: 'rgba(251,191,36,0.15)', border: '1px solid rgba(251,191,36,0.3)' }
+                    }
+                  >
+                    {alarm.severity}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleAck(alarm.id)}
+                    disabled={ackingId === alarm.id}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold transition-all flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer shadow"
+                  >
+                    <Check size={11} /> {ackingId === alarm.id ? 'ACKing…' : 'ACK'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

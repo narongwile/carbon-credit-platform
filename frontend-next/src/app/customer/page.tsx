@@ -1,14 +1,14 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { useOrgAlarms } from '@/lib/useOrgAlarms'
-import { useSessionOrgId } from '@/lib/auth'
-import { useIsLive } from '@/lib/api'
+import { getSession, useSessionOrgId } from '@/lib/auth'
+import { api, useIsLive } from '@/lib/api'
 import { viewerDomains } from '@/lib/viewer'
 import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
@@ -17,7 +17,7 @@ import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { healthFromValues } from '@/lib/alarmParams'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert, Search } from 'lucide-react'
+import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert, Search, Check } from 'lucide-react'
 import { fmtHM } from '@/lib/displayTime'
 import clsx from 'clsx'
 
@@ -61,6 +61,10 @@ function OverviewTab() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
+  const [msgRate, setMsgRate] = useState<number>(0)
+  const [ackingId, setAckingId] = useState<string | null>(null)
+  const msgCounterRef = useRef(0)
+  const [, tick] = useState(0)
 
   const devices = useMemo(() => {
     return rawDevices.filter((d) => {
@@ -81,11 +85,11 @@ function OverviewTab() {
   const { alarms: liveAlarms, refetch: refetchAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 5000 })
   const { alarms: mockAlarms } = useAppStore()
   const [liveFrames, setLiveFrames] = useState<Record<string, Record<string, number>>>({})
-  const [, tick] = useState(0)
 
   useEffect(() => {
     if (!live) return
     const off = subscribeTelemetry((f) => {
+      msgCounterRef.current += 1
       if (f?.id) {
         const id = f.id
         if (f.values) {
@@ -97,12 +101,32 @@ function OverviewTab() {
         }
       }
     })
-    const timer = setInterval(() => tick((n) => n + 1), 5000)
+    const rateTimer = setInterval(() => {
+      setMsgRate(msgCounterRef.current)
+      msgCounterRef.current = 0
+      tick((n) => n + 1)
+    }, 2000)
     return () => {
       off()
-      clearInterval(timer)
+      clearInterval(rateTimer)
     }
   }, [live, refetchAlarms])
+
+  const handleAck = async (alarmId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setAckingId(alarmId)
+    try {
+      if (live) {
+        await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Viewer' })
+        await refetchAlarms()
+      }
+    } catch (err) {
+      console.error('Ack error:', err)
+    } finally {
+      setAckingId(null)
+    }
+  }
 
   const orgAlarms = live
     ? liveAlarms.map((a) => ({
@@ -143,13 +167,14 @@ function OverviewTab() {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-bold text-white">Monitoring Overview</h2>
-            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
+            <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live Telemetry {msgRate > 0 ? `(${(msgRate / 2).toFixed(1)} msg/s)` : 'Connected'}
             </span>
           </div>
           <p className="text-sm text-slate-500">Real-time status across your assigned assets</p>
         </div>
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800">
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800 shadow-sm">
           <span className="text-xs text-slate-400">Fleet Health:</span>
           <span className="text-xs font-bold" style={{ color: hColor }}>{avgHealth}%</span>
         </div>
@@ -179,7 +204,7 @@ function OverviewTab() {
             type="button"
             onClick={() => setDomainFilter('all')}
             className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-              domainFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              domainFilter === 'all' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
             }`}
           >
             All ({rawDevices.length})
@@ -189,7 +214,7 @@ function OverviewTab() {
               type="button"
               onClick={() => setDomainFilter('transformer')}
               className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                domainFilter === 'transformer' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+                domainFilter === 'transformer' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
               }`}
             >
               <Zap size={12} className="text-amber-400" /> Transformers ({rawDevices.filter((d) => d.domain === 'transformer').length})
@@ -200,7 +225,7 @@ function OverviewTab() {
               type="button"
               onClick={() => setDomainFilter('carbonNode')}
               className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                domainFilter === 'carbonNode' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+                domainFilter === 'carbonNode' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
               }`}
             >
               <Thermometer size={12} className="text-emerald-400" /> CarbonBOX ({rawDevices.filter((d) => d.domain === 'carbonNode').length})
@@ -211,7 +236,7 @@ function OverviewTab() {
               type="button"
               onClick={() => setDomainFilter('bloodBox')}
               className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
-                domainFilter === 'bloodBox' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+                domainFilter === 'bloodBox' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
               }`}
             >
               <Droplet size={12} className="text-rose-400" /> BloodBOX ({rawDevices.filter((d) => d.domain === 'bloodBox').length})
@@ -282,7 +307,7 @@ function OverviewTab() {
               })}
             </div>
           ) : (
-            <div className="rounded-xl p-6 text-center text-slate-600 text-sm" style={surface}>No products assigned to your department.</div>
+            <div className="rounded-xl p-6 text-center text-slate-600 text-sm" style={surface}>No products match the selected filter.</div>
           )}
         </div>
 
@@ -303,30 +328,48 @@ function OverviewTab() {
               const c = statusColor(a.severity === 'CRITICAL' ? 'CRITICAL' : a.severity === 'WARNING' ? 'WARNING' : 'NORMAL')
               const linkHref = a.domain === 'transformer' ? `/customer/transformers/detail?id=${a.nodeId}` : `/customer/devices/detail?id=${a.nodeId}`
               return (
-                <Link key={a.id} href={linkHref}>
-                  <div
-                    className="p-3 rounded-xl hover:border-indigo-500/40 transition-all cursor-pointer mb-2"
-                    style={{ background: `${c}10`, border: `1px solid ${c}26`, opacity: a.acknowledged ? 0.6 : 1 }}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="text-sm text-slate-200 leading-snug font-medium">{a.message}</div>
-                      <span
-                        className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
-                        style={{ background: `${c}22`, color: c, border: `1px solid ${c}44` }}
-                      >
-                        {a.severity}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 mt-2 text-[11px] text-slate-500">
-                      <span className="text-slate-400 font-medium">{a.transformerName}</span>
-                      <div className="flex items-center gap-1.5">
-                        <Clock size={10} />
-                        <span>{fmtHM(a.timestamp)}</span>
-                        {a.acknowledged && <span className="text-green-400 font-semibold">· ACK</span>}
+                <div
+                  key={a.id}
+                  className="p-3 rounded-xl transition-all mb-2"
+                  style={{ background: `${c}10`, border: `1px solid ${c}26`, opacity: a.acknowledged ? 0.6 : 1 }}
+                >
+                  <Link href={linkHref}>
+                    <div className="cursor-pointer hover:opacity-90">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm text-slate-200 leading-snug font-medium">{a.message}</div>
+                        <span
+                          className="text-[9px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                          style={{ background: `${c}22`, color: c, border: `1px solid ${c}44` }}
+                        >
+                          {a.severity}
+                        </span>
                       </div>
                     </div>
+                  </Link>
+                  <div className="flex items-center justify-between gap-2 mt-2 pt-1.5 border-t border-slate-800/40 text-[11px] text-slate-500">
+                    <span className="text-slate-400 font-medium">{a.transformerName}</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 text-slate-500">
+                        <Clock size={10} />
+                        <span>{fmtHM(a.timestamp)}</span>
+                      </div>
+                      {!a.acknowledged ? (
+                        <button
+                          type="button"
+                          onClick={(e) => handleAck(a.id, e)}
+                          disabled={ackingId === a.id}
+                          className="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer shadow"
+                        >
+                          <Check size={10} /> {ackingId === a.id ? 'ACKing…' : 'ACK'}
+                        </button>
+                      ) : (
+                        <span className="text-green-400 font-semibold flex items-center gap-1 text-[10px]">
+                          <Check size={10} /> ACK
+                        </span>
+                      )}
+                    </div>
                   </div>
-                </Link>
+                </div>
               )
             }) : <div className="rounded-xl p-6 text-center text-slate-600 text-xs" style={surface}>No active notifications for this organization.</div>}
           </div>
