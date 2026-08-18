@@ -38,7 +38,7 @@ spec:
       #   - name: gitlab-registry
       containers:
       - name: frontend
-        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:fb233deb
+        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:651a9ae4
         ports:
         - containerPort: 80
         resources:
