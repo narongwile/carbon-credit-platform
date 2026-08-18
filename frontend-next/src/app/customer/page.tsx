@@ -108,7 +108,7 @@ function OverviewTab() {
 
   // Real, open alarms for this org (department/domain-scoped server-side)
   const { alarms: liveAlarms, refetch: refetchAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 5000 })
-  const { alarms: mockAlarms } = useAppStore()
+  const { alarms: mockAlarms, acknowledgeAlarm } = useAppStore()
   const [liveFrames, setLiveFrames] = useState<Record<string, Record<string, number>>>({})
 
   useEffect(() => {
