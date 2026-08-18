@@ -496,7 +496,7 @@ export default function LiveSensorMap({
       `}</style>
 
       {/* Search Bar */}
-      <div className="absolute top-3 left-3 z-[1000] max-w-[240px] sm:max-w-[280px]">
+      <div className="absolute top-3 left-3 z-[1500] max-w-[240px] sm:max-w-[280px]">
         <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
       </div>
 
