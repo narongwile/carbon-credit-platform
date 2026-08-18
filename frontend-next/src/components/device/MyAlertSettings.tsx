@@ -76,8 +76,13 @@ export default function MyAlertSettings({
       const perNodeChannels = (p.alertChannels ?? {}) as Record<string, Partial<Record<ChannelId, boolean>>>
       setEnabled({ ...DEFAULT_ENABLED, ...(perNodeChannels[nodeId] ?? {}) })
 
-      const perNodeTopics = (p.alertTopics ?? {}) as Record<string, Partial<Record<string, boolean>>>
-      setSubscribedTopics({ ...DEFAULT_TOPICS, ...(perNodeTopics[nodeId] ?? {}) })
+      const perNodeTopics = (p.alertTopics ?? {}) as Record<string, Record<string, boolean>>
+      const nodeTopics = perNodeTopics[nodeId] ?? {}
+      const mergedTopics: Record<string, boolean> = { ...DEFAULT_TOPICS }
+      for (const k of Object.keys(nodeTopics)) {
+        if (typeof nodeTopics[k] === 'boolean') mergedTopics[k] = nodeTopics[k]
+      }
+      setSubscribedTopics(mergedTopics)
     })
     return () => { cancelled = true }
   }, [session?.id, nodeId])
