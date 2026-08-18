@@ -20,6 +20,7 @@ import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert, Search, Check } from 'lucide-react'
 import { fmtHM } from '@/lib/displayTime'
 import clsx from 'clsx'
+import CustomerAlarmsView from '@/components/CustomerAlarmsView'
 
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
