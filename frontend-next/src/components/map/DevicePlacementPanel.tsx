@@ -44,7 +44,7 @@ export default function DevicePlacementPanel({
   if (!open) {
     return (
       <button onClick={() => onOpenChange(true)} disabled={!!session}
-        className="absolute top-3 left-3 z-[1000] flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-white shadow-lg disabled:opacity-50"
+        className="absolute top-16 left-3 z-[1000] flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-white shadow-lg disabled:opacity-50 transition-all hover:brightness-110"
         style={gradient} title="Set device positions on the map">
         <MapPin size={13} /> Set device positions
         {unplaced.length > 0 && (
@@ -55,7 +55,7 @@ export default function DevicePlacementPanel({
   }
 
   return (
-    <div className="absolute top-3 left-3 z-[1000] w-[300px] max-h-[calc(100%-24px)] rounded-xl shadow-2xl flex flex-col" style={surface}>
+    <div className="absolute top-16 left-3 z-[1000] w-[300px] max-h-[calc(100%-80px)] rounded-xl shadow-2xl flex flex-col" style={surface}>
       <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid #1e2433' }}>
         <h3 className="text-sm font-semibold text-white flex items-center gap-2"><MapPin size={14} className="text-indigo-400" /> Device positions</h3>
         <button onClick={() => onOpenChange(false)} className="p-1 rounded text-slate-400 hover:text-white"><X size={15} /></button>
