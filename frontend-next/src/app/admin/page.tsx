@@ -14,6 +14,7 @@ import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { api, useIsLive } from '@/lib/api'
 import { getSession } from '@/lib/auth'
 import { healthFromValues } from '@/lib/alarmParams'
+import { eventProblems as mockEventProblems } from '@/lib/orgData'
 import Link from 'next/link'
 import clsx from 'clsx'
 import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock, Search, Check } from 'lucide-react'
@@ -190,6 +191,8 @@ function OverviewTab() {
       api.eventProblems(orgId).then((rows) => {
         if (rows) setEvProblems(rows)
       }).catch(() => {})
+    } else {
+      setEvProblems(mockEventProblems)
     }
   }, [live, orgId])
 

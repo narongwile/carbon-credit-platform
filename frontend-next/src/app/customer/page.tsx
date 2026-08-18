@@ -9,7 +9,7 @@ import { useFleetHosts } from '@/lib/useManagedDevices'
 import { useOrgAlarms } from '@/lib/useOrgAlarms'
 import { getSession, useSessionOrgId } from '@/lib/auth'
 import { api, useIsLive } from '@/lib/api'
-import { viewerDomains } from '@/lib/viewer'
+import { viewerDomains, viewerEventProblems } from '@/lib/viewer'
 import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
@@ -63,18 +63,32 @@ function OverviewTab() {
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
   const [msgRate, setMsgRate] = useState<number>(0)
   const [ackingId, setAckingId] = useState<string | null>(null)
-  const [evProblems, setEvProblems] = useState<{ id: string; label: string }[]>([])
+  const [evProblems, setEvProblems] = useState<{ id: string; label: string; department_id?: string | null }[]>([])
   const [selectedProblems, setSelectedProblems] = useState<Record<string, string>>({})
   const msgCounterRef = useRef(0)
   const [, tick] = useState(0)
 
+  // Department-scoped root causes (eventProblems): Only show causes belonging to
+  // this viewer's assigned departments + org-wide causes (department_id === null)
   useEffect(() => {
-    if (live) {
-      api.eventProblems(orgId).then((rows) => {
-        if (rows) setEvProblems(rows)
-      }).catch(() => {})
+    if (!live) {
+      setEvProblems(viewerEventProblems(viewerUserId))
+      return
     }
-  }, [live, orgId])
+    let cancelled = false
+    ;(async () => {
+      try {
+        const myDepts = (await api.myAccess())?.departmentIds ?? []
+        const rows = await api.eventProblems(orgId).catch(() => null)
+        if (cancelled || !rows) return
+        const scoped = rows.filter((r) => r.department_id === null || myDepts.includes(r.department_id))
+        setEvProblems(scoped)
+      } catch (err) {
+        console.error('Failed to load department-scoped event problems:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [live, orgId, viewerUserId])
 
   const devices = useMemo(() => {
     return rawDevices.filter((d) => {
