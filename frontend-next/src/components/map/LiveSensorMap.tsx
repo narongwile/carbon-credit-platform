@@ -506,7 +506,6 @@ export default function LiveSensorMap({
         ...(f.values || (f.temperature != null ? { temperature: f.temperature } : {})),
       }
       const updatedLatest: NodeLatest = {
-        nodeId: id,
         ...cur,
         values: newVals,
         lastReadingAt: f.timestamp || new Date().toISOString(),
