@@ -137,9 +137,13 @@ function OverviewTab() {
     }
   }, [live, refetchAlarms])
 
+  const causeRequired = evProblems.length > 0
+  const ackReady = (id: string) => !causeRequired || !!selectedProblems[id]
+
   const handleAck = async (alarmId: string, e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (!ackReady(alarmId)) return
     setAckingId(alarmId)
     try {
       const probId = selectedProblems[alarmId] || undefined
@@ -147,8 +151,9 @@ function OverviewTab() {
         await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Viewer', eventProblemId: probId })
         await refetchAlarms()
       }
-    } catch (err) {
-      console.error('Ack error:', err)
+      acknowledgeAlarm(alarmId, getSession()?.name ?? 'Viewer')
+    } catch (e) {
+      console.error('Ack error:', e)
     } finally {
       setAckingId(null)
     }
@@ -389,9 +394,12 @@ function OverviewTab() {
                                 setSelectedProblems({ ...selectedProblems, [a.id]: e.target.value })
                               }}
                               onClick={(e) => e.stopPropagation()}
-                              className="text-[10px] bg-[#0d1117] text-slate-300 border border-slate-700 rounded-lg px-1.5 py-0.5 outline-none max-w-[110px] truncate"
+                              className={clsx(
+                                "text-[10px] bg-[#0d1117] text-slate-300 border rounded-lg px-2 py-0.5 outline-none max-w-[130px] truncate transition-colors",
+                                !selectedProblems[a.id] ? "border-amber-500/50 text-amber-300" : "border-slate-700"
+                              )}
                             >
-                              <option value="">Cause (Opt)…</option>
+                              <option value="">Select cause…</option>
                               {evProblems.map((p) => (
                                 <option key={p.id} value={p.id}>{p.label}</option>
                               ))}
@@ -400,8 +408,9 @@ function OverviewTab() {
                           <button
                             type="button"
                             onClick={(e) => handleAck(a.id, e)}
-                            disabled={ackingId === a.id}
-                            className="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer shadow"
+                            disabled={ackingId === a.id || !ackReady(a.id)}
+                            title={!ackReady(a.id) ? 'Select a root cause first' : undefined}
+                            className="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer shadow"
                           >
                             <Check size={10} /> {ackingId === a.id ? 'ACKing…' : 'ACK'}
                           </button>
