@@ -3,15 +3,9 @@
 // ---------------------------------------------------------------------------
 // "My Alert Settings" — a user's own alerting for one device.
 // ---------------------------------------------------------------------------
-// This block existed only on the viewer device page, and its channel switches
-// were local component state seeded from a mock list: toggling them changed
-// nothing, and reopening the page reset them. Admins had no equivalent at all
-// even though they carry the pager for the same devices.
-//
-// The switches now persist per user in user_prefs (the same blob the profile
+// The switches persist per user in user_prefs (the same blob the profile
 // panel writes), keyed by node id, and each one shows whether the credential it
-// needs is actually filled in — an enabled channel with no token cannot deliver,
-// and saying so here beats silence when an alarm does not arrive.
+// needs is actually filled in.
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useState } from 'react'
@@ -20,7 +14,10 @@ import { api, apiEnabled, useIsLive } from '@/lib/api'
 import { useSession } from '@/lib/auth'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import type { SensorDomain } from '@/types/fleet'
-import { Bell, Save, Loader2, ToggleLeft, ToggleRight, AlertTriangle } from 'lucide-react'
+import {
+  Bell, Save, Loader2, ToggleLeft, ToggleRight, AlertTriangle,
+  Sliders, ChevronDown, ChevronUp, Flame, Zap, Activity, ShieldAlert, WifiOff
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -39,17 +36,33 @@ const CHANNELS: { id: ChannelId; name: string; prefsKey?: string }[] = [
 
 const DEFAULT_ENABLED: Record<ChannelId, boolean> = { email: true, telegram: false, line: false, googlechat: false }
 
+const ALERT_TOPICS = [
+  { id: 'topic_thermal', label: 'Thermal & Top Oil Alarms', desc: 'Top Oil Temp > 85°C / > 90°C (Insulation risk), Winding Temp', icon: Flame, color: 'text-amber-400' },
+  { id: 'topic_voltage', label: 'Voltage & Power Quality', desc: 'Over Voltage (+5%/+10%), Under Voltage (-5%/-10%), Voltage Unbalance (>2%/5%)', icon: Zap, color: 'text-yellow-400' },
+  { id: 'topic_current', label: 'Overload & Short Circuit', desc: 'Over Current (>100% capacity), Critical Short Circuit Risk (>115%)', icon: Activity, color: 'text-red-400' },
+  { id: 'topic_fault', label: 'External Fault & Grid Trips', desc: 'Transformer shutdown from animals, lightning, or external incidents', icon: ShieldAlert, color: 'text-purple-400' },
+  { id: 'topic_offline', label: 'Device Offline / Connectivity', desc: 'Alert when telemetry stream stops or sensor connection is lost', icon: WifiOff, color: 'text-slate-400' },
+]
+
+const DEFAULT_TOPICS: Record<string, boolean> = {
+  topic_thermal: true,
+  topic_voltage: true,
+  topic_current: true,
+  topic_fault: true,
+  topic_offline: true,
+}
+
 export default function MyAlertSettings({
-  nodeId, domain, orgId, profileHref = '/admin/profile',
+  nodeId, domain = 'transformer', orgId, profileHref = '/admin/profile',
 }: { nodeId: string; domain?: SensorDomain; orgId?: string; profileHref?: string }) {
   const live = useIsLive()
-  // useSession (not getSession() directly): "· {session?.email}" is rendered
-  // below, and a direct call returns null in the static HTML but the real
-  // session synchronously on the client's first paint — a text-content
-  // hydration mismatch on every device page.
   const session = useSession()
+  const isAdmin = session?.role === 'admin' || session?.role === 'superadmin'
+
   const [prefs, setPrefs] = useState<Record<string, unknown> | null>(null)
   const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>(DEFAULT_ENABLED)
+  const [subscribedTopics, setSubscribedTopics] = useState<Record<string, boolean>>(DEFAULT_TOPICS)
+  const [showAdminThresholds, setShowAdminThresholds] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -60,8 +73,11 @@ export default function MyAlertSettings({
       if (cancelled) return
       const p = (r?.prefs ?? {}) as Record<string, unknown>
       setPrefs(p)
-      const perNode = (p.alertChannels ?? {}) as Record<string, Partial<Record<ChannelId, boolean>>>
-      setEnabled({ ...DEFAULT_ENABLED, ...(perNode[nodeId] ?? {}) })
+      const perNodeChannels = (p.alertChannels ?? {}) as Record<string, Partial<Record<ChannelId, boolean>>>
+      setEnabled({ ...DEFAULT_ENABLED, ...(perNodeChannels[nodeId] ?? {}) })
+
+      const perNodeTopics = (p.alertTopics ?? {}) as Record<string, Partial<Record<string, boolean>>>
+      setSubscribedTopics({ ...DEFAULT_TOPICS, ...(perNodeTopics[nodeId] ?? {}) })
     })
     return () => { cancelled = true }
   }, [session?.id, nodeId])
@@ -70,61 +86,112 @@ export default function MyAlertSettings({
     if (!session?.id) { toast.error('Sign in to save your alert settings'); return }
     setSaving(true)
     try {
-      // putMyConfig REPLACES prefs, so the whole blob has to ride along —
-      // sending only this section would wipe the phone number and the channel
-      // credentials the profile panel stores.
       const current = prefs ?? ((await api.getMyConfig(session.id))?.prefs ?? {}) as Record<string, unknown>
-      const perNode = { ...((current.alertChannels ?? {}) as Record<string, unknown>), [nodeId]: enabled }
-      const next = { ...current, alertChannels: perNode }
+      const perNodeChannels = { ...((current.alertChannels ?? {}) as Record<string, unknown>), [nodeId]: enabled }
+      const perNodeTopics = { ...((current.alertTopics ?? {}) as Record<string, unknown>), [nodeId]: subscribedTopics }
+      const next = { ...current, alertChannels: perNodeChannels, alertTopics: perNodeTopics }
       const res = await api.putMyConfig(session.id, next)
       if (!res) throw new Error('save failed')
       setPrefs(next)
       setSaved(true); setTimeout(() => setSaved(false), 2000)
+      toast.success('Alert settings saved')
     } catch {
       toast.error('Could not save your alert settings')
     } finally {
       setSaving(false)
     }
-  }, [session?.id, prefs, enabled, nodeId])
+  }, [session?.id, prefs, enabled, subscribedTopics, nodeId])
 
   const missing = CHANNELS.filter((c) => c.prefsKey && enabled[c.id] && !prefs?.[c.prefsKey])
 
   return (
-    <div className="rounded-xl p-5 space-y-3" style={surface}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-white">My Alert Settings</h3>
-        <span className="text-[10px] text-slate-500 flex items-center gap-1">
-          <Bell size={11} /> personal — alerts only you · {session?.email || session?.username || '—'}
+    <div className="rounded-xl p-5 space-y-4" style={surface}>
+      <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+        <div>
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Bell size={14} className="text-indigo-400" />
+            My Alert Settings
+          </h3>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Personal notification channels &amp; alert subscriptions for this device
+          </p>
+        </div>
+        <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+          {session?.email || session?.username || '—'}
         </span>
       </div>
 
-      <AlarmParamConfig domain={domain} nodeId={nodeId} orgId={orgId} />
+      {/* Section 1: Notification Delivery Channels */}
+      <div className="space-y-2">
+        <label className="block text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+          1. Delivery Channels
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {CHANNELS.map((ch) => {
+            const configured = !ch.prefsKey || !!prefs?.[ch.prefsKey]
+            const isChEnabled = enabled[ch.id]
+            return (
+              <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>
+                <div>
+                  <span className="text-xs font-medium text-slate-200 block">{ch.name}</span>
+                  {ch.prefsKey && !configured && (
+                    <span className="text-[10px] text-amber-500/80">not configured in profile</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnabled((e) => ({ ...e, [ch.id]: !e[ch.id] }))}
+                  aria-label={`Toggle ${ch.name}`}
+                >
+                  {isChEnabled ? <ToggleRight size={22} className="text-indigo-400" /> : <ToggleLeft size={22} className="text-slate-600" />}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
-      <div className="space-y-1.5">
-        {CHANNELS.map((ch) => {
-          const configured = !ch.prefsKey || !!prefs?.[ch.prefsKey]
-          return (
-            <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>
-              <span className="text-sm text-slate-300 flex items-center gap-2">
-                {ch.name}
-                {ch.prefsKey && !configured && (
-                  <span className="text-[10px] text-slate-600">not configured</span>
-                )}
-              </span>
-              <button onClick={() => setEnabled((e) => ({ ...e, [ch.id]: !e[ch.id] }))} aria-label={`Toggle ${ch.name}`}>
-                {enabled[ch.id] ? <ToggleRight size={20} className="text-indigo-400" /> : <ToggleLeft size={20} className="text-slate-600" />}
-              </button>
-            </div>
-          )
-        })}
+      {/* Section 2: Subscribed Alarm Topics */}
+      <div className="space-y-2 pt-1">
+        <label className="block text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+          2. Subscribed Alarm Categories (Industrial Alarm List)
+        </label>
+        <div className="space-y-1.5">
+          {ALERT_TOPICS.map((topic) => {
+            const Icon = topic.icon
+            const isSubbed = subscribedTopics[topic.id] !== false
+            return (
+              <div
+                key={topic.id}
+                onClick={() => setSubscribedTopics((s) => ({ ...s, [topic.id]: !isSubbed }))}
+                className="flex items-center justify-between p-2.5 rounded-lg cursor-pointer transition-all border hover:border-slate-700"
+                style={{ background: isSubbed ? 'rgba(99,102,241,0.06)' : '#0a0e1a', borderColor: isSubbed ? '#6366f140' : '#1e2433' }}
+              >
+                <div className="flex items-start gap-2.5 pr-2">
+                  <Icon size={14} className={topic.color + ' mt-0.5 shrink-0'} />
+                  <div>
+                    <div className="text-xs font-semibold text-slate-200">{topic.label}</div>
+                    <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">{topic.desc}</div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={isSubbed}
+                  onChange={() => {}}
+                  className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {missing.length > 0 && (
-        <p className="text-[11px] text-amber-400 flex items-start gap-1.5">
-          <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+        <p className="text-[11px] text-amber-400 flex items-start gap-1.5 bg-amber-950/20 p-2.5 rounded-lg border border-amber-800/40">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
           <span>
-            {missing.map((m) => m.name).join(', ')} {missing.length === 1 ? 'has' : 'have'} no credential saved, so nothing can be delivered there.{' '}
-            <Link href={profileHref} className="underline hover:text-amber-300">Add it in your profile</Link>.
+            {missing.map((m) => m.name).join(', ')} {missing.length === 1 ? 'has' : 'have'} no credential saved in your account.{' '}
+            <Link href={profileHref} className="underline font-medium hover:text-amber-300">Set up credentials in your Profile</Link>.
           </span>
         </p>
       )}
@@ -132,13 +199,38 @@ export default function MyAlertSettings({
       <button
         onClick={save}
         disabled={saving || !live}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 transition-all shadow-md"
         style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}
       >
         {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-        {saved ? 'Saved!' : saving ? 'Saving…' : 'Save My Alert'}
+        {saved ? 'Settings Saved!' : saving ? 'Saving…' : 'Save My Alert Preferences'}
       </button>
+
+      {/* Admin Advanced Device Threshold Configuration Accordion */}
+      {isAdmin && (
+        <div className="pt-2 border-t border-slate-800/80 space-y-2">
+          <button
+            type="button"
+            onClick={() => setShowAdminThresholds(!showAdminThresholds)}
+            className="w-full flex items-center justify-between p-2.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900/60 border border-slate-800 transition-all"
+          >
+            <span className="flex items-center gap-2">
+              <Sliders size={13} className="text-indigo-400" />
+              <span>Device-Wide Alarm Thresholds &amp; Rule Engine (Admin)</span>
+            </span>
+            {showAdminThresholds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+
+          {showAdminThresholds && (
+            <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/80 animate-in fade-in duration-200">
+              <AlarmParamConfig domain={domain} nodeId={nodeId} orgId={orgId} />
+            </div>
+          )}
+        </div>
+      )}
+
       {!live && <p className="text-[10px] text-slate-600 text-center">Live mode required to store your settings.</p>}
     </div>
   )
 }
+

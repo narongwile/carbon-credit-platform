@@ -38,73 +38,162 @@ const CATEGORY_TABS: CategoryTab[] = [
   { id: 'custom', label: 'Custom / Other', icon: Box },
 ]
 
-/** Comprehensive Expected Payload Catalog for standard industrial sensor domains */
-export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, AlarmParam[]> = {
+export type ParamKind = 'reading' | 'compound'
+
+export interface ExtendedAlarmParam extends AlarmParam {
+  paramType?: ParamKind
+  sourceFormula?: string
+  riskInsight?: string
+}
+
+/** Physical Reading Parameters Catalog (Direct Sensors from Telemetry) */
+export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]> = {
   transformer: [
-    // 🌡️ Thermal & Oil
-    { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 } },
-    { key: 'windingTemp', label: 'Winding / Hot-Spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110, rate: { unit: '°C/h', warn: 5 } },
-    { key: 'ambientTemp', label: 'Ambient Temperature', unit: '°C', direction: 'high', warn: 45, critical: 55 },
-    { key: 'bottomOilTemp', label: 'Bottom Oil Temperature', unit: '°C', direction: 'high', warn: 70, critical: 85 },
-    { key: 'coreTemp', label: 'Core Temperature', unit: '°C', direction: 'high', warn: 90, critical: 105 },
+    // 🌡️ Thermal & Temperature Sensors
+    { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 }, paramType: 'reading', riskInsight: 'Top Oil Temperature Sensor' },
+    { key: 'windingTemp', label: 'Winding / Hot-Spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110, rate: { unit: '°C/h', warn: 5 }, paramType: 'reading', riskInsight: 'Winding Hot-spot Probe' },
+    { key: 'ambientTemp', label: 'Ambient Temperature', unit: '°C', direction: 'high', warn: 45, critical: 55, paramType: 'reading' },
+    { key: 'bottomOilTemp', label: 'Bottom Oil Temperature', unit: '°C', direction: 'high', warn: 70, critical: 85, paramType: 'reading' },
+    { key: 'coreTemp', label: 'Core Temperature', unit: '°C', direction: 'high', warn: 90, critical: 105, paramType: 'reading' },
 
-    // ⚡️ Electrical & Power Quality
-    { key: 'load', label: 'Over Current (Load Factor)', unit: '%', direction: 'high', warn: 100, critical: 115 },
-    { key: 'overVoltage', label: 'Over Voltage (+5% / +10%)', unit: '%', direction: 'high', warn: 105, critical: 110 },
-    { key: 'underVoltage', label: 'Under Voltage (-5% / -10%)', unit: '%', direction: 'low', warn: 95, critical: 90 },
-    { key: 'voltageUnbalance', label: 'Voltage Unbalance (>2% / >5%)', unit: '%', direction: 'high', warn: 2, critical: 5 },
-    { key: 'currentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
-    { key: 'currentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
-    { key: 'currentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
-    { key: 'currentN', label: 'Neutral Current', unit: 'A', direction: 'high', warn: 50, critical: 100 },
-    { key: 'voltageA', label: 'Phase A Voltage (V_an)', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
-    { key: 'voltageB', label: 'Phase B Voltage (V_bn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
-    { key: 'voltageC', label: 'Phase C Voltage (V_cn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
-    { key: 'powerFactor', label: 'Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75 },
-    { key: 'frequency', label: 'Frequency', unit: 'Hz', direction: 'high', warn: 51.5, critical: 52.5 },
-    { key: 'thd_v', label: 'Voltage THD', unit: '%', direction: 'high', warn: 5, critical: 8 },
-    { key: 'thd_i', label: 'Current THD', unit: '%', direction: 'high', warn: 10, critical: 20 },
-    { key: 'activePower', label: 'Active Power', unit: 'kW', direction: 'high', warn: 800, critical: 1000 },
-    { key: 'apparentPower', label: 'Apparent Power', unit: 'kVA', direction: 'high', warn: 1000, critical: 1250 },
+    // ⚡️ Electrical Power Sensors
+    { key: 'voltageA', label: 'Phase A Voltage (V_an)', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
+    { key: 'voltageB', label: 'Phase B Voltage (V_bn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
+    { key: 'voltageC', label: 'Phase C Voltage (V_cn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
+    { key: 'currentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
+    { key: 'currentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
+    { key: 'currentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
+    { key: 'currentN', label: 'Neutral Current', unit: 'A', direction: 'high', warn: 50, critical: 100, paramType: 'reading' },
+    { key: 'load', label: 'Load Factor', unit: '%', direction: 'high', warn: 100, critical: 115, paramType: 'reading' },
+    { key: 'powerFactor', label: 'Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75, paramType: 'reading' },
+    { key: 'frequency', label: 'Frequency', unit: 'Hz', direction: 'high', warn: 51.5, critical: 52.5, paramType: 'reading' },
+    { key: 'thd_v', label: 'Voltage THD', unit: '%', direction: 'high', warn: 5, critical: 8, paramType: 'reading' },
+    { key: 'thd_i', label: 'Current THD', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading' },
+    { key: 'activePower', label: 'Active Power', unit: 'kW', direction: 'high', warn: 800, critical: 1000, paramType: 'reading' },
+    { key: 'apparentPower', label: 'Apparent Power', unit: 'kVA', direction: 'high', warn: 1000, critical: 1250, paramType: 'reading' },
 
-    // 🧪 DGA & Oil Quality
-    { key: 'hydrogen', label: 'Hydrogen H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 150, critical: 300, rate: { unit: 'ppm/day', warn: 10 } },
-    { key: 'methane', label: 'Methane CH₄ (DGA)', unit: 'ppm', direction: 'high', warn: 120, critical: 400 },
-    { key: 'acetylene', label: 'Acetylene C₂H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 5, critical: 35 },
-    { key: 'ethylene', label: 'Ethylene C₂H₄ (DGA)', unit: 'ppm', direction: 'high', warn: 100, critical: 200 },
-    { key: 'ethane', label: 'Ethane C₂H₆ (DGA)', unit: 'ppm', direction: 'high', warn: 65, critical: 150 },
-    { key: 'co', label: 'Carbon Monoxide CO', unit: 'ppm', direction: 'high', warn: 500, critical: 1000 },
-    { key: 'co2', label: 'Carbon Dioxide CO₂', unit: 'ppm', direction: 'high', warn: 5000, critical: 10000 },
-    { key: 'tdcg', label: 'Total Combustible Gas (TDCG)', unit: 'ppm', direction: 'high', warn: 720, critical: 1920 },
-    { key: 'moisture', label: 'Moisture in Oil', unit: 'ppm', direction: 'high', warn: 25, critical: 35 },
-    { key: 'oilLevel', label: 'Oil Level', unit: '%', direction: 'low', warn: 70, critical: 60 },
-    { key: 'bdv', label: 'Breakdown Voltage (BDV)', unit: 'kV', direction: 'low', warn: 40, critical: 30 },
-    { key: 'acidity', label: 'Oil Acidity', unit: 'mg KOH/g', direction: 'high', warn: 0.15, critical: 0.3 },
+    // 🧪 DGA & Oil Quality Sensors
+    { key: 'hydrogen', label: 'Hydrogen H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 150, critical: 300, rate: { unit: 'ppm/day', warn: 10 }, paramType: 'reading' },
+    { key: 'methane', label: 'Methane CH₄ (DGA)', unit: 'ppm', direction: 'high', warn: 120, critical: 400, paramType: 'reading' },
+    { key: 'acetylene', label: 'Acetylene C₂H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 5, critical: 35, paramType: 'reading' },
+    { key: 'ethylene', label: 'Ethylene C₂H₄ (DGA)', unit: 'ppm', direction: 'high', warn: 100, critical: 200, paramType: 'reading' },
+    { key: 'ethane', label: 'Ethane C₂H₆ (DGA)', unit: 'ppm', direction: 'high', warn: 65, critical: 150, paramType: 'reading' },
+    { key: 'co', label: 'Carbon Monoxide CO', unit: 'ppm', direction: 'high', warn: 500, critical: 1000, paramType: 'reading' },
+    { key: 'co2', label: 'Carbon Dioxide CO₂', unit: 'ppm', direction: 'high', warn: 5000, critical: 10000, paramType: 'reading' },
+    { key: 'tdcg', label: 'Total Combustible Gas (TDCG)', unit: 'ppm', direction: 'high', warn: 720, critical: 1920, paramType: 'reading' },
+    { key: 'moisture', label: 'Moisture in Oil', unit: 'ppm', direction: 'high', warn: 25, critical: 35, paramType: 'reading' },
+    { key: 'oilLevel', label: 'Oil Level', unit: '%', direction: 'low', warn: 70, critical: 60, paramType: 'reading' },
+    { key: 'bdv', label: 'Breakdown Voltage (BDV)', unit: 'kV', direction: 'low', warn: 40, critical: 30, paramType: 'reading' },
+    { key: 'acidity', label: 'Oil Acidity', unit: 'mg KOH/g', direction: 'high', warn: 0.15, critical: 0.3, paramType: 'reading' },
 
-    // 🛡️ Mechanical & Condition
-    { key: 'pressure', label: 'Tank Pressure', unit: 'kPa', direction: 'high', warn: 35, critical: 50 },
-    { key: 'partialDischarge', label: 'Partial Discharge (PD)', unit: 'pC', direction: 'high', warn: 200, critical: 500 },
-    { key: 'vibration', label: 'Vibration Velocity', unit: 'mm/s', direction: 'high', warn: 4.5, critical: 7.1 },
+    // 🛡️ Mechanical & Environmental Sensors
+    { key: 'pressure', label: 'Tank Pressure', unit: 'kPa', direction: 'high', warn: 35, critical: 50, paramType: 'reading' },
+    { key: 'partialDischarge', label: 'Partial Discharge (PD)', unit: 'pC', direction: 'high', warn: 200, critical: 500, paramType: 'reading' },
+    { key: 'vibration', label: 'Vibration Velocity', unit: 'mm/s', direction: 'high', warn: 4.5, critical: 7.1, paramType: 'reading' },
   ],
   carbonNode: [
-    { key: 'tempHigh', label: 'Chamber High Temperature', unit: '°C', direction: 'high', warn: 8, critical: 10 },
-    { key: 'tempLow', label: 'Chamber Low Temperature', unit: '°C', direction: 'low', warn: 2, critical: 0 },
-    { key: 'door', label: 'Door-open Duration', unit: 'min', direction: 'high', warn: 5, critical: 15 },
-    { key: 'current', label: 'Compressor Current', unit: 'A', direction: 'high', warn: 5, critical: 10 },
-    { key: 'rh', label: 'Relative Humidity', unit: '%', direction: 'high', warn: 85, critical: 95 },
-    { key: 'defrostTemp', label: 'Defrost Sensor Temp', unit: '°C', direction: 'high', warn: 15, critical: 25 },
-    { key: 'power', label: 'Power Consumption', unit: 'kW', direction: 'high', warn: 3.5, critical: 5.0 },
+    { key: 'tempHigh', label: 'Chamber High Temperature', unit: '°C', direction: 'high', warn: 8, critical: 10, paramType: 'reading' },
+    { key: 'tempLow', label: 'Chamber Low Temperature', unit: '°C', direction: 'low', warn: 2, critical: 0, paramType: 'reading' },
+    { key: 'door', label: 'Door-open Duration', unit: 'min', direction: 'high', warn: 5, critical: 15, paramType: 'reading' },
+    { key: 'current', label: 'Compressor Current', unit: 'A', direction: 'high', warn: 5, critical: 10, paramType: 'reading' },
+    { key: 'rh', label: 'Relative Humidity', unit: '%', direction: 'high', warn: 85, critical: 95, paramType: 'reading' },
+    { key: 'defrostTemp', label: 'Defrost Sensor Temp', unit: '°C', direction: 'high', warn: 15, critical: 25, paramType: 'reading' },
+    { key: 'power', label: 'Power Consumption', unit: 'kW', direction: 'high', warn: 3.5, critical: 5.0, paramType: 'reading' },
   ],
   bloodBox: [
-    { key: 'tempHigh', label: 'Blood Storage High Temp', unit: '°C', direction: 'high', warn: 6, critical: 8 },
-    { key: 'tempLow', label: 'Blood Storage Low Temp', unit: '°C', direction: 'low', warn: 2, critical: 1 },
-    { key: 'battery', label: 'Battery Level', unit: '%', direction: 'low', warn: 30, critical: 15 },
-    { key: 'excursion', label: 'Excursion Duration', unit: 'min', direction: 'high', warn: 10, critical: 30 },
-    { key: 'ambientTemp', label: 'External Ambient Temp', unit: '°C', direction: 'high', warn: 38, critical: 45 },
-    { key: 'impact', label: 'Shock / Impact Sensor', unit: 'g', direction: 'high', warn: 2.5, critical: 4.0 },
-    { key: 'baroAlt', label: 'Barometric Altitude', unit: 'm', direction: 'high', warn: 2500, critical: 3500 },
-    { key: 'rssi', label: 'Cellular Signal Strength', unit: 'dBm', direction: 'low', warn: -95, critical: -110 },
+    { key: 'tempHigh', label: 'Blood Storage High Temp', unit: '°C', direction: 'high', warn: 6, critical: 8, paramType: 'reading' },
+    { key: 'tempLow', label: 'Blood Storage Low Temp', unit: '°C', direction: 'low', warn: 2, critical: 1, paramType: 'reading' },
+    { key: 'battery', label: 'Battery Level', unit: '%', direction: 'low', warn: 30, critical: 15, paramType: 'reading' },
+    { key: 'excursion', label: 'Excursion Duration', unit: 'min', direction: 'high', warn: 10, critical: 30, paramType: 'reading' },
+    { key: 'ambientTemp', label: 'External Ambient Temp', unit: '°C', direction: 'high', warn: 38, critical: 45, paramType: 'reading' },
+    { key: 'impact', label: 'Shock / Impact Sensor', unit: 'g', direction: 'high', warn: 2.5, critical: 4.0, paramType: 'reading' },
+    { key: 'baroAlt', label: 'Barometric Altitude', unit: 'm', direction: 'high', warn: 2500, critical: 3500, paramType: 'reading' },
+    { key: 'rssi', label: 'Cellular Signal Strength', unit: 'dBm', direction: 'low', warn: -95, critical: -110, paramType: 'reading' },
   ],
+}
+
+/** Compound / Multi-condition Alarm Rules (Industrial Alarm List) */
+export const COMPOUND_ALARM_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]> = {
+  transformer: [
+    {
+      key: 'alarm_oil_temp',
+      label: 'Top Oil Temperature High / Critical',
+      unit: '°C',
+      direction: 'high',
+      warn: 85,
+      critical: 90,
+      paramType: 'compound',
+      sourceFormula: 'Evaluated from Top Oil Temperature (oilTemp)',
+      riskInsight: 'Winding / insulation damage risk (>90°C)',
+    },
+    {
+      key: 'alarm_over_voltage',
+      label: 'Over Voltage Warning / Critical',
+      unit: '%',
+      direction: 'high',
+      warn: 105,
+      critical: 110,
+      paramType: 'compound',
+      sourceFormula: 'Evaluated across Phase Voltages (> +5% / > +10% of rated 230V)',
+      riskInsight: 'Equipment damage risk (> +10%)',
+    },
+    {
+      key: 'alarm_under_voltage',
+      label: 'Under Voltage Warning / Critical',
+      unit: '%',
+      direction: 'low',
+      warn: 95,
+      critical: 90,
+      paramType: 'compound',
+      sourceFormula: 'Evaluated across Phase Voltages (< -5% / < -10% of rated 230V)',
+      riskInsight: 'Low voltage operational trip / brownout',
+    },
+    {
+      key: 'alarm_over_current',
+      label: 'Over Current (Overload) / Short Circuit',
+      unit: '%',
+      direction: 'high',
+      warn: 100,
+      critical: 115,
+      paramType: 'compound',
+      sourceFormula: 'Evaluated from Load Factor & Phase Currents (> 100% to 115% / > 115%)',
+      riskInsight: 'Immediate short circuit risk on critical breach (>115%)',
+    },
+    {
+      key: 'alarm_voltage_unbalance',
+      label: 'Voltage Unbalance High / Critical',
+      unit: '%',
+      direction: 'high',
+      warn: 2,
+      critical: 5,
+      paramType: 'compound',
+      sourceFormula: 'Calculated as (|V_max - V_min| / V_avg) * 100% between phases',
+      riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)',
+    },
+    {
+      key: 'alarm_external_fault',
+      label: 'External Fault / Event',
+      unit: '',
+      direction: 'high',
+      warn: 1,
+      critical: 1,
+      paramType: 'compound',
+      sourceFormula: 'Transformer shutdown / sudden trip from external cause',
+      riskInsight: 'Shutdown from external fault such as animals, lightning, or grid incident',
+    },
+  ],
+  carbonNode: [],
+  bloodBox: [],
+}
+
+/** Comprehensive Expected Payload Catalog combining physical readings and compound alarm rules */
+export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]> = {
+  transformer: [
+    ...READING_PAYLOAD_CATALOG.transformer,
+    ...COMPOUND_ALARM_CATALOG.transformer,
+  ],
+  carbonNode: READING_PAYLOAD_CATALOG.carbonNode,
+  bloodBox: READING_PAYLOAD_CATALOG.bloodBox,
 }
 
 /** Categorize any parameter key into one of the standard tabs */
@@ -181,6 +270,7 @@ export default function AlarmParamConfig({
   const [customParams, setCustomParams] = useState<AlarmParam[]>([])
 
   // Search & Filter state
+  const [paramKindFilter, setParamKindFilter] = useState<'all' | 'reading' | 'compound'>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [activeTab, setActiveTab] = useState<ParamCategory>('all')
 
@@ -255,8 +345,8 @@ export default function AlarmParamConfig({
   // -------------------------------------------------------------------------
   // Unified Parameter List: Catalog + Live Samples + Display Params + Custom
   // -------------------------------------------------------------------------
-  const allParams: AlarmParam[] = useMemo(() => {
-    const map = new Map<string, AlarmParam>()
+  const allParams: ExtendedAlarmParam[] = useMemo(() => {
+    const map = new Map<string, ExtendedAlarmParam>()
 
     // 1. Expected catalog for this domain
     const catalog = EXPECTED_PAYLOAD_CATALOG[domain] || schema?.params || []
@@ -277,6 +367,7 @@ export default function AlarmParamConfig({
           direction,
           warn: direction === 'high' ? 80 : 20,
           critical: direction === 'high' ? 100 : 10,
+          paramType: 'reading',
         })
       }
     }
@@ -295,17 +386,21 @@ export default function AlarmParamConfig({
           direction,
           warn: direction === 'high' ? 80 : 20,
           critical: direction === 'high' ? 100 : 10,
+          paramType: 'reading',
         })
       }
     }
 
     // 4. User-created custom parameters
     for (const cp of customParams) {
-      map.set(cp.key, cp)
+      map.set(cp.key, { ...cp, paramType: 'reading' })
     }
 
     return Array.from(map.values())
   }, [domain, schema, configuredDisplayKeys, discoveredWireKeys, customParams, labelOf])
+
+  const readingCount = useMemo(() => allParams.filter((p) => p.paramType !== 'compound').length, [allParams])
+  const compoundCount = useMemo(() => allParams.filter((p) => p.paramType === 'compound').length, [allParams])
 
   // Active parameter configuration values
   const [vals, setVals] = useState<Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }>>({})
@@ -402,32 +497,49 @@ export default function AlarmParamConfig({
   // Filtering & Category Tabs
   // -------------------------------------------------------------------------
   const categoryCounts = useMemo(() => {
+    const subset = allParams.filter((p) => {
+      if (paramKindFilter === 'reading') return p.paramType !== 'compound'
+      if (paramKindFilter === 'compound') return p.paramType === 'compound'
+      return true
+    })
     const counts: Record<ParamCategory, number> = {
-      all: allParams.length,
+      all: subset.length,
       temperature: 0,
       electrical: 0,
       dga_oil: 0,
       mechanical_env: 0,
       custom: 0,
     }
-    for (const p of allParams) {
+    for (const p of subset) {
       const cat = classifyParam(p.key, domain)
       counts[cat] = (counts[cat] || 0) + 1
     }
     return counts
-  }, [allParams, domain])
+  }, [allParams, paramKindFilter, domain])
 
   const filteredParams = useMemo(() => {
     let list = allParams
+    if (paramKindFilter === 'reading') {
+      list = list.filter((p) => p.paramType !== 'compound')
+    } else if (paramKindFilter === 'compound') {
+      list = list.filter((p) => p.paramType === 'compound')
+    }
+
     if (activeTab !== 'all') {
       list = list.filter((p) => classifyParam(p.key, domain) === activeTab)
     }
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase()
-      list = list.filter((p) => p.label.toLowerCase().includes(q) || p.key.toLowerCase().includes(q) || p.unit.toLowerCase().includes(q))
+      list = list.filter((p) =>
+        p.label.toLowerCase().includes(q) ||
+        p.key.toLowerCase().includes(q) ||
+        (p.unit && p.unit.toLowerCase().includes(q)) ||
+        (p.riskInsight && p.riskInsight.toLowerCase().includes(q)) ||
+        (p.sourceFormula && p.sourceFormula.toLowerCase().includes(q))
+      )
     }
     return list
-  }, [allParams, activeTab, searchQuery, domain])
+  }, [allParams, paramKindFilter, activeTab, searchQuery, domain])
 
   // Build current rule for persistence
   const buildRule = (): NodeAlarmRule | null => {
@@ -691,6 +803,45 @@ export default function AlarmParamConfig({
         </div>
       )}
 
+      {/* Scope Segment Filter: All vs. Reading Parameters vs. Compound Alarms */}
+      <div className="flex items-center gap-1.5 p-1 rounded-xl border border-slate-800 bg-slate-950/60 max-w-full overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setParamKindFilter('all')}
+          className={clsx(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all',
+            paramKindFilter === 'all' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+          )}
+        >
+          <Sliders size={12} />
+          <span>All Parameters ({allParams.length})</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setParamKindFilter('reading')}
+          className={clsx(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all',
+            paramKindFilter === 'reading' ? 'bg-sky-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+          )}
+        >
+          <Activity size={12} className={paramKindFilter === 'reading' ? 'text-white' : 'text-sky-400'} />
+          <span>Reading Parameters ({readingCount})</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 font-normal">Physical Sensors</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setParamKindFilter('compound')}
+          className={clsx(
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all',
+            paramKindFilter === 'compound' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+          )}
+        >
+          <Zap size={12} className={paramKindFilter === 'compound' ? 'text-white' : 'text-amber-400'} />
+          <span>Compound Alarms ({compoundCount})</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 font-normal">Alarm List</span>
+        </button>
+      </div>
+
       {/* Category Tabs & Quick Search */}
       <div className="space-y-2">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
@@ -726,7 +877,7 @@ export default function AlarmParamConfig({
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
-              placeholder="Search parameter..."
+              placeholder="Search parameter or risk..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-8 pr-7 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
@@ -751,7 +902,7 @@ export default function AlarmParamConfig({
             <thead className="sticky top-0 z-10" style={{ background: '#0d1117', borderBottom: '1px solid #1e2433' }}>
               <tr>
                 <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Active</th>
-                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Parameter (Payload Key)</th>
+                <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Parameter &amp; Classification</th>
                 <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Live Reading</th>
                 <th className="py-2.5 px-3 text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Direction</th>
                 <th className="py-2.5 px-3 text-[10px] text-amber-400 font-semibold uppercase tracking-wider">Warning</th>
@@ -785,15 +936,35 @@ export default function AlarmParamConfig({
                       />
                     </td>
 
-                    {/* Parameter Label & Wire Key */}
+                    {/* Parameter Label & Wire Key & Type Badges */}
                     <td className="py-2 px-3">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold text-slate-200">{p.label}</span>
+                        {p.paramType === 'compound' ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-950/70 text-amber-300 border border-amber-800/60">
+                            <Zap size={9} /> Compound Alarm
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-sky-950/60 text-sky-300 border border-sky-800/50">
+                            <Activity size={9} /> Reading Sensor
+                          </span>
+                        )}
                       </div>
-                      <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                      <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 mt-0.5">
                         <span>{p.key}</span>
                         {p.unit && <span className="text-indigo-400/80">({p.unit})</span>}
                       </div>
+                      {p.sourceFormula && (
+                        <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                          <span className="text-slate-500 font-medium">Formula:</span>
+                          <span className="text-slate-300">{p.sourceFormula}</span>
+                        </div>
+                      )}
+                      {p.riskInsight && (
+                        <div className="text-[10px] text-amber-400/90 mt-0.5 flex items-center gap-1">
+                          <span>💡 {p.riskInsight}</span>
+                        </div>
+                      )}
                     </td>
 
                     {/* Live Reading */}

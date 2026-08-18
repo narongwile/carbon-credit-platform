@@ -127,9 +127,9 @@ export default function DeviceLocationCard({
     )
   }, [])
   useEffect(() => {
-    if (editing) requestGeolocation()
+    if (editing || expanded) requestGeolocation()
     else { setGeoPos(null); setGeoStatus('idle') }
-  }, [editing, requestGeolocation])
+  }, [editing, expanded, requestGeolocation])
 
   const triggerCoordConfirm = async (target: 'device' | 'site', lat: number, lng: number) => {
     setPendingConfirm({
@@ -244,7 +244,7 @@ export default function DeviceLocationCard({
       ) : shown ? (
         <div className="space-y-2">
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-            <LocationPicker key={`${shown.lat},${shown.lng}`} lat={shown.lat} lng={shown.lng} height="120px" zoom={14} interactive={false} showLayerSwitcher={false} onChange={() => {}} />
+            <LocationPicker key={`${shown.lat},${shown.lng}`} lat={shown.lat} lng={shown.lng} height="120px" zoom={14} interactive={false} showLayerSwitcher={false} showMyLocation={false} onChange={() => {}} />
           </div>
           <div className="flex items-start gap-2">
             <MapPin size={11} className="text-slate-500 mt-0.5 flex-shrink-0" />
@@ -260,22 +260,6 @@ export default function DeviceLocationCard({
               )}
             </div>
           </div>
-          {geoPos && (
-            <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-lg bg-sky-950/40 border border-sky-800/40 text-sky-300">
-              <span className="flex items-center gap-1.5">
-                <Navigation size={11} className="text-sky-400" />
-                ห่างจากคุณ: <strong className="font-semibold text-white">{formatDistance(calculateDistanceMeters(geoPos.lat, geoPos.lng, shown.lat, shown.lng))}</strong>
-              </span>
-              <a
-                href={`https://www.google.com/maps/dir/?api=1&origin=${geoPos.lat},${geoPos.lng}&destination=${shown.lat},${shown.lng}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sky-400 hover:text-sky-300 text-[10px] underline font-medium"
-              >
-                นำทาง ↗
-              </a>
-            </div>
-          )}
           {canConfigure && (
             <button onClick={() => setEditing('device')}
               className="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded-md text-indigo-300 hover:text-indigo-200" style={inset}>
@@ -349,9 +333,27 @@ export default function DeviceLocationCard({
                     zoom={15}
                     interactive={false}
                     showSearch={true}
+                    showLayerSwitcher={true}
+                    showMyLocation={true}
                     onChange={() => {}}
                   />
                 </div>
+                {geoPos && (
+                  <div className="flex items-center justify-between text-xs px-3 py-2 rounded-lg bg-sky-950/50 border border-sky-800/50 text-sky-300">
+                    <span className="flex items-center gap-1.5">
+                      <Navigation size={13} className="text-sky-400" />
+                      ระยะห่างจากตำแหน่งของคุณ: <strong className="font-semibold text-white">{formatDistance(calculateDistanceMeters(geoPos.lat, geoPos.lng, shown.lat, shown.lng))}</strong>
+                    </span>
+                    <a
+                      href={`https://www.google.com/maps/dir/?api=1&origin=${geoPos.lat},${geoPos.lng}&destination=${shown.lat},${shown.lng}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sky-400 hover:text-sky-200 underline font-medium flex items-center gap-1"
+                    >
+                      เปิดนำทาง ↗
+                    </a>
+                  </div>
+                )}
                 {canConfigure && (
                   <div className="flex items-center justify-between pt-1">
                     <span className="text-[11px] text-slate-500">Need to update this position?</span>

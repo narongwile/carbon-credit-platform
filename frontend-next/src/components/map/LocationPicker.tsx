@@ -37,6 +37,7 @@ export default function LocationPicker({
   zoom = 8,
   showSearch = false,
   showLayerSwitcher = true,
+  showMyLocation = false,
   defaultLayer = 'streets',
 }: {
   lat: number | null
@@ -47,6 +48,7 @@ export default function LocationPicker({
   zoom?: number
   showSearch?: boolean
   showLayerSwitcher?: boolean
+  showMyLocation?: boolean
   defaultLayer?: LayerKey
 }) {
   const elRef = useRef<HTMLDivElement>(null)
@@ -200,17 +202,19 @@ export default function LocationPicker({
 
       {/* Layer Switcher (Streets / Esri Satellite / Dark) & My Location */}
       <div className="absolute top-2 right-2 z-[500] flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={handleMyLocation}
-          disabled={locating}
-          title="Locate my position (แสดงพิกัดตำแหน่งปัจจุบันของคุณ)"
-          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all shadow-lg text-white disabled:opacity-50"
-          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
-        >
-          {locating ? <Loader2 size={11} className="animate-spin text-cyan-400" /> : <Navigation size={11} className="text-cyan-400" />}
-          <span className="hidden sm:inline">My Location</span>
-        </button>
+        {showMyLocation && (
+          <button
+            type="button"
+            onClick={handleMyLocation}
+            disabled={locating}
+            title="Locate my position (แสดงพิกัดตำแหน่งปัจจุบันของคุณ)"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all shadow-lg text-white disabled:opacity-50"
+            style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
+          >
+            {locating ? <Loader2 size={11} className="animate-spin text-cyan-400" /> : <Navigation size={11} className="text-cyan-400" />}
+            <span className="hidden sm:inline">My Location</span>
+          </button>
+        )}
 
         {showLayerSwitcher && (
           <div className="flex items-center p-0.5 rounded-lg shadow-lg"
