@@ -169,7 +169,7 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
     try {
       if (live) {
         const r = await api.ackEvent(id, { by: getSession()?.name ?? 'admin', eventProblemId: problemId })
-        if (!r?.ok && r?.status && r.status >= 400) {
+        if (r === null) {
           toast.error('Failed to acknowledge alarm')
           return
         }
