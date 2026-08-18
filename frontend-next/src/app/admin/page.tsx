@@ -7,6 +7,7 @@ import { useAppStore } from '@/lib/store'
 import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useLiveGeoNodes } from '@/lib/useFleetLive'
 import { useFleetHosts } from '@/lib/useManagedDevices'
+import { useOrgAlarms } from '@/lib/useOrgAlarms'
 import { useOrgPhotoCovers } from '@/lib/useNodePhotos'
 import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorHost, type SensorDomain } from '@/types/fleet'
@@ -174,7 +175,33 @@ function OverviewTab() {
   const orgId = selectedOrgId || 'org-1'
   const live = useIsLive()
   const { hosts, fromBackend } = useFleetHosts(orgId)
-  const alarms = getAlarmsByOrg(orgId)
+  const { alarms: liveAlarms, refetch: refetchAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 5000 })
+  const mockAlarms = getAlarmsByOrg(orgId)
+
+  const alarms = live
+    ? liveAlarms.map((a) => ({
+        id: a.id,
+        nodeId: a.nodeId,
+        message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
+        transformerName: a.nodeName,
+        timestamp: a.raisedAt,
+        acknowledged: !!a.acknowledgedAt,
+        severity: a.severity,
+        domain: a.domain,
+        eventProblemId: a.eventProblemId,
+      }))
+    : mockAlarms.map((a) => ({
+        id: a.id,
+        nodeId: a.transformerId,
+        message: a.message,
+        transformerName: a.transformerName,
+        timestamp: a.timestamp,
+        acknowledged: a.acknowledged,
+        severity: a.severity,
+        domain: 'transformer' as SensorDomain,
+        eventProblemId: undefined,
+      }))
+
   const [liveFrames, setLiveFrames] = useState<Record<string, number>>({})
   const [liveValues, setLiveValues] = useState<Record<string, Record<string, number>>>({})
   const [searchQuery, setSearchQuery] = useState('')
@@ -200,12 +227,15 @@ function OverviewTab() {
     if (!live) return
     const off = subscribeTelemetry((f) => {
       msgCounterRef.current += 1
-      if (f?.id && f.type !== 'alarm') {
+      if (f?.id) {
         const id = f.id
         setLiveFrames((prev) => ({ ...prev, [id]: Date.now() }))
         if (f.values) {
           const vals = f.values
           setLiveValues((prev) => ({ ...prev, [id]: vals }))
+        }
+        if (f.type === 'alarm') {
+          refetchAlarms()
         }
       }
     })
@@ -218,7 +248,7 @@ function OverviewTab() {
       off()
       clearInterval(rateTimer)
     }
-  }, [live])
+  }, [live, refetchAlarms])
 
   const eff = (h: SensorHost): string => {
     const lastFrame = liveFrames[h.id]
@@ -268,6 +298,7 @@ function OverviewTab() {
       const probId = selectedProblems[alarmId] || undefined
       if (live) {
         await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Admin', eventProblemId: probId })
+        await refetchAlarms()
       }
       acknowledgeAlarm(alarmId, getSession()?.name ?? 'Admin')
     } catch (e) {
