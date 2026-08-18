@@ -73,8 +73,10 @@ function OverviewTab() {
     if (!live) return
     const off = subscribeTelemetry((f) => {
       if (f?.id) {
+        const id = f.id
         if (f.values) {
-          setLiveFrames((prev) => ({ ...prev, [f.id]: f.values }))
+          const vals = f.values
+          setLiveFrames((prev) => ({ ...prev, [id]: vals }))
         }
         if (f.type === 'alarm' || f.alarm) {
           refetchAlarms()

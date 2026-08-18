@@ -183,9 +183,11 @@ function OverviewTab() {
     if (!live) return
     const off = subscribeTelemetry((f) => {
       if (f?.id && f.type !== 'alarm') {
-        setLiveFrames((prev) => ({ ...prev, [f.id]: Date.now() }))
+        const id = f.id
+        setLiveFrames((prev) => ({ ...prev, [id]: Date.now() }))
         if (f.values) {
-          setLiveValues((prev) => ({ ...prev, [f.id]: f.values }))
+          const vals = f.values
+          setLiveValues((prev) => ({ ...prev, [id]: vals }))
         }
       }
     })
