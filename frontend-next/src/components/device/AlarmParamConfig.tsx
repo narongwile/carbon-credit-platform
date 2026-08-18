@@ -41,22 +41,25 @@ const CATEGORY_TABS: CategoryTab[] = [
 /** Comprehensive Expected Payload Catalog for standard industrial sensor domains */
 export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, AlarmParam[]> = {
   transformer: [
-    // 🌡️ Thermal & Temperature
-    { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 80, critical: 95, rate: { unit: '°C/h', warn: 3 } },
+    // 🌡️ Thermal & Oil
+    { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 } },
     { key: 'windingTemp', label: 'Winding / Hot-Spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110, rate: { unit: '°C/h', warn: 5 } },
     { key: 'ambientTemp', label: 'Ambient Temperature', unit: '°C', direction: 'high', warn: 45, critical: 55 },
     { key: 'bottomOilTemp', label: 'Bottom Oil Temperature', unit: '°C', direction: 'high', warn: 70, critical: 85 },
     { key: 'coreTemp', label: 'Core Temperature', unit: '°C', direction: 'high', warn: 90, critical: 105 },
 
-    // ⚡️ Electrical & Power
-    { key: 'load', label: 'Load Factor', unit: '%', direction: 'high', warn: 80, critical: 95 },
+    // ⚡️ Electrical & Power Quality
+    { key: 'load', label: 'Over Current (Load Factor)', unit: '%', direction: 'high', warn: 100, critical: 115 },
+    { key: 'overVoltage', label: 'Over Voltage (+5% / +10%)', unit: '%', direction: 'high', warn: 105, critical: 110 },
+    { key: 'underVoltage', label: 'Under Voltage (-5% / -10%)', unit: '%', direction: 'low', warn: 95, critical: 90 },
+    { key: 'voltageUnbalance', label: 'Voltage Unbalance (>2% / >5%)', unit: '%', direction: 'high', warn: 2, critical: 5 },
     { key: 'currentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
     { key: 'currentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
     { key: 'currentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500 },
     { key: 'currentN', label: 'Neutral Current', unit: 'A', direction: 'high', warn: 50, critical: 100 },
-    { key: 'voltageA', label: 'Phase A Voltage (V_an)', unit: 'V', direction: 'high', warn: 245, critical: 260 },
-    { key: 'voltageB', label: 'Phase B Voltage (V_bn)', unit: 'V', direction: 'high', warn: 245, critical: 260 },
-    { key: 'voltageC', label: 'Phase C Voltage (V_cn)', unit: 'V', direction: 'high', warn: 245, critical: 260 },
+    { key: 'voltageA', label: 'Phase A Voltage (V_an)', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
+    { key: 'voltageB', label: 'Phase B Voltage (V_bn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
+    { key: 'voltageC', label: 'Phase C Voltage (V_cn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
     { key: 'powerFactor', label: 'Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75 },
     { key: 'frequency', label: 'Frequency', unit: 'Hz', direction: 'high', warn: 51.5, critical: 52.5 },
     { key: 'thd_v', label: 'Voltage THD', unit: '%', direction: 'high', warn: 5, critical: 8 },

@@ -1512,26 +1512,38 @@ const pool = global.get('resolvePool')(e.orgId);
 // the tenant DB and silently notifies nobody.
 const controlPool = global.get('pool');
 const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}
-const text = '['+e.severity+'] '+e.paramLabel+' = '+e.value+e.unit+' (limit '+e.threshold+') on '+e.nodeId+' — '+(e.kind||'')+' @ '+when;
-const subject = 'ONEOPS '+e.severity+': '+e.paramLabel;
+
+// Domain-aware category & condition risk insight from industrial spec
+const __RISK_MAP = {
+  oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },
+  windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },
+  overVoltage: { cat: 'Voltage', critRisk: 'Equipment damage risk (>+10% rated voltage)', warnRisk: 'Over voltage warning (>+5% rated voltage)' },
+  underVoltage: { cat: 'Voltage', critRisk: 'Low voltage operational trip (<-10% rated voltage)', warnRisk: 'Under voltage warning (<-5% rated voltage)' },
+  voltageA: { cat: 'Voltage', critRisk: 'Phase A equipment damage risk (>253V)', warnRisk: 'Phase A over voltage (>241.5V)' },
+  voltageB: { cat: 'Voltage', critRisk: 'Phase B equipment damage risk (>253V)', warnRisk: 'Phase B over voltage (>241.5V)' },
+  voltageC: { cat: 'Voltage', critRisk: 'Phase C equipment damage risk (>253V)', warnRisk: 'Phase C over voltage (>241.5V)' },
+  load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },
+  voltageUnbalance: { cat: 'Power Quality', critRisk: 'Phase unbalance critical (>5%)', warnRisk: 'Voltage unbalance high (>2%)' },
+  externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },
+  online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },
+};
+const __info = __RISK_MAP[e.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };
+const __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;
+const __catText = __info.cat;
+const __sevEmoji = e.severity === 'CRITICAL' ? '🔴' : '🟡';
+
+const __isOffline = e.kind === 'offline';
+const __valueLine = __isOffline ? 'No telemetry received' : (e.value + (e.unit||''));
+const __limitLine = __isOffline ? '—' : (e.threshold + (e.unit||''));
+const text = '\\n' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + '\\n'
+  + '🏷 Category: ' + __catText + '\\n'
+  + '⚡️ Device: ' + e.nodeId + '\\n'
+  + '📊 Value: ' + __valueLine + ' (Limit: ' + __limitLine + ')\\n'
+  + '💡 Risk: ' + __riskText + '\\n'
+  + '🕒 Time: ' + when;
+const subject = 'ONEOPS ' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + ' (' + __catText + ')';
 
 // --- Rich message payloads --------------------------------------------------
-// A one-line string tells an on-call engineer what tripped but not what to do
-// about it: they still have to find the device in the UI. Every channel here
-// supports a card with a deep link, so the alert carries its own way in.
-//
-// APP_BASE_URL (falling back to CORS_ORIGIN, which is already the frontend
-// origin) + trailingSlash:true from next.config — the static export serves
-// /admin/nodes/detail/, and without the trailing slash the CDN 308s.
-//
-// Device id is a QUERY param (?id=), not a path segment: with output:'export'
-// a dynamic [id] route can only pre-render the ids known at build time, so a
-// device that registered after the last deploy (a real ESP, not a seed
-// fixture) had no static file to serve, and nginx's SPA fallback silently
-// served the LOGIN page for that URL instead of the device — a card whose
-// button quietly took you to the wrong page for every device newer than the
-// last frontend build. /admin/nodes/detail and /customer/devices/detail are
-// single static pages regardless of id, so this can't happen again.
 const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(/\\/+$/,'');
 const __linkFor = (role) => {
   if (!__base || __base === '*') return '';
@@ -1539,40 +1551,46 @@ const __linkFor = (role) => {
   return __base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId);
 };
 const __sevColor = e.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';
-const __isOffline = e.kind === 'offline';
-const __valueLine = __isOffline ? 'No telemetry received' : (e.value + (e.unit||''));
-const __limitLine = __isOffline ? '—' : (e.threshold + (e.unit||''));
 const __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 // LINE Flex bubble (Messaging API push only; LINE Notify takes plain text).
 const __flex = (link) => ({ type:'flex', altText: text, contents: { type:'bubble',
   header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[
-    { type:'text', text: e.severity, color:'#FFFFFF', size:'xs', weight:'bold' },
+    { type:'text', text: e.severity + ' · ' + __catText, color:'#FFFFFF', size:'xs', weight:'bold' },
     { type:'text', text: String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },
   body: { type:'box', layout:'vertical', spacing:'sm', contents: [
-    ['Device', String(e.nodeId)], ['Value', String(__valueLine)], ['Limit', String(__limitLine)], ['Time', String(when)],
+    ['Category', String(__catText)],
+    ['Device', String(e.nodeId)],
+    ['Value', String(__valueLine)],
+    ['Limit', String(__limitLine)],
+    ['Risk/Condition', String(__riskText)],
+    ['Time', String(when)],
   ].map(([k,v]) => ({ type:'box', layout:'baseline', spacing:'sm', contents:[
-    { type:'text', text:k, size:'sm', color:'#94A3B8', flex:2 },
-    { type:'text', text:v, size:'sm', color:'#0F172A', flex:5, wrap:true } ] })) },
+    { type:'text', text:k, size:'sm', color:'#94A3B8', flex:3 },
+    { type:'text', text:v, size:'sm', color:'#0F172A', flex:5, weight: k==='Risk/Condition'?'bold':'regular', wrap:true } ] })) },
   footer: link ? { type:'box', layout:'vertical', contents:[
     { type:'button', style:'primary', color:'#6366F1', height:'sm',
       action:{ type:'uri', label:'Open device', uri: link } } ] } : undefined } });
 
 // Telegram: HTML text + a URL button under the message.
-const __tgText = '<b>['+__esc(e.severity)+'] '+__esc(e.paramLabel||'Alarm')+'</b>\\n'
-  + 'Device: <code>'+__esc(e.nodeId)+'</code>\\n'
-  + 'Value: '+__esc(__valueLine)+'  (limit '+__esc(__limitLine)+')\\n'
-  + 'Time: '+__esc(when);
+const __tgText = '<b>' + __sevEmoji + ' [' + __esc(e.severity) + '] ' + __esc(e.paramLabel || 'Alarm') + '</b>\\n'
+  + '🏷 <b>Category:</b> ' + __esc(__catText) + '\\n'
+  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n'
+  + '📊 <b>Value:</b> ' + __esc(__valueLine) + ' (Limit: ' + __esc(__limitLine) + ')\\n'
+  + '💡 <b>Risk/Condition:</b> ' + __esc(__riskText) + '\\n'
+  + '🕒 <b>Time:</b> ' + __esc(when);
 const __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',
   reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined });
 
 // Google Chat cardsV2 — 'text' rides along so notifications and clients that
 // cannot render cards still show something useful.
 const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
-  header: { title: (e.severity==='CRITICAL'?'🔴 ':'🟠 ') + String(e.paramLabel||'Alarm'), subtitle: String(e.nodeId) },
+  header: { title: (e.severity==='CRITICAL'?'🔴 ':'🟠 ') + String(e.paramLabel||'Alarm'), subtitle: __catText + ' · ' + String(e.nodeId) },
   sections: [{ widgets: [
+    { decoratedText: { topLabel:'Category', text: String(__catText) } },
     { decoratedText: { topLabel:'Value', text: String(__valueLine) } },
     { decoratedText: { topLabel:'Limit', text: String(__limitLine) } },
+    { decoratedText: { topLabel:'Condition / Risk', text: String(__riskText) } },
     { decoratedText: { topLabel:'Time', text: String(when) } },
     ...(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : []),
   ] }] } }] });

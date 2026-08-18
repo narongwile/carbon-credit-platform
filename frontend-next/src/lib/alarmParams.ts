@@ -34,12 +34,19 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
   transformer: {
     label: 'ETERNITY Transformer',
     params: [
-      { key: 'oilTemp', label: 'Oil Temperature', unit: '°C', direction: 'high', warn: 80, critical: 95, rate: { unit: '°C/h', warn: 3 } },
+      // 🌡️ Thermal & Oil
+      { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 } },
       { key: 'windingTemp', label: 'Winding / Hot-spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110 },
+      // ⚡️ Voltage & Power Quality
+      { key: 'overVoltage', label: 'Over Voltage', unit: '%', direction: 'high', warn: 105, critical: 110 },
+      { key: 'underVoltage', label: 'Under Voltage', unit: '%', direction: 'low', warn: 95, critical: 90 },
+      { key: 'voltageUnbalance', label: 'Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
+      // 🔌 Current & Load
+      { key: 'load', label: 'Over Current (Load)', unit: '%', direction: 'high', warn: 100, critical: 115 },
+      // 🧪 DGA & Oil Quality
       { key: 'hydrogen', label: 'Hydrogen H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 150, critical: 300, rate: { unit: 'ppm/day', warn: 10 } },
       { key: 'moisture', label: 'Moisture', unit: 'ppm', direction: 'high', warn: 25, critical: 35 },
       { key: 'oilLevel', label: 'Oil Level', unit: '%', direction: 'low', warn: 70, critical: 60 },
-      { key: 'load', label: 'Load', unit: '%', direction: 'high', warn: 80, critical: 95 },
     ],
     dwellMin: 5,
     hysteresis: 2,
@@ -138,3 +145,44 @@ export const LEGACY_WIRE_KEYS = new Set([
   'door_state', 'rh_pct', 'batt_pct', 'impact_g', 'baro_alt_m',
   'electrical_current_a', 'current_a',
 ])
+
+/**
+ * Standard Alarm Category and Condition / Risk Insights based on industrial transformer specification.
+ */
+export const ALARM_RISK_INSIGHTS: Record<string, { category: string; risk: string; condition: string }> = {
+  oilTemp: {
+    category: 'Thermal & Oil',
+    risk: 'Winding/insulation damage risk',
+    condition: 'Top Oil Temperature > 85°C (Warning) / > 90°C (Critical)',
+  },
+  windingTemp: {
+    category: 'Thermal & Oil',
+    risk: 'Hot-spot thermal degradation',
+    condition: 'Winding Temp > 95°C (Warning) / > 110°C (Critical)',
+  },
+  overVoltage: {
+    category: 'Voltage',
+    risk: 'Equipment damage risk',
+    condition: '> +5% of rated voltage (Warning) / > +10% of rated voltage (Critical)',
+  },
+  underVoltage: {
+    category: 'Voltage',
+    risk: 'Operational instability / low voltage trip',
+    condition: '< -5% of rated voltage (Warning) / < -10% of rated voltage (Critical)',
+  },
+  load: {
+    category: 'Current',
+    risk: 'Immediate short circuit risk on critical breach',
+    condition: '> 100% to 115% rated capacity (Warning) / > 115% (Critical)',
+  },
+  voltageUnbalance: {
+    category: 'Power Quality',
+    risk: 'Phase unbalance motor heating & system stress',
+    condition: 'Voltage unbalance between phases > 2% (Warning) / > 5% (Critical)',
+  },
+  externalFault: {
+    category: 'Event/Fault',
+    risk: 'Transformer shutdown from external fault such as animals, lightning, or grid incident',
+    condition: 'Notice/Warning condition',
+  },
+}

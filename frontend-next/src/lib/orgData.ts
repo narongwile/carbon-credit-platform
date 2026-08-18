@@ -75,11 +75,24 @@ export const defaultNotificationChannels: NotificationChannelConfig[] = [
 ]
 
 export const eventProblems: EventProblem[] = [
-  { id: 'ev-temp-high', label: 'Temperature High' },
-  { id: 'ev-temp-low', label: 'Temperature Low' },
-  { id: 'ev-door-open', label: 'Door Left Open' },
-  { id: 'ev-power-loss', label: 'Power Loss' },
-  { id: 'ev-sensor-fault', label: 'Sensor Fault' },
+  // Thermal & Oil
+  { id: 'ev-top-oil-high', label: 'Top Oil Temperature High (> 85°C)' },
+  { id: 'ev-top-oil-critical', label: 'Top Oil Temperature Critical (Insulation Damage Risk > 90°C)' },
+  { id: 'ev-winding-temp', label: 'Winding / Hot-Spot Temp High' },
+  // Voltage
+  { id: 'ev-over-voltage-warn', label: 'Over Voltage Warning (> +5% rated voltage)' },
+  { id: 'ev-over-voltage-crit', label: 'Over Voltage Critical (Equipment Damage Risk > +10%)' },
+  { id: 'ev-under-voltage-warn', label: 'Under Voltage Warning (< -5% rated voltage)' },
+  { id: 'ev-under-voltage-crit', label: 'Under Voltage Critical (< -10% rated voltage)' },
+  // Current
+  { id: 'ev-over-current-warn', label: 'Over Current (Overload) Warning (> 100% to 115%)' },
+  { id: 'ev-over-current-crit', label: 'Over Current (Short Circuit) Critical (> 115%)' },
+  // Power Quality
+  { id: 'ev-voltage-unbalance-warn', label: 'Voltage Unbalance High (> 2% between phases)' },
+  { id: 'ev-voltage-unbalance-crit', label: 'Voltage Unbalance Critical (> 5% between phases)' },
+  // Event/Fault
+  { id: 'ev-external-fault', label: 'External Fault/Event (Animals, Lightning, Grid Trip)' },
+  { id: 'ev-sensor-fault', label: 'Sensor Fault / Communication Loss' },
   { id: 'ev-offline', label: 'Device Offline' },
   { id: 'ev-other', label: 'Other / Manual Note' },
 ]
@@ -90,9 +103,12 @@ export const eventProblems: EventProblem[] = [
 export const departmentEventProblems: Record<string, EventProblem[]> = {
   // org-1 · dept-bb (transformer focus)
   'dept-bb': [
-    { id: 'ev-bb-oiltemp', label: 'Oil Temperature High', departmentId: 'dept-bb' },
-    { id: 'ev-bb-h2', label: 'Hydrogen (H₂) Rising', departmentId: 'dept-bb' },
-    { id: 'ev-bb-load', label: 'Overload', departmentId: 'dept-bb' },
+    { id: 'ev-bb-oiltemp', label: 'Top Oil Temp High / Critical (>85°C / >90°C)', departmentId: 'dept-bb' },
+    { id: 'ev-bb-voltage', label: 'Over / Under Voltage (+5% / -5%)', departmentId: 'dept-bb' },
+    { id: 'ev-bb-overcurrent', label: 'Over Current / Short Circuit Risk (>115%)', departmentId: 'dept-bb' },
+    { id: 'ev-bb-unbalance', label: 'Voltage Unbalance (>2% / >5%)', departmentId: 'dept-bb' },
+    { id: 'ev-bb-extfault', label: 'External Fault/Event (Lightning, Animals, etc.)', departmentId: 'dept-bb' },
+    { id: 'ev-bb-h2', label: 'Hydrogen (H₂) Rising (DGA)', departmentId: 'dept-bb' },
     { id: 'ev-bb-offline', label: 'Device Offline', departmentId: 'dept-bb' },
     { id: 'ev-bb-other', label: 'Other / Manual Note', departmentId: 'dept-bb' },
   ],
