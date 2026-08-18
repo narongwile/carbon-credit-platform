@@ -63,8 +63,18 @@ function OverviewTab() {
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
   const [msgRate, setMsgRate] = useState<number>(0)
   const [ackingId, setAckingId] = useState<string | null>(null)
+  const [evProblems, setEvProblems] = useState<{ id: string; label: string }[]>([])
+  const [selectedProblems, setSelectedProblems] = useState<Record<string, string>>({})
   const msgCounterRef = useRef(0)
   const [, tick] = useState(0)
+
+  useEffect(() => {
+    if (live) {
+      api.eventProblems(orgId).then((rows) => {
+        if (rows) setEvProblems(rows)
+      }).catch(() => {})
+    }
+  }, [live, orgId])
 
   const devices = useMemo(() => {
     return rawDevices.filter((d) => {
@@ -117,8 +127,9 @@ function OverviewTab() {
     e.stopPropagation()
     setAckingId(alarmId)
     try {
+      const probId = selectedProblems[alarmId] || undefined
       if (live) {
-        await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Viewer' })
+        await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Viewer', eventProblemId: probId })
         await refetchAlarms()
       }
     } catch (err) {
@@ -348,20 +359,38 @@ function OverviewTab() {
                   </Link>
                   <div className="flex items-center justify-between gap-2 mt-2 pt-1.5 border-t border-slate-800/40 text-[11px] text-slate-500">
                     <span className="text-slate-400 font-medium">{a.transformerName}</span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 shrink-0">
                       <div className="flex items-center gap-1 text-slate-500">
                         <Clock size={10} />
                         <span>{fmtHM(a.timestamp)}</span>
                       </div>
                       {!a.acknowledged ? (
-                        <button
-                          type="button"
-                          onClick={(e) => handleAck(a.id, e)}
-                          disabled={ackingId === a.id}
-                          className="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer shadow"
-                        >
-                          <Check size={10} /> {ackingId === a.id ? 'ACKing…' : 'ACK'}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {evProblems.length > 0 && (
+                            <select
+                              value={selectedProblems[a.id] || ''}
+                              onChange={(e) => {
+                                e.stopPropagation()
+                                setSelectedProblems({ ...selectedProblems, [a.id]: e.target.value })
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[10px] bg-[#0d1117] text-slate-300 border border-slate-700 rounded-lg px-1.5 py-0.5 outline-none max-w-[110px] truncate"
+                            >
+                              <option value="">Cause (Opt)…</option>
+                              {evProblems.map((p) => (
+                                <option key={p.id} value={p.id}>{p.label}</option>
+                              ))}
+                            </select>
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => handleAck(a.id, e)}
+                            disabled={ackingId === a.id}
+                            className="px-2 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold transition-all flex items-center gap-1 shrink-0 disabled:opacity-50 cursor-pointer shadow"
+                          >
+                            <Check size={10} /> {ackingId === a.id ? 'ACKing…' : 'ACK'}
+                          </button>
+                        </div>
                       ) : (
                         <span className="text-green-400 font-semibold flex items-center gap-1 text-[10px]">
                           <Check size={10} /> ACK

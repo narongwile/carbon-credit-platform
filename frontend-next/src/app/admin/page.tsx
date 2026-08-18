@@ -180,8 +180,18 @@ function OverviewTab() {
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
   const [msgRate, setMsgRate] = useState<number>(0)
   const [ackingId, setAckingId] = useState<string | null>(null)
+  const [evProblems, setEvProblems] = useState<{ id: string; label: string }[]>([])
+  const [selectedProblems, setSelectedProblems] = useState<Record<string, string>>({})
   const msgCounterRef = useRef(0)
   const [, tick] = useState(0)
+
+  useEffect(() => {
+    if (live) {
+      api.eventProblems(orgId).then((rows) => {
+        if (rows) setEvProblems(rows)
+      }).catch(() => {})
+    }
+  }, [live, orgId])
 
   useEffect(() => {
     if (!live) return
@@ -252,8 +262,9 @@ function OverviewTab() {
   const handleAck = async (alarmId: string) => {
     setAckingId(alarmId)
     try {
+      const probId = selectedProblems[alarmId] || undefined
       if (live) {
-        await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Admin' })
+        await api.ackEvent(alarmId, { by: getSession()?.name ?? 'Admin', eventProblemId: probId })
       }
       acknowledgeAlarm(alarmId, getSession()?.name ?? 'Admin')
     } catch (e) {
@@ -435,7 +446,7 @@ function OverviewTab() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2.5 shrink-0">
+                <div className="flex items-center gap-2 shrink-0">
                   <span
                     className="text-[10px] px-2 py-0.5 rounded font-bold"
                     style={
@@ -446,6 +457,18 @@ function OverviewTab() {
                   >
                     {alarm.severity}
                   </span>
+                  {evProblems.length > 0 && (
+                    <select
+                      value={selectedProblems[alarm.id] || ''}
+                      onChange={(e) => setSelectedProblems({ ...selectedProblems, [alarm.id]: e.target.value })}
+                      className="text-[10px] bg-[#0d1117] text-slate-300 border border-slate-700 rounded-lg px-2 py-1 outline-none w-28 sm:w-36 truncate"
+                    >
+                      <option value="">Cause (Opt)…</option>
+                      {evProblems.map((p) => (
+                        <option key={p.id} value={p.id}>{p.label}</option>
+                      ))}
+                    </select>
+                  )}
                   <button
                     type="button"
                     onClick={() => handleAck(alarm.id)}
