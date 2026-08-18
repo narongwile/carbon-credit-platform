@@ -1,3 +1,5 @@
+'use client'
+
 import { useCallback, useEffect, useState } from 'react'
 import { api, useIsLive, type FleetNode } from './api'
 import { subscribeTelemetry, type TelemetryFrame } from './telemetryBus'
