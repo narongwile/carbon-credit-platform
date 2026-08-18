@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useOrgAlarms, type OrgAlarmRow } from '@/lib/useOrgAlarms'
-import { getSession } from '@/lib/auth'
+import { getSession, useSessionOrgId } from '@/lib/auth'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, FileText, CalendarDays } from 'lucide-react'
 import type { Alarm } from '@/types'
@@ -28,72 +28,68 @@ const QUICK_RANGES: { label: string; hours: number | null }[] = [
 
 function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string, problemId?: string) => void; problems: EventProblem[] }) {
   const [problemId, setProblemId] = useState('')
-  const cfg = {
-    CRITICAL: { color: '#ef4444', bg: 'rgba(239,68,68,0.08)', border: 'rgba(239,68,68,0.2)', icon: <XCircle size={14} className="text-red-400" /> },
-    WARNING: { color: '#fbbf24', bg: 'rgba(251,191,36,0.06)', border: 'rgba(251,191,36,0.15)', icon: <AlertTriangle size={14} className="text-amber-400" /> },
-    INFO: { color: '#60a5fa', bg: 'rgba(96,165,250,0.06)', border: 'rgba(96,165,250,0.15)', icon: <Info size={14} className="text-blue-400" /> },
-  }
-  const c = cfg[alarm.severity]
 
   return (
     <tr
-      className="transition-colors"
+      key={alarm.id}
+      className="transition-colors border-b"
       style={{
-        background: alarm.acknowledged ? 'transparent' : c.bg,
-        borderBottom: '1px solid #1e2433',
-        opacity: alarm.acknowledged ? 0.6 : 1,
+        borderColor: '#1e2433',
+        background: alarm.severity === 'CRITICAL' && !alarm.acknowledged ? 'rgba(239,68,68,0.03)' : 'transparent',
       }}
     >
       <td className="py-3 px-4">
-        <div className="flex items-center gap-2">
-          {c.icon}
-          <span className="text-xs font-bold" style={{ color: c.color }}>{alarm.severity}</span>
-        </div>
+        <span
+          className="text-xs px-2.5 py-1 rounded-full font-semibold inline-flex items-center gap-1.5"
+          style={
+            alarm.severity === 'CRITICAL'
+              ? { background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.3)' }
+              : alarm.severity === 'WARNING'
+              ? { background: 'rgba(251,191,36,0.15)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.3)' }
+              : { background: 'rgba(59,130,246,0.15)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)' }
+          }
+        >
+          {alarm.severity === 'CRITICAL' && <XCircle size={10} />}
+          {alarm.severity === 'WARNING' && <AlertTriangle size={10} />}
+          {alarm.severity === 'INFO' && <Info size={10} />}
+          {alarm.severity}
+        </span>
       </td>
-      <td className="py-3 px-4">
-        <span className="text-xs font-semibold text-indigo-400">{alarm.transformerName}</span>
+      <td className="py-3 px-4 font-medium text-white text-xs">{alarm.transformerName}</td>
+      <td className="py-3 px-4 text-xs text-slate-300 max-w-xs truncate">{alarm.message}</td>
+      <td className="py-3 px-4 text-xs font-mono font-semibold text-white">
+        {alarm.value != null ? `${alarm.value}${alarm.unit || ''}` : '—'}
       </td>
-      <td className="py-3 px-4 max-w-xs">
-        <div className="text-sm text-slate-300 truncate">{alarm.message}</div>
-        <div className="text-xs text-slate-600">{alarm.sensor}</div>
-      </td>
-      <td className="py-3 px-4">
-        <span className="text-sm font-bold text-white">{alarm.value}</span>
-        <span className="text-xs text-slate-500 ml-1">{alarm.unit}</span>
-      </td>
-      <td className="py-3 px-4">
-        <div className="flex items-center gap-1 text-xs text-slate-500">
-          <Clock size={10} />
+      <td className="py-3 px-4 text-xs text-slate-400">
+        <span className="flex items-center gap-1">
+          <Clock size={11} className="text-slate-600" />
           {fmtDateTime(alarm.timestamp)}
-          {alarm.source === 'edge' && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-300 font-medium">EDGE</span>}
-        </div>
+        </span>
       </td>
       <td className="py-3 px-4">
         {alarm.acknowledged ? (
-          <div>
-            <div className="flex items-center gap-1 text-xs text-green-400">
-              <CheckCircle size={11} /> Acknowledged
-            </div>
-            <div className="text-[10px] text-slate-600 mt-0.5">by {alarm.acknowledgedBy}</div>
-          </div>
+          <span className="text-xs text-emerald-400 flex items-center gap-1">
+            <CheckCircle size={12} />
+            Ack by {alarm.acknowledgedBy || 'Admin'}
+          </span>
         ) : (
-          <div className="flex flex-col gap-1.5 min-w-[150px]">
+          <div className="flex items-center gap-2">
             {problems.length > 0 && (
               <select
                 value={problemId}
                 onChange={(e) => setProblemId(e.target.value)}
-                className="text-xs rounded-lg px-2 py-1.5 text-slate-200"
-                style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+                className="text-xs rounded-lg px-2 py-1 text-slate-200 outline-none max-w-[160px]"
+                style={{
+                  background: '#0a0e1a',
+                  border: `1px solid ${problemId ? '#1e2433' : 'rgba(251, 191, 36, 0.5)'}`,
+                }}
               >
-                <option value="">Select Problem</option>
-                {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                <option value="">Select root cause…</option>
+                {problems.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
               </select>
             )}
-            {/* A root cause must be chosen before this is clickable. The one
-                exception is an organization with no root causes configured:
-                the select above is not rendered at all then, so there is
-                nothing to choose and blocking would leave a CRITICAL alarm
-                permanently un-acknowledgeable. */}
             <button
               onClick={() => onAck(alarm.id, problemId || undefined)}
               disabled={problems.length > 0 && !problemId}
@@ -110,33 +106,23 @@ function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string
   )
 }
 
-// OrgAlarmRow (real, alarm_events) -> Alarm (this page's shape, historically
-// mockData.ts's). alarm_events has no INFO severity — it is threshold/rate/
-// offline detection only — so a real alarm never matches that filter button;
-// that is honest, not a gap: mockData.ts invented severities the schema
-// never had.
 const toAlarm = (a: OrgAlarmRow, orgId: string): Alarm => ({
-  id: a.id, transformerId: a.nodeId, transformerName: a.nodeName, orgId,
+  id: a.id, transformerId: a.nodeId, transformerName: a.nodeName || a.nodeId, orgId,
   severity: a.severity, message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
   sensor: a.paramLabel, value: a.value, unit: a.unit, threshold: a.threshold, timestamp: a.raisedAt,
   acknowledged: !!a.acknowledgedAt, acknowledgedBy: a.acknowledgedBy ?? undefined, acknowledgedAt: a.acknowledgedAt ?? undefined,
 })
 
 export default function AlarmsManagementView({ embedded = false }: { embedded?: boolean }) {
-  // useAppStore().alarms is seeded ONCE from mockData.ts at store creation and
-  // nothing ever refreshes it from a real endpoint — this page's list, its
-  // Critical/Warning counters and every filter below used to run entirely on
-  // that mock data regardless of Live/Demo mode, while Acknowledge (below)
-  // already wrote through to the real backend. A real CRITICAL alarm on a
-  // real device never appeared here at all.
   const { alarms: mockAlarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
+  const sessionOrgId = useSessionOrgId('org-1')
+  const effOrgId = selectedOrgId || sessionOrgId || 'org-1'
   const [filter, setFilter] = useState<'all' | 'CRITICAL' | 'WARNING' | 'INFO'>('all')
   const [showAcked, setShowAcked] = useState(false)
   const live = useIsLive()
-  const { alarms: liveOrgAlarms, refetch: refetchAlarms } = useOrgAlarms(selectedOrgId, { pollMs: live ? 20000 : undefined })
-  const alarms = live ? liveOrgAlarms.map((a) => toAlarm(a, selectedOrgId)) : mockAlarms
+  const { alarms: liveOrgAlarms, refetch: refetchAlarms } = useOrgAlarms(effOrgId, { pollMs: live ? 5000 : undefined })
+  const alarms = live ? liveOrgAlarms.map((a) => toAlarm(a, effOrgId)) : mockAlarms
 
-  // Time range: a quick preset, or explicit from/to when the operator sets them.
   const [quick, setQuick] = useState<string>('Last 24 hours')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -144,12 +130,6 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
 
   const range = useMemo(() => {
     if (from || to) {
-      // fromDisplayInput, not new Date(): a datetime-local value is the
-      // BROWSER's wall clock, but every timestamp on this page is rendered in
-      // DISPLAY_TZ by fmtDateTime. Reading it as browser time meant an operator
-      // outside that zone picked 08:00 and got back rows this same page labels
-      // 15:00 — the filter and the column disagreeing about what one number
-      // means. Same conversion ParamHistoryModal's custom range already uses.
       return { start: from ? fromDisplayInput(from) : 0, end: to ? fromDisplayInput(to) : Infinity, label: `${from || '…'} → ${to || 'now'}` }
     }
     const hrs = QUICK_RANGES.find((q) => q.label === quick)?.hours ?? null
@@ -158,30 +138,26 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
       : { start: Date.now() - hrs * 3600_000, end: Infinity, label: quick }
   }, [quick, from, to])
 
-  // Root causes offered on acknowledge. This page is admin/superadmin-only
-  // (see admin/layout.tsx's route guard), so every department's problems
-  // apply — no department scoping needed, unlike the equivalent viewer-facing
-  // pickers (NodeEventLog, customer's Alarms).
   const [problems, setProblems] = useState<EventProblem[]>([])
   useEffect(() => {
     if (!live) { setProblems([]); return }
-    const orgId = getSession()?.orgId ?? selectedOrgId
+    const orgId = getSession()?.orgId ?? effOrgId
     if (!orgId) return
     api.eventProblems(orgId).then((rows) => { if (rows) setProblems(rows) })
-  }, [live, selectedOrgId])
+  }, [live, effOrgId])
 
-  const orgAlarms = alarms.filter((a) => a.orgId === selectedOrgId)
+  const orgAlarms = alarms.filter((a) => !a.orgId || a.orgId === effOrgId)
   const filtered = orgAlarms.filter((a) => {
     if (!showAcked && a.acknowledged) return false
     if (filter !== 'all' && a.severity !== filter) return false
     const ts = new Date(a.timestamp).getTime()
-    if (Number.isFinite(ts) && (ts < range.start || ts > range.end)) return false
+    if (Number.isFinite(ts) && range.start > 0) {
+      if (a.acknowledged && (ts < range.start || ts > range.end)) return false
+      if (!a.acknowledged && (from || to) && (ts < range.start || ts > range.end)) return false
+    }
     return true
   })
 
-  // Acknowledge writes through to the backend in Live mode (with the chosen
-  // root cause) and refetches the real list; falls back to the local mock
-  // store in Demo.
   const onAck = async (id: string, problemId?: string) => {
     // Guarded here as well as on the button: a disabled attribute is a UI
     // affordance, not a rule — this is the one path that actually writes.

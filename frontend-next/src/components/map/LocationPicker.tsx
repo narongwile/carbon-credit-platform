@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import MapSearchBar from '@/components/map/MapSearchBar'
-import { Layers, Map as MapIcon, Globe, Moon } from 'lucide-react'
+import { Layers, Map as MapIcon, Globe, Moon, Navigation, Loader2 } from 'lucide-react'
 import 'leaflet/dist/leaflet.css'
 
 const MAP_LAYERS = {
@@ -52,14 +52,51 @@ export default function LocationPicker({
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const markerRef = useRef<any>(null)
+  const userMarkerRef = useRef<any>(null)
   const tileLayerRef = useRef<any>(null)
   const LRef = useRef<any>(null)
   const onChangeRef = useRef(onChange)
   const [currentLayer, setCurrentLayer] = useState<LayerKey>(defaultLayer)
+  const [locating, setLocating] = useState(false)
 
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
+
+  const handleMyLocation = () => {
+    if (!navigator.geolocation || !mapRef.current) return
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false)
+        const { latitude, longitude } = pos.coords
+        const L = LRef.current, map = mapRef.current
+        if (!L || !map) return
+        map.flyTo([latitude, longitude], 15, { duration: 1.2 })
+        if (userMarkerRef.current) {
+          map.removeLayer(userMarkerRef.current)
+        }
+        const userIcon = L.divIcon({
+          className: 'gsm-user-loc',
+          html: `
+            <div style="position: relative; width: 20px; height: 20px;">
+              <div style="position: absolute; inset: 0; border-radius: 50%; background: #38bdf8; opacity: 0.75; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+              <div style="position: absolute; inset: 3px; border-radius: 50%; background: #0284c7; border: 2px solid #ffffff; box-shadow: 0 0 10px #38bdf8;"></div>
+            </div>
+          `,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        })
+        const m = L.marker([latitude, longitude], { icon: userIcon })
+          .addTo(map)
+          .bindPopup('<b style="color:#0f172a">ตำแหน่งปัจจุบันของคุณ (Your Location)</b>')
+          .openPopup()
+        userMarkerRef.current = m
+      },
+      () => setLocating(false),
+      { timeout: 10000, enableHighAccuracy: true }
+    )
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -161,42 +198,56 @@ export default function LocationPicker({
         </div>
       )}
 
-      {/* Layer Switcher (Streets / Esri Satellite / Dark) */}
-      {showLayerSwitcher && (
-        <div className="absolute top-2 right-2 z-[500] flex items-center p-0.5 rounded-lg shadow-lg"
-          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
-          <button
-            type="button"
-            onClick={() => switchLayer('streets')}
-            title="Street map (OpenStreetMap)"
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
-              currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <MapIcon size={11} /> Streets
-          </button>
-          <button
-            type="button"
-            onClick={() => switchLayer('satellite')}
-            title="Satellite imagery (Esri World Imagery / ArcGIS)"
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
-              currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Globe size={11} /> Satellite
-          </button>
-          <button
-            type="button"
-            onClick={() => switchLayer('dark')}
-            title="Dark map (CARTO Dark Matter)"
-            className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
-              currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Moon size={11} /> Dark
-          </button>
-        </div>
-      )}
+      {/* Layer Switcher (Streets / Esri Satellite / Dark) & My Location */}
+      <div className="absolute top-2 right-2 z-[500] flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={handleMyLocation}
+          disabled={locating}
+          title="Locate my position (แสดงพิกัดตำแหน่งปัจจุบันของคุณ)"
+          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium transition-all shadow-lg text-white disabled:opacity-50"
+          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
+        >
+          {locating ? <Loader2 size={11} className="animate-spin text-cyan-400" /> : <Navigation size={11} className="text-cyan-400" />}
+          <span className="hidden sm:inline">My Location</span>
+        </button>
+
+        {showLayerSwitcher && (
+          <div className="flex items-center p-0.5 rounded-lg shadow-lg"
+            style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
+            <button
+              type="button"
+              onClick={() => switchLayer('streets')}
+              title="Street map (OpenStreetMap)"
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <MapIcon size={11} /> Streets
+            </button>
+            <button
+              type="button"
+              onClick={() => switchLayer('satellite')}
+              title="Satellite imagery (Esri World Imagery / ArcGIS)"
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Globe size={11} /> Satellite
+            </button>
+            <button
+              type="button"
+              onClick={() => switchLayer('dark')}
+              title="Dark map (CARTO Dark Matter)"
+              className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Moon size={11} /> Dark
+            </button>
+          </div>
+        )}
+      </div>
 
       <div ref={elRef} style={{ width: '100%', height: '100%', borderRadius: '0.75rem', zIndex: 0 }} />
     </div>

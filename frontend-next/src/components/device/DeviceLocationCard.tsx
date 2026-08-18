@@ -24,8 +24,8 @@ import { useCallback, useEffect, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { api } from '@/lib/api'
 import { useFleetLive } from '@/lib/useFleetLive'
-import { useReverseAddress } from '@/lib/geoAddress'
-import { MapPin, ExternalLink, Crosshair, Loader2, LocateFixed, Maximize2, X, Check, Building } from 'lucide-react'
+import { useReverseAddress, reverseGeocode, calculateDistanceMeters, formatDistance } from '@/lib/geoAddress'
+import { MapPin, ExternalLink, Crosshair, Loader2, LocateFixed, Maximize2, X, Check, Building, Navigation, Cpu } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const LocationPicker = dynamic(() => import('@/components/map/LocationPicker'), { ssr: false })
@@ -106,6 +106,15 @@ export default function DeviceLocationCard({
   const [saving, setSaving] = useState(false)
   const [expanded, setExpanded] = useState(false)
 
+  // Pending confirmation state before writing to DB
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    target: 'device' | 'site'
+    lat: number
+    lng: number
+    address: string | null
+    loadingAddress: boolean
+  } | null>(null)
+
   const [geoPos, setGeoPos] = useState<{ lat: number; lng: number } | null>(null)
   const [geoStatus, setGeoStatus] = useState<'idle' | 'loading' | 'denied' | 'unsupported'>('idle')
   const requestGeolocation = useCallback(() => {
@@ -122,24 +131,41 @@ export default function DeviceLocationCard({
     else { setGeoPos(null); setGeoStatus('idle') }
   }, [editing, requestGeolocation])
 
-  const save = async (target: 'device' | 'site', lat: number, lng: number) => {
+  const triggerCoordConfirm = async (target: 'device' | 'site', lat: number, lng: number) => {
+    setPendingConfirm({
+      target,
+      lat,
+      lng,
+      address: null,
+      loadingAddress: true,
+    })
+    const addr = await reverseGeocode(lat, lng)
+    setPendingConfirm((p) => (p && p.lat === lat && p.lng === lng ? { ...p, address: addr, loadingAddress: false } : p))
+  }
+
+  const confirmSave = async () => {
+    if (!pendingConfirm || saving) return
+    const { target, lat, lng } = pendingConfirm
     setSaving(true)
-    if (target === 'device') {
-      const r = await api.setNodeLocation(nodeId, { lat, lng })
+    try {
+      if (target === 'device') {
+        const r = await api.setNodeLocation(nodeId, { lat, lng })
+        if (!r?.ok) { toast.error('Could not save this device’s location'); return }
+        toast.success('Device location saved')
+        reload()
+      } else {
+        if (!site) return
+        const r = await api.saveSite(orgId, { id: site.id, name: site.name, address: site.address ?? undefined, lat, lng })
+        if (!r?.ok) { toast.error('Could not save the site location'); return }
+        toast.success(`${site.name}’s location saved`)
+        setSite({ ...site, lat, lng })
+      }
+      setPendingConfirm(null)
+      setEditing(null)
+      setExpanded(false)
+    } finally {
       setSaving(false)
-      if (!r?.ok) { toast.error('Could not save this device’s location'); return }
-      toast.success('Device location saved')
-      reload()
-    } else {
-      if (!site) { setSaving(false); return }
-      const r = await api.saveSite(orgId, { id: site.id, name: site.name, address: site.address ?? undefined, lat, lng })
-      setSaving(false)
-      if (!r?.ok) { toast.error('Could not save the site location'); return }
-      toast.success(`${site.name}’s location saved`)
-      setSite({ ...site, lat, lng })
     }
-    setEditing(null)
-    setExpanded(false)
   }
 
   // Shared between the compact inline editor and the expanded modal
@@ -150,7 +176,7 @@ export default function DeviceLocationCard({
       </p>
       <div className="flex items-center gap-1.5 flex-wrap">
         {geoStatus !== 'unsupported' && (
-          <button onClick={() => (geoPos ? save(target, geoPos.lat, geoPos.lng) : requestGeolocation())}
+          <button onClick={() => (geoPos ? triggerCoordConfirm(target, geoPos.lat, geoPos.lng) : requestGeolocation())}
             disabled={saving || geoStatus === 'loading'}
             title={geoPos ? 'Use the position your browser just reported' : 'Ask your browser for your current GPS position'}
             className="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded-md text-indigo-300 hover:text-indigo-200 disabled:opacity-50" style={inset}>
@@ -171,7 +197,7 @@ export default function DeviceLocationCard({
           height={pickerHeight}
           zoom={shown ? 14 : 6}
           showSearch={true}
-          onChange={(lat, lng) => save(target, lat, lng)}
+          onChange={(lat, lng) => triggerCoordConfirm(target, lat, lng)}
         />
         {saving && (
           <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(10,14,26,0.6)' }}>
@@ -179,8 +205,8 @@ export default function DeviceLocationCard({
           </div>
         )}
       </div>
-      <ManualCoordInputs onSet={(lat, lng) => save(target, lat, lng)} busy={saving} />
-      <button onClick={() => { setEditing(null); setExpanded(false) }} disabled={saving}
+      <ManualCoordInputs onSet={(lat, lng) => triggerCoordConfirm(target, lat, lng)} busy={saving} />
+      <button onClick={() => { setEditing(null); setExpanded(false); setPendingConfirm(null) }} disabled={saving}
         className="text-[10px] px-2 py-1 rounded-md text-slate-400 hover:text-white disabled:opacity-50" style={inset}>
         Cancel
       </button>
@@ -234,6 +260,22 @@ export default function DeviceLocationCard({
               )}
             </div>
           </div>
+          {geoPos && (
+            <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded-lg bg-sky-950/40 border border-sky-800/40 text-sky-300">
+              <span className="flex items-center gap-1.5">
+                <Navigation size={11} className="text-sky-400" />
+                ห่างจากคุณ: <strong className="font-semibold text-white">{formatDistance(calculateDistanceMeters(geoPos.lat, geoPos.lng, shown.lat, shown.lng))}</strong>
+              </span>
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&origin=${geoPos.lat},${geoPos.lng}&destination=${shown.lat},${shown.lng}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sky-400 hover:text-sky-300 text-[10px] underline font-medium"
+              >
+                นำทาง ↗
+              </a>
+            </div>
+          )}
           {canConfigure && (
             <button onClick={() => setEditing('device')}
               className="flex items-center gap-1.5 text-[10px] px-2 py-1.5 rounded-md text-indigo-300 hover:text-indigo-200" style={inset}>
@@ -326,6 +368,107 @@ export default function DeviceLocationCard({
             ) : (
               <p className="text-xs text-slate-500 py-8 text-center">No location set yet.</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal when a coordinate is selected/entered in transformer dashboard */}
+      {pendingConfirm && (
+        <div className="fixed inset-0 z-[3000] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl p-5 shadow-2xl space-y-4 border border-slate-700/60" style={surface}>
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                  <MapPin size={18} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-white">ยืนยันพิกัดสถานที่ติดตั้ง</h2>
+                  <p className="text-[11px] text-slate-400">ตรวจสอบข้อมูลสถานที่ก่อนบันทึก</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPendingConfirm(null)}
+                disabled={saving}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Target Item */}
+            <div className="p-3 rounded-xl space-y-1.5" style={inset}>
+              <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                {pendingConfirm.target === 'device' ? <Cpu size={12} className="text-indigo-400" /> : <Building size={12} className="text-amber-400" />}
+                {pendingConfirm.target === 'device' ? 'อุปกรณ์เป้าหมาย' : 'ไซต์ / สถานีเป้าหมาย'}
+              </div>
+              <div className="text-xs font-semibold text-white">
+                {pendingConfirm.target === 'device' ? (deviceNode?.name ?? nodeId) : (site?.name ?? 'Site')}
+              </div>
+            </div>
+
+            {/* Location & GPS */}
+            <div className="p-3 rounded-xl space-y-2.5" style={inset}>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <Navigation size={11} className="text-cyan-400" />
+                  พิกัด (GPS)
+                </span>
+                <span className="font-mono text-xs text-cyan-300 font-semibold bg-cyan-950/40 border border-cyan-800/40 px-2 py-0.5 rounded">
+                  {pendingConfirm.lat.toFixed(6)}, {pendingConfirm.lng.toFixed(6)}
+                </span>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800/60">
+                <div className="text-[10px] font-medium uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
+                  <MapPin size={11} className="text-amber-400" />
+                  ที่อยู่ / ข้อมูลสถานที่
+                </div>
+                {pendingConfirm.loadingAddress ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-400 py-1">
+                    <Loader2 size={13} className="animate-spin text-indigo-400" />
+                    <span>กำลังค้นหาชื่อสถานที่ (Reverse Geocoding)...</span>
+                  </div>
+                ) : pendingConfirm.address ? (
+                  <p className="text-xs text-slate-200 leading-relaxed font-medium bg-slate-900/80 p-2 rounded-lg border border-slate-800">
+                    {pendingConfirm.address}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-400 italic bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    ไม่พบชื่อสถานที่ในฐานข้อมูล (จะบันทึกเฉพาะค่าพิกัดละติจูด/ลองจิจูด)
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingConfirm(null)}
+                disabled={saving}
+                className="px-3.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white rounded-xl bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 transition-colors"
+              >
+                เลือกใหม่ / ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={confirmSave}
+                disabled={saving}
+                className="px-4 py-1.5 text-xs font-semibold text-white rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 transition-colors shadow-lg shadow-indigo-600/30 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin" />
+                    <span>กำลังบันทึก...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={13} />
+                    <span>ยืนยันบันทึก (Confirm)</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

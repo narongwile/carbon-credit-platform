@@ -87,7 +87,10 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
     if (severity !== 'all' && a.severity !== severity) return false
     if (filterEvent !== 'all' && (a.eventProblemId || evClass[a.id]) !== filterEvent) return false
     const ts = new Date(a.raisedAt).getTime()
-    if (Number.isFinite(ts) && (ts < range.start || ts > range.end)) return false
+    if (Number.isFinite(ts) && range.start > 0) {
+      if (a.acknowledgedAt && (ts < range.start || ts > range.end)) return false
+      if (!a.acknowledgedAt && (from || to) && (ts < range.start || ts > range.end)) return false
+    }
     return true
   })
 

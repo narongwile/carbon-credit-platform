@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
 import { api, type NodeLatest } from '@/lib/api'
+import { subscribeTelemetry, type TelemetryFrame } from '@/lib/telemetryBus'
+import { calculateDistanceMeters, formatDistance } from '@/lib/geoAddress'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
@@ -108,6 +110,7 @@ export default function LiveSensorMap({
   const LRef = useRef<any>(null)
   const markersRef = useRef<Map<string, any>>(new Map())
   const userMarkerRef = useRef<any>(null)
+  const userLocRef = useRef<{ lat: number; lng: number } | null>(null)
   const fittedRef = useRef(false)
 
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
@@ -220,6 +223,18 @@ export default function LiveSensorMap({
       ? `<div style="${SECTION}">Asset</div>${row('Model', np.model)}${row('Rating', np.ratedKva, ' kVA')}${row('Voltage', np.voltageClass)}`
       : ''
 
+    const userLoc = userLocRef.current
+    let distanceSection = ''
+    if (userLoc && Number.isFinite(n.lat) && Number.isFinite(n.lng)) {
+      const distM = calculateDistanceMeters(userLoc.lat, userLoc.lng, n.lat, n.lng)
+      const distFormatted = formatDistance(distM)
+      const dirUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLoc.lat},${userLoc.lng}&destination=${n.lat},${n.lng}`
+      distanceSection = `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(14,165,233,0.12);border:1px solid rgba(14,165,233,0.25);border-radius:6px;padding:5px 8px;margin-top:6px;font-size:11px;color:#38bdf8">
+        <span>🧭 ห่างจากคุณ: <b>${distFormatted}</b></span>
+        <a href="${dirUrl}" target="_blank" rel="noopener noreferrer" style="color:#7dd3fc;text-decoration:none;font-weight:700;font-size:10px;display:flex;align-items:center;gap:2px">นำทาง ↗</a>
+      </div>`
+    }
+
     const pres = latest?.presence
     const connectivity = [
       row('Device ID', n.deviceId),
@@ -250,6 +265,7 @@ export default function LiveSensorMap({
          </div>
          ${readings}
          ${asset}
+         ${distanceSection}
          ${connectivitySection}
          ${latest?.lastReadingAt ? `<div style="color:#64748b;font-size:10px;margin-top:6px">Last reading ${esc(fmtDateTime(latest.lastReadingAt))}</div>` : ''}
          ${approxLine}
@@ -357,6 +373,7 @@ export default function LiveSensorMap({
       (pos) => {
         setLocating(false)
         const { latitude, longitude } = pos.coords
+        userLocRef.current = { lat: latitude, lng: longitude }
         const L = LRef.current, map = mapRef.current
         if (!L || !map) return
         map.flyTo([latitude, longitude], 15, { duration: 1.2 })
@@ -376,9 +393,17 @@ export default function LiveSensorMap({
         })
         const m = L.marker([latitude, longitude], { icon: userIcon })
           .addTo(map)
-          .bindPopup('<b style="color:#0f172a">Your Current Location</b>')
+          .bindPopup('<b style="color:#0f172a">ตำแหน่งปัจจุบันของคุณ (Your Location)</b>')
           .openPopup()
         userMarkerRef.current = m
+
+        // Refresh any open popups so distance is immediately visible
+        markersRef.current.forEach((marker, id) => {
+          const node = visibleNodesRef.current.find((n) => n.id === id)
+          if (node && marker.isPopupOpen?.()) {
+            marker.setPopupContent(popupHtml(node))
+          }
+        })
       },
       () => setLocating(false),
       { timeout: 10000, enableHighAccuracy: true }
@@ -462,6 +487,74 @@ export default function LiveSensorMap({
   useEffect(() => {
     syncMarkers()
   }, [visibleNodes, photoCovers, nameplates, editable])
+
+  // Sub-second telemetry & alarm updates streamed over WebSocket
+  useEffect(() => {
+    const unsubscribe = subscribeTelemetry((f: TelemetryFrame) => {
+      if (!f?.id) return
+      const id = f.id
+
+      // 1. Update cached latest values
+      const cur = latestRef.current.get(id) || {
+        values: {},
+        lastReadingAt: null,
+        presence: { online: 1, last_seen: f.timestamp || new Date().toISOString(), rssi: null, batt: null, fw: null, transport: null },
+      }
+      const newVals = {
+        ...(cur.values || {}),
+        ...(f.values || (f.temperature != null ? { temperature: f.temperature } : {})),
+      }
+      const updatedLatest: NodeLatest = {
+        ...cur,
+        values: newVals,
+        lastReadingAt: f.timestamp || new Date().toISOString(),
+        presence: {
+          ...(cur.presence || { rssi: null, batt: null, fw: null, transport: null }),
+          online: 1,
+          last_seen: f.timestamp || new Date().toISOString(),
+        },
+      }
+      latestRef.current.set(id, updatedLatest)
+
+      // 2. Update marker & node on map in real-time
+      const node = visibleNodesRef.current.find((n) => n.id === id)
+      if (node) {
+        node.online = 1
+        node.lastSeen = f.timestamp || new Date().toISOString()
+        node.updated = f.timestamp ? relativeTime(f.timestamp) : 'Just now'
+        if (f.type === 'alarm') {
+          if (f.severity === 'CRITICAL') {
+            node.alarm = 'CRITICAL'
+            node.health = 'critical'
+            node.metricValue = 'CRITICAL Alarm'
+          } else if (f.severity === 'WARNING') {
+            node.alarm = 'WARNING'
+            node.health = 'warning'
+            node.metricValue = 'WARNING Alarm'
+          } else if (f.severity === 'NORMAL') {
+            node.alarm = null
+            node.health = 'healthy'
+            node.metricValue = 'Online'
+          }
+        }
+        const marker = markersRef.current.get(id)
+        if (marker) {
+          const color = healthColor[node.health]
+          marker.setStyle({
+            fillColor: color,
+            color: node.approx ? color : '#ffffff',
+          })
+          if (marker.setTooltipContent) {
+            marker.setTooltipContent(tooltipHtml(node))
+          }
+          if (marker.isPopupOpen?.()) {
+            marker.setPopupContent(popupHtml(node))
+          }
+        }
+      }
+    })
+    return () => unsubscribe()
+  }, [])
 
   useEffect(() => {
     if (!elRef.current) return
