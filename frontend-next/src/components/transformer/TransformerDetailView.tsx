@@ -851,10 +851,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         </div>
       </div>
 
-      {/* Main content - 3 column layout */}
-      <div className="flex gap-0 overflow-hidden min-h-0 flex-shrink-0" style={{ height: 'clamp(520px, calc(100vh - 160px), 900px)' }}>
+      {/* Main content - responsive 3 column layout (stacked on mobile, 3-col on lg) */}
+      <div className="flex flex-col lg:flex-row gap-0 overflow-y-auto lg:overflow-hidden min-h-0 flex-1" style={{ minHeight: '520px' }}>
         {/* Left panel - sensor cards */}
-        <div className="w-56 flex-shrink-0 p-3 space-y-2 overflow-y-auto" style={{ borderRight: '1px solid #1e2433' }}>
+        <div className="w-full lg:w-56 flex-shrink-0 p-3 space-y-2 overflow-visible lg:overflow-y-auto border-b lg:border-b-0" style={{ borderRight: '1px solid #1e2433' }}>
           <div className="flex items-center gap-2 mb-2">
             <div className="text-[10px] text-slate-600 uppercase tracking-wider">Sensor Readings</div>
             {canConfigure && live && (
@@ -885,16 +885,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           )}
         </div>
 
-        {/* Center - 3D model + charts */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* The device photos (admin-uploaded), same as FixDashboard's twin
-              slot — this page never picked up that fix when node_images shipped
-              (migrate-v27), so a photographed unit still rendered the generic 3D
-              model here regardless. The 3D canvas is now the FALLBACK, shown
-              (and labelled "Generic model — not this unit" by
-              DevicePhotoGallery itself) only until a photo exists, exactly like
-              the FIX theme. */}
-          <div className="flex-1 relative" style={{ minHeight: '320px' }}>
+        {/* Center - 3D model + charts + custom charts */}
+        <div className="flex-1 flex flex-col overflow-y-auto min-w-0">
+          {/* The device photos (admin-uploaded) or 3D fallback */}
+          <div className="relative h-[260px] sm:h-[320px] lg:min-h-[320px] flex-shrink-0">
             <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, #0a0e1a 0%, #0d1117 50%, #0a0e1a 100%)' }}>
               <DevicePhotoGallery nodeId={id} orgId={transformer.orgId} deviceName={transformer.name}
                 fallback={show3d ? <Transformer3D transformer={transformer} /> : <NoPhotoPlaceholder />} />
@@ -902,11 +896,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           </div>
 
           {/* Charts */}
-          {/* Titles and the click target follow whatever these charts actually
-              drew, so the heading can no longer promise "Oil Temperature" on a
-              device that reports none, and clicking always opens a parameter
-              with real stored history behind it. */}
-          <div className="flex-shrink-0 grid grid-cols-2 gap-0" style={{ borderTop: '1px solid #1e2433' }}>
+          <div className="flex-shrink-0 grid grid-cols-1 sm:grid-cols-2 gap-0 border-t border-slate-800" style={{ borderTop: '1px solid #1e2433' }}>
             {[[chartSlots[0], chartSlots[1]], [chartSlots[2], chartSlots[3]]].map(([a, b], i) => {
               const title = [a?.label, b?.label].filter(Boolean).join(' & ') || 'No parameters'
               const target = a?.key ?? b?.key ?? null
@@ -917,7 +907,9 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     <div className="text-[10px] text-slate-500 uppercase tracking-wider group-enabled:group-hover:text-indigo-400 truncate">{title}</div>
                     {target && <div className="text-[10px] text-slate-600 group-hover:text-indigo-400 flex-shrink-0 ml-2">Last 12h · click for history</div>}
                   </button>
-                  <TrendChart a={a} b={b} />
+                  <div className="w-full min-w-0 h-[100px]">
+                    <TrendChart a={a} b={b} />
+                  </div>
                 </div>
               )
             })}
@@ -933,7 +925,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         </div>
 
         {/* Right panel - info + health + alarms */}
-        <div className="w-56 flex-shrink-0 overflow-y-auto p-3 space-y-3" style={{ borderLeft: '1px solid #1e2433' }}>
+        <div className="w-full lg:w-56 flex-shrink-0 overflow-visible lg:overflow-y-auto p-3 space-y-3 border-t lg:border-t-0" style={{ borderLeft: '1px solid #1e2433' }}>
           {/* Health gauge */}
           <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <HealthGauge value={transformer.healthIndex} />

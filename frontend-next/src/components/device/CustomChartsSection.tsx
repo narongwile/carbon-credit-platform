@@ -187,35 +187,37 @@ function MultiParamChart({
           {loading ? 'Loading…' : 'No stored readings in this period'}
         </div>
       ) : (
-        <ResponsiveContainer width="100%" height={180}>
-          <LineChart data={plotted} margin={{ top: 5, right: usesRightAxis ? 4 : 10, bottom: 0, left: -20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-            <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={28} />
-            <YAxis yAxisId="L" tick={{ fill: leftColor, fontSize: 10 }} tickLine={false} axisLine={false}
-              domain={axisMode === 'normalize' ? [0, 100] : ['auto', 'auto']}
-              tickFormatter={axisMode === 'normalize' ? (v) => `${v}%` : undefined} />
-            {usesRightAxis && (
-              <YAxis yAxisId="R" orientation="right" tick={{ fill: rightColor, fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-            )}
-            <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
-              formatter={(v: unknown, name: string, item: { payload?: Record<string, unknown>; dataKey?: string | number }) => {
-                const key = String(item?.dataKey ?? '')
-                const unit = paramByKey.get(key)?.unit ?? ''
-                if (axisMode === 'normalize') {
-                  const raw = item?.payload?.[`${key}__raw`]
-                  const pct = typeof v === 'number' ? `${v.toFixed(0)}%` : String(v)
-                  return [typeof raw === 'number' ? `${raw}${unit ? ` ${unit}` : ''} · ${pct}` : pct, name]
-                }
-                return [typeof v === 'number' ? `${v.toFixed(2)}${unit ? ` ${unit}` : ''}` : String(v), name]
-              }} />
-            <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
-            {chart.paramKeys.map((key, i) => (
-              <Line key={key} yAxisId={usesRightAxis ? (axisOf.get(key) ?? 'L') : 'L'}
-                type="monotone" dataKey={key} stroke={PALETTE[i % PALETTE.length]} strokeWidth={1.5}
-                dot={false} name={nameOf(key)} connectNulls isAnimationActive={false} />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
+        <div className="w-full min-w-0 h-[180px]">
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={plotted} margin={{ top: 5, right: usesRightAxis ? 4 : 10, bottom: 0, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
+              <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={28} />
+              <YAxis yAxisId="L" tick={{ fill: leftColor, fontSize: 10 }} tickLine={false} axisLine={false}
+                domain={axisMode === 'normalize' ? [0, 100] : ['auto', 'auto']}
+                tickFormatter={axisMode === 'normalize' ? (v) => `${v}%` : undefined} />
+              {usesRightAxis && (
+                <YAxis yAxisId="R" orientation="right" tick={{ fill: rightColor, fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+              )}
+              <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }}
+                formatter={(v: unknown, name: string, item: { payload?: Record<string, unknown>; dataKey?: string | number }) => {
+                  const key = String(item?.dataKey ?? '')
+                  const unit = paramByKey.get(key)?.unit ?? ''
+                  if (axisMode === 'normalize') {
+                    const raw = item?.payload?.[`${key}__raw`]
+                    const pct = typeof v === 'number' ? `${v.toFixed(0)}%` : String(v)
+                    return [typeof raw === 'number' ? `${raw}${unit ? ` ${unit}` : ''} · ${pct}` : pct, name]
+                  }
+                  return [typeof v === 'number' ? `${v.toFixed(2)}${unit ? ` ${unit}` : ''}` : String(v), name]
+                }} />
+              <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
+              {chart.paramKeys.map((key, i) => (
+                <Line key={key} yAxisId={usesRightAxis ? (axisOf.get(key) ?? 'L') : 'L'}
+                  type="monotone" dataKey={key} stroke={PALETTE[i % PALETTE.length]} strokeWidth={1.5}
+                  dot={false} name={nameOf(key)} connectNulls isAnimationActive={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       )}
       {axisMode === 'normalize' && data.length > 0 && (
         <p className="text-[9px] text-slate-600 mt-1">
