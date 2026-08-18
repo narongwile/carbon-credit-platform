@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -17,7 +17,7 @@ import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { healthFromValues } from '@/lib/alarmParams'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert } from 'lucide-react'
+import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert, Search } from 'lucide-react'
 import { fmtHM } from '@/lib/displayTime'
 import clsx from 'clsx'
 
@@ -57,11 +57,25 @@ function OverviewTab() {
 
   const { hosts, fromBackend } = useFleetHosts(orgId)
   const allowed = viewerDomains(viewerUserId)
-  const devices = fromBackend ? hosts : hosts.filter((h) => allowed.includes(h.domain))
+  const rawDevices = fromBackend ? hosts : hosts.filter((h) => allowed.includes(h.domain))
 
-  const normal = devices.filter((d) => d.status === 'NORMAL').length
-  const warning = devices.filter((d) => d.status === 'WARNING').length
-  const critical = devices.filter((d) => d.status === 'CRITICAL' || d.status === 'OFFLINE').length
+  const [searchQuery, setSearchQuery] = useState('')
+  const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
+
+  const devices = useMemo(() => {
+    return rawDevices.filter((d) => {
+      if (domainFilter !== 'all' && d.domain !== domainFilter) return false
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase()
+        return d.name.toLowerCase().includes(q) || d.id.toLowerCase().includes(q)
+      }
+      return true
+    })
+  }, [rawDevices, domainFilter, searchQuery])
+
+  const normal = rawDevices.filter((d) => d.status === 'NORMAL').length
+  const warning = rawDevices.filter((d) => d.status === 'WARNING').length
+  const critical = rawDevices.filter((d) => d.status === 'CRITICAL' || d.status === 'OFFLINE').length
 
   // Real, open alarms for this org (department/domain-scoped server-side)
   const { alarms: liveAlarms, refetch: refetchAlarms } = useOrgAlarms(orgId, { open: true, pollMs: 5000 })
@@ -107,8 +121,40 @@ function OverviewTab() {
         domain: 'transformer' as SensorDomain,
       }))
 
+  const avgHealth = useMemo(() => {
+    if (!rawDevices.length) return 100
+    const scores = rawDevices.map((d) => {
+      if (d.domain === 'transformer') {
+        const lv = liveFrames[d.id]
+        const dyn = lv ? healthFromValues(lv, 'transformer') : null
+        return dyn ?? (d.domain === 'transformer' ? d.healthIndex : 95)
+      }
+      return d.status === 'CRITICAL' ? 50 : d.status === 'WARNING' ? 75 : 98
+    })
+    return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+  }, [rawDevices, liveFrames])
+
+  const hColor = avgHealth >= 80 ? '#4ade80' : avgHealth >= 60 ? '#fbbf24' : '#ef4444'
+
   return (
     <div className="space-y-6">
+      {/* Header with Live Telemetry Pulse */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold text-white">Monitoring Overview</h2>
+            <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Live Telemetry
+            </span>
+          </div>
+          <p className="text-sm text-slate-500">Real-time status across your assigned assets</p>
+        </div>
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/60 border border-slate-800">
+          <span className="text-xs text-slate-400">Fleet Health:</span>
+          <span className="text-xs font-bold" style={{ color: hColor }}>{avgHealth}%</span>
+        </div>
+      </div>
+
       {/* Status summary (all devices) */}
       <div className="grid grid-cols-3 gap-4">
         {[
@@ -124,6 +170,65 @@ function OverviewTab() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+          <button
+            type="button"
+            onClick={() => setDomainFilter('all')}
+            className={`px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+              domainFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+            }`}
+          >
+            All ({rawDevices.length})
+          </button>
+          {rawDevices.some((d) => d.domain === 'transformer') && (
+            <button
+              type="button"
+              onClick={() => setDomainFilter('transformer')}
+              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                domainFilter === 'transformer' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              }`}
+            >
+              <Zap size={12} className="text-amber-400" /> Transformers ({rawDevices.filter((d) => d.domain === 'transformer').length})
+            </button>
+          )}
+          {rawDevices.some((d) => d.domain === 'carbonNode') && (
+            <button
+              type="button"
+              onClick={() => setDomainFilter('carbonNode')}
+              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                domainFilter === 'carbonNode' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              }`}
+            >
+              <Thermometer size={12} className="text-emerald-400" /> CarbonBOX ({rawDevices.filter((d) => d.domain === 'carbonNode').length})
+            </button>
+          )}
+          {rawDevices.some((d) => d.domain === 'bloodBox') && (
+            <button
+              type="button"
+              onClick={() => setDomainFilter('bloodBox')}
+              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                domainFilter === 'bloodBox' ? 'bg-indigo-600 text-white' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              }`}
+            >
+              <Droplet size={12} className="text-rose-400" /> BloodBOX ({rawDevices.filter((d) => d.domain === 'bloodBox').length})
+            </button>
+          )}
+        </div>
+
+        <div className="relative w-full sm:w-60">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search device name, ID..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl text-white placeholder-slate-500 bg-[#0d1117] border border-[#1e2433] focus:border-indigo-500 outline-none"
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
