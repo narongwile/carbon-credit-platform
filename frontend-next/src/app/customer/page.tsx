@@ -92,7 +92,7 @@ function OverviewTab() {
           const vals = f.values
           setLiveFrames((prev) => ({ ...prev, [id]: vals }))
         }
-        if (f.type === 'alarm' || f.alarm) {
+        if (f.type === 'alarm') {
           refetchAlarms()
         }
       }
