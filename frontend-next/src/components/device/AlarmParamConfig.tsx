@@ -110,6 +110,31 @@ export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]>
     { key: 'baroAlt', label: 'Barometric Altitude', unit: 'm', direction: 'high', warn: 2500, critical: 3500, paramType: 'reading' },
     { key: 'rssi', label: 'Cellular Signal Strength', unit: 'dBm', direction: 'low', warn: -95, critical: -110, paramType: 'reading' },
   ],
+  automobile: [
+    // 🧠 Biosignal & 1D-CNN Fatigue Index (Direct MQTT & Model Ingest)
+    { key: 'fatigue_score', label: 'Driver Fatigue Risk Index (1D-CNN)', unit: '%', direction: 'high', warn: 70, critical: 85, paramType: 'reading', riskInsight: 'Driver drowsiness / cognitive fatigue risk breach' },
+    { key: 'hr_bpm', label: 'Driver Heart Rate', unit: 'BPM', direction: 'high', warn: 110, critical: 130, paramType: 'reading', riskInsight: 'Driver physical exertion / cardiac stress' },
+    { key: 'hrv_rmssd', label: 'Heart-Rate Variability (HRV RMSSD)', unit: 'ms', direction: 'low', warn: 30, critical: 20, paramType: 'reading', riskInsight: 'Autonomic nervous system recovery depletion' },
+    { key: 'fatigue_ratio', label: 'Neural EEG Fatigue Ratio (θ+α)/β', unit: 'ratio', direction: 'high', warn: 4.0, critical: 6.0, paramType: 'reading', riskInsight: 'Frontal theta wave surge vs beta wave suppression' },
+    { key: 'eeg_theta', label: 'EEG Theta Band Surge', unit: 'μV', direction: 'high', warn: 30, critical: 45, paramType: 'reading' },
+    { key: 'eeg_alpha', label: 'EEG Alpha Band Power', unit: 'μV', direction: 'high', warn: 35, critical: 50, paramType: 'reading' },
+    { key: 'eeg_beta', label: 'EEG Beta Band Power', unit: 'μV', direction: 'low', warn: 12, critical: 8, paramType: 'reading' },
+
+    // 🏎️ Vehicle Dynamics & Powertrain (CAN Ingest)
+    { key: 'speed_kmh', label: 'Vehicle Speed', unit: 'km/h', direction: 'high', warn: 120, critical: 140, paramType: 'reading' },
+    { key: 'steering_angle', label: 'Steering Reversal Deviation', unit: '°', direction: 'high', warn: 45, critical: 60, paramType: 'reading' },
+    { key: 'brake_bar', label: 'Hydraulic Brake Pressure', unit: 'bar', direction: 'high', warn: 80, critical: 120, paramType: 'reading' },
+    { key: 'apps1', label: 'Accelerator Pedal Position (APPS1)', unit: '%', direction: 'high', warn: 95, critical: 100, paramType: 'reading' },
+    { key: 'motor_rpm', label: 'Inverter Motor RPM', unit: 'RPM', direction: 'high', warn: 7500, critical: 8500, paramType: 'reading' },
+    { key: 'motor_temp', label: 'Inverter / Motor Temperature', unit: '°C', direction: 'high', warn: 85, critical: 100, paramType: 'reading' },
+    { key: 'bms_soc', label: 'BMS Battery State of Charge', unit: '%', direction: 'low', warn: 20, critical: 10, paramType: 'reading' },
+
+    // Aliases (camelCase for Frontend Compatibility)
+    { key: 'fatigueScore', label: 'Fatigue Score (Aliased)', unit: '%', direction: 'high', warn: 70, critical: 85, paramType: 'reading' },
+    { key: 'speedKmh', label: 'Vehicle Speed (Aliased)', unit: 'km/h', direction: 'high', warn: 120, critical: 140, paramType: 'reading' },
+    { key: 'motorTemp', label: 'Motor Temp (Aliased)', unit: '°C', direction: 'high', warn: 85, critical: 100, paramType: 'reading' },
+    { key: 'bmsSoc', label: 'Battery SOC (Aliased)', unit: '%', direction: 'low', warn: 20, critical: 10, paramType: 'reading' },
+  ],
 }
 
 /** Compound / Multi-condition Alarm Rules (Industrial Alarm List) */
@@ -184,6 +209,7 @@ export const COMPOUND_ALARM_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]> 
   ],
   carbonNode: [],
   bloodBox: [],
+  automobile: [],
 }
 
 /** Comprehensive Expected Payload Catalog combining physical readings and compound alarm rules */
@@ -194,6 +220,7 @@ export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]
   ],
   carbonNode: READING_PAYLOAD_CATALOG.carbonNode,
   bloodBox: READING_PAYLOAD_CATALOG.bloodBox,
+  automobile: READING_PAYLOAD_CATALOG.automobile,
 }
 
 /** Categorize any parameter key into one of the standard tabs */

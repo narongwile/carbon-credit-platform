@@ -17,7 +17,7 @@ import { NodePhotoPreview } from '@/components/device/NodePhotoThumb'
 import { DOMAIN_META, type SensorDomain, type SensorHost } from '@/types/fleet'
 import { healthFromValues } from '@/lib/alarmParams'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert, Search, Check } from 'lucide-react'
+import { CheckCircle, AlertTriangle, XCircle, Bell, Clock, Zap, Thermometer, Droplet, ChevronRight, LayoutDashboard, Map as MapIcon, ShieldAlert, Search, Check, Car } from 'lucide-react'
 import { fmtHM } from '@/lib/displayTime'
 import clsx from 'clsx'
 import CustomerAlarmsView from '@/components/CustomerAlarmsView'
@@ -25,7 +25,7 @@ import CustomerAlarmsView from '@/components/CustomerAlarmsView'
 const LiveSensorMap = dynamic(() => import('@/components/map/LiveSensorMap'), { ssr: false })
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
-const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet }
+const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet, automobile: Car }
 const statusColor = (s: string) => (s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280')
 
 function metric(h: SensorHost, liveVal?: Record<string, number>): string {
@@ -38,8 +38,14 @@ function metric(h: SensorHost, liveVal?: Record<string, number>): string {
     const t = liveVal?.chamberTemp ?? liveVal?.tempHigh
     return `${t != null ? `${t.toFixed(1)}°C · ` : ''}${h.targetMinC}–${h.targetMaxC}°C`
   }
-  const t = liveVal?.bloodTemp ?? liveVal?.tempHigh
-  return `${t != null ? `${t.toFixed(1)}°C · ` : ''}set ${h.setLowC}–${h.setHighC}°C`
+  if (h.domain === 'automobile') {
+    return `Fatigue ${h.fatigueScore}% · ${h.speedKmh} km/h`
+  }
+  if (h.domain === 'bloodBox') {
+    const t = liveVal?.bloodTemp ?? liveVal?.tempHigh
+    return `${t != null ? `${t.toFixed(1)}°C · ` : ''}set ${h.setLowC}–${h.setHighC}°C`
+  }
+  return ''
 }
 
 // --- Overview tab (the page's original content) ----------------------------
@@ -271,6 +277,17 @@ function OverviewTab() {
               }`}
             >
               <Droplet size={12} className="text-rose-400" /> BloodBOX ({rawDevices.filter((d) => d.domain === 'bloodBox').length})
+            </button>
+          )}
+          {rawDevices.some((d) => d.domain === 'automobile') && (
+            <button
+              type="button"
+              onClick={() => setDomainFilter('automobile')}
+              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                domainFilter === 'automobile' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              }`}
+            >
+              <Car size={12} className="text-amber-400" /> Formula EV ({rawDevices.filter((d) => d.domain === 'automobile').length})
             </button>
           )}
         </div>

@@ -17,7 +17,7 @@ import type { NodeAlarmRule } from '@/server/alarmEngine'
 import {
   Thermometer, Droplet, Zap, Plus, X, Check, ChevronLeft, ChevronRight,
   ToggleLeft, ToggleRight, Building2, Layers, CircleCheck, ArrowRight, Boxes, MapPin,
-  Radio, Trash2,
+  Radio, Trash2, Car,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -26,6 +26,7 @@ const PLATFORM_DOMAIN: Record<PlatformType, SensorDomain> = {
   eternityTransformers: 'transformer',
   refrigerationDataLogger: 'carbonNode',
   bloodBox: 'bloodBox',
+  automobile: 'automobile',
 }
 
 // A parameter the ESP32 sensor publishes in the telemetry `values` object.
@@ -89,7 +90,7 @@ function MqttPreview({ orgId, product, params }: { orgId: string; product: strin
   )
 }
 
-const ICONS: Record<string, React.ElementType> = { Thermometer, Droplet, Zap }
+const ICONS: Record<string, React.ElementType> = { Thermometer, Droplet, Zap, Car }
 
 function PlatformIcon({ name, color, size = 18 }: { name: string; color: string; size?: number }) {
   const Cmp = ICONS[name] ?? Boxes
@@ -683,6 +684,7 @@ export default function PlatformsPage() {
     refrigerationDataLogger: 'carbonbox',
     bloodBox: 'bloodbox',
     eternityTransformers: 'eternity',
+    automobile: 'automobile',
   }
 
   return (

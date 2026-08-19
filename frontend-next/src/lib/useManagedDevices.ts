@@ -27,6 +27,7 @@ const DEVICE_TYPE: Record<NonNullable<ManagedDevice['domain']>, string> = {
   transformer: 'Power Transformer',
   carbonNode: 'Refrigeration Logger',
   bloodBox: 'BloodBOX Cold Storage',
+  automobile: 'Formula EV Telemetry',
 }
 
 // api.fleet() resolves to null on ANY failure — a genuinely empty roster and a
@@ -210,6 +211,15 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
       }
       if (n.domain === 'carbonNode') {
         return { ...base, domain: 'carbonNode', cabinetZone: '—', targetMinC: 2, targetMaxC: 8, refrigerantType: '—', co2eSavedKg: 0, creditsIssued: 0 }
+      }
+      if (n.domain === 'automobile') {
+        return {
+          ...base, domain: 'automobile', model: 'Formula EV', driverName: '—',
+          fatigueScore: 0, fatigueState: 'ALERT', hrBpm: 0, hrvRmssd: 0,
+          eegAlpha: 0, eegTheta: 0, eegBeta: 0, fatigueRatio: 0,
+          speedKmh: 0, steeringAngle: 0, brakeBar: 0, apps1: 0,
+          motorRpm: 0, motorTemp: 0, bmsSoc: 100, openAlarms: 0,
+        }
       }
       return { ...base, domain: 'bloodBox', boxCode: n.id.toUpperCase(), setLowC: 2, setHighC: 6, floor: '—', excursions: 0, inTransit: false }
     })

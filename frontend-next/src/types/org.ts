@@ -61,8 +61,8 @@ export interface ManagedDevice {
   serial: string
   /** Sensor type / model. */
   deviceType: string
-  /** Sensor domain: refrigerationDataLogger / bloodBox / eternityTransformers. */
-  domain?: 'transformer' | 'carbonNode' | 'bloodBox'
+  /** Sensor domain: refrigerationDataLogger / bloodBox / eternityTransformers / automobile. */
+  domain?: 'transformer' | 'carbonNode' | 'bloodBox' | 'automobile'
   /** Site that hosts this device. */
   siteId?: string
   location: string

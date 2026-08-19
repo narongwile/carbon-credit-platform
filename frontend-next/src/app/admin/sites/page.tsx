@@ -7,7 +7,7 @@ import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain, type SensorHost, type SiteOperations } from '@/types/fleet'
-import { Building2, Zap, Thermometer, Droplet, MapPin, Leaf, AlertTriangle, Activity, HeartPulse } from 'lucide-react'
+import { Building2, Zap, Thermometer, Droplet, MapPin, Leaf, AlertTriangle, Activity, HeartPulse, Car } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -16,9 +16,10 @@ const domainIcon: Record<SensorDomain, React.ElementType> = {
   transformer: Zap,
   carbonNode: Thermometer,
   bloodBox: Droplet,
+  automobile: Car,
 }
 
-const ALL_DOMAINS: SensorDomain[] = ['transformer', 'carbonNode', 'bloodBox']
+const ALL_DOMAINS: SensorDomain[] = ['transformer', 'carbonNode', 'bloodBox', 'automobile']
 
 interface SiteRow { id: string; name: string; address: string }
 
@@ -45,6 +46,7 @@ function HostChip({ host }: { host: SensorHost }) {
   const detail =
     host.domain === 'transformer' ? `${host.kva} kVA · health ${host.healthIndex}`
     : host.domain === 'carbonNode' ? `${host.targetMinC}–${host.targetMaxC}°C · ${host.creditsIssued} credits`
+    : host.domain === 'automobile' ? `Fatigue ${host.fatigueScore}% · ${host.speedKmh} km/h`
     : `set ${host.setLowC}–${host.setHighC}°C · ${host.floor}`
   return (
     <div className="flex items-center gap-2.5 p-3 rounded-lg" style={inset}>
@@ -72,6 +74,7 @@ function siteOperations(siteId: string, siteName: string, hostList: SensorHost[]
   const tr = hostList.filter((h): h is Extract<SensorHost, { domain: 'transformer' }> => h.domain === 'transformer')
   const cn = hostList.filter((h): h is Extract<SensorHost, { domain: 'carbonNode' }> => h.domain === 'carbonNode')
   const bb = hostList.filter((h): h is Extract<SensorHost, { domain: 'bloodBox' }> => h.domain === 'bloodBox')
+  const au = hostList.filter((h): h is Extract<SensorHost, { domain: 'automobile' }> => h.domain === 'automobile')
   return {
     siteId,
     siteName,
@@ -90,6 +93,11 @@ function siteOperations(siteId: string, siteName: string, hostList: SensorHost[]
       count: bb.length,
       excursions: bb.reduce((a, b) => a + b.excursions, 0),
       inTransit: bb.filter((b) => b.inTransit).length,
+    },
+    automobile: {
+      count: au.length,
+      avgFatigue: au.length ? Math.round(au.reduce((a, v) => a + v.fatigueScore, 0) / au.length) : 0,
+      activeVehicles: au.filter((v) => v.status !== 'OFFLINE').length,
     },
   }
 }

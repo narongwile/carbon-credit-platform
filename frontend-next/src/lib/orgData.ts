@@ -57,14 +57,14 @@ export const managedUsers: ManagedUser[] = [
 ]
 
 export const managedDevices: ManagedDevice[] = [
-  // Org A — refrigeration nodes
-  { id: 'dev-1', orgId: 'org-1', name: 'Cold Room #1', serial: 'RFG-00:1A:01', deviceType: 'Refrigeration Logger', location: 'Warehouse A', theme: 'fix', departmentIds: ['dept-bb'], status: 'online', lastValue: '4.1°C' },
-  { id: 'dev-2', orgId: 'org-1', name: 'Cold Room #2', serial: 'RFG-00:1A:02', deviceType: 'Refrigeration Logger', location: 'Warehouse A', theme: 'fix', departmentIds: ['dept-bb', 'dept-cc'], status: 'online', lastValue: '5.3°C' },
-  { id: 'dev-3', orgId: 'org-1', name: 'Freezer #1', serial: 'RFG-00:1A:03', deviceType: 'Refrigeration Logger', location: 'Warehouse B', theme: 'freestyle', departmentIds: ['dept-cc'], status: 'offline', lastValue: '-18.0°C' },
+  { id: 'dev-1', orgId: 'org-1', name: 'Cold Room #1', serial: 'RFG-00:1A:01', deviceType: 'Refrigeration Logger', domain: 'carbonNode', location: 'Warehouse A', theme: 'fix', departmentIds: ['dept-bb'], status: 'online', lastValue: '4.1°C' },
+  { id: 'dev-2', orgId: 'org-1', name: 'Cold Room #2', serial: 'RFG-00:1A:02', deviceType: 'Refrigeration Logger', domain: 'carbonNode', location: 'Warehouse A', theme: 'fix', departmentIds: ['dept-bb', 'dept-cc'], status: 'online', lastValue: '5.3°C' },
+  { id: 'dev-3', orgId: 'org-1', name: 'Freezer #1', serial: 'RFG-00:1A:03', deviceType: 'Refrigeration Logger', domain: 'carbonNode', location: 'Warehouse B', theme: 'freestyle', departmentIds: ['dept-cc'], status: 'offline', lastValue: '-18.0°C' },
+  { id: 'NAT-GW-01', orgId: 'org-1', name: 'NAT-GW-01 Formula EV', serial: 'NAT-GW-DEV2025', deviceType: 'Formula EV Telemetry Gateway', domain: 'automobile', location: 'Track / Test Bench', theme: 'fix', departmentIds: ['dept-bb'], status: 'online', lastValue: 'Fatigue 24%' },
   // Org B — transformers
-  { id: 'dev-4', orgId: 'org-2', name: 'Transformer T1', serial: 'TRF-SN100231', deviceType: 'Power Transformer', location: 'Substation North', theme: 'fix', departmentIds: ['dept-dd'], status: 'online', lastValue: '68.4°C' },
-  { id: 'dev-5', orgId: 'org-2', name: 'Transformer T2', serial: 'TRF-SN100232', deviceType: 'Power Transformer', location: 'Substation East', theme: 'freestyle', departmentIds: ['dept-dd', 'dept-ee'], status: 'online', lastValue: '82.1°C' },
-  { id: 'dev-6', orgId: 'org-2', name: 'Transformer T3', serial: 'TRF-SN100233', deviceType: 'Power Transformer', location: 'Substation West', theme: 'fix', departmentIds: ['dept-ee'], status: 'online', lastValue: '71.0°C' },
+  { id: 'dev-4', orgId: 'org-2', name: 'Transformer T1', serial: 'TRF-SN100231', deviceType: 'Power Transformer', domain: 'transformer', location: 'Substation North', theme: 'fix', departmentIds: ['dept-dd'], status: 'online', lastValue: '68.4°C' },
+  { id: 'dev-5', orgId: 'org-2', name: 'Transformer T2', serial: 'TRF-SN100232', deviceType: 'Power Transformer', domain: 'transformer', location: 'Substation East', theme: 'freestyle', departmentIds: ['dept-dd', 'dept-ee'], status: 'online', lastValue: '82.1°C' },
+  { id: 'dev-6', orgId: 'org-2', name: 'Transformer T3', serial: 'TRF-SN100233', deviceType: 'Power Transformer', domain: 'transformer', location: 'Substation West', theme: 'fix', departmentIds: ['dept-ee'], status: 'online', lastValue: '71.0°C' },
 ]
 
 export const defaultNotificationChannels: NotificationChannelConfig[] = [

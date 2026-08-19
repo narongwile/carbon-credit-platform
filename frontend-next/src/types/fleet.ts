@@ -11,12 +11,13 @@
 // across all three domains roll up into `v_site_operations`.
 // ---------------------------------------------------------------------------
 
-export type SensorDomain = 'transformer' | 'carbonNode' | 'bloodBox'
+export type SensorDomain = 'transformer' | 'carbonNode' | 'bloodBox' | 'automobile'
 
 export const DOMAIN_META: Record<SensorDomain, { label: string; platform: string; accent: string }> = {
   transformer: { label: 'Transformer', platform: 'ETERNITY', accent: '#6366f1' },
   carbonNode: { label: 'Refrigeration Node', platform: 'CarbonBOX', accent: '#22c55e' },
   bloodBox: { label: 'BloodBOX', platform: 'BloodBOX', accent: '#ef4444' },
+  automobile: { label: 'Formula EV (NAT)', platform: 'Formula EV', accent: '#f59e0b' },
 }
 
 export interface Site {
@@ -74,7 +75,30 @@ export interface BloodBoxHost extends HostBase {
   inTransit: boolean
 }
 
-export type SensorHost = TransformerHost | CarbonNodeHost | BloodBoxHost
+// automobile / Formula EV & Driver Fatigue 1D-CNN Telemetry
+export interface AutomobileHost extends HostBase {
+  domain: 'automobile'
+  model: string
+  driverName: string
+  fatigueScore: number
+  fatigueState: 'ALERT' | 'DROWSY' | 'CRITICAL'
+  hrBpm: number
+  hrvRmssd: number
+  eegAlpha: number
+  eegTheta: number
+  eegBeta: number
+  fatigueRatio: number
+  speedKmh: number
+  steeringAngle: number
+  brakeBar: number
+  apps1: number
+  motorRpm: number
+  motorTemp: number
+  bmsSoc: number
+  openAlarms: number
+}
+
+export type SensorHost = TransformerHost | CarbonNodeHost | BloodBoxHost | AutomobileHost
 
 // sensor_types (ERD #1)
 export interface SensorType {
@@ -124,7 +148,7 @@ export interface DeviceInterface {
   status: 'up' | 'down'
 }
 
-// v_site_operations — unified per-site KPI across the 3 domains (data-flow #3)
+// v_site_operations — unified per-site KPI across the domains (data-flow #3)
 export interface SiteOperations {
   siteId: string
   siteName: string
@@ -132,4 +156,5 @@ export interface SiteOperations {
   transformer: { count: number; avgHealth: number; openAlarms: number }
   carbonNode: { count: number; co2eSavedKg: number; creditsIssued: number }
   bloodBox: { count: number; excursions: number; inTransit: number }
+  automobile?: { count: number; avgFatigue: number; activeVehicles: number }
 }

@@ -77,6 +77,21 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
     dwellMin: 2,
     hysteresis: 0.5,
   },
+  automobile: {
+    label: 'Formula EV (NAT)',
+    params: [
+      { key: 'fatigue_score', label: 'Driver Fatigue Risk Index (1D-CNN)', unit: '%', direction: 'high', warn: 70, critical: 85 },
+      { key: 'hr_bpm', label: 'Driver Heart Rate', unit: 'BPM', direction: 'high', warn: 110, critical: 130 },
+      { key: 'fatigue_ratio', label: 'Neural EEG Fatigue Ratio (Theta+Alpha)/Beta', unit: 'ratio', direction: 'high', warn: 4.0, critical: 6.0 },
+      { key: 'eeg_theta', label: 'EEG Theta Band Surge', unit: 'μV', direction: 'high', warn: 30, critical: 45 },
+      { key: 'speed_kmh', label: 'Vehicle Speed', unit: 'km/h', direction: 'high', warn: 120, critical: 140 },
+      { key: 'steering_angle', label: 'Steering Reversal Deviation', unit: 'deg', direction: 'high', warn: 45, critical: 60 },
+      { key: 'motor_temp', label: 'Inverter Motor Temp', unit: '°C', direction: 'high', warn: 85, critical: 100 },
+      { key: 'bms_soc', label: 'BMS Battery SOC', unit: '%', direction: 'low', warn: 20, critical: 10 },
+    ],
+    dwellMin: 2,
+    hysteresis: 1,
+  },
 }
 
 export const getAlarmSchema = (domain?: SensorDomain): DomainAlarmSchema | null =>

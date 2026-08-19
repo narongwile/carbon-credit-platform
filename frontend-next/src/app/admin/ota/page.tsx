@@ -22,6 +22,7 @@ const DOMAIN_LABEL: Record<SensorDomain, string> = {
   transformer: 'Transformer',
   carbonNode: 'Refrigeration (carbonNode)',
   bloodBox: 'BloodBOX',
+  automobile: 'Formula EV (automobile)',
 }
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -50,7 +51,7 @@ export default function OTAManagementPage() {
   const live = useIsLive()
   const selectedOrgId = useAppStore((s) => s.selectedOrgId) || 'org-1'
   useAppStore((s) => s.orgEntitlements[selectedOrgId])
-  const licensedProducts = live ? licensedDomains(selectedOrgId) : (['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[])
+  const licensedProducts = live ? licensedDomains(selectedOrgId) : (['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[])
   const { devices } = useManagedDevices(selectedOrgId)
 
   const [releases, setReleases] = useState<Release[]>([])

@@ -31,6 +31,9 @@ import toast from 'react-hot-toast'
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
+import { organizations } from '@/lib/mockData'
+import { useAppStore } from '@/lib/store'
+
 interface OrgRow { id: string; name: string; status: string }
 
 export default function EntitlementsPage() {
@@ -43,23 +46,48 @@ export default function EntitlementsPage() {
   const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isLive()) { setOrgs([]); return }
     let cancelled = false
-    api.orgs().then((rows) => {
-      if (cancelled || !rows) return
-      const list = rows.map((r) => ({ id: r.id, name: r.name, status: r.status ?? 'active' }))
+    if (isLive()) {
+      api.orgs().then((rows) => {
+        if (cancelled) return
+        const list = (rows && rows.length > 0)
+          ? rows.map((r) => ({ id: r.id, name: r.name, status: r.status ?? 'active' }))
+          : organizations.map((o) => ({ id: o.id, name: o.name, status: o.status ?? 'active' }))
+        setOrgs(list)
+        setSelectedOrgId((cur) => (cur && list.some((o) => o.id === cur) ? cur : list[0]?.id ?? ''))
+      })
+    } else {
+      const list = organizations.map((o) => ({ id: o.id, name: o.name, status: o.status ?? 'active' }))
       setOrgs(list)
       setSelectedOrgId((cur) => (cur && list.some((o) => o.id === cur) ? cur : list[0]?.id ?? ''))
-    })
+    }
     return () => { cancelled = true }
   }, [live])
 
   const loadOrg = useCallback(async (orgId: string) => {
-    if (!orgId || !isLive()) { setLicensed([]); setAudit([]); return }
+    if (!orgId) { setLicensed([]); setAudit([]); return }
     setLoading(true)
     try {
-      setLicensed((await api.entitlements(orgId)) ?? [])
-      setAudit((await api.auditLog({ orgId, limit: 10 })) ?? [])
+      if (isLive()) {
+        const liveEnts = await api.entitlements(orgId)
+        if (liveEnts) {
+          setLicensed(liveEnts)
+          useAppStore.getState().setOrgEntitlements(orgId, liveEnts)
+        } else {
+          const storeEnts = useAppStore.getState().orgEntitlements[orgId]
+          const mockEnts = organizations.find((o) => o.id === orgId)?.platforms.filter((p) => p.licensed).map((p) =>
+            p.platformId === 'eternity' ? 'eternityTransformers' : p.platformId === 'carbonbox' ? 'refrigerationDataLogger' : p.platformId
+          ) || []
+          setLicensed(storeEnts ?? mockEnts)
+        }
+        setAudit((await api.auditLog({ orgId, limit: 10 })) ?? [])
+      } else {
+        const storeEnts = useAppStore.getState().orgEntitlements[orgId]
+        const mockEnts = organizations.find((o) => o.id === orgId)?.platforms.filter((p) => p.licensed).map((p) =>
+          p.platformId === 'eternity' ? 'eternityTransformers' : p.platformId === 'carbonbox' ? 'refrigerationDataLogger' : p.platformId
+        ) || []
+        setLicensed(storeEnts ?? mockEnts)
+      }
     } finally {
       setLoading(false)
     }
@@ -69,23 +97,27 @@ export default function EntitlementsPage() {
 
   const selectedOrg = orgs.find((o) => o.id === selectedOrgId)
 
-  // Written through on every click, not collected behind a Save button — the
-  // old page's "Save All Changes" did nothing, and a batch that silently drops
-  // is worse than a click that visibly fails.
+  // Written through on every click, synced to backend and Zustand store immediately.
   const toggle = async (platformId: string) => {
     const before = licensed
     const next = before.includes(platformId) ? before.filter((p) => p !== platformId) : [...before, platformId]
     setLicensed(next)
     setBusy(platformId)
-    const r = await api.setEntitlements(selectedOrgId, next)
-    setBusy(null)
-    if (!r) {
-      setLicensed(before)
-      toast.error('Could not update the entitlement')
-      return
+    useAppStore.getState().setOrgEntitlements(selectedOrgId, next)
+    if (isLive()) {
+      const r = await api.setEntitlements(selectedOrgId, next)
+      setBusy(null)
+      if (!r) {
+        setLicensed(before)
+        useAppStore.getState().setOrgEntitlements(selectedOrgId, before)
+        toast.error('Could not update the entitlement')
+        return
+      }
+      api.auditLog({ orgId: selectedOrgId, limit: 10 }).then((a) => a && setAudit(a))
+    } else {
+      setBusy(null)
     }
     toast.success(next.includes(platformId) ? 'Product licensed' : 'Licence revoked')
-    api.auditLog({ orgId: selectedOrgId, limit: 10 }).then((a) => a && setAudit(a))
   }
 
   return (
@@ -95,12 +127,8 @@ export default function EntitlementsPage() {
         <p className="text-sm text-slate-500 mt-1">Which products each organization is licensed for</p>
       </div>
 
-      {!live ? (
-        <div className="rounded-xl p-6 text-sm text-slate-500" style={surface}>
-          Switch to Live mode to manage entitlements.
-        </div>
-      ) : !orgs.length ? (
-        <div className="rounded-xl p-6 text-sm text-slate-500" style={surface}>No organizations yet.</div>
+      {!orgs.length ? (
+        <div className="rounded-xl p-6 text-sm text-slate-500" style={surface}>No organizations found.</div>
       ) : (
         <>
           {/* Org selector */}

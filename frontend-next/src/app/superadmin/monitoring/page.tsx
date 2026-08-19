@@ -8,12 +8,12 @@ import { useAppStore } from '@/lib/store'
 import { api, isLive } from '@/lib/api'
 import { statusFromLive } from '@/lib/useFleetLive'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
-import { Activity, Search, Zap, Thermometer, Droplet, ExternalLink } from 'lucide-react'
+import { Activity, Search, Zap, Thermometer, Droplet, ExternalLink, Car } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
-const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet }
+const domainIcon: Record<SensorDomain, React.ElementType> = { transformer: Zap, carbonNode: Thermometer, bloodBox: Droplet, automobile: Car }
 const statusColor = (s: string) => (s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280')
 
 function monitorRoute(domain: SensorDomain, id: string): string {
@@ -117,6 +117,7 @@ export default function SuperAdminMonitoringPage() {
     name: h.name, domain: h.domain, status: h.status,
     metric: h.domain === 'transformer' ? `Health ${h.healthIndex} · ${h.kva} kVA`
       : h.domain === 'carbonNode' ? `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} credits`
+      : h.domain === 'automobile' ? `Fatigue ${h.fatigueScore}% · ${h.speedKmh} km/h`
       : `set ${h.setLowC}–${h.setHighC}°C · ${h.excursions} excursions`,
     sensorCount: h.sensorCount,
   }))

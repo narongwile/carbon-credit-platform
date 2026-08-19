@@ -16,7 +16,7 @@ import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package, Server
+  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package, Server, Car
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -51,6 +51,7 @@ const NAV: NavItem[] = [
   { href: '/admin/trends', label: 'Compare Devices', icon: TrendingUp, section: 'Monitoring' },
   { href: '/admin/refrigeration', label: 'Refrigeration', icon: Thermometer, requires: { platform: 'refrigerationDataLogger' } },
   { href: '/admin/bloodbox', label: 'BloodBOX', icon: Droplet, requires: { platform: 'bloodBox' } },
+  { href: '/admin/automobile', label: 'Formula EV (NAT)', icon: Car, requires: { platform: 'automobile' } },
   { href: '/admin/alarms', label: 'Alarms', icon: Bell, badge: 'critical' },
   { href: '/admin/events', label: 'Events', icon: Calendar },
 

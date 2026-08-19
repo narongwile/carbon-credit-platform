@@ -157,22 +157,40 @@ function OrgModal({ org, onClose }: { org: Organization; onClose: () => void }) 
   // the backend platform id — no more mock-id ↔ backend-id translation layer.
   const [licensed, setLicensed] = useState<Record<string, boolean>>({})
   useEffect(() => {
-    if (!isLive()) return
     let cancelled = false
-    api.entitlements(org.id).then((ents) => {
-      if (cancelled || !ents) return
-      setLicensed(Object.fromEntries(PLATFORM_TEMPLATES.map((p) => [p.id, ents.includes(p.id)])))
-    })
+    if (isLive()) {
+      api.entitlements(org.id).then((ents) => {
+        if (cancelled || !ents) return
+        setLicensed(Object.fromEntries(PLATFORM_TEMPLATES.map((p) => [p.id, ents.includes(p.id)])))
+        useAppStore.getState().setOrgEntitlements(org.id, ents)
+      })
+    } else {
+      const storeEnts = useAppStore.getState().orgEntitlements[org.id]
+      const mockEnts = (org.platforms || []).filter((p) => p.licensed).map((p) =>
+        p.platformId === 'eternity' ? 'eternityTransformers' : p.platformId === 'carbonbox' ? 'refrigerationDataLogger' : p.platformId
+      )
+      const current = storeEnts ?? mockEnts
+      setLicensed(Object.fromEntries(PLATFORM_TEMPLATES.map((p) => [p.id, current.includes(p.id)])))
+    }
     return () => { cancelled = true }
-  }, [org.id])
-  const toggleLicense = (platformId: string) => {
+  }, [org.id, org.platforms])
+
+  const toggleLicense = async (platformId: string) => {
     const prev = licensed
     const next = { ...prev, [platformId]: !prev[platformId] }
     setLicensed(next)
-    if (!isLive()) return
-    api.setEntitlements(org.id, Object.keys(next).filter((k) => next[k])).then((r) => {
-      if (!r) { setLicensed(prev); toast.error('Could not update the license') }
-    })
+    const activePlatformIds = Object.keys(next).filter((k) => next[k])
+    useAppStore.getState().setOrgEntitlements(org.id, activePlatformIds)
+    if (isLive()) {
+      const r = await api.setEntitlements(org.id, activePlatformIds)
+      if (!r) {
+        setLicensed(prev)
+        useAppStore.getState().setOrgEntitlements(org.id, Object.keys(prev).filter((k) => prev[k]))
+        toast.error('Could not update the license')
+        return
+      }
+    }
+    toast.success(next[platformId] ? 'Product licensed' : 'Licence revoked')
   }
 
   // Per-org dashboard theme grants — super admin only.

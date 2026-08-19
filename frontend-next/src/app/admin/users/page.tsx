@@ -826,7 +826,7 @@ function ProductAccess({ orgId, departments, setDepartments, users, setUsers }: 
     let cancelled = false
     api.entitlements(orgId).then((ents) => {
       if (cancelled || !ents) return
-      setDomains((['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
+      setDomains((['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
     })
     return () => { cancelled = true }
   }, [orgId])

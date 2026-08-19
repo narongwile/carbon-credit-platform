@@ -35,9 +35,10 @@ type AlarmRule struct {
 }
 
 type TelemetryPayload struct {
-	NodeID    string             `json:"nodeId"`
-	Timestamp int64              `json:"ts"`
-	Values    map[string]float64 `json:"values"`
+	NodeID      string             `json:"nodeId"`
+	NodeIDSnake string             `json:"node_id"`
+	Timestamp   int64              `json:"ts"`
+	Values      map[string]float64 `json:"values"`
 	// Firmware identifies itself as device_id on its status/heartbeat/alarm
 	// payloads (only the readings payload carries nodeId), so accept it as an
 	// alias — otherwise those frames were dropped as "Missing nodeId" and the
@@ -57,6 +58,9 @@ type TelemetryPayload struct {
 func (t TelemetryPayload) id() string {
 	if t.NodeID != "" {
 		return t.NodeID
+	}
+	if t.NodeIDSnake != "" {
+		return t.NodeIDSnake
 	}
 	return t.DeviceID
 }
@@ -697,6 +701,8 @@ func domainFromProduct(p string) string {
 		return "carbonNode"
 	case "bloodbox":
 		return "bloodBox"
+	case "automobile", "ev", "formula", "nat", "nat-gw":
+		return "automobile"
 	default:
 		return "transformer" // ETERNITY-first default
 	}

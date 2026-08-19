@@ -65,6 +65,18 @@ export const organizations: Organization[] = [
           { id: 'f10', name: 'API Integration', enabled: false, category: 'api' },
         ],
       },
+      {
+        platformId: 'automobile',
+        platformName: 'Formula EV (NAT)',
+        licensed: true,
+        features: [
+          { id: 'f11', name: '1D-CNN Fatigue Prediction', enabled: true, category: 'ai' },
+          { id: 'f12', name: 'Live 4-Ch EEG Spectral Radar', enabled: true, category: 'neuro' },
+          { id: 'f13', name: 'CAN-Bus Formula EV Telemetry', enabled: true, category: 'telemetry' },
+          { id: 'f14', name: 'Driver Vitals & HRV Analytics', enabled: true, category: 'vitals' },
+          { id: 'f15', name: 'Microsleep Early Alarm System', enabled: true, category: 'safety' },
+        ],
+      },
     ],
   },
   {

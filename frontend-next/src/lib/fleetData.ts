@@ -96,6 +96,7 @@ export function getSiteOperations(siteId: string): SiteOperations {
   const tr = list.filter((h) => h.domain === 'transformer') as Extract<SensorHost, { domain: 'transformer' }>[]
   const cn = list.filter((h) => h.domain === 'carbonNode') as Extract<SensorHost, { domain: 'carbonNode' }>[]
   const bb = list.filter((h) => h.domain === 'bloodBox') as Extract<SensorHost, { domain: 'bloodBox' }>[]
+  const au = list.filter((h) => h.domain === 'automobile') as Extract<SensorHost, { domain: 'automobile' }>[]
   return {
     siteId,
     siteName: site?.name ?? siteId,
@@ -115,6 +116,11 @@ export function getSiteOperations(siteId: string): SiteOperations {
       excursions: bb.reduce((a, b) => a + b.excursions, 0),
       inTransit: bb.filter((b) => b.inTransit).length,
     },
+    automobile: {
+      count: au.length,
+      avgFatigue: au.length ? Math.round(au.reduce((a, v) => a + v.fatigueScore, 0) / au.length) : 0,
+      activeVehicles: au.filter((v) => v.status !== 'OFFLINE').length,
+    },
   }
 }
 
@@ -130,6 +136,7 @@ const DOMAIN_DEFAULTS = {
   transformer: { deviceType: 'Power Transformer', theme: 'fix' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-dd' } as Record<string, string> },
   carbonNode: { deviceType: 'Refrigeration Logger', theme: 'fix' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-dd' } as Record<string, string> },
   bloodBox: { deviceType: 'BloodBOX Cold Storage', theme: 'freestyle' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-ee' } as Record<string, string> },
+  automobile: { deviceType: 'Formula EV Telemetry', theme: 'fix' as const, dept: { 'site-1a': 'dept-bb', 'site-1b': 'dept-cc', 'site-2a': 'dept-dd' } as Record<string, string> },
 }
 
 function hostToDevice(h: SensorHost): ManagedDevice {
@@ -138,6 +145,7 @@ function hostToDevice(h: SensorHost): ManagedDevice {
   const lastValue =
     h.domain === 'transformer' ? '68.4°C'
     : h.domain === 'carbonNode' ? `${h.targetMaxC}°C`
+    : h.domain === 'automobile' ? `${h.fatigueScore}%`
     : '4.6°C'
   const serial = h.domain === 'transformer' ? h.serial : h.domain === 'bloodBox' ? h.boxCode : h.id.toUpperCase()
   const dept = d.dept[h.siteId]

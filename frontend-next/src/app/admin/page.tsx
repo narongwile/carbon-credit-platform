@@ -18,7 +18,7 @@ import { healthFromValues } from '@/lib/alarmParams'
 import { eventProblems as mockEventProblems } from '@/lib/orgData'
 import Link from 'next/link'
 import clsx from 'clsx'
-import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock, Search, Check } from 'lucide-react'
+import { AlertTriangle, CheckCircle, XCircle, Zap, Thermometer, Droplets, Activity, LayoutDashboard, Map as MapIcon, Bell, Clock, Search, Check, Car } from 'lucide-react'
 import type { Transformer } from '@/types'
 import { fmtHM } from '@/lib/displayTime'
 
@@ -131,7 +131,9 @@ function hostMetric(h: SensorHost, liveVal?: Record<string, number>): string {
     return `Health ${health}%`
   }
   if (h.domain === 'carbonNode') return `${h.targetMinC}–${h.targetMaxC}°C · ${h.creditsIssued} cr`
-  return `set ${h.setLowC}–${h.setHighC}°C`
+  if (h.domain === 'automobile') return `Fatigue ${h.fatigueScore}% · ${h.speedKmh} km/h`
+  if (h.domain === 'bloodBox') return `set ${h.setLowC}–${h.setHighC}°C`
+  return ''
 }
 function HostCard({ host, href, liveStatus, liveVal }: { host: SensorHost; href: string; liveStatus?: string; liveVal?: Record<string, number> }) {
   const meta = DOMAIN_META[host.domain]
@@ -416,6 +418,17 @@ function OverviewTab() {
               <Droplets size={12} className="text-rose-400" /> BloodBOX ({hosts.filter((h) => h.domain === 'bloodBox').length})
             </button>
           )}
+          {hosts.some((h) => h.domain === 'automobile') && (
+            <button
+              type="button"
+              onClick={() => setDomainFilter('automobile')}
+              className={`flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                domainFilter === 'automobile' ? 'bg-indigo-600 text-white shadow' : 'bg-[#0d1117] text-slate-400 hover:text-white border border-[#1e2433]'
+              }`}
+            >
+              <Car size={12} className="text-amber-400" /> Formula EV ({hosts.filter((h) => h.domain === 'automobile').length})
+            </button>
+          )}
         </div>
 
         <div className="relative w-full sm:w-64">
@@ -431,7 +444,7 @@ function OverviewTab() {
       </div>
 
       {/* Per-product device sections */}
-      {(['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).map((d) => {
+      {(['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[]).map((d) => {
         const list = byDomain(d)
         if (!list.length) return null
         const meta = DOMAIN_META[d]
@@ -445,7 +458,7 @@ function OverviewTab() {
             </h3>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {list.map((h) => (
-                <HostCard key={h.id} host={h} liveStatus={eff(h)} liveVal={liveValues[h.id]} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : `/admin/nodes/detail?id=${h.id}`} />
+                <HostCard key={h.id} host={h} liveStatus={eff(h)} liveVal={liveValues[h.id]} href={d === 'transformer' ? `/admin/transformers/detail?id=${h.id}` : d === 'automobile' ? `/admin/automobile` : `/admin/nodes/detail?id=${h.id}`} />
               ))}
             </div>
           </div>

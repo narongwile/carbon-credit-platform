@@ -9,6 +9,7 @@ import { calculateDistanceMeters, formatDistance } from '@/lib/geoAddress'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
+import type { SensorDomain } from '@/types/fleet'
 import {
   Map as MapIcon,
   Globe,
@@ -19,6 +20,7 @@ import {
   Zap,
   Thermometer,
   Droplet,
+  Car,
   Filter,
   Check,
 } from 'lucide-react'
@@ -115,7 +117,7 @@ export default function LiveSensorMap({
 
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
   const [statusFilter, setStatusFilter] = useState<'all' | 'critical' | 'warning' | 'healthy'>('all')
-  const [domainFilter, setDomainFilter] = useState<'all' | 'transformer' | 'carbonNode' | 'bloodBox'>('all')
+  const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
   const [locating, setLocating] = useState(false)
 
   const counts = useMemo(() => {
@@ -127,6 +129,7 @@ export default function LiveSensorMap({
       transformer: nodes.filter((n) => n.domain === 'transformer').length,
       carbonNode: nodes.filter((n) => n.domain === 'carbonNode').length,
       bloodBox: nodes.filter((n) => n.domain === 'bloodBox').length,
+      automobile: nodes.filter((n) => n.domain === 'automobile').length,
     }
   }, [nodes])
 
@@ -685,6 +688,19 @@ export default function LiveSensorMap({
                 }`}
               >
                 <Droplet size={11} className="text-rose-400" /> BloodBOX ({counts.bloodBox})
+              </button>
+            )}
+            {counts.automobile > 0 && (
+              <button
+                type="button"
+                onClick={() => setDomainFilter(domainFilter === 'automobile' ? 'all' : 'automobile')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  domainFilter === 'automobile'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                }`}
+              >
+                <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
               </button>
             )}
           </>

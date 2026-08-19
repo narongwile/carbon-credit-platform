@@ -52,7 +52,7 @@ export default function AlarmNotificationPage() {
     let cancelled = false
     api.entitlements(orgId).then((ents) => {
       if (cancelled || !ents) return
-      setOrgDomains((['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
+      setOrgDomains((['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
     })
     return () => { cancelled = true }
   }, [live, orgId])

@@ -586,7 +586,7 @@ global.set('accessFor', async function(userId){
   const [u]=await pool.query("SELECT org_id,role,department_id FROM users WHERE id=?",[userId]);
   const role=u.length?u[0].role:'viewer'; const departmentId=u.length?u[0].department_id:null;
   const departmentIds=await global.get('departmentsOf')(userId, departmentId);
-  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox'].forEach(d=>levels[d]='manage');}
+  if(role==='admin'||role==='superadmin'){['transformer','carbonNode','bloodBox','automobile'].forEach(d=>levels[d]='manage');}
   else{
     // Most permissive across the user's departments, then narrowed by any
     // explicit per-user override (which may only RESTRICT). Tolerate a
@@ -621,7 +621,7 @@ global.set('accessFor', async function(userId){
     try{
       for(const dept of (departmentIds.length?departmentIds:[''])){
         const [dr]=await pool.query("SELECT domain,level FROM product_access WHERE scope='department' AND scope_id=?",[dept]);
-        if(!dr.length){ ['transformer','carbonNode','bloodBox'].forEach(d=>{const cur=levels[d]||'none'; if(RANK['view']>RANK[cur]) levels[d]='view';}); continue; }
+        if(!dr.length){ ['transformer','carbonNode','bloodBox','automobile'].forEach(d=>{const cur=levels[d]||'none'; if(RANK['view']>RANK[cur]) levels[d]='view';}); continue; }
         dr.forEach(r=>{const cur=levels[r.domain]||'none'; if(RANK[r.level]>RANK[cur]) levels[r.domain]=r.level;});
       }
       const [ur]=await pool.query("SELECT domain,level FROM product_access WHERE scope='user' AND scope_id=?",[userId]);
