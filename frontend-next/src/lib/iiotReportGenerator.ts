@@ -116,7 +116,8 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
       if (devDomain !== opts.domain) return false
     }
     if (opts.departmentId && opts.departmentId !== 'all') {
-      if (d.departmentId && d.departmentId !== opts.departmentId) return false
+      const depts = d.departmentIds || ((d as any).departmentId ? [(d as any).departmentId] : [])
+      if (depts.length > 0 && !depts.includes(opts.departmentId)) return false
     }
     if (opts.nodeId && opts.nodeId !== 'all') {
       if (d.id !== opts.nodeId) return false
@@ -154,7 +155,7 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
           { key: 'voltageA', label: 'Phase A Voltage', unit: 'V', samples: 720, min: 228.4, avg: 231.5, max: 234.8, compliance: true },
         ]
 
-    const health = dev.healthScore ?? (dev.status === 'alarm' ? 68 : dev.status === 'offline' ? 0 : 96)
+    const health = (dev as any).healthScore ?? ((dev.status as string) === 'alarm' ? 68 : dev.status === 'offline' ? 0 : 96)
     return {
       nodeId: dev.id,
       deviceName: dev.name || dev.id,

@@ -14,7 +14,6 @@ import { useState, useEffect } from 'react'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useSessionOrgId } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
-import { api } from '@/lib/api'
 import {
   buildIIoTReportData,
   exportIIoTPDF,

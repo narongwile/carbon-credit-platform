@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
@@ -37,7 +37,6 @@ import {
   FileSpreadsheet,
   FileText,
   Clock,
-  Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
