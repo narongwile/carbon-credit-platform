@@ -55,6 +55,6 @@ INSERT IGNORE INTO alarm_rules (node_id, org_id, domain, rule_json, updated_by) 
   ), 'system');
 
 -- 7. Seed device presence
-INSERT IGNORE INTO device_presence (node_id, online, last_seen, transport, fw_version, ip) VALUES
-  ('NAT-GW-01', 1, NOW(3), 'wifi', '1.0.0', '192.168.1.150')
+INSERT IGNORE INTO device_presence (node_id, online, last_seen, transport, fw) VALUES
+  ('NAT-GW-01', 1, NOW(3), 'wifi', '1.0.0')
 ON DUPLICATE KEY UPDATE online = 1, last_seen = NOW(3);
