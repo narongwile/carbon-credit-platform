@@ -1597,6 +1597,12 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
 (async () => {
   try {
     // --- Org Email Template Load & Render ----------------------------------
+    let orgName = e.orgId;
+    try {
+      const [orgRows] = await controlPool.query("SELECT name FROM organizations WHERE id=?", [e.orgId]);
+      if (orgRows.length && orgRows[0].name) orgName = orgRows[0].name;
+    } catch(_) {}
+
     let emailTpl = null;
     try {
       const [tRows] = await controlPool.query("SELECT sval FROM platform_settings WHERE skey=?", ['email_template.' + e.orgId]);
@@ -1604,8 +1610,8 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
     } catch(_) {}
     if (!emailTpl) {
       emailTpl = {
-        subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',
-        customHeaderNote: '',
+        subjectTemplate: '[{{severity}}] {{org_name}} Alert: {{device_name}} - {{param_label}} ({{category}})',
+        customHeaderNote: 'Attention: Automated priority alert triggered by {{org_name}} Industrial IoT Monitoring System.',
         customFooterSop: '',
         includeActionLink: true,
         format: 'html',
@@ -1616,6 +1622,7 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
       device_name: e.nodeId,
       node_id: e.nodeId,
       org_id: e.orgId,
+      org_name: orgName,
       severity: e.severity,
       category: __catText,
       param_label: e.paramLabel || 'Alarm',
@@ -1629,7 +1636,7 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
 
     const __renderTpl = (str) => String(str || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => (__templateVars[k] !== undefined ? __templateVars[k] : ''));
 
-    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})');
+    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}} - {{param_label}} ({{category}})');
     const emailHeaderNote = __renderTpl(emailTpl.customHeaderNote);
     const emailFooterSop = __renderTpl(emailTpl.customFooterSop);
 
@@ -4008,6 +4015,11 @@ const dept=(b.departmentId===''||b.departmentId===undefined||b.departmentId===nu
 const emailTplGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 (async()=>{
+  let orgName = orgId;
+  try {
+    const [orgRows] = await pool.query("SELECT name FROM organizations WHERE id=?", [orgId]);
+    if (orgRows.length && orgRows[0].name) orgName = orgRows[0].name;
+  } catch(e){}
   let template = null;
   try {
     const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['email_template.' + orgId]);
@@ -4015,21 +4027,21 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
   } catch(e){}
   if(!template) {
     template = {
-      subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',
-      customHeaderNote: '',
+      subjectTemplate: '[{{severity}}] ' + orgName + ' Alert: {{device_name}} - {{param_label}} ({{category}})',
+      customHeaderNote: 'Attention: Automated priority alert triggered by ' + orgName + ' Industrial IoT Monitoring System.',
       customFooterSop: 'SOP Protocol: For Critical Alarms, contact the Substation Control Room at 02-xxx-xxxx immediately.',
       includeActionLink: true,
       format: 'html',
     };
   }
-  msg.headers=__CORS; msg.payload=template; node.send(msg);
+  msg.headers=__CORS; msg.payload={ ...template, orgName }; node.send(msg);
 })()` + bbErr
 
 const emailTplPutFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 (async()=>{
   const sval = JSON.stringify({
-    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})').slice(0, 300),
+    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}} - {{param_label}} ({{category}})').slice(0, 300),
     customHeaderNote: String(b.customHeaderNote || '').slice(0, 500),
     customFooterSop: String(b.customFooterSop || '').slice(0, 1000),
     includeActionLink: b.includeActionLink !== false,
@@ -4047,8 +4059,14 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
   const mc = await global.get('mailConfig')();
   if(!mc.transport) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'SMTP server is not configured in platform settings'}; return msg; }
 
+  let orgName = orgId;
+  try {
+    const [orgRows] = await pool.query("SELECT name FROM organizations WHERE id=?", [orgId]);
+    if (orgRows.length && orgRows[0].name) orgName = orgRows[0].name;
+  } catch(e){}
+
   const tpl = {
-    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})'),
+    subjectTemplate: String(b.subjectTemplate || '[{{severity}}] ' + orgName + ' Alert: {{device_name}} - {{param_label}} ({{category}})'),
     customHeaderNote: String(b.customHeaderNote || ''),
     customFooterSop: String(b.customFooterSop || ''),
     includeActionLink: b.includeActionLink !== false,
@@ -4060,6 +4078,7 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
     device_name: 'TR-SUBSTATION-01',
     node_id: 'TR-SUBSTATION-01',
     org_id: orgId,
+    org_name: orgName,
     severity: 'CRITICAL',
     category: 'Thermal & Oil',
     param_label: 'Top Oil Temperature',
@@ -4072,11 +4091,8 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
     sevEmoji: '🔴',
   };
 
-  const render = (s) => String(s || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => sampleData[k] ?? '');
+  const render = (s) => String(s || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => sampleData[k] ?? '');
   const subject = '[TEST] ' + render(tpl.subjectTemplate);
-  const text = '[TEST SIMULATION]\\n' + render(tpl.subjectTemplate) + '\\n\\n'
-    + 'Device: ' + sampleData.device_name + '\\n'
-    + 'Value: ' + sampleData.value + ' (Limit: ' + sampleData.threshold + ')\\n'
     + 'Risk: ' + sampleData.risk_insight + '\\n'
     + (tpl.customHeaderNote ? '\\nNotice: ' + render(tpl.customHeaderNote) + '\\n' : '')
     + (tpl.customFooterSop ? '\\nSOP Protocol: ' + render(tpl.customFooterSop) + '\\n' : '');

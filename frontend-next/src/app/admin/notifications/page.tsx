@@ -30,8 +30,9 @@ const channelIcon = {
 
 export default function AlarmNotificationPage() {
   const live = useIsLive()
-  const { selectedOrgId } = useAppStore()
+  const { selectedOrgId, orgNames } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
+  const orgName = orgNames[orgId] || 'ETERNITY'
   // Real fleet — the "Apply to device" picker AND applyRuleToOrg's actual
   // targets used to both come from the mock seed (managedDevicesFromFleet /
   // getHostsByOrg) unconditionally, so "Applied to N node(s) across your
@@ -403,7 +404,7 @@ export default function AlarmNotificationPage() {
 
         {/* Enterprise Email Alarm Template & Custom SOP Configurator */}
         <div className="lg:col-span-2">
-          <EmailTemplateConfigurator orgId={orgId} />
+          <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
         </div>
 
         {/* Create Event in each department */}

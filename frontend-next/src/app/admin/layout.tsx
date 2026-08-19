@@ -74,7 +74,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter()
   const pathname = usePathname()
   const live = useIsLive()
-  const { alarms, selectedOrgId, setSelectedOrgId, setOrgLogo, setOrgEntitlements, isLiveMode, toggleLiveMode } = useAppStore()
+  const { alarms, selectedOrgId, setSelectedOrgId, setOrgLogo, setOrgName, setOrgEntitlements, isLiveMode, toggleLiveMode } = useAppStore()
   const visibleNav = NAV.filter((item) => isEntitled(selectedOrgId, item.requires))
   const [pendingCount, setPendingCount] = useState(0)
   // Real org list for the tenant switcher — the seed `organizations` array is
@@ -129,9 +129,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     api.orgs().then((rows) => {
       if (!rows) return
       setOrgList(rows.map((o) => ({ id: o.id, name: o.name })))
-      for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
+      for (const o of rows) {
+        if (o.logo_url) setOrgLogo(o.id, o.logo_url)
+        if (o.name) setOrgName(o.id, o.name)
+      }
     })
-  }, [setOrgLogo])
+  }, [setOrgLogo, setOrgName])
 
   // Real platform licenses for the ACTIVE org — entitlements.ts's checks
   // (isPlatformLicensed / isFeatureEnabled / isEntitled, used by visibleNav

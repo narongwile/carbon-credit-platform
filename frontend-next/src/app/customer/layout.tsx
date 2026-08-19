@@ -54,7 +54,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
   const router = useRouter()
   const pathname = usePathname()
   const live = useIsLive()
-  const { viewerUserId, setViewerUserId, setOrgLogo } = useAppStore()
+  const { viewerUserId, setViewerUserId, setOrgLogo, setOrgName } = useAppStore()
   const orgId = useSessionOrgId()
   // Profile is never gated — a viewer who cannot reach it cannot set a password
   // or their own notification channels.
@@ -95,14 +95,17 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
     }
   }, [router])
 
-  // Hydrate this company's logo from the backend (set by its admin in Settings).
+  // Hydrate this company's logo and name from the backend (set by its admin in Settings).
   useEffect(() => {
     if (!isLive()) return
     api.orgs().then((rows) => {
       if (!rows) return
-      for (const o of rows) if (o.logo_url) setOrgLogo(o.id, o.logo_url)
+      for (const o of rows) {
+        if (o.logo_url) setOrgLogo(o.id, o.logo_url)
+        if (o.name) setOrgName(o.id, o.name)
+      }
     })
-  }, [setOrgLogo])
+  }, [setOrgLogo, setOrgName])
 
   const isActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { api, useIsLive } from '@/lib/api'
+import { useAppStore } from '@/lib/store'
 import { Mail, Sparkles, Send, Eye, ShieldAlert, RotateCcw, AlertTriangle, Smartphone, Monitor } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -18,13 +19,13 @@ export interface EmailTemplateConfig {
   format?: 'html' | 'text'
 }
 
-const DEFAULT_TEMPLATE: EmailTemplateConfig = {
-  subjectTemplate: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})',
-  customHeaderNote: 'Attention: Automated priority alert triggered by ONEOPS Industrial IoT Monitoring System.',
+const buildDefaultTemplate = (orgName: string = '{{org_name}}'): EmailTemplateConfig => ({
+  subjectTemplate: `[{{severity}}] ${orgName} Alert: {{device_name}} - {{param_label}} ({{category}})`,
+  customHeaderNote: `Attention: Automated priority alert triggered by ${orgName} Industrial IoT Monitoring System.`,
   customFooterSop: 'SOP Protocol: For Critical Alarms (> 90°C / > 115%), contact Substation Control Room at 02-xxx-xxxx immediately and dispatch duty maintenance engineer.',
   includeActionLink: true,
   format: 'html',
-}
+})
 
 const DYNAMIC_TOKENS = [
   { key: '{{device_name}}', label: 'Device Name / Asset', desc: 'e.g. TR-SUBSTATION-01' },
@@ -35,12 +36,13 @@ const DYNAMIC_TOKENS = [
   { key: '{{threshold}}', label: 'Alarm Limit', desc: 'e.g. 90.0°C' },
   { key: '{{risk_insight}}', label: 'Risk / Condition', desc: 'Engineering failure risk' },
   { key: '{{time}}', label: 'Timestamp', desc: '18/08/2026, 22:30:00 ICT' },
+  { key: '{{org_name}}', label: 'Organization Name', desc: 'e.g. KMUTT, ETERNITY' },
 ]
 
-const PRESET_SUBJECTS = [
-  { label: 'Standard Enterprise', val: '[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})' },
-  { label: 'Urgent Dispatch', val: '🚨 URGENT [{{severity}}]: {{device_name}} reached {{value}} (Limit: {{threshold}})' },
-  { label: 'Asset & Category', val: '[ALARM] {{category}} Alert on {{device_name}} - {{param_label}}' },
+const getPresetSubjects = (orgName: string = '{{org_name}}') => [
+  { label: 'Standard Enterprise', val: `[{{severity}}] ${orgName} Alert: {{device_name}} - {{param_label}} ({{category}})` },
+  { label: 'Urgent Dispatch', val: `🚨 URGENT [{{severity}}]: {{device_name}} reached {{value}} (Limit: {{threshold}})` },
+  { label: 'Asset & Category', val: `[ALARM] {{category}} Alert on {{device_name}} - {{param_label}}` },
 ]
 
 interface EmailTemplateConfiguratorProps {
@@ -50,7 +52,12 @@ interface EmailTemplateConfiguratorProps {
 
 export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTemplateConfiguratorProps) {
   const live = useIsLive()
-  const [template, setTemplate] = useState<EmailTemplateConfig>(DEFAULT_TEMPLATE)
+  const storeOrgName = useAppStore((s) => s.orgNames[orgId])
+  const setStoreOrgName = useAppStore((s) => s.setOrgName)
+  const currentOrgName = storeOrgName || orgName || 'Industrial Operations'
+
+  const defaultTpl = buildDefaultTemplate(currentOrgName)
+  const [template, setTemplate] = useState<EmailTemplateConfig>(defaultTpl)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testEmail, setTestEmail] = useState('')
@@ -63,17 +70,34 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
   const sopRef = useRef<HTMLTextAreaElement>(null)
   const [activeField, setActiveField] = useState<'subject' | 'header' | 'sop'>('subject')
 
+  // Proactively fetch the exact organization details from the backend DB
+  useEffect(() => {
+    if (!live || !orgId) return
+    let cancelled = false
+    api.orgs().then((orgs) => {
+      if (cancelled || !orgs) return
+      const found = orgs.find((o) => o.id === orgId)
+      if (found?.name) {
+        setStoreOrgName(orgId, found.name)
+      }
+    })
+    return () => { cancelled = true }
+  }, [live, orgId, setStoreOrgName])
+
   useEffect(() => {
     if (!live) return
     let cancelled = false
     setLoading(true)
-    api.emailTemplate(orgId).then((res) => {
+    api.emailTemplate(orgId).then((res: any) => {
       if (cancelled) return
+      if (res && res.orgName) {
+        setStoreOrgName(orgId, res.orgName)
+      }
       if (res && res.subjectTemplate) {
         setTemplate({
-          subjectTemplate: res.subjectTemplate || DEFAULT_TEMPLATE.subjectTemplate,
-          customHeaderNote: res.customHeaderNote ?? DEFAULT_TEMPLATE.customHeaderNote,
-          customFooterSop: res.customFooterSop ?? DEFAULT_TEMPLATE.customFooterSop,
+          subjectTemplate: res.subjectTemplate || defaultTpl.subjectTemplate,
+          customHeaderNote: res.customHeaderNote ?? defaultTpl.customHeaderNote,
+          customFooterSop: res.customFooterSop ?? defaultTpl.customFooterSop,
           includeActionLink: res.includeActionLink !== false,
           format: res.format || 'html',
         })
@@ -81,7 +105,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
       setLoading(false)
     }).catch(() => setLoading(false))
     return () => { cancelled = true }
-  }, [live, orgId])
+  }, [live, orgId, defaultTpl.subjectTemplate, defaultTpl.customHeaderNote, defaultTpl.customFooterSop, setStoreOrgName])
 
   const insertToken = (token: string) => {
     if (activeField === 'subject') {
@@ -167,7 +191,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
   }
 
   const handleResetDefault = () => {
-    setTemplate(DEFAULT_TEMPLATE)
+    setTemplate(buildDefaultTemplate(currentOrgName))
     toast.success('Reset template to standard industrial default')
   }
 
@@ -184,7 +208,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
     threshold: simulatedSeverity === 'CRITICAL' ? '90.0°C' : '241.5V',
     risk_insight: simulatedSeverity === 'CRITICAL' ? 'Winding & insulation degradation risk (>90°C)' : 'Phase A voltage above nominal limit',
     time: new Date().toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' }) + ' (Asia/Bangkok)',
-    org_name: orgName || 'ONEOPS Industrial',
+    org_name: currentOrgName,
   }
 
   const renderSimulated = (str?: string) => {
@@ -196,6 +220,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
   const previewHeader = renderSimulated(template.customHeaderNote)
   const previewSop = renderSimulated(template.customFooterSop)
   const sevColor = simulatedSeverity === 'CRITICAL' ? '#ef4444' : '#f59e0b'
+  const presetSubjects = getPresetSubjects(currentOrgName)
 
   return (
     <div className="rounded-xl p-5 space-y-6" style={surface}>
@@ -208,9 +233,6 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-bold text-white">Email Alarm Template &amp; Custom Message</h2>
-              <span className="text-[10px] px-2 py-0.5 rounded font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 uppercase">
-                Enterprise Best Practice
-              </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
               Customize subject lines, emergency action SOPs, and notification formats with dynamic placeholders.
@@ -272,7 +294,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
               </label>
               <div className="flex items-center gap-1">
                 <span className="text-[10px] text-slate-500 mr-1">Presets:</span>
-                {PRESET_SUBJECTS.map((p, idx) => (
+                {presetSubjects.map((p, idx) => (
                   <button
                     key={idx}
                     type="button"
@@ -290,7 +312,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
               value={template.subjectTemplate}
               onFocus={() => setActiveField('subject')}
               onChange={(e) => setTemplate(t => ({ ...t, subjectTemplate: e.target.value }))}
-              placeholder="[{{severity}}] ONEOPS Alert: {{device_name}} - {{param_label}} ({{category}})"
+              placeholder={`[{{severity}}] ${currentOrgName} Alert: {{device_name}} - {{param_label}} ({{category}})`}
               className="w-full rounded-lg px-3.5 py-2.5 text-sm text-white font-mono placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
               style={inset}
             />
@@ -590,7 +612,7 @@ ${previewHeader ? `Notice: ${previewHeader}\n\n` : ''}${previewSop ? `SOP Protoc
 
                   {/* Footer */}
                   <div className="bg-[#070a12] border-t border-slate-800/80 px-3 py-2 text-[10px] text-slate-500 text-center">
-                    Automated alert from ONEOPS Unified Industrial Monitoring Platform.
+                    Automated alert from {currentOrgName} Unified Industrial Monitoring Platform.
                   </div>
                 </div>
               </div>
