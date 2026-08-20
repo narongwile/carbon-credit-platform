@@ -15,7 +15,7 @@ db:
 
 extraEnvVars:
   - name: PHPMYADMIN_ABSOLUTE_URI
-    value: https://pma-iiot.27.254.143.144.nip.io/
+    value: "https://pma-uat.27.254.143.144.nip.io:30443/"
   - name: PHP_UPLOAD_MAX_FILESIZE
     value: 256M
   - name: PHP_POST_MAX_SIZE

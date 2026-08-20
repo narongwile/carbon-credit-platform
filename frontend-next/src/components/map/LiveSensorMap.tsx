@@ -1,12 +1,36 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
 import { api, type NodeLatest } from '@/lib/api'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
+import { Map as MapIcon, Globe, Moon } from 'lucide-react'
+
+const MAP_LAYERS = {
+  streets: {
+    name: 'Street',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19,
+  },
+  satellite: {
+    name: 'Satellite',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri, Maxar, Earthstar Geographics',
+    maxZoom: 19,
+  },
+  dark: {
+    name: 'Dark',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 19,
+  },
+} as const
+
+type LayerKey = keyof typeof MAP_LAYERS
 
 /** Cover photo id per device — see useOrgPhotoCovers. One request for the whole map. */
 export type PhotoCovers = Record<string, { photoId: string; v: string }>
@@ -85,9 +109,11 @@ export default function LiveSensorMap({
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
+  const tileLayerRef = useRef<any>(null)
   const LRef = useRef<any>(null)
   const markersRef = useRef<Map<string, any>>(new Map())
   const fittedRef = useRef(false)
+  const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
   // Always read the latest nodes (avoids a stale closure in the mount effect).
   const nodesRef = useRef(nodes)
   nodesRef.current = nodes
@@ -253,15 +279,9 @@ export default function LiveSensorMap({
      </div>`
   }
 
-  /** Fetch (or refresh) one device's real readings and re-render its popup.
-   * `force` is what keeps an OPEN popup live: the cache short-circuits the
-   * first-open case, but a popup left open through several fleet polls should
-   * keep showing current values rather than the ones from when it opened. */
   const loadLatest = (id: string, force = false) => {
     if (inFlightRef.current.has(id)) return
     if (!force && latestRef.current.has(id)) return
-    // A demo/seed pin has no real device behind it — skipping keeps the
-    // "Loading…" line off a node that would never resolve.
     if (!nodesRef.current.find((n) => n.id === id)?.deviceId) return
     inFlightRef.current.add(id)
     api.latest(id)
@@ -275,7 +295,6 @@ export default function LiveSensorMap({
       .finally(() => { inFlightRef.current.delete(id) })
   }
 
-  // Add/update/remove markers to match the current nodes — reusing the map.
   const syncMarkers = () => {
     const L = LRef.current, map = mapRef.current
     if (!L || !map) return
@@ -285,9 +304,6 @@ export default function LiveSensorMap({
       seen.add(n.id)
       const color = healthColor[n.health]
       const existing = markers.get(n.id)
-      // A device with no coordinate of its own is shown at the org's factory pin.
-      // It must not look like a surveyed position: hollow, dashed and dimmer, so
-      // "roughly at this site" is visibly different from "here".
       const style = n.approx
         ? { fillColor: color, fillOpacity: 0.25, color, weight: 2, dashArray: '3 3' }
         : { fillColor: color, fillOpacity: 1, color: '#ffffff', weight: 2, dashArray: undefined }
@@ -295,16 +311,11 @@ export default function LiveSensorMap({
         existing.setLatLng([n.lat, n.lng])
         existing.setStyle(style)
         existing.setPopupContent(popupHtml(n))
-        // Keep an open popup's readings as live as its status dot: this runs on
-        // every fleet poll, and setPopupContent alone would only re-render the
-        // values fetched when the popup first opened.
         if (existing.isPopupOpen?.()) loadLatest(n.id, true)
       } else {
         const m = L.circleMarker([n.lat, n.lng], { radius: 9, ...style })
           .addTo(map)
           .bindPopup(popupHtml(n))
-        // The popup is a raw HTML string with no back-reference to its node, so
-        // the popupopen handler below reads the id from the marker itself.
         m._gsmNodeId = n.id
         markers.set(n.id, m)
       }
@@ -312,9 +323,15 @@ export default function LiveSensorMap({
     markers.forEach((m, id) => {
       if (!seen.has(id)) { map.removeLayer(m); markers.delete(id) }
     })
-    // Fit the view to the markers only once, so live updates don't yank the map.
     if (!fittedRef.current && markers.size) {
       try { map.fitBounds(L.featureGroup(Array.from(markers.values())).getBounds().pad(0.3)); fittedRef.current = true } catch { /* single point */ }
+    }
+  }
+
+  const switchLayer = (layerKey: LayerKey) => {
+    setCurrentLayer(layerKey)
+    if (tileLayerRef.current) {
+      tileLayerRef.current.setUrl(MAP_LAYERS[layerKey].url)
     }
   }
 
@@ -327,10 +344,14 @@ export default function LiveSensorMap({
       LRef.current = L
       const map = L.map(elRef.current, { scrollWheelZoom: true }).setView([13.7, 100.9], 6)
       mapRef.current = map
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-        maxZoom: 19,
+
+      const initialLayerConfig = MAP_LAYERS.streets
+      const tileLayer = L.tileLayer(initialLayerConfig.url, {
+        attribution: initialLayerConfig.attribution,
+        maxZoom: initialLayerConfig.maxZoom,
       }).addTo(map)
+      tileLayerRef.current = tileLayer
+
       // Popup content is a raw HTML string (Leaflet, not React), so the click
       // is wired via delegation on the map's own container rather than bound
       // to the button element itself. It has to be: every live telemetry tick
@@ -413,18 +434,56 @@ export default function LiveSensorMap({
   return (
     <div className="relative">
       {/* Search Bar */}
-      <div className="absolute top-3 left-3 z-[1000]">
+      <div className="absolute top-3 left-3 z-[1000] max-w-[260px] sm:max-w-xs">
         <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
       </div>
 
-      {/* Legend */}
-      <div className="absolute top-3 right-3 z-[1000] hidden sm:flex items-center gap-4 px-4 py-2 rounded-xl shadow-lg" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-        {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => (
-          <span key={k} className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-            <span className="w-2.5 h-2.5 rounded-full" style={{ background: healthColor[k] }} /> {label}
-          </span>
-        ))}
+      {/* Layer Switcher (Streets / Esri Satellite / Dark) & Legend */}
+      <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2">
+        <div className="flex items-center p-0.5 rounded-xl shadow-lg"
+          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
+          <button
+            type="button"
+            onClick={() => switchLayer('streets')}
+            title="Street map (OpenStreetMap)"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+              currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <MapIcon size={12} /> Streets
+          </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('satellite')}
+            title="Satellite imagery (Esri World Imagery / ArcGIS)"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+              currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Globe size={12} /> Satellite
+          </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('dark')}
+            title="Dark map (CARTO Dark Matter)"
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+              currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Moon size={12} /> Dark
+          </button>
+        </div>
+
+        {/* Legend */}
+        <div className="hidden sm:flex items-center gap-4 px-4 py-2 rounded-xl shadow-lg" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+          {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => (
+            <span key={k} className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
+              <span className="w-2.5 h-2.5 rounded-full" style={{ background: healthColor[k] }} /> {label}
+            </span>
+          ))}
+        </div>
       </div>
+
       <div ref={elRef} style={{ height, width: '100%', background: '#0a0e1a', outline: pickActive ? '2px solid #6366f1' : 'none', outlineOffset: '-2px' }} className="rounded-xl overflow-hidden" />
     </div>
   )

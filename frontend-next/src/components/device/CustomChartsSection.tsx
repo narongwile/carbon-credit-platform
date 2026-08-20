@@ -317,6 +317,7 @@ export default function CustomChartsSection({
           chart={expanded}
           paramByKey={paramByKey}
           onClose={() => setExpanded(null)}
+          onEdit={canConfigure ? () => { const c = expanded; setExpanded(null); setEditing(c) } : undefined}
         />
       )}
     </div>

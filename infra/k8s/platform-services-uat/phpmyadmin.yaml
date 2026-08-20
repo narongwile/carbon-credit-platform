@@ -38,7 +38,7 @@ spec:
             - name: UPLOAD_LIMIT
               value: 256M
             - name: PMA_ABSOLUTE_URI
-              value: "./"
+              value: "https://pma-uat.27.254.143.144.nip.io:30443/"
             - name: PMA_REVERSE_PROXY
               value: "true"
           resources:

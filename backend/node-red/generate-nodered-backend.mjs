@@ -1888,95 +1888,78 @@ const AFTER = Number(env.get('OFFLINE_AFTER_S') || 45);
 // which also moves on the 30s heartbeat and would flap inside a 20s window.
 const LINK_AFTER = Number(env.get('LINK_LOST_AFTER_S') || 20);
 (async () => {
-  for (const __org of await global.get('sweepOrgs')()) {
-  const pool = global.get('resolvePool')(__org);
-  // Stage 0 — link recovery. Stage 1 below writes a LINK_LOST row once readings
-  // have been quiet for LINK_AFTER (20s), but it never touches device_presence.
-  // online — only the Stage-2 block further down does that, after the FULL
-  // OFFLINE_AFTER_S (45s) window. A link that blips for, say, 25s and recovers
-  // on its own (a common WiFi hiccup) never reaches Stage 2, so online stays 1
-  // throughout — meaning there is no offline→online TRANSITION for anything to
-  // notice: not this sweep, and not the Go worker's updatePresence (which logs
-  // LINK_RESTORE only when device_presence.online was 0 and a frame just made
-  // it 1). The LINK_LOST from Stage 1 was then left dangling forever, and every
-  // later blip added another one on top — exactly what a real device showed:
-  // six LINK_LOST rows in a row with no LINK_RESTORE between them, despite the
-  // device reading live the whole time. A node whose MOST RECENT
-  // transport_events row is a link-loss but has since delivered a reading is
-  // simply back; close the gap here rather than leaving it open indefinitely.
+  const ctlPool = global.get('pool');
+  if (!ctlPool || typeof ctlPool.query !== 'function') return null;
+
+  // Stage 0 — link recovery: check devices in ctlPool.device_presence that are online=1 and have resumed telemetry
   try {
-    const [recovered] = await pool.query(
-      "SELECT p.node_id, p.transport, p.last_reading_at, te.ts AS lost_at FROM device_presence p " +
+    const [recovered] = await ctlPool.query(
+      "SELECT p.node_id, p.transport, p.last_reading_at, n.org_id FROM device_presence p " +
       "JOIN nodes n ON n.id = p.node_id " +
-      "JOIN transport_events te ON te.id = (SELECT te2.id FROM transport_events te2 WHERE te2.node_id = p.node_id ORDER BY te2.ts DESC, te2.id DESC LIMIT 1) " +
-      "WHERE p.online = 1 AND te.to_transport = 'none' AND p.last_reading_at IS NOT NULL AND p.last_reading_at > te.ts");
+      "WHERE p.online = 1 AND p.last_reading_at IS NOT NULL");
     for (const r of recovered) {
-      await pool.query(
-        "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, ts) VALUES (?,?,?,?,?)",
-        [r.node_id, 'none', r.transport || 'wifi', 'recovered', r.last_reading_at]);
-      node.warn('link restored (telemetry resumed): ' + r.node_id);
+      const orgPool = global.get('resolvePool')(r.org_id);
+      const [lastTe] = await orgPool.query(
+        "SELECT to_transport, ts FROM transport_events WHERE node_id=? ORDER BY ts DESC, id DESC LIMIT 1",
+        [r.node_id]);
+      if (lastTe.length && lastTe[0].to_transport === 'none' && new Date(r.last_reading_at) > new Date(lastTe[0].ts)) {
+        await orgPool.query(
+          "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, ts) VALUES (?,?,?,?,?)",
+          [r.node_id, 'none', r.transport || 'wifi', 'recovered', r.last_reading_at]);
+        node.warn('link restored (telemetry resumed): ' + r.node_id);
+      }
     }
   } catch (e) { node.warn('link-recovery sweep: ' + e.message); }
-  // Devices still marked online whose readings went quiet and that have no open
-  // link-loss row yet. NOT EXISTS keeps this to a single query no matter how
-  // many devices are down, and stops the same outage being logged every tick.
+
+  // Stage 1 — link silence: devices online whose readings stopped > LINK_AFTER
   try {
-    const [silent] = await pool.query(
-      "SELECT p.node_id, p.last_reading_at, p.transport FROM device_presence p JOIN nodes n ON n.id = p.node_id " +
-      "WHERE p.online = 1 AND p.last_reading_at IS NOT NULL AND p.last_reading_at < (NOW(3) - INTERVAL ? SECOND) " +
-      "AND NOT EXISTS (SELECT 1 FROM transport_events t WHERE t.node_id = p.node_id AND t.to_transport = 'none' AND t.ts >= p.last_reading_at)",
+    const [silent] = await ctlPool.query(
+      "SELECT p.node_id, p.last_reading_at, p.transport, n.org_id FROM device_presence p " +
+      "JOIN nodes n ON n.id = p.node_id " +
+      "WHERE p.online = 1 AND p.last_reading_at IS NOT NULL AND p.last_reading_at < (NOW(3) - INTERVAL ? SECOND)",
       [LINK_AFTER]);
     for (const s of silent) {
-      await pool.query(
-        "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, ts) VALUES (?,?,?,?,?)",
-        [s.node_id, s.transport || 'wifi', 'none', 'no_telemetry', s.last_reading_at]);
-      node.warn('link lost (no telemetry): ' + s.node_id);
+      const orgPool = global.get('resolvePool')(s.org_id);
+      const [dup] = await orgPool.query(
+        "SELECT 1 FROM transport_events WHERE node_id = ? AND to_transport = 'none' AND ts >= ?",
+        [s.node_id, s.last_reading_at]);
+      if (!dup.length) {
+        await orgPool.query(
+          "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, ts) VALUES (?,?,?,?,?)",
+          [s.node_id, s.transport || 'wifi', 'none', 'no_telemetry', s.last_reading_at]);
+        node.warn('link lost (no telemetry): ' + s.node_id);
+      }
     }
   } catch (e) { node.warn('link-silence sweep: ' + e.message); }
-  // last_reading_at ships in migrate-v19. If this pod starts before the migration
-  // job has run, fall back to the pre-v19 columns rather than letting an "unknown
-  // column" abort the sweep — offline detection is exactly what must not stop.
-  let rows;
+
+  // Stage 2 — full offline declaration (DEVICE_OFFLINE)
+  let rows = [];
   try {
-    [rows] = await pool.query(
-      "SELECT p.node_id, p.last_seen, p.last_reading_at, p.transport, n.org_id, n.department_id FROM device_presence p JOIN nodes n ON n.id = p.node_id WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)",
+    [rows] = await ctlPool.query(
+      "SELECT p.node_id, p.last_seen, p.last_reading_at, p.transport, n.org_id, n.department_id FROM device_presence p " +
+      "JOIN nodes n ON n.id = p.node_id " +
+      "WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)",
       [AFTER]);
   } catch (e) {
-    node.warn('offline sweep falling back (pre-v19 schema?): ' + e.message);
-    [rows] = await pool.query(
-      "SELECT p.node_id, p.last_seen, NULL AS last_reading_at, p.transport, n.org_id, n.department_id FROM device_presence p JOIN nodes n ON n.id = p.node_id WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)",
-      [AFTER]);
+    node.warn('offline sweep query error: ' + e.message);
   }
   for (const r of rows) {
-    await pool.query("UPDATE device_presence SET online = 0 WHERE node_id = ?", [r.node_id]);
+    await ctlPool.query("UPDATE device_presence SET online = 0 WHERE node_id = ?", [r.node_id]);
+    const orgPool = global.get('resolvePool')(r.org_id);
     const id = 'ev-offline-' + r.node_id + '-' + Date.now();
-    // Stamp the declaration at (last frame + grace period), never at sweep time.
-    // NOW() drifts with however late the tick happened to run, which reported an
-    // outage minutes after it happened; last_seen alone put DEVICE_OFFLINE at the
-    // same second as the LINK_LOST that precedes it, so the timeline could not
-    // show that the link had already been silent for the whole grace period.
-    // last_seen + AFTER is exactly what it claims: the moment the device stopped
-    // qualifying as online, and it is the same value no matter when the sweep runs.
-    await pool.query("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(?, INTERVAL ? SECOND))",
-      [id, r.node_id, r.org_id, r.department_id, 'online', 'Device Offline', 'CRITICAL', 'offline', 0, 0, '', r.last_seen, AFTER]);
-    // Also put it on the connectivity timeline as a link loss, so LINK_LOST /
-    // LINK_RESTORE pair up. The worker only writes LINK_LOST when it sees a LWT
-    // while the device is still marked online — a device that simply stops
-    // transmitting (power cut, dead radio) never produces one.
-    //
-    // Stage 1 above normally wrote this row 25s earlier; this is the fallback for
-    // a device that has no last_reading_at at all (never stored a reading, e.g.
-    // heartbeat-only) or whose stage-1 pass was missed. Skip it when a link-loss
-    // row already covers this outage, otherwise the timeline shows it twice.
     const ref = r.last_reading_at || r.last_seen;
-    const [dup] = await pool.query(
+    await orgPool.query(
+      "INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,DATE_ADD(?, INTERVAL ? SECOND))",
+      [id, r.node_id, r.org_id, r.department_id, 'online', 'Device Offline', 'CRITICAL', 'offline', 0, 0, '', r.last_seen, AFTER]);
+    const [dup] = await orgPool.query(
       "SELECT 1 FROM transport_events WHERE node_id = ? AND to_transport = 'none' AND ts >= ? LIMIT 1",
       [r.node_id, ref]);
-    if (!dup.length) await pool.query(
-      "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, ts) VALUES (?,?,?,?,?)",
-      [r.node_id, r.transport || 'wifi', 'none', 'no_telemetry', ref]);
+    if (!dup.length) {
+      await orgPool.query(
+        "INSERT INTO transport_events (node_id, from_transport, to_transport, reason, ts) VALUES (?,?,?,?,?)",
+        [r.node_id, r.transport || 'wifi', 'none', 'no_telemetry', ref]);
+    }
     node.send({ payload: { id, nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'Device Offline', kind:'offline', value:0, unit:'', threshold:0, severity:'CRITICAL', time:new Date(new Date(r.last_seen).getTime() + AFTER*1000).toISOString() } });
-  }
   }
 })().catch(e => node.error('offline-sweep: ' + e.message));
 return null;
@@ -2186,9 +2169,27 @@ const chartsDelFunc = CORS + `const id=msg.req.params.id; const chartId=msg.req.
 // control pool silently showed nothing for any moved device, forever.
 const getEventsFunc = CORS + `const id=msg.req.params.id;
 (async()=>{
-  const org=(await global.get('orgOfNode')(id))||'';
-  const pool=global.get('resolvePool')(org);
-  const[r]=await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50',[id]); msg.headers=__CORS; msg.payload=r; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+  const ctl = global.get('pool');
+  const org = (await global.get('orgOfNode')(id)) || (msg.auth && msg.auth.orgId) || '';
+  const tenantPool = global.get('resolvePool')(org);
+  const pools = Array.from(new Set([tenantPool, ctl].filter(Boolean)));
+  const out = [];
+  const seen = new Set();
+  for (const pool of pools) {
+    try {
+      const [r] = await pool.query('SELECT * FROM alarm_events WHERE node_id=? ORDER BY raised_at DESC LIMIT 50', [id]);
+      for (const row of r) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        out.push(row);
+      }
+    } catch(e) {}
+  }
+  out.sort((a,b) => new Date(b.raised_at) - new Date(a.raised_at));
+  msg.headers = __CORS;
+  msg.payload = out.slice(0, 50);
+  node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 // Transport/connectivity timeline for a device: link switches (transport_events,
 // written by the firmware's transport handler) merged with offline backlog
@@ -2204,26 +2205,69 @@ const getEventsFunc = CORS + `const id=msg.req.params.id;
 // own database.
 const transportFunc = CORS + `const id=msg.req.params.id;
 (async()=>{
-  const org=(await global.get('orgOfNode')(id))||(msg.auth&&msg.auth.orgId)||'';
-  const pool=global.get('resolvePool')(org);
-  const out=[];
-  try{ const [t]=await pool.query("SELECT id,from_transport,to_transport,reason,rssi,ts FROM transport_events WHERE node_id=? ORDER BY ts DESC LIMIT 25",[id]);
-    for(const r of t) out.push({ id:'tr-'+r.id, ts:r.ts, type: r.to_transport==='none' ? 'LINK_LOST' : (r.from_transport==='none' ? 'LINK_RESTORE' : 'FALLBACK_'+String(r.to_transport||'').toUpperCase()),
-      desc: 'Link '+r.from_transport+' → '+r.to_transport+(r.reason?' ('+r.reason+')':'')+(r.rssi!=null?' · RSSI '+r.rssi:''), isOfflineSync:false });
-  }catch(e){ node.warn('transport_events: '+e.message); }
-  // Connectivity alarms (raised by the offline sweep) belong on this timeline,
-  // not in the threshold alarm log — "Device Offline" is a link event.
-  try{ const [o]=await pool.query("SELECT id,severity,raised_at FROM alarm_events WHERE node_id=? AND kind='offline' ORDER BY raised_at DESC LIMIT 25",[id]);
-    for(const r of o) out.push({ id:'off-'+r.id, ts:r.raised_at, type:'DEVICE_OFFLINE',
-      desc:'Device stopped reporting — marked offline by the presence sweep', isOfflineSync:false });
-  }catch(e){ node.warn('offline alarm_events: '+e.message); }
-  try{ const [s]=await pool.query("SELECT id,records_count,oldest_ts,newest_ts,sync_at FROM offline_sync_log WHERE node_id=? ORDER BY sync_at DESC LIMIT 25",[id]);
-    for(const r of s) out.push({ id:'os-'+r.id, ts:r.sync_at, type:'OFFLINE_SYNC',
-      desc:'Flushed '+r.records_count+' offline record'+(r.records_count===1?'':'s')+' to cloud', isOfflineSync:true });
-  }catch(e){ node.warn('offline_sync_log: '+e.message); }
-  out.sort((a,b)=> new Date(b.ts) - new Date(a.ts));
-  msg.headers=__CORS; msg.payload=out.slice(0,25); node.send(msg);
-})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+  const ctl = global.get('pool');
+  const org = (await global.get('orgOfNode')(id)) || (msg.auth && msg.auth.orgId) || '';
+  const tenantPool = global.get('resolvePool')(org);
+  const pools = Array.from(new Set([tenantPool, ctl].filter(Boolean)));
+  const out = [];
+  const seenIds = new Set();
+
+  for (const pool of pools) {
+    try {
+      const [t] = await pool.query("SELECT id,from_transport,to_transport,reason,rssi,ts FROM transport_events WHERE node_id=? ORDER BY ts DESC LIMIT 25", [id]);
+      for (const r of t) {
+        const key = 'tr-' + r.id + '-' + (r.ts ? new Date(r.ts).getTime() : '');
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        out.push({
+          id: 'tr-' + r.id,
+          ts: r.ts,
+          type: r.to_transport === 'none' ? 'LINK_LOST' : (r.from_transport === 'none' ? 'LINK_RESTORE' : 'FALLBACK_' + String(r.to_transport || '').toUpperCase()),
+          desc: 'Link ' + r.from_transport + ' → ' + r.to_transport + (r.reason ? ' (' + r.reason + ')' : '') + (r.rssi != null ? ' · RSSI ' + r.rssi : ''),
+          isOfflineSync: false
+        });
+      }
+    } catch(e) {}
+
+    try {
+      const [o] = await pool.query("SELECT id,severity,raised_at FROM alarm_events WHERE node_id=? AND kind='offline' ORDER BY raised_at DESC LIMIT 25", [id]);
+      for (const r of o) {
+        const key = 'off-' + r.id;
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        out.push({
+          id: 'off-' + r.id,
+          ts: r.raised_at,
+          type: 'DEVICE_OFFLINE',
+          desc: 'Device stopped reporting — marked offline by the presence sweep',
+          isOfflineSync: false
+        });
+      }
+    } catch(e) {}
+
+    try {
+      const [s] = await pool.query("SELECT id,records_count,oldest_ts,newest_ts,sync_at FROM offline_sync_log WHERE node_id=? ORDER BY sync_at DESC LIMIT 25", [id]);
+      for (const r of s) {
+        const key = 'os-' + r.id;
+        if (seenIds.has(key)) continue;
+        seenIds.add(key);
+        out.push({
+          id: 'os-' + r.id,
+          ts: r.sync_at,
+          type: 'OFFLINE_SYNC',
+          desc: 'Flushed ' + r.records_count + ' offline record' + (r.records_count === 1 ? '' : 's') + ' to cloud',
+          isOfflineSync: true
+        });
+      }
+    } catch(e) {}
+  }
+
+  out.sort((a,b) => new Date(b.ts) - new Date(a.ts));
+  msg.headers = __CORS;
+  msg.payload = out.slice(0, 25);
+  node.send(msg);
+})().catch(e => { msg.headers=__CORS; msg.statusCode=500; msg.payload={error:e.message}; node.send(msg); });
+return null;`
 
 const ackFunc = CORS + `const pool=global.get('pool'); const id=msg.req.params.id; const {by,eventProblemId}=msg.payload||{};
 (async()=>{await pool.query('UPDATE alarm_events SET acknowledged_at=NOW(3),acknowledged_by=?,event_problem_id=? WHERE id=?',[by||'user',eventProblemId||null,id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`

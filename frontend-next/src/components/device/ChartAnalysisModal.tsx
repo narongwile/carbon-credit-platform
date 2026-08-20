@@ -27,7 +27,7 @@ import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISP
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { X, Loader2, Download, LayoutDashboard } from 'lucide-react'
+import { X, Loader2, Download, LayoutDashboard, Pencil } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -56,13 +56,17 @@ const AXIS_MODES: { id: AxisMode; label: string; title: string }[] = [
 interface Row { param_key: string; value: number; taken_at: string; v_min?: number; v_max?: number; n?: number }
 
 export default function ChartAnalysisModal({
-  nodeId, deviceName, chart, paramByKey, onClose,
+  nodeId, deviceName, chart, paramByKey, onClose, onEdit,
 }: {
   nodeId: string
   deviceName?: string
   chart: ChartDefinition
   paramByKey: Map<string, AvailableParam>
   onClose: () => void
+  /** Present only when the caller has already gated this on canConfigure — a
+   * viewer/customer session never receives it, so the button below simply
+   * doesn't render rather than needing its own role check here. */
+  onEdit?: () => void
 }) {
   const live = useIsLive()
   const [quick, setQuick] = useState<string>('24h')
@@ -274,9 +278,17 @@ export default function ChartAnalysisModal({
               {deviceName ?? nodeId} · {nodeId} · {chart.paramKeys.length} parameter{chart.paramKeys.length === 1 ? '' : 's'}
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5" aria-label="Close">
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onEdit && (
+              <button onClick={onEdit} title="Edit this chart's parameters"
+                className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-lg text-slate-300 hover:text-white" style={inset}>
+                <Pencil size={12} /> Edit chart
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/5" aria-label="Close">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Range + axis mode controls */}

@@ -192,7 +192,7 @@ export default function DeviceLocationCard({
       <div className="flex items-center justify-between mb-2">
         <div className="text-[10px] text-slate-600 uppercase tracking-wider">Device Location</div>
         <div className="flex items-center gap-2">
-          {shown && (
+          {!editing && shown && (
             <button
               onClick={() => setExpanded(true)}
               className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-white px-1.5 py-0.5 rounded transition-colors"

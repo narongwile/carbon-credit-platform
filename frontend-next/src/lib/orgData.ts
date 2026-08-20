@@ -152,15 +152,15 @@ export const THEME_NAV: Record<string, string[]> = {
   // the moment an admin granted any theme both items vanished from every
   // viewer's nav with no way to grant them back — the gate was fail-closed for
   // two menu items nobody could open.
-  'th-overview': ['/customer', '/customer/alarms', '/customer/reports'],
+  'th-overview': ['/customer', '/customer/alarms', '/customer/reports', '/customer/trends'],
   // Indoor and outdoor location are one idea to an operator, and the admin nav
   // already groups them the same way. Both are the Sites feature's surface: a
   // site's floor plan and the same site's pin on the map.
-  'th-map': ['/customer/map', '/customer/floorplans'],
-  'th-fix': ['/customer/devices'],
-  'th-free': ['/customer/devices'],
-  'th-refrig': ['/customer/devices'],
-  'th-twin': ['/customer/devices'],
+  'th-map': ['/customer/map'],
+  'th-fix': ['/customer/devices', '/customer/trends'],
+  'th-free': ['/customer/devices', '/customer/trends'],
+  'th-refrig': ['/customer/devices', '/customer/trends'],
+  'th-twin': ['/customer/devices', '/customer/trends'],
 }
 
 /**

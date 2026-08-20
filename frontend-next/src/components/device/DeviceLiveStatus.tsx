@@ -26,6 +26,7 @@ const FRESH_MS = 90_000
 const ago = (iso: string | null | undefined): string => {
   if (!iso) return 'never'
   const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (s < 10) return 'just now'
   if (s < 60) return `${s}s ago`
   if (s < 3600) return `${Math.floor(s / 60)}m ago`
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`
@@ -71,9 +72,12 @@ export default function DeviceLiveStatus({ nodeId }: { nodeId: string }) {
     )
   }
 
-  const seenAt = presence?.last_reading_at || presence?.last_seen || null
   const streaming = lastFrameAt !== null && Date.now() - lastFrameAt < FRESH_MS
   const online = streaming || presence?.online === 1
+  const seenAt = (streaming && lastFrameAt ? new Date(lastFrameAt).toISOString() : null)
+    || presence?.last_reading_at
+    || presence?.last_seen
+    || null
 
   // Online but nothing arriving = the link is quiet; the sweep has not declared
   // it offline yet. Saying so beats a green light that is about to turn red.

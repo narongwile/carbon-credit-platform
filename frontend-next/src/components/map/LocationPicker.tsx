@@ -1,8 +1,32 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import MapSearchBar from '@/components/map/MapSearchBar'
+import { Layers, Map as MapIcon, Globe, Moon } from 'lucide-react'
 import 'leaflet/dist/leaflet.css'
+
+const MAP_LAYERS = {
+  streets: {
+    name: 'Street',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap',
+    maxZoom: 19,
+  },
+  satellite: {
+    name: 'Satellite',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri, Maxar, Earthstar Geographics',
+    maxZoom: 19,
+  },
+  dark: {
+    name: 'Dark',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 19,
+  },
+} as const
+
+type LayerKey = keyof typeof MAP_LAYERS
 
 export default function LocationPicker({
   lat,
@@ -12,24 +36,24 @@ export default function LocationPicker({
   interactive = true,
   zoom = 8,
   showSearch = false,
+  defaultLayer = 'streets',
 }: {
   lat: number | null
   lng: number | null
   onChange: (lat: number, lng: number) => void
   height?: string
-  /** false renders a plain pin — pan/zoom still work, but click/drag cannot
-   * move it. For a read-only "here's where this is" view sharing the same
-   * map component as the editable picker, instead of a second one to keep
-   * in sync with it. */
   interactive?: boolean
   zoom?: number
   showSearch?: boolean
+  defaultLayer?: LayerKey
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
   const markerRef = useRef<any>(null)
+  const tileLayerRef = useRef<any>(null)
   const LRef = useRef<any>(null)
   const onChangeRef = useRef(onChange)
+  const [currentLayer, setCurrentLayer] = useState<LayerKey>(defaultLayer)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -57,10 +81,12 @@ export default function LocationPicker({
       mapRef.current = map
       if (!interactive) map.doubleClickZoom.disable()
 
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap',
-        maxZoom: 19,
+      const initialLayerConfig = MAP_LAYERS[defaultLayer]
+      const tileLayer = L.tileLayer(initialLayerConfig.url, {
+        attribution: initialLayerConfig.attribution,
+        maxZoom: initialLayerConfig.maxZoom,
       }).addTo(map)
+      tileLayerRef.current = tileLayer
 
       // Initial marker
       if (lat != null && lng != null) {
@@ -101,6 +127,13 @@ export default function LocationPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const switchLayer = (layerKey: LayerKey) => {
+    setCurrentLayer(layerKey)
+    if (tileLayerRef.current) {
+      tileLayerRef.current.setUrl(MAP_LAYERS[layerKey].url)
+    }
+  }
+
   const handlePlaceSelect = (targetLat: number, targetLng: number) => {
     if (!mapRef.current) return
     mapRef.current.flyTo([targetLat, targetLng], 15, { duration: 1.2 })
@@ -121,10 +154,46 @@ export default function LocationPicker({
   return (
     <div className="relative" style={{ width: '100%', height }}>
       {showSearch && (
-        <div className="absolute top-2 left-2 z-[500] max-w-[280px] sm:max-w-xs">
+        <div className="absolute top-2 left-2 z-[500] max-w-[260px] sm:max-w-xs">
           <MapSearchBar onSelectPlace={handlePlaceSelect} placeholder="Search place or address…" />
         </div>
       )}
+
+      {/* Layer Switcher (Streets / Esri Satellite / Dark) */}
+      <div className="absolute top-2 right-2 z-[500] flex items-center p-0.5 rounded-lg shadow-lg"
+        style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
+        <button
+          type="button"
+          onClick={() => switchLayer('streets')}
+          title="Street map (OpenStreetMap)"
+          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+            currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <MapIcon size={11} /> Streets
+        </button>
+        <button
+          type="button"
+          onClick={() => switchLayer('satellite')}
+          title="Satellite imagery (Esri World Imagery / ArcGIS)"
+          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+            currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Globe size={11} /> Satellite
+        </button>
+        <button
+          type="button"
+          onClick={() => switchLayer('dark')}
+          title="Dark map (CARTO Dark Matter)"
+          className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+            currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Moon size={11} /> Dark
+        </button>
+      </div>
+
       <div ref={elRef} style={{ width: '100%', height: '100%', borderRadius: '0.75rem', zIndex: 0 }} />
     </div>
   )

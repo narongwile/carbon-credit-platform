@@ -21,11 +21,17 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
+type ParamDebounce struct {
+	DwellMin  *int `json:"dwell_min,omitempty"`
+	CooldownS *int `json:"cooldown_s,omitempty"`
+}
+
 type AlarmRule struct {
-	NodeID   string
-	OrgID    string
-	Domain   string
-	RuleJSON string
+	NodeID       string
+	OrgID        string
+	Domain       string
+	RuleJSON     string
+	DebounceJSON sql.NullString
 }
 
 type TelemetryPayload struct {
@@ -80,9 +86,10 @@ type RuleDefinition struct {
 }
 
 type AlarmParamState struct {
-	ActiveLevel string
-	RunCount    int
-	PrevValue   *float64
+	ActiveLevel  string
+	RunCount     int
+	PrevValue    *float64
+	LastRaisedAt time.Time
 }
 
 type AlarmNodeState struct {
@@ -246,8 +253,9 @@ func main() {
 	healthPort := getEnv("HEALTH_PORT", "8080")
 	go startHealthServer(healthPort)
 
-	// 5. Start background watchdog & throughput monitor
+	// 5. Start background watchdog, offline sweep & throughput monitor
 	go startMqttWatchdog(mqttClient, subTopic)
+	go startOfflineSweep(30*time.Second, 90)
 	go heartbeatLoop()
 
 	log.Println("Worker started. Press Ctrl+C to exit.")
@@ -331,6 +339,101 @@ func startMqttWatchdog(client mqtt.Client, subTopic string) {
 					log.Printf("[watchdog] Re-subscription refreshed successfully on %q", subTopic)
 					subErrCount = 0
 				}
+			}
+		}
+	}
+}
+
+// startOfflineSweep periodically checks for devices that have silently gone offline
+// (stopped transmitting without sending an MQTT LWT packet).
+func startOfflineSweep(interval time.Duration, offlineAfterSeconds int) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if controlDB == nil {
+			continue
+		}
+		// Find online devices whose last_seen timestamp is older than offlineAfterSeconds
+		rows, err := controlDB.Query(`
+			SELECT p.node_id, n.org_id, n.department_id, COALESCE(p.transport, 'wifi') AS transport, p.last_seen
+			FROM device_presence p
+			JOIN nodes n ON n.id = p.node_id
+			WHERE p.online = 1 AND p.last_seen < (NOW(3) - INTERVAL ? SECOND)
+		`, offlineAfterSeconds)
+		if err != nil {
+			// If table or column not ready yet, continue silently
+			continue
+		}
+
+		type staleNode struct {
+			nodeID       string
+			orgID        string
+			departmentID sql.NullString
+			transport    string
+			lastSeen     sql.NullTime
+		}
+		var stale []staleNode
+		for rows.Next() {
+			var s staleNode
+			if err := rows.Scan(&s.nodeID, &s.orgID, &s.departmentID, &s.transport, &s.lastSeen); err == nil {
+				stale = append(stale, s)
+			}
+		}
+		rows.Close()
+
+		for _, s := range stale {
+			// 1. Mark device offline in controlDB
+			if _, err := controlDB.Exec("UPDATE device_presence SET online = 0 WHERE node_id = ?", s.nodeID); err != nil {
+				log.Printf("[offline-sweep] Failed to update presence for %s: %v", s.nodeID, err)
+				continue
+			}
+			log.Printf("[offline-sweep] Device %s timed out (>%ds without data), marked OFFLINE", s.nodeID, offlineAfterSeconds)
+
+			targetDB := resolvePool(s.orgID)
+			if targetDB == nil {
+				targetDB = controlDB
+			}
+
+			// 2. Insert LINK_LOST event into targetDB (tenant DB)
+			if _, err := targetDB.Exec(`
+				INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts)
+				VALUES (?, ?, 'none', 'timeout', NULL, NOW(3))
+			`, s.nodeID, s.transport); err != nil {
+				log.Printf("[offline-sweep] Failed to insert transport_events for %s: %v", s.nodeID, err)
+			}
+
+			// 3. Insert Device Offline CRITICAL alarm into targetDB (tenant DB)
+			alarmID := fmt.Sprintf("ev-offline-%s-%d", s.nodeID, time.Now().UnixMilli())
+			if _, err := targetDB.Exec(`
+				INSERT IGNORE INTO alarm_events (id, node_id, org_id, department_id, param_key, param_label, severity, kind, value, threshold, unit, raised_at)
+				VALUES (?, ?, ?, ?, 'online', 'Device Offline', 'CRITICAL', 'offline', 0, 0, '', NOW(3))
+			`, alarmID, s.nodeID, s.orgID, nullableStr(s.departmentID)); err != nil {
+				log.Printf("[offline-sweep] Failed to insert offline alarm for %s: %v", s.nodeID, err)
+			}
+
+			// 4. Publish MQTT alarm event for live UI
+			if mqttClient != nil && mqttClient.IsConnected() {
+				ev := map[string]interface{}{
+					"id":           alarmID,
+					"nodeId":       s.nodeID,
+					"orgId":        s.orgID,
+					"departmentId": nullableStr(s.departmentID),
+					"paramKey":     "online",
+					"paramLabel":   "Device Offline",
+					"severity":     "CRITICAL",
+					"kind":         "offline",
+					"value":        0,
+					"threshold":    0,
+					"unit":         "",
+					"ts":           time.Now().UnixMilli(),
+				}
+				evBytes, _ := json.Marshal(ev)
+				dispOrg := s.orgID
+				if dispOrg == "" {
+					dispOrg = "default"
+				}
+				mqttClient.Publish(fmt.Sprintf("internal/alarms/live/%s/%s", dispOrg, s.nodeID), 0, false, evBytes)
 			}
 		}
 	}
@@ -792,17 +895,35 @@ func updatePresence(t TelemetryPayload) {
 		if transport == "" {
 			transport = "wifi"
 		}
-		if _, err := controlDB.Exec(
-			"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
-			t.NodeID, "none", transport, "recovered", rssi); err != nil {
-			log.Printf("Recovery event failed for %s: %v", t.NodeID, err)
+
+		var orgID string
+		var depID sql.NullString
+		if err := controlDB.QueryRow("SELECT org_id, department_id FROM nodes WHERE id = ?", t.NodeID).Scan(&orgID, &depID); err == nil {
+			targetDB := resolvePool(orgID)
+			if targetDB == nil {
+				targetDB = controlDB
+			}
+			if _, err := targetDB.Exec(
+				"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+				t.NodeID, "none", transport, "recovered", rssi); err != nil {
+				log.Printf("Recovery event failed for %s: %v", t.NodeID, err)
+			}
+			// Close the open offline alarm in tenant DB so the device stops looking down.
+			if _, err := targetDB.Exec(
+				"UPDATE alarm_events SET cleared_at = NOW(3) WHERE node_id = ? AND kind = 'offline' AND cleared_at IS NULL",
+				t.NodeID); err != nil {
+				log.Printf("Clear offline alarm failed for %s: %v", t.NodeID, err)
+			}
+		} else {
+			// Unassigned fallback to controlDB
+			_, _ = controlDB.Exec(
+				"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+				t.NodeID, "none", transport, "recovered", rssi)
+			_, _ = controlDB.Exec(
+				"UPDATE alarm_events SET cleared_at = NOW(3) WHERE node_id = ? AND kind = 'offline' AND cleared_at IS NULL",
+				t.NodeID)
 		}
-		// Close the open offline alarm so the device stops looking down.
-		if _, err := controlDB.Exec(
-			"UPDATE alarm_events SET cleared_at = NOW(3) WHERE node_id = ? AND kind = 'offline' AND cleared_at IS NULL",
-			t.NodeID); err != nil {
-			log.Printf("Clear offline alarm failed for %s: %v", t.NodeID, err)
-		}
+
 		if downFor > 0 {
 			log.Printf("Device back online: %s (was down %s)", t.NodeID, downFor)
 		} else {
@@ -814,28 +935,34 @@ func updatePresence(t TelemetryPayload) {
 		if transport == "" {
 			transport = "wifi"
 		}
-		if _, err := controlDB.Exec(
-			"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
-			t.NodeID, transport, "none", "lwt", rssi); err != nil {
-			log.Printf("Link lost event failed for %s: %v", t.NodeID, err)
-		}
 
-		// department_id is nullable (auto-registered devices have none until an
-		// admin assigns one), so scanning it into a plain string fails with
-		// "converting NULL to string" and the whole block was skipped — meaning no
-		// offline alarm for exactly the devices that onboard themselves.
 		var orgID string
 		var depID sql.NullString
 		if err := controlDB.QueryRow("SELECT org_id, department_id FROM nodes WHERE id = ?", t.NodeID).Scan(&orgID, &depID); err == nil {
-			tenantDB := resolvePool(orgID)
-			if tenantDB != nil {
-				alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
-				_, err := tenantDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
-					alarmID, t.NodeID, orgID, nullableStr(depID), "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
-				if err != nil {
-					log.Printf("Insert offline alarm failed for %s: %v", t.NodeID, err)
-				}
+			targetDB := resolvePool(orgID)
+			if targetDB == nil {
+				targetDB = controlDB
 			}
+			if _, err := targetDB.Exec(
+				"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+				t.NodeID, transport, "none", "lwt", rssi); err != nil {
+				log.Printf("Link lost event failed for %s: %v", t.NodeID, err)
+			}
+
+			alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
+			_, err := targetDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
+				alarmID, t.NodeID, orgID, nullableStr(depID), "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
+			if err != nil {
+				log.Printf("Insert offline alarm failed for %s: %v", t.NodeID, err)
+			}
+		} else {
+			// Unassigned fallback to controlDB
+			_, _ = controlDB.Exec(
+				"INSERT INTO transport_events (node_id, from_transport, to_transport, reason, rssi, ts) VALUES (?,?,?,?,?,NOW(3))",
+				t.NodeID, transport, "none", "lwt", rssi)
+			alarmID := fmt.Sprintf("ev-offline-%s-%d", t.NodeID, time.Now().UnixMilli())
+			_, _ = controlDB.Exec("INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,value,threshold,unit,raised_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NOW(3))",
+				alarmID, t.NodeID, UnassignedOrg, nil, "online", "Device Offline", "CRITICAL", "offline", 0, 0, "")
 		}
 	}
 }
@@ -864,8 +991,13 @@ func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
 	}
 
 	var r AlarmRule
-	err := tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json FROM alarm_rules WHERE node_id=?", nodeID).
-		Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON)
+	err := tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json, debounce_json FROM alarm_rules WHERE node_id=?", nodeID).
+		Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON, &r.DebounceJSON)
+	if err != nil && strings.Contains(err.Error(), "debounce_json") {
+		// Fallback if debounce_json column is not present
+		err = tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json FROM alarm_rules WHERE node_id=?", nodeID).
+			Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON)
+	}
 
 	if err != nil {
 		if err != sql.ErrNoRows {
@@ -901,6 +1033,12 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 	if err := json.Unmarshal([]byte(rule.RuleJSON), &ruleDef); err != nil {
 		log.Printf("Failed to unmarshal rule JSON for node %s: %v", t.NodeID, err)
 		return
+	}
+
+	// Parse debounce_json if available
+	debounceMap := make(map[string]ParamDebounce)
+	if rule.DebounceJSON.Valid && len(rule.DebounceJSON.String) > 0 {
+		_ = json.Unmarshal([]byte(rule.DebounceJSON.String), &debounceMap)
 	}
 
 	stateVal, _ := alarmStateCache.LoadOrStore(t.NodeID, &AlarmNodeState{
@@ -951,16 +1089,30 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 		if dwellMin <= 0 {
 			dwellMin = 3 // default
 		}
+		cooldownS := 0
+		if dbOpt, ok := debounceMap[p.Key]; ok {
+			if dbOpt.DwellMin != nil && *dbOpt.DwellMin > 0 {
+				dwellMin = *dbOpt.DwellMin
+			}
+			if dbOpt.CooldownS != nil && *dbOpt.CooldownS > 0 {
+				cooldownS = *dbOpt.CooldownS
+			}
+		}
 
 		if lvl != "" {
 			ps.RunCount++
 			if ps.RunCount >= dwellMin && lvl != ps.ActiveLevel {
-				if ps.ActiveLevel == "" || (ps.ActiveLevel == "WARNING" && lvl == "CRITICAL") {
+				inCooldown := false
+				if cooldownS > 0 && !ps.LastRaisedAt.IsZero() && ts.Sub(ps.LastRaisedAt) < time.Duration(cooldownS)*time.Second {
+					inCooldown = true
+				}
+				if !inCooldown && (ps.ActiveLevel == "" || (ps.ActiveLevel == "WARNING" && lvl == "CRITICAL")) {
 					thresh := p.Warn
 					if lvl == "CRITICAL" {
 						thresh = p.Critical
 					}
 					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, lvl, "threshold", val, thresh)
+					ps.LastRaisedAt = ts
 				}
 				ps.ActiveLevel = lvl
 			}
@@ -1180,16 +1332,28 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	t.Values = normalized
 
 	stored := 0
-	for key, val := range t.Values {
-		_, err := tenantDB.Exec("INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES (?, ?, ?, ?)",
-			t.NodeID, key, val, ts)
-		if err != nil {
-			log.Printf("DB Insert Error for org %s: %v", orgID, err)
-			statErrors.Add(1)
-			continue
+	if len(t.Values) > 0 {
+		var (
+			queryBuilder strings.Builder
+			args         = make([]interface{}, 0, len(t.Values)*4)
+			idx          = 0
+		)
+		queryBuilder.WriteString("INSERT IGNORE INTO readings (node_id, param_key, value, taken_at) VALUES ")
+		for key, val := range t.Values {
+			if idx > 0 {
+				queryBuilder.WriteString(", ")
+			}
+			queryBuilder.WriteString("(?, ?, ?, ?)")
+			args = append(args, t.NodeID, key, val, ts)
+			idx++
 		}
-		stored++
-		statReadings.Add(1)
+		if _, err := tenantDB.Exec(queryBuilder.String(), args...); err != nil {
+			log.Printf("DB Batch Insert Error for org %s node %s: %v", orgID, t.NodeID, err)
+			statErrors.Add(int64(len(t.Values)))
+		} else {
+			stored = len(t.Values)
+			statReadings.Add(int64(stored))
+		}
 	}
 
 	// Stamp when this device last delivered actual measurements. This is NOT the

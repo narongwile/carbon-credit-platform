@@ -1,11 +1,12 @@
 'use client'
 
 // ---------------------------------------------------------------------------
-// Trends — compare ONE parameter across SEVERAL devices.
+// Customer Trends — compare ONE parameter across SEVERAL devices.
 // ---------------------------------------------------------------------------
+// Scoped to the customer's signed-in organization and accessible products.
 // Multi-device parameter visualizer with advanced layout modes:
 // 1. Combined View: Single shared-axis chart with interactive line isolation
-// 2. Split Stacked View: Separate row per device with synced time-axis (prevents overlap)
+// 2. Split Stacked View: Separate row per device with synced time-axis (no overlap)
 // 3. Grid View: Side-by-side comparative cards
 // ---------------------------------------------------------------------------
 
@@ -13,7 +14,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
+import { useSessionOrgId } from '@/lib/auth'
 import { useManagedDevices } from '@/lib/useManagedDevices'
+import { viewerDomains } from '@/lib/viewer'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { downloadCSV } from '@/lib/exportFile'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
@@ -22,7 +25,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Brush, AreaChart, Area,
 } from 'recharts'
 import {
-  Loader2, Download, Check, Layers, LayoutGrid, Rows, TrendingUp, Activity, Sparkles, AlertTriangle, Calendar, RefreshCw, Eye, EyeOff
+  Loader2, Download, Check, Layers, LayoutGrid, Rows, TrendingUp, Activity, Sparkles, Calendar, RefreshCw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -40,7 +43,6 @@ const RANGES = [
 
 type LayoutMode = 'combined' | 'split' | 'grid'
 
-/** High-contrast, distinguishable palette for up to 8 lines. */
 const LINE_COLORS = ['#6366f1', '#22d3ee', '#f97316', '#a78bfa', '#4ade80', '#fbbf24', '#ec4899', '#38bdf8']
 const MAX_DEVICES = 8
 const MAX_POINTS = 300
@@ -50,8 +52,8 @@ interface Loaded { id: string; name: string; rows: Row[] }
 
 const toUTC = (ms: number) => new Date(ms).toISOString()
 
-function deviceDetailRoute(domain: SensorDomain, id: string): string {
-  return domain === 'transformer' ? `/admin/transformers/detail?id=${encodeURIComponent(id)}` : `/admin/nodes/detail?id=${encodeURIComponent(id)}`
+function customerDeviceDetailRoute(domain: SensorDomain, id: string): string {
+  return domain === 'transformer' ? `/customer/transformers/detail?id=${encodeURIComponent(id)}` : `/customer/devices/detail?id=${encodeURIComponent(id)}`
 }
 
 function TrendsLegend({
@@ -99,10 +101,12 @@ function TrendsLegend({
   )
 }
 
-export default function TrendsPage() {
+export default function CustomerTrendsPage() {
   const live = useIsLive()
-  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
-  const orgId = selectedOrgId || 'org-1'
+  const orgId = useSessionOrgId()
+  const { viewerUserId } = useAppStore()
+  const allowed = viewerDomains(viewerUserId)
+
   const { devices } = useManagedDevices(orgId)
 
   const [domain, setDomain] = useState<SensorDomain>('transformer')
@@ -129,11 +133,19 @@ export default function TrendsPage() {
     ? (fromDisplayInput(customRange.to) - fromDisplayInput(customRange.from)) / 60_000
     : (RANGES.find((r) => r.id === rangeId)?.minutes ?? 1440)
 
-  const candidates = useMemo(() => devices.filter((d) => d.domain === domain), [devices, domain])
+  // Scope candidates to viewer's accessible domains
+  const candidates = useMemo(() => {
+    return devices.filter((d) => d.domain === domain && (!allowed.length || allowed.includes(d.domain as SensorDomain)))
+  }, [devices, domain, allowed])
+
   const domainsPresent = useMemo(() => {
-    const set = new Set(devices.map((d) => d.domain).filter(Boolean) as SensorDomain[])
+    const set = new Set(
+      devices
+        .map((d) => d.domain)
+        .filter((d): d is SensorDomain => Boolean(d) && (!allowed.length || allowed.includes(d as SensorDomain)))
+    )
     return set.size ? Array.from(set) : (['transformer'] as SensorDomain[])
-  }, [devices])
+  }, [devices, allowed])
 
   useEffect(() => {
     if (!domainsPresent.includes(domain)) {
@@ -381,7 +393,7 @@ export default function TrendsPage() {
             <input
               type="datetime-local"
               defaultValue={customRange?.from || toDisplayInput(Date.now() - 24 * 3600000)}
-              id="trends-from-dt"
+              id="cust-trends-from-dt"
               className="rounded-md px-2 py-1 text-slate-200 outline-none"
               style={inset}
             />
@@ -389,14 +401,14 @@ export default function TrendsPage() {
             <input
               type="datetime-local"
               defaultValue={customRange?.to || toDisplayInput(Date.now())}
-              id="trends-to-dt"
+              id="cust-trends-to-dt"
               className="rounded-md px-2 py-1 text-slate-200 outline-none"
               style={inset}
             />
             <button
               onClick={() => {
-                const f = (document.getElementById('trends-from-dt') as HTMLInputElement)?.value
-                const t = (document.getElementById('trends-to-dt') as HTMLInputElement)?.value
+                const f = (document.getElementById('cust-trends-from-dt') as HTMLInputElement)?.value
+                const t = (document.getElementById('cust-trends-to-dt') as HTMLInputElement)?.value
                 if (!f || !t) return
                 setCustomRange({ from: f, to: t })
                 setShowCustomPicker(false)
@@ -417,7 +429,7 @@ export default function TrendsPage() {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {candidates.length === 0 && (
-              <span className="text-xs text-slate-600">No {DOMAIN_META[domain].label.toLowerCase()} devices in this organization.</span>
+              <span className="text-xs text-slate-600">No devices available for this category in your access permissions.</span>
             )}
             {candidates.map((d) => {
               const on = picked.includes(d.id)
@@ -604,7 +616,7 @@ export default function TrendsPage() {
             </ResponsiveContainer>
           </div>
         ) : layoutMode === 'split' ? (
-          /* 2. Split Stacked Rows View — Separate chart per device (Zero Overlapping Lines!) */
+          /* 2. Split Stacked Rows View — Separate chart per device */
           <div className="space-y-4">
             {picked.map((id, i) => {
               const dev = devices.find((d) => d.id === id)
@@ -626,7 +638,7 @@ export default function TrendsPage() {
                       <span>Latest: <strong className="text-white">{devStat?.last != null ? `${devStat.last.toFixed(2)} ${param?.unit}` : '—'}</strong></span>
                       <span className="text-slate-400">Avg: <strong className="text-indigo-300">{devStat?.avg != null ? `${devStat.avg.toFixed(2)} ${param?.unit}` : '—'}</strong></span>
                       <span className="text-slate-400">Δ: <strong className="text-slate-300">{devStat?.delta != null ? `${devStat.delta.toFixed(2)} ${param?.unit}` : '—'}</strong></span>
-                      <Link href={deviceDetailRoute(domain, id)} className="text-[11px] text-indigo-400 hover:text-indigo-300 font-sans">
+                      <Link href={customerDeviceDetailRoute(domain, id)} className="text-[11px] text-indigo-400 hover:text-indigo-300 font-sans">
                         Details →
                       </Link>
                     </div>
@@ -635,7 +647,7 @@ export default function TrendsPage() {
                   <ResponsiveContainer width="100%" height={140}>
                     <AreaChart data={data} margin={{ top: 5, right: 10, bottom: 0, left: -10 }}>
                       <defs>
-                        <linearGradient id={`grad-${id}`} x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id={`cust-grad-${id}`} x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor={color} stopOpacity={0.3} />
                           <stop offset="95%" stopColor={color} stopOpacity={0} />
                         </linearGradient>
@@ -675,7 +687,7 @@ export default function TrendsPage() {
                         stroke={color}
                         strokeWidth={2}
                         fillOpacity={1}
-                        fill={`url(#grad-${id})`}
+                        fill={`url(#cust-grad-${id})`}
                         isAnimationActive={false}
                       />
                     </AreaChart>
@@ -685,7 +697,7 @@ export default function TrendsPage() {
             })}
           </div>
         ) : (
-          /* 3. Grid Matrix View (Side by side cards) */
+          /* 3. Grid Matrix View */
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
             {picked.map((id, i) => {
               const dev = devices.find((d) => d.id === id)
@@ -773,7 +785,7 @@ export default function TrendsPage() {
                         {s.last === null ? '—' : s.last.toFixed(2)}
                       </td>
                       <td className="py-2.5 px-4 text-right font-sans">
-                        <Link href={deviceDetailRoute(domain, s.id)} className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium">
+                        <Link href={customerDeviceDetailRoute(domain, s.id)} className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium">
                           Open Device →
                         </Link>
                       </td>
