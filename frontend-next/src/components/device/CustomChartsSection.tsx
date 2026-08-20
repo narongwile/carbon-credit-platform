@@ -13,10 +13,11 @@ import { api, useIsLive, type ChartDefinition } from '@/lib/api'
 import type { SensorDomain } from '@/types/fleet'
 import { fmtHM, fmtDayMonth } from '@/lib/displayTime'
 import ChartBuilderModal, { type AvailableParam } from './ChartBuilderModal'
+import ChartAnalysisModal from './ChartAnalysisModal'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { Plus, Pencil, LayoutDashboard } from 'lucide-react'
+import { Plus, Pencil, LayoutDashboard, Maximize2 } from 'lucide-react'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const tooltipStyle = { background: '#0d1117', border: '1px solid #1e2433', borderRadius: '8px', fontSize: '11px' }
@@ -232,6 +233,7 @@ export default function CustomChartsSection({
   const live = useIsLive()
   const [charts, setCharts] = useState<ChartDefinition[] | null>(null)
   const [editing, setEditing] = useState<ChartDefinition | 'new' | null>(null)
+  const [expanded, setExpanded] = useState<ChartDefinition | null>(null)
 
   const reload = useCallback(() => {
     if (!live) { setCharts([]); return }
@@ -278,12 +280,18 @@ export default function CustomChartsSection({
             <div key={c.id} className="rounded-xl p-3" style={inset}>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[11px] font-medium text-slate-200 truncate">{c.title}</div>
-                {canConfigure && (
-                  <button onClick={() => setEditing(c)} title="Edit this chart"
-                    className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5 shrink-0">
-                    <Pencil size={11} />
+                <div className="flex items-center gap-0.5 shrink-0">
+                  <button onClick={() => setExpanded(c)} title="Expand — chart visualize analysis"
+                    className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5">
+                    <Maximize2 size={11} />
                   </button>
-                )}
+                  {canConfigure && (
+                    <button onClick={() => setEditing(c)} title="Edit this chart"
+                      className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5">
+                      <Pencil size={11} />
+                    </button>
+                  )}
+                </div>
               </div>
               <MultiParamChart nodeId={nodeId} chart={c} paramByKey={paramByKey} />
             </div>
@@ -300,6 +308,15 @@ export default function CustomChartsSection({
           existing={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); reload() }}
+        />
+      )}
+
+      {expanded && (
+        <ChartAnalysisModal
+          nodeId={nodeId}
+          chart={expanded}
+          paramByKey={paramByKey}
+          onClose={() => setExpanded(null)}
         />
       )}
     </div>
