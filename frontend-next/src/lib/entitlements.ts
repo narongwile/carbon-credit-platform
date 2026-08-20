@@ -15,12 +15,14 @@ const PLATFORM_LEGACY: Record<PlatformType, string> = {
   refrigerationDataLogger: 'carbonbox',
   bloodBox: 'bloodbox',
   eternityTransformers: 'eternity',
+  automobile: 'automobile',
 }
 
 export const DOMAIN_TO_PLATFORM: Record<SensorDomain, PlatformType> = {
   transformer: 'eternityTransformers',
   carbonNode: 'refrigerationDataLogger',
   bloodBox: 'bloodBox',
+  automobile: 'automobile',
 }
 
 export const getOrg = (orgId: string) => organizations.find((o) => o.id === orgId)
@@ -77,7 +79,7 @@ export function isFeatureEnabled(orgId: string, featureName: string): boolean {
 
 /** Sensor domains the org is licensed for. */
 export function licensedDomains(orgId: string): SensorDomain[] {
-  return (['transformer', 'carbonNode', 'bloodBox'] as SensorDomain[]).filter((d) => isDomainLicensed(orgId, d))
+  return (['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[]).filter((d) => isDomainLicensed(orgId, d))
 }
 
 // What a nav item / page requires to be visible.

@@ -94,7 +94,7 @@ if [ -n "${HTTPS_PROXY:-}${https_proxy:-}" ]; then
 fi
 
 info "building ${IMAGE}:${TAG}"
-docker build "${BUILD_NET_ARGS[@]}" -t "${IMAGE}:latest" -t "${IMAGE}:${TAG}" "$BUILD_DIR"
+docker build ${BUILD_NET_ARGS[@]+"${BUILD_NET_ARGS[@]}"} -t "${IMAGE}:latest" -t "${IMAGE}:${TAG}" "$BUILD_DIR"
 
 info "pushing ${IMAGE}:latest"
 docker push "${IMAGE}:latest"

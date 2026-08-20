@@ -61,11 +61,11 @@ export default function MapSearchBar({
   }
 
   return (
-    <div ref={containerRef} className="relative z-[1000] w-full max-w-sm">
+    <div ref={containerRef} className="relative z-[1500] w-full max-w-sm">
       <div
         className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs shadow-lg transition-all"
         style={{
-          background: 'rgba(13, 17, 23, 0.92)',
+          background: 'rgba(13, 17, 23, 0.95)',
           backdropFilter: 'blur(8px)',
           border: '1px solid #1e2433',
         }}
@@ -88,11 +88,11 @@ export default function MapSearchBar({
 
       {open && results.length > 0 && (
         <div
-          className="absolute left-0 right-0 top-full mt-1.5 rounded-lg overflow-hidden shadow-2xl z-[1001]"
+          className="absolute left-0 right-0 top-full mt-1.5 rounded-lg overflow-hidden shadow-2xl z-[2000]"
           style={{
             background: '#0d1117',
             border: '1px solid #1e2433',
-            maxHeight: '220px',
+            maxHeight: '260px',
             overflowY: 'auto',
           }}
         >

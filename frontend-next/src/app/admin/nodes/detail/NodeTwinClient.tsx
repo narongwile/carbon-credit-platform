@@ -66,7 +66,7 @@ export default function NodeTwinClient() {
       {/* Which of the customer's sites this unit is at, and what else is there.
           ETERNITY's customers run from one substation to a dozen plants, so the
           device page has to answer that without a detour through Sites. */}
-      <NodeSitePanel nodeId={device.id} orgId={device.orgId} currentSiteId={device.siteId} />
+      <NodeSitePanel nodeId={device.id} orgId={device.orgId} currentSiteId={device.siteId} domain={device.domain} />
 
       <NodeDocuments nodeId={device.id} orgId={device.orgId} deviceName={device.name} />
 

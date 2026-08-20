@@ -14,6 +14,7 @@ export type PlatformType =
   | 'refrigerationDataLogger'
   | 'bloodBox'
   | 'eternityTransformers'
+  | 'automobile'
 
 export interface PlatformFeatureTemplate {
   name: string
@@ -104,6 +105,26 @@ export const PLATFORM_TEMPLATES: PlatformTemplate[] = [
       { name: 'AI Predictive Diagnostics', category: 'ai', defaultEnabled: false },
       { name: 'Historical Analytics', category: 'analytics', defaultEnabled: true },
       { name: 'Report Generation', category: 'reporting', defaultEnabled: true },
+    ],
+  },
+  {
+    id: 'automobile',
+    name: 'Formula EV & Driver Fatigue 1D-CNN (NAT)',
+    shortName: 'Formula EV',
+    sensorType: 'Neuro-Adaptive Telemetry (CAN-Bus + EEG + HRV)',
+    description:
+      'Formula EV racing telemetry and real-time Driver Fatigue prediction using 1D-CNN deep learning neural networks. Synchronizes vehicle CAN-Bus with 4-channel Muse EEG and Coospo HRV biosignals.',
+    icon: 'Car',
+    accent: '#f59e0b',
+    metrics: ['Fatigue Risk (%)', 'Heart Rate & HRV (ms)', '4-Ch EEG Band Power', 'Speed & Steering Dynamics'],
+    moduleRoute: '/admin/automobile',
+    status: 'live',
+    features: [
+      { name: '1D-CNN Fatigue Prediction', category: 'ai', defaultEnabled: true },
+      { name: 'Live 4-Ch EEG Spectral Radar', category: 'neuro', defaultEnabled: true },
+      { name: 'CAN-Bus Formula EV Telemetry', category: 'telemetry', defaultEnabled: true },
+      { name: 'Driver Vitals & HRV Analytics', category: 'vitals', defaultEnabled: true },
+      { name: 'Microsleep Early Alarm System', category: 'safety', defaultEnabled: true },
     ],
   },
 ]

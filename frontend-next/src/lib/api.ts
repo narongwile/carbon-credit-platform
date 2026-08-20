@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import type { NodeAlarmRule } from '@/server/alarmEngine'
+import type { SensorDomain } from '@/types/fleet'
 import { useAppStore } from './store'
 
 /** An admin-defined, per-device chart: a named, ordered selection of this
@@ -415,6 +416,18 @@ export const api = {
     req<{ ok: boolean; count: number; departmentId: string | null }>(
       `/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels, departmentId: departmentId ?? null }) }),
   /**
+   * Enterprise Email Alarm Template & Custom SOP Message Configuration
+   */
+  emailTemplate: (orgId: string) =>
+    req<{ subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' }>(
+      `/api/orgs/${orgId}/email-template`),
+  putEmailTemplate: (orgId: string, template: { subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' }) =>
+    req<{ ok: boolean; template: { subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' } }>(
+      `/api/orgs/${orgId}/email-template`, { method: 'PUT', body: JSON.stringify(template) }),
+  testEmailTemplate: (orgId: string, payload: { targetEmail: string; subjectTemplate: string; customHeaderNote?: string; customFooterSop?: string; includeActionLink?: boolean; format?: 'html' | 'text' }) =>
+    req<{ ok: boolean; sentTo: string; subject: string }>(
+      `/api/orgs/${orgId}/email-template/test`, { method: 'POST', body: JSON.stringify(payload) }),
+  /**
    * Which parameters SENSOR READINGS shows. Resolved per department, most
    * specific first: device+department -> device -> organization+department ->
    * organization -> none. A user in several departments gets the union, the
@@ -488,7 +501,7 @@ export const api = {
       param_key: string; param_label: string; severity: 'WARNING' | 'CRITICAL'; kind: string
       value: number; threshold: number; unit: string | null; raised_at: string
       acknowledged_at: string | null; acknowledged_by: string | null; event_problem_id: string | null
-      cleared_at: string | null; domain: 'transformer' | 'carbonNode' | 'bloodBox'; node_name: string
+      cleared_at: string | null; domain: SensorDomain; node_name: string
     }[]>(`/api/orgs/${orgId}/alarms${open ? '?open=1' : ''}`),
   // Link switches + offline-backlog flushes for a device (transport_events
   // merged with offline_sync_log), newest first.
@@ -1106,7 +1119,7 @@ export const api = {
    */
   myAccess: () => req<{
     userId: string; orgId: string; role: string; departmentIds: string[]; themeIds: string[]
-    levels: Partial<Record<'transformer' | 'carbonNode' | 'bloodBox', 'none' | 'view' | 'manage'>>
+    levels: Partial<Record<SensorDomain, 'none' | 'view' | 'manage'>>
   }>(`/api/me/access`),
   // departmentIds is the real assignment (migrate-v25). departmentId is still
   // sent so a backend without that table keeps the primary one.
@@ -1159,7 +1172,7 @@ export const api = {
 export interface FleetNode {
   id: string
   name: string
-  domain: 'transformer' | 'carbonNode' | 'bloodBox'
+  domain: SensorDomain
   site_id: string | null
   department_id: string | null
   lat: number | null
@@ -1177,6 +1190,8 @@ export interface FleetNode {
    * (device_presence.last_sample) — the real count of what it's actually
    * publishing right now, not a fixed per-domain guess. */
   sensor_count?: number
+  /** Real sensor values from device_presence.last_sample */
+  last_sample?: Record<string, number> | null
 }
 
 /** How a schedule decides who receives it. See migrate-v41. */

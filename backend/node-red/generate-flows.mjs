@@ -20,17 +20,26 @@ const MQTT_HOST = process.env.MQTT_HOST || 'mqtt.data.svc.cluster.local'
 const MQTT_PORT = process.env.MQTT_PORT || '1883'
 const MQTT_TOPIC = process.env.MQTT_TOPIC || 'telemetry/#'
 
-const normalizeFn = `// Accepts either JSON {nodeId, values, ts} or topic telemetry/<nodeId>/<param> = number
+const normalizeFn = `// Accepts either JSON {nodeId/node_id/device_id, values, ts} or topic telemetry/<org>/<product>/<nodeId> or telemetry/<nodeId>/<param> = number
 let nodeId, values, ts = Date.now();
-if (msg.payload && typeof msg.payload === 'object' && msg.payload.nodeId) {
-  nodeId = msg.payload.nodeId; values = msg.payload.values || {}; ts = msg.payload.ts || ts;
+if (msg.payload && typeof msg.payload === 'object' && (msg.payload.nodeId || msg.payload.node_id || msg.payload.device_id)) {
+  nodeId = msg.payload.nodeId || msg.payload.node_id || msg.payload.device_id;
+  values = msg.payload.values || {};
+  ts = msg.payload.ts || ts;
 } else {
-  const p = (msg.topic || '').split('/');   // telemetry/<nodeId>/<param>
-  nodeId = p[1]; values = { [p[2]]: Number(msg.payload) };
+  const p = (msg.topic || '').split('/');
+  if (p.length >= 4) {
+    nodeId = p[3];
+    values = (msg.payload && typeof msg.payload === 'object' && msg.payload.values) ? msg.payload.values : (typeof msg.payload === 'object' ? msg.payload : {});
+    ts = (msg.payload && msg.payload.ts) ? msg.payload.ts : ts;
+  } else if (p.length === 3) {
+    nodeId = p[1];
+    values = { [p[2]]: Number(msg.payload) };
+  }
 }
 if (!nodeId) { return null; }
 msg.method = 'POST';
-msg.url = '${BACKEND_URL}/api/nodes/' + nodeId + '/readings';
+msg.url = '${BACKEND_URL}/api/nodes/' + encodeURIComponent(nodeId) + '/readings';
 msg.headers = { 'content-type': 'application/json' };
 msg.payload = { values, ts };
 return msg;`

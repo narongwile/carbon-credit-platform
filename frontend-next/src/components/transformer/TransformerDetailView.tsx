@@ -37,8 +37,10 @@ import {
 import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
-  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2
+  ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
+  BarChart2, FileText
 } from 'lucide-react'
+import clsx from 'clsx'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
 
@@ -171,8 +173,10 @@ function useLiveTransformer(base: Transformer | undefined) {
     const loadLatest = () => {
       api.latest(id).then((r) => {
         if (cancelled || !r) return
-        if (r.values) setValues(r.values)
-        setLastReadingAt(r.lastReadingAt ?? null)
+        if (r.values && Object.keys(r.values).length > 0) {
+          setValues((prev) => ({ ...(prev || {}), ...r.values }))
+        }
+        if (r.lastReadingAt) setLastReadingAt(r.lastReadingAt)
       })
     }
     // 48 buckets over 12h = one point per 15 minutes, which is exactly what the
@@ -188,8 +192,8 @@ function useLiveTransformer(base: Transformer | undefined) {
     // fallback for when it is down. A frame lands the moment the device
     // publishes, with no interval in between.
     const off = subscribeTelemetry((f) => {
-      if (f.id !== id || f.type === 'alarm' || !f.values) return
-      setValues(f.values)
+      if (f.id !== id || f.type === 'alarm' || !f.values || !Object.keys(f.values).length) return
+      setValues((prev) => ({ ...(prev || {}), ...f.values }))
       setLastReadingAt(new Date().toISOString())
     })
     // A tab in the background has its timers throttled to ~1/min by the
@@ -609,6 +613,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // per-device coordinate widget below can resolve the site it belongs to.
   const siteId = useMemo(() => hosts.find((h) => h.id === id && h.domain === 'transformer')?.siteId, [hosts, id])
   const { transformer, live, online, lastReadingAt, values, series } = useLiveTransformer(base)
+  const displayLocation = useMemo(() => {
+    if (transformer?.location && transformer.location !== '—') return transformer.location
+    const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
+    if (host?.lat != null && host?.lng != null) {
+      return `${Number(host.lat).toFixed(4)}, ${Number(host.lng).toFixed(4)}`
+    }
+    if (transformer?.lat != null && transformer?.lng != null) {
+      return `${Number(transformer.lat).toFixed(4)}, ${Number(transformer.lng).toFixed(4)}`
+    }
+    return '—'
+  }, [transformer?.location, transformer?.lat, transformer?.lng, hosts, id])
   const [openParam, setOpenParam] = useState<string | null>(null)
   const [showKeys, setShowKeys] = useState<string[] | null>(null)
   const [picking, setPicking] = useState(false)
@@ -633,6 +648,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // another org's device needs THAT org's toggle, not their own selected one.
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
   const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
+  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs'>('overview')
   // card = a full SensorCard (icon, number, sparkline); list = a dense row
   // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
   // device's twenty-odd secondary values do not each cost a full card's worth
@@ -818,7 +834,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         <div className="h-4 w-px" style={{ background: '#1e2433' }} />
         <div className="flex items-center gap-1.5 text-xs text-slate-500">
           <MapPin size={11} />
-          {transformer.location}
+          {displayLocation}
         </div>
         <div className="ml-auto flex items-center gap-3">
           {/* Was a permanently spinning "Live" — it said nothing about the device. */}
@@ -838,10 +854,69 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         </div>
       </div>
 
-      {/* Main content - 3 column layout */}
-      <div className="flex gap-0 overflow-hidden min-h-0 flex-shrink-0" style={{ height: 'clamp(520px, calc(100vh - 160px), 900px)' }}>
-        {/* Left panel - sensor cards */}
-        <div className="w-56 flex-shrink-0 p-3 space-y-2 overflow-y-auto" style={{ borderRight: '1px solid #1e2433' }}>
+      {/* Mobile Tab Switcher (< lg screen) */}
+      <div className="lg:hidden flex items-center justify-between bg-[#0d1117] border-b border-[#1e2433] p-1.5 sticky top-0 z-20 overflow-x-auto gap-1">
+        {[
+          { id: 'overview', label: 'Overview', icon: <Activity size={13} /> },
+          { id: 'visuals', label: '3D & Assets', icon: <Camera size={13} /> },
+          { id: 'charts', label: 'Charts', icon: <BarChart2 size={13} /> },
+          { id: 'logs', label: 'Logs & Docs', icon: <FileText size={13} /> },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setMobileTab(tab.id as any)}
+            className={clsx(
+              'flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap',
+              mobileTab === tab.id
+                ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            {tab.icon}
+            <span>{tab.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Main content - responsive layout (tabbed on mobile, 3-column on lg) */}
+      <div className="flex flex-col lg:flex-row gap-0 overflow-y-auto lg:overflow-hidden min-h-0 flex-1" style={{ minHeight: '520px' }}>
+        {/* Left panel - sensor cards (and mobile overview top summary) */}
+        <div className={clsx(
+          'w-full lg:w-56 flex-shrink-0 p-3 space-y-2 overflow-visible lg:overflow-y-auto border-b lg:border-b-0',
+          mobileTab === 'overview' ? 'block' : 'hidden lg:block'
+        )} style={{ borderRight: '1px solid #1e2433' }}>
+          {/* Mobile-only Health & Connection Summary on Overview Tab */}
+          <div className="lg:hidden space-y-2 pb-2 mb-2 border-b border-[#1e2433]">
+            <div className="grid grid-cols-2 gap-2">
+              {/* Connection Status */}
+              <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] text-slate-400">Connection</span>
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                    <span className={`text-[11px] font-bold ${online ? 'text-green-400' : 'text-slate-500'}`}>
+                      {online ? 'ONLINE' : 'OFFLINE'}
+                    </span>
+                  </div>
+                </div>
+                {live && lastReadingAt
+                  ? <div className="text-[10px] text-slate-600">{fmtDateTime(lastReadingAt)}</div>
+                  : <LiveTime />}
+              </div>
+
+              {/* Health Gauge */}
+              <div className="rounded-xl p-3 flex items-center justify-center" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+                <HealthGauge value={transformer.healthIndex} />
+              </div>
+            </div>
+
+            {/* Active Alarms Widget */}
+            <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+              <div className="text-[10px] text-slate-600 uppercase tracking-wider mb-1.5">Active Alarms</div>
+              {live ? <LiveActiveAlarms nodeId={transformer.id} /> : <ActiveAlarms transformerId={transformer.id} />}
+            </div>
+          </div>
+
           <div className="flex items-center gap-2 mb-2">
             <div className="text-[10px] text-slate-600 uppercase tracking-wider">Sensor Readings</div>
             {canConfigure && live && (
@@ -851,17 +926,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               </button>
             )}
           </div>
-          {/* One card per parameter the device actually reports — schema slots
-              (with thresholds and status colour) first, then everything else.
-              No fixed six, and nothing drawn for a slot this unit never
-              sends. A parameter the admin demoted to a compact row (below)
-              never gets a card here — the split is what Configure sets. */}
+          {/* One card per parameter the device actually reports */}
           {bigCards.map((c) => (
             <SensorCard key={c.key} label={c.label} icon={c.icon} sensor={c.reading} onOpen={() => setOpenParam(c.key)} />
           ))}
-          {/* The list-tier: same click-for-history behaviour as a card, at a
-              fraction of the space — where the twenty-odd secondary values on
-              a merged transformer actually belong. */}
           <SensorListSection
             items={listCards.map((c) => ({ key: c.key, label: c.label, value: c.reading.value, unit: c.reading.unit, status: c.reading.status }))}
             onOpen={setOpenParam} />
@@ -872,28 +940,77 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           )}
         </div>
 
-        {/* Center - 3D model + charts */}
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {/* The device photos (admin-uploaded), same as FixDashboard's twin
-              slot — this page never picked up that fix when node_images shipped
-              (migrate-v27), so a photographed unit still rendered the generic 3D
-              model here regardless. The 3D canvas is now the FALLBACK, shown
-              (and labelled "Generic model — not this unit" by
-              DevicePhotoGallery itself) only until a photo exists, exactly like
-              the FIX theme. */}
-          <div className="flex-1 relative" style={{ minHeight: '320px' }}>
+        {/* Center - 3D model + charts + custom charts */}
+        <div className={clsx(
+          'flex-1 flex flex-col overflow-y-auto min-w-0',
+          (mobileTab === 'visuals' || mobileTab === 'charts') ? 'flex' : 'hidden lg:flex'
+        )}>
+          {/* 3D / Photo Gallery (Visible on Desktop OR when mobileTab === 'visuals') */}
+          <div className={clsx(
+            'relative h-[260px] sm:h-[320px] lg:min-h-[320px] flex-shrink-0',
+            mobileTab === 'visuals' ? 'block' : 'hidden lg:block'
+          )}>
             <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, #0a0e1a 0%, #0d1117 50%, #0a0e1a 100%)' }}>
               <DevicePhotoGallery nodeId={id} orgId={transformer.orgId} deviceName={transformer.name}
                 fallback={show3d ? <Transformer3D transformer={transformer} /> : <NoPhotoPlaceholder />} />
             </div>
           </div>
 
-          {/* Charts */}
-          {/* Titles and the click target follow whatever these charts actually
-              drew, so the heading can no longer promise "Oil Temperature" on a
-              device that reports none, and clicking always opens a parameter
-              with real stored history behind it. */}
-          <div className="flex-shrink-0 grid grid-cols-2 gap-0" style={{ borderTop: '1px solid #1e2433' }}>
+          {/* Mobile-only Asset Info & Location when mobileTab === 'visuals' */}
+          <div className="lg:hidden p-3 space-y-3" style={mobileTab === 'visuals' ? { display: 'block' } : { display: 'none' }}>
+            {/* Transformer info */}
+            <div className="rounded-xl p-3 space-y-2" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] text-slate-600 uppercase tracking-wider">Asset Info</div>
+                <div className="flex items-center gap-1.5">
+                  {sizeClass && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium text-indigo-300" style={{ background: 'rgba(99,102,241,0.12)' }}>
+                      {TRANSFORMER_CLASS_LABEL[sizeClass]}
+                    </span>
+                  )}
+                  {canConfigure && live && (
+                    <button onClick={() => setEditingDeptAccess(true)} title="Configure department access"
+                      className="text-slate-500 hover:text-indigo-400 flex-shrink-0">
+                      <Users size={11} />
+                    </button>
+                  )}
+                  {canConfigure && live && (
+                    <button onClick={() => setEditingNameplate(true)} title="Edit nameplate"
+                      className="text-slate-500 hover:text-indigo-400 flex-shrink-0">
+                      <Pencil size={11} />
+                    </button>
+                  )}
+                </div>
+              </div>
+              {[
+                { icon: <Hash size={10} />, label: 'ID', value: transformer.name },
+                { icon: <Building2 size={10} />, label: 'Model', value: nameplate?.resolved?.model || nameplate?.model || transformer.model || 'Not entered' },
+                { icon: <Zap size={10} />, label: 'Rating', value: (nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva) != null ? `${nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva} kVA` : (transformer.kva ? `${transformer.kva} kVA` : 'Not entered') },
+                { icon: <Activity size={10} />, label: 'Voltage', value: nameplate?.resolved?.voltageClass || nameplate?.voltageClass || transformer.voltage || 'Not entered' },
+                { icon: <Wind size={10} />, label: 'Cooling', value: nameplate?.resolved?.coolingType || nameplate?.coolingType || 'Not entered' },
+                { icon: <Building2 size={10} />, label: 'Mfg.', value: nameplate?.resolved?.manufacturer || nameplate?.manufacturer || transformer.manufacturer || 'Not entered' },
+                { icon: <Calendar size={10} />, label: 'Installed', value: nameplate?.yearInstalled ? String(nameplate.yearInstalled) : (transformer.installDate || 'Not entered') },
+                { icon: <Hash size={10} />, label: 'S/N', value: nameplate?.serialNumber || transformer.serialNumber || 'Not entered' },
+              ].map((item) => (
+                <div key={item.label} className="flex items-start gap-2">
+                  <span className="text-slate-600 mt-0.5 flex-shrink-0">{item.icon}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[10px] text-slate-600">{item.label}</div>
+                    <div className={`text-[11px] truncate ${item.value === 'Not entered' ? 'text-slate-600 italic' : 'text-slate-300'}`}>{item.value}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Device Location */}
+            <DeviceLocationCard nodeId={transformer.id} orgId={orgId} siteId={siteId} canConfigure={canConfigure} />
+          </div>
+
+          {/* Charts (Visible on Desktop OR when mobileTab === 'charts') */}
+          <div className={clsx(
+            'flex-shrink-0 grid grid-cols-1 sm:grid-cols-2 gap-0 border-t border-slate-800',
+            mobileTab === 'charts' ? 'grid' : 'hidden lg:grid'
+          )} style={{ borderTop: '1px solid #1e2433' }}>
             {[[chartSlots[0], chartSlots[1]], [chartSlots[2], chartSlots[3]]].map(([a, b], i) => {
               const title = [a?.label, b?.label].filter(Boolean).join(' & ') || 'No parameters'
               const target = a?.key ?? b?.key ?? null
@@ -904,23 +1021,28 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     <div className="text-[10px] text-slate-500 uppercase tracking-wider group-enabled:group-hover:text-indigo-400 truncate">{title}</div>
                     {target && <div className="text-[10px] text-slate-600 group-hover:text-indigo-400 flex-shrink-0 ml-2">Last 12h · click for history</div>}
                   </button>
-                  <TrendChart a={a} b={b} />
+                  <div className="w-full min-w-0 h-[100px]">
+                    <TrendChart a={a} b={b} />
+                  </div>
                 </div>
               )
             })}
           </div>
 
-          <CustomChartsSection
-            nodeId={transformer.id}
-            orgId={transformer.orgId}
-            domain="transformer"
-            availableParams={modalParams}
-            canConfigure={canConfigure}
-          />
+          {/* Custom Charts Section (Visible on Desktop OR when mobileTab === 'charts') */}
+          <div className={mobileTab === 'charts' ? 'block' : 'hidden lg:block'}>
+            <CustomChartsSection
+              nodeId={transformer.id}
+              orgId={transformer.orgId}
+              domain="transformer"
+              availableParams={modalParams}
+              canConfigure={canConfigure}
+            />
+          </div>
         </div>
 
-        {/* Right panel - info + health + alarms */}
-        <div className="w-56 flex-shrink-0 overflow-y-auto p-3 space-y-3" style={{ borderLeft: '1px solid #1e2433' }}>
+        {/* Right panel - info + health + alarms (Desktop 3rd column) */}
+        <div className="hidden lg:block w-56 flex-shrink-0 overflow-y-auto p-3 space-y-3" style={{ borderLeft: '1px solid #1e2433' }}>
           {/* Health gauge */}
           <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <HealthGauge value={transformer.healthIndex} />
@@ -930,8 +1052,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           <div className="rounded-xl p-3" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-slate-400">Connection</span>
-              {/* Was hardcoded ONLINE. Derived from the last stored reading so a
-                  silent device reads OFFLINE here as well as in the Event Log. */}
               <div className="flex items-center gap-1.5">
                 <div className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
                 <span className={`text-xs ${online ? 'text-green-400' : 'text-slate-500'}`}>
@@ -944,10 +1064,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               : <LiveTime />}
           </div>
 
-          {/* Transformer info — real nameplate (node_nameplates) overrides the
-              seed/placeholder fields additively wherever an admin has entered
-              one. "Not entered" replaces what used to be a 0/'—' placeholder
-              or, on FixDashboard's twin, an outright fabricated value. */}
+          {/* Transformer info */}
           <div className="rounded-xl p-3 space-y-2" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <div className="flex items-center justify-between mb-2">
               <div className="text-[10px] text-slate-600 uppercase tracking-wider">Asset Info</div>
@@ -973,9 +1090,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             </div>
             {[
               { icon: <Hash size={10} />, label: 'ID', value: transformer.name },
-              // resolved.X is override ?? catalog model's value (migrate-v32);
-              // falls back to the raw field for a backend not yet migrated,
-              // then to the seed placeholder, same as before this existed.
               { icon: <Building2 size={10} />, label: 'Model', value: nameplate?.resolved?.model || nameplate?.model || transformer.model || 'Not entered' },
               { icon: <Zap size={10} />, label: 'Rating', value: (nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva) != null ? `${nameplate?.resolved?.ratedKva ?? nameplate?.ratedKva} kVA` : (transformer.kva ? `${transformer.kva} kVA` : 'Not entered') },
               { icon: <Activity size={10} />, label: 'Voltage', value: nameplate?.resolved?.voltageClass || nameplate?.voltageClass || transformer.voltage || 'Not entered' },
@@ -994,9 +1108,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             ))}
           </div>
 
-          {/* Device Location — a real map + the device's own coordinate (with
-              a site fallback), not the text-only jittered mock this used to
-              show. See DeviceLocationCard for why two coordinates exist. */}
+          {/* Device Location */}
           <DeviceLocationCard nodeId={transformer.id} orgId={orgId} siteId={siteId} canConfigure={canConfigure} />
 
           {/* Active Alarms */}
@@ -1044,10 +1156,9 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         />
       )}
 
-      {/* Site management + Alarm event log + transport/connectivity timeline (same components the
-          generic node page uses, so both routes stay in step). */}
-      <div className="p-4 space-y-4">
-        <NodeSitePanel nodeId={transformer.id} orgId={transformer.orgId} currentSiteId={siteId} deviceHref="/admin/transformers/detail" />
+      {/* Site management + Alarm event log + transport/connectivity timeline (Mobile logs tab / Desktop bottom) */}
+      <div className={clsx('p-4 space-y-4', mobileTab === 'logs' ? 'block' : 'hidden lg:block')}>
+        <NodeSitePanel nodeId={transformer.id} orgId={transformer.orgId} currentSiteId={siteId} domain="transformer" deviceHref="/admin/transformers/detail" />
         <NodeDocuments nodeId={transformer.id} orgId={transformer.orgId} deviceName={transformer.name} />
         <NodeEventLog
           nodeId={transformer.id}

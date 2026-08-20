@@ -21,6 +21,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
+import { useAppStore } from '@/lib/store'
 import { fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import { X, Download, Send, Loader2, FileText, Table, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -52,6 +53,9 @@ const QUICK = [
 export default function DeviceExportDialog({
   nodeId, deviceName, onClose,
 }: { nodeId: string; deviceName: string; onClose: () => void }) {
+  const { selectedOrgId, orgNames } = useAppStore()
+  const orgName = orgNames[selectedOrgId] || 'ETERNITY'
+
   // Default to the last 24h, expressed in DISPLAY_TZ wall clock so the pickers
   // agree with every timestamp shown elsewhere on the page.
   const [from, setFrom] = useState(() => toDisplayInput(Date.now() - 24 * 3600_000))
@@ -60,7 +64,7 @@ export default function DeviceExportDialog({
   const [wantPdf, setWantPdf] = useState(true)
   const [channel, setChannel] = useState<Channel>('email')
   const [target, setTarget] = useState('')
-  const [subject, setSubject] = useState(`ONEOPS export — ${deviceName}`)
+  const [subject, setSubject] = useState(`${orgName} export — ${deviceName}`)
   const [note, setNote] = useState('')
   const [rows, setRows] = useState<{ param_key: string; value: number; taken_at: string }[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -94,7 +98,7 @@ export default function DeviceExportDialog({
     const autoTable = (await import('jspdf-autotable')).default
     const doc = new jsPDF()
     doc.setFontSize(16); doc.setTextColor(99, 102, 241)
-    doc.text('ONEOPS — Device Export', 14, 18)
+    doc.text(`${orgName} — Device Export`, 14, 18)
     doc.setFontSize(10); doc.setTextColor(90, 90, 90)
     doc.text(`Device: ${deviceName}`, 14, 27)
     doc.text(`Window: ${from} → ${to} (${DISPLAY_TZ_LABEL})`, 14, 33)
@@ -121,7 +125,7 @@ export default function DeviceExportDialog({
     fr.readAsDataURL(b)
   })
 
-  const stamp = `${deviceName.replace(/\s+/g, '_')}_${from.slice(0, 10)}_${to.slice(0, 10)}`
+  const stamp = `${orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_${deviceName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_${from.slice(0, 10)}_${to.slice(0, 10)}`
 
   const download = async () => {
     if (!wantCsv && !wantPdf) { toast.error('Pick at least one format'); return }

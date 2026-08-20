@@ -21,6 +21,8 @@
 import { useCallback, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import { useFleetLive, fleetToGeoNodes } from '@/lib/useFleetLive'
+import { reverseGeocode } from '@/lib/geoAddress'
+import type { SensorDomain } from '@/types/fleet'
 import toast from 'react-hot-toast'
 
 export type PlacementMode = 'sequential' | 'same-point'
@@ -32,9 +34,18 @@ export interface PlacementSession {
   index: number
 }
 
+export interface PendingPlacement {
+  lat: number
+  lng: number
+  address: string | null
+  loadingAddress: boolean
+  devices: { id: string; name: string; domain: SensorDomain }[]
+}
+
 export function usePlacementSession(orgId: string) {
   const { byId, loaded, reload } = useFleetLive(orgId)
   const [session, setSession] = useState<PlacementSession | null>(null)
+  const [pending, setPending] = useState<PendingPlacement | null>(null)
   const [busy, setBusy] = useState(false)
 
   const devices = useMemo(
@@ -48,14 +59,52 @@ export function usePlacementSession(orgId: string) {
   const start = useCallback((ids: string[], mode: PlacementMode) => {
     if (!ids.length) return
     setSession({ mode, ids, index: 0 })
+    setPending(null)
   }, [])
 
-  const stop = useCallback(() => setSession(null), [])
+  const stop = useCallback(() => {
+    setSession(null)
+    setPending(null)
+  }, [])
 
   const current = session ? byId.get(session.ids[session.index]) : null
 
+  // Triggered when user clicks the map or enters coordinates: Previews the location info first
   const pick = useCallback(async (lat: number, lng: number) => {
     if (!session || busy) return
+
+    const targetDevices = session.mode === 'same-point'
+      ? session.ids.map((id) => {
+          const d = byId.get(id)
+          return { id, name: d?.name ?? id, domain: d?.domain ?? ('transformer' as SensorDomain) }
+        })
+      : (() => {
+          const id = session.ids[session.index]
+          const d = byId.get(id)
+          return [{ id, name: d?.name ?? id, domain: d?.domain ?? ('transformer' as SensorDomain) }]
+        })()
+
+    setPending({
+      lat,
+      lng,
+      address: null,
+      loadingAddress: true,
+      devices: targetDevices,
+    })
+
+    const addr = await reverseGeocode(lat, lng)
+    setPending((p) => (p && p.lat === lat && p.lng === lng ? { ...p, address: addr, loadingAddress: false } : p))
+  }, [session, busy, byId])
+
+  // Cancel pending preview without saving
+  const cancelPending = useCallback(() => {
+    setPending(null)
+  }, [])
+
+  // Confirm and execute the actual placement save
+  const confirmPending = useCallback(async () => {
+    if (!session || !pending || busy) return
+    const { lat, lng } = pending
     setBusy(true)
     try {
       if (session.mode === 'same-point') {
@@ -65,6 +114,7 @@ export function usePlacementSession(orgId: string) {
         if (ok) toast.success(`${ok} device${ok === 1 ? '' : 's'} placed at ${lat.toFixed(5)}, ${lng.toFixed(5)}`)
         if (failed) toast.error(`${failed} could not be saved`)
         reload()
+        setPending(null)
         setSession(null)
         return
       }
@@ -74,9 +124,10 @@ export function usePlacementSession(orgId: string) {
       const name = byId.get(id)?.name ?? id
       if (!r?.ok) { toast.error(`Could not save the position for ${name}`); return }
       reload()
+      setPending(null)
       const next = session.index + 1
       if (next >= session.ids.length) {
-        toast.success(`${session.ids.length} device${session.ids.length === 1 ? '' : 's'} placed`)
+        toast.success(`${session.ids.length} device${session.ids.length === 1 ? '' : 's'} placed successfully`)
         setSession(null)
       } else {
         toast.success(`${name} placed — next: ${byId.get(session.ids[next])?.name ?? session.ids[next]}`)
@@ -85,11 +136,12 @@ export function usePlacementSession(orgId: string) {
     } finally {
       setBusy(false)
     }
-  }, [session, busy, byId, reload])
+  }, [session, pending, busy, byId, reload])
 
   /** Move past the current device in a sequential walk without placing it. */
   const skip = useCallback(() => {
     if (!session || session.mode !== 'sequential') return
+    setPending(null)
     const next = session.index + 1
     if (next >= session.ids.length) setSession(null)
     else setSession({ ...session, index: next })
@@ -97,7 +149,8 @@ export function usePlacementSession(orgId: string) {
 
   return {
     devices, unplaced, nodes, loaded,
-    session, current, busy,
+    session, current, busy, pending,
     start, stop, pick, skip, reload,
+    confirmPending, cancelPending,
   }
 }

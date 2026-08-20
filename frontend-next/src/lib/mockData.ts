@@ -65,6 +65,18 @@ export const organizations: Organization[] = [
           { id: 'f10', name: 'API Integration', enabled: false, category: 'api' },
         ],
       },
+      {
+        platformId: 'automobile',
+        platformName: 'Formula EV (NAT)',
+        licensed: true,
+        features: [
+          { id: 'f11', name: '1D-CNN Fatigue Prediction', enabled: true, category: 'ai' },
+          { id: 'f12', name: 'Live 4-Ch EEG Spectral Radar', enabled: true, category: 'neuro' },
+          { id: 'f13', name: 'CAN-Bus Formula EV Telemetry', enabled: true, category: 'telemetry' },
+          { id: 'f14', name: 'Driver Vitals & HRV Analytics', enabled: true, category: 'vitals' },
+          { id: 'f15', name: 'Microsleep Early Alarm System', enabled: true, category: 'safety' },
+        ],
+      },
     ],
   },
   {
@@ -175,13 +187,17 @@ export function makeTransformer(host: TransformerHost): Transformer {
   const seed = host.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
   const jitter = ((seed % 20) - 10) / 5000
 
+  const hasRealCoords = host.lat != null && host.lng != null
+  const coordStr = hasRealCoords ? `${Number(host.lat).toFixed(4)}, ${Number(host.lng).toFixed(4)}` : undefined
+  const location = site ? site.name : (host.siteId && host.siteId !== '—' ? host.siteId : coordStr ?? '—')
+
   return {
     id: host.id,
     name: host.name,
     orgId: host.orgId,
-    location: site ? site.name : host.siteId,
-    lat: (site?.lat ?? 13.7) + jitter,
-    lng: (site?.lng ?? 100.5) + jitter,
+    location,
+    lat: host.lat != null ? Number(host.lat) : (site?.lat ?? 13.7) + jitter,
+    lng: host.lng != null ? Number(host.lng) : (site?.lng ?? 100.5) + jitter,
     status,
     healthIndex: host.healthIndex,
     kva: host.kva,

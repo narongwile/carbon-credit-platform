@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { api, isLive } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
 import type { SensorDomain } from '@/types/fleet'
 
 export interface OrgAlarmRow {
@@ -60,10 +61,23 @@ export function useOrgAlarms(orgId: string, opts?: { open?: boolean; pollMs?: nu
 
   useEffect(() => {
     load()
-    if (!isLive() || !pollMs) return
-    const t = setInterval(load, pollMs)
-    return () => clearInterval(t)
+    if (!isLive()) return
+    if (pollMs) {
+      const t = setInterval(load, pollMs)
+      return () => clearInterval(t)
+    }
   }, [load, pollMs])
+
+  // Instant refetch when a WebSocket alarm event arrives
+  useEffect(() => {
+    if (!isLive() || !orgId) return
+    const unsubscribe = subscribeTelemetry((f) => {
+      if (f?.type === 'alarm') {
+        load()
+      }
+    })
+    return () => unsubscribe()
+  }, [load, orgId])
 
   return { alarms, loaded, refetch: load }
 }

@@ -19,13 +19,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, useIsLive, type FleetNode } from './api'
 import { allManagedDevices, managedDevicesFromFleet, getSitesByOrg, getHostsByOrg } from './fleetData'
 import { statusFromLive } from './useFleetLive'
-import type { SensorHost } from '@/types/fleet'
+import { healthFromValues } from './alarmParams'
+import type { SensorHost, SensorDomain } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
 
 const DEVICE_TYPE: Record<NonNullable<ManagedDevice['domain']>, string> = {
   transformer: 'Power Transformer',
   carbonNode: 'Refrigeration Logger',
   bloodBox: 'BloodBOX Cold Storage',
+  automobile: 'Formula EV Telemetry',
 }
 
 // api.fleet() resolves to null on ANY failure — a genuinely empty roster and a
@@ -61,6 +63,8 @@ export function fleetNodeToDevice(
   siteName?: string,
 ): ManagedDevice {
   const domain = n.domain
+  const coordStr = (n.lat != null && n.lng != null) ? `${Number(n.lat).toFixed(4)}, ${Number(n.lng).toFixed(4)}` : undefined
+  const loc = siteName ?? (n.site_id && n.site_id !== '—' ? n.site_id : undefined) ?? coordStr ?? (mock?.location && mock.location !== '—' ? mock.location : undefined) ?? '—'
   return {
     id: n.id,
     orgId,
@@ -69,7 +73,7 @@ export function fleetNodeToDevice(
     deviceType: DEVICE_TYPE[domain] ?? mock?.deviceType ?? 'Sensor Node',
     domain,
     siteId: n.site_id ?? mock?.siteId,
-    location: siteName ?? mock?.location ?? n.site_id ?? '—',
+    location: loc,
     theme: mock?.theme ?? 'fix',
     departmentIds: n.department_id ? [n.department_id] : (mock?.departmentIds ?? []),
     status: n.online === 0 ? 'offline' : 'online',
@@ -172,11 +176,16 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
     const hosts = nodes.map((n): SensorHost => {
       const seed = byId.get(n.id)
       const status = statusFromLive(n)
+      const coordStr = (n.lat != null && n.lng != null) ? `${Number(n.lat).toFixed(4)}, ${Number(n.lng).toFixed(4)}` : undefined
       // n.sensor_count (device_presence.last_sample's key count) is the real
       // reading — preferred over the mock seed's fixed per-domain number even
       // when an id happens to collide with one, so a real device's page never
       // shows a made-up sensor count just because its id looks like a demo one.
-      const computedHealth = status === 'CRITICAL' ? 50 : status === 'WARNING' ? 80 : status === 'NORMAL' ? 100 : (seed?.domain === 'transformer' ? seed.healthIndex : 0)
+      const sample = n.last_sample || {}
+      const dynamicHealth = healthFromValues(sample, n.domain as SensorDomain)
+      const seedHealth = (seed && seed.domain === 'transformer') ? seed.healthIndex : 95
+      const fallbackHealth = status === 'CRITICAL' ? 45 : status === 'WARNING' ? 75 : status === 'NORMAL' ? seedHealth : 0
+      const computedHealth = dynamicHealth !== null ? dynamicHealth : fallbackHealth
       if (seed) {
         if (seed.domain === 'transformer') {
           const np = nameplates[n.id]
@@ -184,12 +193,14 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
             ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount,
             healthIndex: computedHealth,
             model: np?.model || seed.model, kva: np?.ratedKva ?? seed.kva, voltage: np?.voltageClass || seed.voltage,
+            lat: n.lat ?? seed.lat, lng: n.lng ?? seed.lng,
           }
         }
-        return { ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount }
+        return { ...seed, status, name: n.name || seed.name, sensorCount: n.sensor_count ?? seed.sensorCount, lat: n.lat ?? seed.lat, lng: n.lng ?? seed.lng }
       }
       const base = {
         id: n.id, orgId, siteId: n.site_id ?? '—', name: n.name || n.id, status, sensorCount: n.sensor_count ?? 0,
+        lat: n.lat, lng: n.lng, location: coordStr ?? (n.site_id && n.site_id !== '—' ? n.site_id : '—'),
       }
       if (n.domain === 'transformer') {
         const np = nameplates[n.id]
@@ -200,6 +211,15 @@ export function useFleetHosts(orgId: string): { hosts: SensorHost[]; loaded: boo
       }
       if (n.domain === 'carbonNode') {
         return { ...base, domain: 'carbonNode', cabinetZone: '—', targetMinC: 2, targetMaxC: 8, refrigerantType: '—', co2eSavedKg: 0, creditsIssued: 0 }
+      }
+      if (n.domain === 'automobile') {
+        return {
+          ...base, domain: 'automobile', model: 'Formula EV', driverName: '—',
+          fatigueScore: 0, fatigueState: 'ALERT', hrBpm: 0, hrvRmssd: 0,
+          eegAlpha: 0, eegTheta: 0, eegBeta: 0, fatigueRatio: 0,
+          speedKmh: 0, steeringAngle: 0, brakeBar: 0, apps1: 0,
+          motorRpm: 0, motorTemp: 0, bmsSoc: 100, openAlarms: 0,
+        }
       }
       return { ...base, domain: 'bloodBox', boxCode: n.id.toUpperCase(), setLowC: 2, setHighC: 6, floor: '—', excursions: 0, inTransit: false }
     })

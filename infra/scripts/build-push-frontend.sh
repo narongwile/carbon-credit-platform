@@ -70,7 +70,7 @@ fi
 
 if [ -n "${GITLAB_REGISTRY_USER:-}" ] && [ -n "${GITLAB_REGISTRY_TOKEN:-}" ]; then
   info "logging in to registry.gitlab.com as ${GITLAB_REGISTRY_USER}"
-  echo "$GITLAB_REGISTRY_TOKEN" | docker login registry.gitlab.com -u "$GITLAB_REGISTRY_USER" --password-stdin
+  echo "$GITLAB_REGISTRY_TOKEN" | docker login registry.gitlab.com -u "$GITLAB_REGISTRY_USER" --password-stdin || true
 else
   info "GITLAB_REGISTRY_USER/GITLAB_REGISTRY_TOKEN not set — assuming 'docker login registry.gitlab.com' was already run"
 fi

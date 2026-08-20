@@ -63,6 +63,7 @@ export const healthColor: Record<NodeHealth, string> = {
 function metric(h: (typeof hosts)[number]): { label: string; value: string } {
   if (h.domain === 'transformer') return { label: 'Oil Temp', value: '68.4°C' }
   if (h.domain === 'carbonNode') return { label: 'Temperature', value: `${h.targetMaxC}°C` }
+  if (h.domain === 'automobile') return { label: 'Fatigue Risk', value: `${h.fatigueScore}%` }
   return { label: 'Temperature', value: '4.6°C' }
 }
 

@@ -1,13 +1,29 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
 import { api, type NodeLatest } from '@/lib/api'
+import { subscribeTelemetry, type TelemetryFrame } from '@/lib/telemetryBus'
+import { calculateDistanceMeters, formatDistance } from '@/lib/geoAddress'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
-import { Map as MapIcon, Globe, Moon } from 'lucide-react'
+import type { SensorDomain } from '@/types/fleet'
+import {
+  Map as MapIcon,
+  Globe,
+  Moon,
+  Maximize2,
+  Navigation,
+  Layers,
+  Zap,
+  Thermometer,
+  Droplet,
+  Car,
+  Filter,
+  Check,
+} from 'lucide-react'
 
 const MAP_LAYERS = {
   streets: {
@@ -32,22 +48,14 @@ const MAP_LAYERS = {
 
 type LayerKey = keyof typeof MAP_LAYERS
 
-/** Cover photo id per device — see useOrgPhotoCovers. One request for the whole map. */
 export type PhotoCovers = Record<string, { photoId: string; v: string }>
-/** Nameplate essentials per device — see useOrgNameplates. Transformers only in practice. */
 export type NameplateMap = Record<string, { model: string | null; ratedKva: number | null; voltageClass: string | null }>
 
-// Popup content is a raw HTML string handed to Leaflet, so every interpolated
-// value has to be escaped: device names, models and voltage classes are all
-// operator-entered free text, and one containing a quote or an angle bracket
-// would otherwise break the markup — or worse, inject into it.
 const esc = (v: unknown): string =>
   String(v ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
   ))
 
-/** "5 min ago" / "2 h ago" — the question a map popup answers is "is this
- * current?", which a raw timestamp makes the reader compute for themselves. */
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const t = new Date(iso).getTime()
@@ -60,9 +68,6 @@ function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(secs / 86400)} d ago`
 }
 
-/** Friendly label + unit for a raw wire key, from the product's alarm schema.
- * An unrecognised key keeps its own name rather than being hidden — a real
- * transformer reports plenty of keys the schema never enumerated. */
 function paramMeta(domain: GeoNode['domain'], key: string): { label: string; unit: string } {
   const p = ALARM_SCHEMA[domain]?.params.find((x) => x.key === key)
   return { label: p?.label ?? key, unit: p?.unit ?? '' }
@@ -73,38 +78,32 @@ const ROW = 'display:flex;justify-content:space-between;gap:12px;font-size:11px;
 const ROW_K = 'color:#94a3b8;white-space:nowrap'
 const ROW_V = 'color:#e2e8f0;font-weight:600;text-align:right'
 
-/** One "key   value" line, rendered only when the value is actually present. */
 const row = (k: string, v: string | number | null | undefined, suffix = ''): string =>
   v === null || v === undefined || v === '' || v === '—'
     ? ''
     : `<div style="${ROW}"><span style="${ROW_K}">${esc(k)}</span><span style="${ROW_V}">${esc(v)}${esc(suffix)}</span></div>`
 
-// Real geographic Live Sensor Map (Leaflet + OpenStreetMap tiles).
-// The map is created ONCE and markers are updated in place — previously the whole
-// map (tiles + view) was torn down and rebuilt on every telemetry tick because the
-// effect depended on `nodes` (a fresh array each render), which looked like the map
-// "refreshing every second". Now data updates only re-sync markers; the user's
-// pan/zoom and any open popup are preserved.
 export default function LiveSensorMap({
-  nodes, height = '70vh', photoCovers, nameplates, onOpenPhotos, editable, onReposition, pickActive, onPick, onOpenDevice,
+  nodes,
+  height = '70vh',
+  photoCovers,
+  nameplates,
+  onOpenPhotos,
+  editable,
+  onReposition,
+  pickActive,
+  onPick,
+  onOpenDevice,
 }: {
   nodes: GeoNode[]
   height?: string
-  /** Thumbnail shown in the popup, keyed by node id. Omit to render the popup exactly as before. */
   photoCovers?: PhotoCovers
-  /** Model/rating/voltage per device — see useOrgNameplates. Omit to skip that popup section. */
   nameplates?: NameplateMap
-  /** Fired when the popup thumbnail is clicked — the caller owns the lightbox. */
   onOpenPhotos?: (nodeId: string) => void
-  /** Adds a "Reposition" button to every popup — ETERNITY has no Floor Plans feature, so this map IS how a device's position gets set. */
   editable?: boolean
-  /** Fired when "Reposition" is clicked — the caller owns what "pick a new point" means (see DevicePlacementPanel). */
   onReposition?: (nodeId: string) => void
-  /** While true, clicking open ground (not a marker) reports a coordinate instead of doing nothing. */
   pickActive?: boolean
   onPick?: (lat: number, lng: number) => void
-  /** Fired when "View Dashboard" is clicked in a popup — the caller owns
-   * routing (transformer vs the shared node twin differ by domain). */
   onOpenDevice?: (nodeId: string, domain: GeoNode['domain']) => void
 }) {
   const elRef = useRef<HTMLDivElement>(null)
@@ -112,18 +111,44 @@ export default function LiveSensorMap({
   const tileLayerRef = useRef<any>(null)
   const LRef = useRef<any>(null)
   const markersRef = useRef<Map<string, any>>(new Map())
+  const userMarkerRef = useRef<any>(null)
+  const userLocRef = useRef<{ lat: number; lng: number } | null>(null)
   const fittedRef = useRef(false)
+
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
-  // Always read the latest nodes (avoids a stale closure in the mount effect).
-  const nodesRef = useRef(nodes)
-  nodesRef.current = nodes
+  const [statusFilter, setStatusFilter] = useState<'all' | 'critical' | 'warning' | 'healthy'>('all')
+  const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
+  const [locating, setLocating] = useState(false)
+
+  const counts = useMemo(() => {
+    return {
+      all: nodes.length,
+      critical: nodes.filter((n) => n.health === 'critical').length,
+      warning: nodes.filter((n) => n.health === 'warning').length,
+      healthy: nodes.filter((n) => n.health === 'healthy').length,
+      transformer: nodes.filter((n) => n.domain === 'transformer').length,
+      carbonNode: nodes.filter((n) => n.domain === 'carbonNode').length,
+      bloodBox: nodes.filter((n) => n.domain === 'bloodBox').length,
+      automobile: nodes.filter((n) => n.domain === 'automobile').length,
+    }
+  }, [nodes])
+
+  const visibleNodes = useMemo(() => {
+    return nodes.filter((n) => {
+      if (statusFilter !== 'all' && n.health !== statusFilter) return false
+      if (domainFilter !== 'all' && n.domain !== domainFilter) return false
+      return true
+    })
+  }, [nodes, statusFilter, domainFilter])
+
+  const visibleNodesRef = useRef(visibleNodes)
+  visibleNodesRef.current = visibleNodes
+
   const coversRef = useRef(photoCovers)
   coversRef.current = photoCovers
   const nameplatesRef = useRef(nameplates)
   nameplatesRef.current = nameplates
-  // Live readings are fetched per device the first time its popup is opened —
-  // /api/fleet/:id/latest is one request per device, so fetching for every pin
-  // up front would be dozens of requests for data nobody has asked to see.
+
   const latestRef = useRef<Map<string, NodeLatest>>(new Map())
   const inFlightRef = useRef<Set<string>>(new Set())
   const onOpenPhotosRef = useRef(onOpenPhotos)
@@ -137,11 +162,6 @@ export default function LiveSensorMap({
   const onOpenDeviceRef = useRef(onOpenDevice)
   onOpenDeviceRef.current = onOpenDevice
 
-  // A responder walking up to the wrong grey box at 2am is the whole reason the
-  // device photo exists (see DevicePhotoGallery) — the map popup is exactly
-  // where that recognition needs to happen, before they've even arrived. The
-  // thumbnail is the ~320px copy the gallery already produced; this view adds
-  // no new image, just another place the existing one earns its keep.
   const popupHtml = (n: GeoNode) => {
     const cover = coversRef.current?.[n.id]
     const photo = cover
@@ -151,35 +171,22 @@ export default function LiveSensorMap({
              style="width:100%;height:100%;object-fit:cover;display:block" />
          </button>`
       : ''
-    // "Set this device's position on its floor plan" is wrong advice for an
-    // org with no Floor Plans feature — ETERNITY's sites are real GPS
-    // coordinates, not indoor layouts. editable orgs get a working button
-    // instead of a dead-end sentence.
+
     const approxLine = n.approx
       ? editableRef.current
         ? `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location.</div>`
-        : `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on its floor plan.</div>`
+        : `<div style="color:#fbbf24;font-size:11px;margin-top:6px">Approximate — shown at the factory location. Set this device's position on the map.</div>`
       : ''
+
     const repositionBtn = editableRef.current
       ? `<button type="button" class="gsm-reposition-btn" data-node-id="${n.id}"
            style="display:flex;align-items:center;gap:5px;width:100%;margin-top:8px;padding:6px 8px;border-radius:6px;border:1px solid #6366f155;background:rgba(99,102,241,0.12);color:#a5b4fc;font-size:11px;font-weight:600;cursor:pointer">
            📍 ${n.approx ? 'Set position' : 'Reposition'}
          </button>`
       : ''
-    // Same color the marker itself uses (healthColor[n.health]) — the badge
-    // reads as "this pin, described", not a second, disagreeing opinion.
-    // Derived from n.health specifically, NOT metricValue: in live mode
-    // metricValue genuinely is the alarm/status text (CRITICAL/WARNING/
-    // Online/Offline — fleetToGeoNodes), but in demo mode it's a real
-    // per-domain sensor reading (oil temp, cabinet temp — geoNodes.ts's
-    // metric()) that would read as nonsense inside a status pill. health is
-    // real status in both modes.
+
     const statusColor = healthColor[n.health]
     const statusLabel = n.health === 'critical' ? 'Critical' : n.health === 'warning' ? 'Warning' : 'Healthy'
-    // Presence is a SEPARATE fact from alarm health: a device can be perfectly
-    // healthy and simply offline, which the single health pill alone reads as
-    // "Warning" with no hint of why. Shown side by side so the popup answers
-    // "is it reporting?" and "is it alarming?" independently.
     const offline = n.online === 0
     const presenceColor = offline ? '#64748b' : '#22c55e'
     const badges = `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">
@@ -192,19 +199,11 @@ export default function LiveSensorMap({
          ${n.alarm ? `<span style="padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;background:${statusColor}22;color:${statusColor}">${esc(n.alarm)} alarm</span>` : ''}
        </div>`
 
-    // Live sensor readings — the single biggest thing missing from this popup:
-    // the map showed a colour and a status word for a transformer whose actual
-    // oil temperature, load and gas levels were one page away. Fetched lazily
-    // on popup open (see the popupopen handler); until it lands, the popup
-    // says so rather than silently rendering an empty section.
     const latest = latestRef.current.get(n.id)
     const values = latest?.values ?? {}
     const keys = Object.keys(values)
     let readings = ''
     if (keys.length) {
-      // A popup is not a dashboard: the first handful of parameters, then an
-      // honest count of what was left out, with the full set one click away
-      // via View Dashboard below.
       const SHOWN = 6
       const rows = keys.slice(0, SHOWN).map((k) => {
         const { label, unit } = paramMeta(n.domain, k)
@@ -219,21 +218,26 @@ export default function LiveSensorMap({
     } else if (latest) {
       readings = `<div style="${SECTION}">Live readings</div><div style="color:#64748b;font-size:11px">This device has not reported any values yet.</div>`
     } else if (n.deviceId) {
-      // Only in live mode (deviceId is set by fleetToGeoNodes) — a demo pin has
-      // nothing to load and must not claim to be loading forever.
       readings = `<div style="${SECTION}">Live readings</div><div style="color:#64748b;font-size:11px">Loading…</div>`
     }
 
-    // Which unit this is, physically. For a transformer "TR-004" means nothing
-    // on approach; "2500 kVA, 22kV/0.4kV" is what tells a technician they are
-    // at the right asset before they open anything.
     const np = nameplatesRef.current?.[n.id]
     const asset = np && (np.model || np.ratedKva || np.voltageClass)
       ? `<div style="${SECTION}">Asset</div>${row('Model', np.model)}${row('Rating', np.ratedKva, ' kVA')}${row('Voltage', np.voltageClass)}`
       : ''
 
-    // Presence/link detail. rssi and fw come straight off the fleet row; the
-    // battery and transport are only known once latest has been fetched.
+    const userLoc = userLocRef.current
+    let distanceSection = ''
+    if (userLoc && Number.isFinite(n.lat) && Number.isFinite(n.lng)) {
+      const distM = calculateDistanceMeters(userLoc.lat, userLoc.lng, n.lat, n.lng)
+      const distFormatted = formatDistance(distM)
+      const dirUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLoc.lat},${userLoc.lng}&destination=${n.lat},${n.lng}`
+      distanceSection = `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(14,165,233,0.12);border:1px solid rgba(14,165,233,0.25);border-radius:6px;padding:5px 8px;margin-top:6px;font-size:11px;color:#38bdf8">
+        <span>🧭 ห่างจากคุณ: <b>${distFormatted}</b></span>
+        <a href="${dirUrl}" target="_blank" rel="noopener noreferrer" style="color:#7dd3fc;text-decoration:none;font-weight:700;font-size:10px;display:flex;align-items:center;gap:2px">นำทาง ↗</a>
+      </div>`
+    }
+
     const pres = latest?.presence
     const connectivity = [
       row('Device ID', n.deviceId),
@@ -252,11 +256,7 @@ export default function LiveSensorMap({
          style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;margin-top:6px;padding:6px 8px;border-radius:6px;border:none;background:#6366f1;color:#ffffff;font-size:11px;font-weight:700;cursor:pointer">
          View Dashboard →
        </button>`
-    // The detail rows scroll; the actions do NOT. Before this split, a
-    // transformer with a photo, six readings, a nameplate and seven device rows
-    // pushed "View Dashboard" past the popup's own max-height — the primary
-    // action on the popup was reachable only by scrolling inside it, which is
-    // exactly the thing a map popup must never hide.
+
     return `<div style="min-width:236px;max-width:272px;display:flex;flex-direction:column">
        <div style="overflow-y:auto;max-height:min(46vh,360px);padding-right:2px">
          ${photo}
@@ -268,6 +268,7 @@ export default function LiveSensorMap({
          </div>
          ${readings}
          ${asset}
+         ${distanceSection}
          ${connectivitySection}
          ${latest?.lastReadingAt ? `<div style="color:#64748b;font-size:10px;margin-top:6px">Last reading ${esc(fmtDateTime(latest.lastReadingAt))}</div>` : ''}
          ${approxLine}
@@ -279,17 +280,32 @@ export default function LiveSensorMap({
      </div>`
   }
 
+  const tooltipHtml = (n: GeoNode) => {
+    const color = healthColor[n.health]
+    return `
+      <div style="padding: 3px 6px; font-family: inherit; line-height: 1.3;">
+        <div style="display: flex; align-items: center; gap: 5px; font-weight: 700; color: #f8fafc; font-size: 11px;">
+          <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: ${color}; box-shadow: 0 0 6px ${color};"></span>
+          ${esc(n.name)}
+        </div>
+        <div style="color: #94a3b8; font-size: 10px; margin-top: 2px;">
+          ${esc(n.platform)} · <span style="color: ${color}; font-weight: 600;">${esc(n.metricValue || n.health)}</span>
+        </div>
+      </div>
+    `
+  }
+
   const loadLatest = (id: string, force = false) => {
     if (inFlightRef.current.has(id)) return
     if (!force && latestRef.current.has(id)) return
-    if (!nodesRef.current.find((n) => n.id === id)?.deviceId) return
+    if (!visibleNodesRef.current.find((n) => n.id === id)?.deviceId) return
     inFlightRef.current.add(id)
     api.latest(id)
       .then((r) => {
         if (!r) return
         latestRef.current.set(id, r)
         const marker = markersRef.current.get(id)
-        const fresh = nodesRef.current.find((n) => n.id === id)
+        const fresh = visibleNodesRef.current.find((n) => n.id === id)
         if (marker && fresh) marker.setPopupContent(popupHtml(fresh))
       })
       .finally(() => { inFlightRef.current.delete(id) })
@@ -300,7 +316,7 @@ export default function LiveSensorMap({
     if (!L || !map) return
     const markers = markersRef.current
     const seen = new Set<string>()
-    nodesRef.current.forEach((n) => {
+    visibleNodesRef.current.forEach((n) => {
       seen.add(n.id)
       const color = healthColor[n.health]
       const existing = markers.get(n.id)
@@ -311,11 +327,20 @@ export default function LiveSensorMap({
         existing.setLatLng([n.lat, n.lng])
         existing.setStyle(style)
         existing.setPopupContent(popupHtml(n))
+        if (existing.setTooltipContent) existing.setTooltipContent(tooltipHtml(n))
         if (existing.isPopupOpen?.()) loadLatest(n.id, true)
       } else {
         const m = L.circleMarker([n.lat, n.lng], { radius: 9, ...style })
           .addTo(map)
           .bindPopup(popupHtml(n))
+        if (m.bindTooltip) {
+          m.bindTooltip(tooltipHtml(n), {
+            direction: 'top',
+            offset: [0, -8],
+            opacity: 0.95,
+            className: 'gsm-map-tooltip',
+          })
+        }
         m._gsmNodeId = n.id
         markers.set(n.id, m)
       }
@@ -324,8 +349,68 @@ export default function LiveSensorMap({
       if (!seen.has(id)) { map.removeLayer(m); markers.delete(id) }
     })
     if (!fittedRef.current && markers.size) {
-      try { map.fitBounds(L.featureGroup(Array.from(markers.values())).getBounds().pad(0.3)); fittedRef.current = true } catch { /* single point */ }
+      try {
+        map.fitBounds(L.featureGroup(Array.from(markers.values())).getBounds().pad(0.3))
+        fittedRef.current = true
+      } catch {
+        /* single point */
+      }
     }
+  }
+
+  const handleFitFleet = () => {
+    const L = LRef.current, map = mapRef.current
+    if (!L || !map || !markersRef.current.size) return
+    try {
+      const group = L.featureGroup(Array.from(markersRef.current.values()))
+      map.fitBounds(group.getBounds().pad(0.3), { duration: 1 })
+    } catch {
+      /* single marker */
+    }
+  }
+
+  const handleMyLocation = () => {
+    if (!navigator.geolocation || !mapRef.current) return
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false)
+        const { latitude, longitude } = pos.coords
+        userLocRef.current = { lat: latitude, lng: longitude }
+        const L = LRef.current, map = mapRef.current
+        if (!L || !map) return
+        map.flyTo([latitude, longitude], 15, { duration: 1.2 })
+        if (userMarkerRef.current) {
+          map.removeLayer(userMarkerRef.current)
+        }
+        const userIcon = L.divIcon({
+          className: 'gsm-user-loc',
+          html: `
+            <div style="position: relative; width: 18px; height: 18px;">
+              <div style="position: absolute; inset: 0; border-radius: 50%; background: #38bdf8; opacity: 0.75; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>
+              <div style="position: absolute; inset: 3px; border-radius: 50%; background: #0284c7; border: 2px solid #ffffff; box-shadow: 0 0 8px #38bdf8;"></div>
+            </div>
+          `,
+          iconSize: [18, 18],
+          iconAnchor: [9, 9],
+        })
+        const m = L.marker([latitude, longitude], { icon: userIcon })
+          .addTo(map)
+          .bindPopup('<b style="color:#0f172a">ตำแหน่งปัจจุบันของคุณ (Your Location)</b>')
+          .openPopup()
+        userMarkerRef.current = m
+
+        // Refresh any open popups so distance is immediately visible
+        markersRef.current.forEach((marker, id) => {
+          const node = visibleNodesRef.current.find((n) => n.id === id)
+          if (node && marker.isPopupOpen?.()) {
+            marker.setPopupContent(popupHtml(node))
+          }
+        })
+      },
+      () => setLocating(false),
+      { timeout: 10000, enableHighAccuracy: true }
+    )
   }
 
   const switchLayer = (layerKey: LayerKey) => {
@@ -335,7 +420,6 @@ export default function LiveSensorMap({
     }
   }
 
-  // Create the map once (mount only).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -352,22 +436,21 @@ export default function LiveSensorMap({
       }).addTo(map)
       tileLayerRef.current = tileLayer
 
-      // Popup content is a raw HTML string (Leaflet, not React), so the click
-      // is wired via delegation on the map's own container rather than bound
-      // to the button element itself. It has to be: every live telemetry tick
-      // re-syncs markers, and setPopupContent() on an OPEN popup replaces the
-      // popup's innerHTML — including this button — without firing 'popupopen'
-      // again, which silently killed a directly-bound listener within seconds
-      // of the popup opening. A listener on the container never goes stale
-      // because it never lived on the node that gets replaced.
       elRef.current.addEventListener('click', (e: MouseEvent) => {
         const target = e.target as HTMLElement
         const photoBtn = target.closest<HTMLElement>('.gsm-photo-btn')
-        if (photoBtn) { const id = photoBtn.getAttribute('data-node-id'); if (id) onOpenPhotosRef.current?.(id); return }
+        if (photoBtn) {
+          const id = photoBtn.getAttribute('data-node-id')
+          if (id) onOpenPhotosRef.current?.(id)
+          return
+        }
         const repoBtn = target.closest<HTMLElement>('.gsm-reposition-btn')
         if (repoBtn) {
           const id = repoBtn.getAttribute('data-node-id')
-          if (id) { map.closePopup(); onRepositionRef.current?.(id) }
+          if (id) {
+            map.closePopup()
+            onRepositionRef.current?.(id)
+          }
           return
         }
         const openBtn = target.closest<HTMLElement>('.gsm-open-btn')
@@ -377,49 +460,106 @@ export default function LiveSensorMap({
           if (id && domain) onOpenDeviceRef.current?.(id, domain)
         }
       })
-      // Lazily load this device's real readings the first time its popup opens,
-      // then re-render just that popup. Fetching for every pin on mount would
-      // be one request per device for detail nobody has looked at yet; fetching
-      // on every open would re-request the same device on each glance. Cached
-      // per node id for the life of the map, and refreshed by the marker sync
-      // below whenever the fleet poll brings new data.
+
       map.on('popupopen', (e: any) => {
         const id: string | undefined = e?.popup?._source?._gsmNodeId
         if (id) loadLatest(id)
       })
-      // Pick mode: a click on open ground (Leaflet does not fire 'click' on the
-      // map when a marker or popup consumed it) reports the coordinate. This is
-      // the whole placement mechanism — ETERNITY has no Floor Plans feature, so
-      // there is no OTHER way for an admin to give a device a real position.
+
       map.on('click', (e: any) => {
         if (!onPickRef.current) return
-        // circleMarker click events bubble to the map's own 'click' by default
-        // (Leaflet's bubblingMouseEvents), so a click ON an existing marker
-        // would otherwise ALSO report that marker's own coordinate as a new
-        // pick — redundant at best, a wrong placement at worst. Only ground.
         if ((e.originalEvent?.target as HTMLElement | undefined)?.closest?.('.leaflet-interactive')) return
         onPickRef.current(e.latlng.lat, e.latlng.lng)
       })
+
       syncMarkers()
     })()
+
     return () => {
       cancelled = true
-      if (mapRef.current) { (mapRef.current as any).remove(); mapRef.current = null }
+      if (mapRef.current) {
+        ;(mapRef.current as any).remove()
+        mapRef.current = null
+      }
       markersRef.current.clear()
       fittedRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Re-sync markers when the data — or the cover photos — changes (no map
-  // recreation). setPopupContent() on an OPEN popup updates it live, which is
-  // what lets a photo just uploaded on the device page appear here without a
-  // reload.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { syncMarkers() }, [nodes, photoCovers, nameplates, editable])
+  useEffect(() => {
+    syncMarkers()
+  }, [visibleNodes, photoCovers, nameplates, editable])
 
-  // The one visible sign a click will do something other than pan: a crosshair
-  // instead of the open hand, and a border that says "you are placing a pin".
+  // Sub-second telemetry & alarm updates streamed over WebSocket
+  useEffect(() => {
+    const unsubscribe = subscribeTelemetry((f: TelemetryFrame) => {
+      if (!f?.id) return
+      const id = f.id
+
+      // 1. Update cached latest values
+      const cur = latestRef.current.get(id) || {
+        nodeId: id,
+        values: {},
+        lastReadingAt: null,
+        presence: { online: 1, last_seen: f.timestamp || new Date().toISOString(), rssi: null, batt: null, fw: null, transport: null },
+      }
+      const newVals = {
+        ...(cur.values || {}),
+        ...(f.values || (f.temperature != null ? { temperature: f.temperature } : {})),
+      }
+      const updatedLatest: NodeLatest = {
+        ...cur,
+        values: newVals,
+        lastReadingAt: f.timestamp || new Date().toISOString(),
+        presence: {
+          ...(cur.presence || { rssi: null, batt: null, fw: null, transport: null }),
+          online: 1,
+          last_seen: f.timestamp || new Date().toISOString(),
+        },
+      }
+      latestRef.current.set(id, updatedLatest)
+
+      // 2. Update marker & node on map in real-time
+      const node = visibleNodesRef.current.find((n) => n.id === id)
+      if (node) {
+        node.online = 1
+        node.lastSeen = f.timestamp || new Date().toISOString()
+        node.updated = f.timestamp ? relativeTime(f.timestamp) : 'Just now'
+        if (f.type === 'alarm') {
+          if (f.severity === 'CRITICAL') {
+            node.alarm = 'CRITICAL'
+            node.health = 'critical'
+            node.metricValue = 'CRITICAL Alarm'
+          } else if (f.severity === 'WARNING') {
+            node.alarm = 'WARNING'
+            node.health = 'warning'
+            node.metricValue = 'WARNING Alarm'
+          } else if (f.severity === 'NORMAL') {
+            node.alarm = null
+            node.health = 'healthy'
+            node.metricValue = 'Online'
+          }
+        }
+        const marker = markersRef.current.get(id)
+        if (marker) {
+          const color = healthColor[node.health]
+          marker.setStyle({
+            fillColor: color,
+            color: node.approx ? color : '#ffffff',
+          })
+          if (marker.setTooltipContent) {
+            marker.setTooltipContent(tooltipHtml(node))
+          }
+          if (marker.isPopupOpen?.()) {
+            marker.setPopupContent(popupHtml(node))
+          }
+        }
+      }
+    })
+    return () => unsubscribe()
+  }, [])
+
   useEffect(() => {
     if (!elRef.current) return
     elRef.current.style.cursor = pickActive ? 'crosshair' : ''
@@ -431,17 +571,148 @@ export default function LiveSensorMap({
     }
   }
 
+  const hasMultipleDomains =
+    (counts.transformer > 0 && counts.carbonNode > 0) ||
+    (counts.transformer > 0 && counts.bloodBox > 0) ||
+    (counts.carbonNode > 0 && counts.bloodBox > 0)
+
   return (
     <div className="relative">
+      <style jsx global>{`
+        .gsm-map-tooltip {
+          background: rgba(13, 17, 23, 0.94) !important;
+          border: 1px solid #1e2433 !important;
+          border-radius: 8px !important;
+          color: #fff !important;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6) !important;
+          padding: 2px 4px !important;
+        }
+        .gsm-map-tooltip::before {
+          border-top-color: #1e2433 !important;
+        }
+      `}</style>
+
       {/* Search Bar */}
-      <div className="absolute top-3 left-3 z-[1000] max-w-[260px] sm:max-w-xs">
+      <div className="absolute top-3 left-3 z-[1500] max-w-[240px] sm:max-w-[280px]">
         <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
       </div>
 
-      {/* Layer Switcher (Streets / Esri Satellite / Dark) & Legend */}
+      {/* Quick Filter Chips */}
+      <div className="absolute top-3 left-[255px] sm:left-[300px] right-[240px] z-[1000] overflow-x-auto no-scrollbar hidden md:flex items-center gap-1.5 py-0.5 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => setStatusFilter('all')}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+            statusFilter === 'all'
+              ? 'bg-indigo-600 text-white shadow-indigo-500/20'
+              : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+          }`}
+        >
+          All ({counts.all})
+        </button>
+        {counts.critical > 0 && (
+          <button
+            type="button"
+            onClick={() => setStatusFilter(statusFilter === 'critical' ? 'all' : 'critical')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+              statusFilter === 'critical'
+                ? 'bg-red-600 text-white shadow-red-500/20'
+                : 'bg-[#0d1117]/90 text-red-400 hover:text-red-300 border border-red-500/30'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" /> Critical ({counts.critical})
+          </button>
+        )}
+        {counts.warning > 0 && (
+          <button
+            type="button"
+            onClick={() => setStatusFilter(statusFilter === 'warning' ? 'all' : 'warning')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+              statusFilter === 'warning'
+                ? 'bg-amber-600 text-white shadow-amber-500/20'
+                : 'bg-[#0d1117]/90 text-amber-400 hover:text-amber-300 border border-amber-500/30'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-amber-400" /> Warning ({counts.warning})
+          </button>
+        )}
+        {counts.healthy > 0 && (
+          <button
+            type="button"
+            onClick={() => setStatusFilter(statusFilter === 'healthy' ? 'all' : 'healthy')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+              statusFilter === 'healthy'
+                ? 'bg-emerald-600 text-white shadow-emerald-500/20'
+                : 'bg-[#0d1117]/90 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30'
+            }`}
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400" /> Normal ({counts.healthy})
+          </button>
+        )}
+
+        {hasMultipleDomains && (
+          <>
+            <div className="w-px h-4 bg-slate-800 mx-1 flex-shrink-0" />
+            <button
+              type="button"
+              onClick={() => setDomainFilter(domainFilter === 'transformer' ? 'all' : 'transformer')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                domainFilter === 'transformer'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+              }`}
+            >
+              <Zap size={11} className="text-amber-400" /> Transformers ({counts.transformer})
+            </button>
+            {counts.carbonNode > 0 && (
+              <button
+                type="button"
+                onClick={() => setDomainFilter(domainFilter === 'carbonNode' ? 'all' : 'carbonNode')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  domainFilter === 'carbonNode'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                }`}
+              >
+                <Thermometer size={11} className="text-emerald-400" /> CarbonBOX ({counts.carbonNode})
+              </button>
+            )}
+            {counts.bloodBox > 0 && (
+              <button
+                type="button"
+                onClick={() => setDomainFilter(domainFilter === 'bloodBox' ? 'all' : 'bloodBox')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  domainFilter === 'bloodBox'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                }`}
+              >
+                <Droplet size={11} className="text-rose-400" /> BloodBOX ({counts.bloodBox})
+              </button>
+            )}
+            {counts.automobile > 0 && (
+              <button
+                type="button"
+                onClick={() => setDomainFilter(domainFilter === 'automobile' ? 'all' : 'automobile')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  domainFilter === 'automobile'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                }`}
+              >
+                <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Layer Switcher & Interactive Legend */}
       <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2">
-        <div className="flex items-center p-0.5 rounded-xl shadow-lg"
-          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}>
+        <div
+          className="flex items-center p-0.5 rounded-xl shadow-lg"
+          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
+        >
           <button
             type="button"
             onClick={() => switchLayer('streets')}
@@ -474,17 +745,79 @@ export default function LiveSensorMap({
           </button>
         </div>
 
-        {/* Legend */}
-        <div className="hidden sm:flex items-center gap-4 px-4 py-2 rounded-xl shadow-lg" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-          {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => (
-            <span key={k} className="flex items-center gap-1.5 text-xs font-semibold text-slate-200">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ background: healthColor[k] }} /> {label}
-            </span>
-          ))}
+        {/* Interactive Legend Pills */}
+        <div
+          className="hidden sm:flex items-center gap-3 px-3.5 py-1.5 rounded-xl shadow-lg"
+          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
+        >
+          {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => {
+            const active = statusFilter === k
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setStatusFilter(statusFilter === k ? 'all' : k)}
+                className={`flex items-center gap-1.5 text-xs font-semibold transition-all px-1.5 py-0.5 rounded-md ${
+                  active ? 'bg-white/10 text-white font-bold' : 'text-slate-300 hover:text-white'
+                }`}
+                title={`Filter ${label} devices`}
+              >
+                <span
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{
+                    background: healthColor[k],
+                    boxShadow: active ? `0 0 8px ${healthColor[k]}` : undefined,
+                  }}
+                />
+                {label}
+              </button>
+            )
+          })}
         </div>
       </div>
 
-      <div ref={elRef} style={{ height, width: '100%', background: '#0a0e1a', outline: pickActive ? '2px solid #6366f1' : 'none', outlineOffset: '-2px' }} className="rounded-xl overflow-hidden" />
+      {/* Floating Action Controls (Bottom Right) */}
+      <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2 pointer-events-auto">
+        <button
+          type="button"
+          onClick={handleFitFleet}
+          title="Fit all devices in view"
+          className="p-2.5 rounded-xl shadow-xl transition-all hover:scale-105 active:scale-95 text-white flex items-center justify-center cursor-pointer"
+          style={{
+            background: 'rgba(13, 17, 23, 0.94)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid #1e2433',
+          }}
+        >
+          <Maximize2 size={16} className="text-indigo-400" />
+        </button>
+        <button
+          type="button"
+          onClick={handleMyLocation}
+          disabled={locating}
+          title="Locate my position"
+          className="p-2.5 rounded-xl shadow-xl transition-all hover:scale-105 active:scale-95 text-white flex items-center justify-center cursor-pointer disabled:opacity-50"
+          style={{
+            background: 'rgba(13, 17, 23, 0.94)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid #1e2433',
+          }}
+        >
+          <Navigation size={16} className={locating ? 'text-indigo-400 animate-spin' : 'text-cyan-400'} />
+        </button>
+      </div>
+
+      <div
+        ref={elRef}
+        style={{
+          height,
+          width: '100%',
+          background: '#0a0e1a',
+          outline: pickActive ? '2px solid #6366f1' : 'none',
+          outlineOffset: '-2px',
+        }}
+        className="rounded-xl overflow-hidden shadow-inner"
+      />
     </div>
   )
 }

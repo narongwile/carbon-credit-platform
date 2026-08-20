@@ -1,11 +1,8 @@
 'use client'
-// ---------------------------------------------------------------------------
-// Live fleet overlay. Fetches GET /api/fleet (+ optional per-node latest) from
-// the backend and exposes it by node id. When NEXT_PUBLIC_API_URL is unset the
-// hook is a no-op (empty map) so callers transparently fall back to mock data.
-// ---------------------------------------------------------------------------
+
 import { useCallback, useEffect, useState } from 'react'
 import { api, useIsLive, type FleetNode } from './api'
+import { subscribeTelemetry, type TelemetryFrame } from './telemetryBus'
 import { DOMAIN_META } from '@/types/fleet'
 import type { GeoNode } from './geoNodes'
 
@@ -18,8 +15,8 @@ export function statusFromLive(n: FleetNode): EffectiveStatus {
   return 'NORMAL'
 }
 
-/** How often the fleet re-fetches — the map's own claim to being "live". */
-const POLL_MS = 15_000
+/** How often the fleet re-fetches — the map's background poll (5s). */
+const POLL_MS = 5_000
 
 export function useFleetLive(orgId: string, domain?: string) {
   const [byId, setById] = useState<Map<string, FleetNode>>(new Map())
@@ -35,16 +32,38 @@ export function useFleetLive(orgId: string, domain?: string) {
     })
   }, [orgId, domain, apiEnabled])
 
+  // Periodic poll to catch new devices, rule/presence changes from DB
   useEffect(() => {
     load()
     if (!apiEnabled || !orgId) return
-    // A device placed on the Live Sensor Map (DevicePlacementPanel) needs its
-    // new pin to actually appear without a manual page reload — this is what
-    // makes that possible, and every other consumer of this hook gets the same
-    // "positions/alarms/presence catch up on their own" for free.
     const t = setInterval(load, POLL_MS)
     return () => clearInterval(t)
   }, [load, apiEnabled, orgId])
+
+  // Sub-second real-time telemetry overlay via WebSocket
+  useEffect(() => {
+    if (!apiEnabled) return
+    const unsubscribe = subscribeTelemetry((f: TelemetryFrame) => {
+      if (!f?.id) return
+      setById((prev) => {
+        const existing = prev.get(f.id)
+        if (!existing) return prev
+        const updated: FleetNode = { ...existing }
+        // Receiving telemetry proves the device is online
+        updated.online = 1
+        if (f.timestamp) updated.last_seen = f.timestamp
+        if (f.type === 'alarm') {
+          if (f.severity === 'CRITICAL') updated.alarm = 'CRITICAL'
+          else if (f.severity === 'WARNING') updated.alarm = 'WARNING'
+          else if (f.severity === 'NORMAL') updated.alarm = null
+        }
+        const next = new Map(prev)
+        next.set(f.id, updated)
+        return next
+      })
+    })
+    return () => unsubscribe()
+  }, [apiEnabled])
 
   return { byId, enabled: apiEnabled, loaded, reload: load }
 }
