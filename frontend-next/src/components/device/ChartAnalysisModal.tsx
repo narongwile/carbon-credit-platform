@@ -21,7 +21,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { api, useIsLive, type ChartDefinition } from '@/lib/api'
 import type { AvailableParam } from './ChartBuilderModal'
-import type { NodeAlarmRule } from '@/server/alarmEngine'
+import type { NodeAlarmRule, ParamRule } from '@/server/alarmEngine'
+import { paramStatus, type ParamStatus } from '@/lib/alarmParams'
 import { downloadCSV } from '@/lib/exportFile'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import {
@@ -45,6 +46,31 @@ const QUICK = [
 
 const MAX_POINTS = 360
 const toUTC = (ms: number) => new Date(ms).toISOString()
+
+/** Below this many overlapping buckets an r is noise dressed as a finding, so
+ * the pair is withheld rather than reported with a confident-looking number. */
+const MIN_PAIR_POINTS = 5
+/** How many pairs the panel lists. Anything dropped is stated explicitly — a
+ * silent top-N reads as "these are all of them" when it is not. */
+const MAX_PAIRS_SHOWN = 12
+
+/** Conventional descriptive bands for |r|. Deliberately worded as strength of
+ * ASSOCIATION: two parameters can track each other perfectly because both
+ * follow load or ambient temperature, with no causal link between them. */
+function rLabel(r: number): string {
+  const a = Math.abs(r)
+  const dir = r > 0 ? 'together' : 'inversely'
+  if (a >= 0.8) return `strong, ${dir}`
+  if (a >= 0.5) return `moderate, ${dir}`
+  if (a >= 0.3) return `weak, ${dir}`
+  return 'negligible'
+}
+
+const STATUS_STYLE: Record<ParamStatus, { color: string; bg: string }> = {
+  NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.12)' },
+  WARNING: { color: '#fbbf24', bg: 'rgba(251,191,36,0.14)' },
+  CRITICAL: { color: '#ef4444', bg: 'rgba(239,68,68,0.14)' },
+}
 
 type AxisMode = 'dual' | 'shared' | 'normalize'
 const AXIS_MODES: { id: AxisMode; label: string; title: string }[] = [
@@ -204,27 +230,101 @@ export default function ChartAnalysisModal({
     })
   }, [axisMode, data, chart.paramKeys, ranges])
 
-  /** Weighted by each bucket's own sample count (n) — a straight average of
-   * per-bucket averages would silently under-count a bucket that rolled up
-   * thousands of raw readings next to one that rolled up a handful. Min/max
-   * are the true extremes seen in the window, not extremes of the bucket
-   * averages. */
+  /** Per-series statistics AND threshold diagnostics.
+   *
+   * Averages are weighted by each bucket's own sample count (n) — a straight
+   * average of per-bucket averages would silently under-count a bucket that
+   * rolled up thousands of raw readings next to one that rolled up a handful.
+   * Min/max are the true extremes seen in the window, not extremes of the
+   * bucket averages.
+   *
+   * The threshold half evaluates through paramStatus, which honours the rule's
+   * OWN direction: a 'low' parameter (oil level, battery) alarms when it drops,
+   * and hardcoding a >= comparison would report it as healthy at its worst
+   * moment. Two different questions get two different answers:
+   *   pctAlarm   how much of the window sat in breach, by bucket MEAN
+   *   peakStatus whether the worst single moment breached at all — the mean of
+   *              a bucket can sit safely inside limits while one sample inside
+   *              that same bucket spiked past critical, and that spike is
+   *              precisely the event worth surfacing.
+   */
   const stats = useMemo(() => {
-    const m = new Map<string, { min: number; max: number; avg: number; n: number }>()
+    const m = new Map<string, {
+      min: number; max: number; avg: number; n: number
+      latest: number | null; latestStatus: ParamStatus | null; peakStatus: ParamStatus | null
+      pctAlarm: number; rule: ParamRule | null
+    }>()
     for (const k of chart.paramKeys) {
-      let min = Infinity, max = -Infinity, sum = 0, n = 0
+      const p = rule?.params.find((x) => x.key === k) ?? null
+      let min = Infinity, max = -Infinity, sum = 0, n = 0, breachN = 0
+      let latestTs = -Infinity, latest: number | null = null
       for (const r of rows ?? []) {
         if (r.param_key !== k) continue
         const w = r.n ?? 1
-        min = Math.min(min, Number(r.v_min ?? r.value))
-        max = Math.max(max, Number(r.v_max ?? r.value))
-        sum += Number(r.value) * w
+        const v = Number(r.value)
+        min = Math.min(min, Number(r.v_min ?? v))
+        max = Math.max(max, Number(r.v_max ?? v))
+        sum += v * w
         n += w
+        const ts = new Date(r.taken_at).getTime()
+        if (ts > latestTs) { latestTs = ts; latest = v }
+        if (p && paramStatus(v, p) !== 'NORMAL') breachN += w
       }
-      if (n > 0) m.set(k, { min, max, avg: sum / n, n })
+      if (n <= 0) continue
+      // For a 'high' rule the worst moment in the window is the maximum; for a
+      // 'low' rule it is the minimum.
+      const peak = p ? (p.direction === 'high' ? max : min) : null
+      m.set(k, {
+        min, max, avg: sum / n, n, latest,
+        latestStatus: p && latest !== null ? paramStatus(latest, p) : null,
+        peakStatus: p && peak !== null ? paramStatus(peak, p) : null,
+        pctAlarm: (breachN / n) * 100,
+        rule: p,
+      })
     }
     return m
-  }, [rows, chart.paramKeys])
+  }, [rows, chart.paramKeys, rule])
+
+  /** Pearson r for every pair of parameters, on the time-aligned bucket means
+   * this chart already plots — the actual "do these move together?" answer the
+   * eye is trying to estimate from overlaid lines.
+   *
+   * Stated limits rather than buried ones: this correlates BUCKETED means, not
+   * raw samples, so a coarser bucket smooths away short divergence and
+   * generally inflates |r|. r is invariant to positive linear rescaling, so it
+   * is identical in all three axis modes — normalize % changes the picture, not
+   * the number. A pair is reported only when enough buckets carry BOTH values
+   * and both series actually vary: a flat series has no correlation to measure,
+   * which is not the same as a correlation of zero.
+   */
+  const correlations = useMemo(() => {
+    const keys = chart.paramKeys
+    const out: { a: string; b: string; r: number; n: number }[] = []
+    for (let i = 0; i < keys.length; i++) {
+      for (let j = i + 1; j < keys.length; j++) {
+        const xs: number[] = [], ys: number[] = []
+        for (const d of data) {
+          const x = d[keys[i]], y = d[keys[j]]
+          if (typeof x === 'number' && !Number.isNaN(x) && typeof y === 'number' && !Number.isNaN(y)) { xs.push(x); ys.push(y) }
+        }
+        const n = xs.length
+        if (n < MIN_PAIR_POINTS) continue
+        let mx = 0, my = 0
+        for (let t = 0; t < n; t++) { mx += xs[t]; my += ys[t] }
+        mx /= n; my /= n
+        let sxy = 0, sxx = 0, syy = 0
+        for (let t = 0; t < n; t++) {
+          const dx = xs[t] - mx, dy = ys[t] - my
+          sxy += dx * dy; sxx += dx * dx; syy += dy * dy
+        }
+        if (sxx === 0 || syy === 0) continue   // flat series — undefined, not zero
+        out.push({ a: keys[i], b: keys[j], r: sxy / Math.sqrt(sxx * syy), n })
+      }
+    }
+    return out.sort((p, q) => Math.abs(q.r) - Math.abs(p.r))
+  }, [data, chart.paramKeys])
+
+  const totalPairs = (chart.paramKeys.length * (chart.paramKeys.length - 1)) / 2
 
   const toggleHidden = (key: string) => setHidden((h) => {
     const next = new Set(h)
@@ -509,7 +609,7 @@ export default function ChartAnalysisModal({
                 (and the rounded corners) intact. */}
             <div className="rounded-xl overflow-hidden" style={inset}>
               <div className="overflow-x-auto">
-                <table className="w-full text-[11px] min-w-[340px]">
+                <table className="w-full text-[11px] min-w-[560px]">
                   <thead>
                     <tr className="text-slate-500" style={{ borderBottom: '1px solid #1e2433' }}>
                       <th className="text-left font-medium px-3 py-2">Parameter</th>
@@ -517,6 +617,8 @@ export default function ChartAnalysisModal({
                       <th className="text-right font-medium px-3 py-2">Average</th>
                       <th className="text-right font-medium px-3 py-2">Max</th>
                       <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Samples</th>
+                      <th className="text-left font-medium px-3 py-2 whitespace-nowrap" title="Status of the most recent reading in this window, evaluated against this device's saved rule">Latest</th>
+                      <th className="text-right font-medium px-3 py-2 whitespace-nowrap" title="Share of the window whose bucket average sat in warning or critical">In alarm</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -540,6 +642,34 @@ export default function ChartAnalysisModal({
                           <td className="px-3 py-2 text-right text-slate-200 font-medium whitespace-nowrap">{s ? `${s.avg.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
                           <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">{s ? `${s.max.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
                           <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{s ? s.n.toLocaleString() : '—'}</td>
+                          {/* No saved rule for this parameter means there is
+                              nothing to diagnose against — an em dash, not a
+                              reassuring green "normal" it has not earned. */}
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            {s?.latestStatus ? (
+                              <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold uppercase tracking-wide"
+                                style={{ color: STATUS_STYLE[s.latestStatus].color, background: STATUS_STYLE[s.latestStatus].bg }}>
+                                {s.latestStatus}
+                              </span>
+                            ) : <span className="text-slate-600" title="No alarm threshold saved for this parameter">no rule</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right whitespace-nowrap">
+                            {s?.rule ? (
+                              <span className={s.pctAlarm > 0 ? 'text-amber-300' : 'text-slate-500'}>
+                                {s.pctAlarm.toFixed(1)}%
+                                {/* Every bucket average stayed inside limits, yet
+                                    the window's worst single moment did not —
+                                    a spike averaged away is exactly what a
+                                    percentage alone would hide. */}
+                                {s.pctAlarm === 0 && s.peakStatus && s.peakStatus !== 'NORMAL' && (
+                                  <span className="ml-1 text-[9px]" style={{ color: STATUS_STYLE[s.peakStatus].color }}
+                                    title={`No bucket average breached, but the window's peak reached ${s.peakStatus}`}>
+                                    ⚠ peak
+                                  </span>
+                                )}
+                              </span>
+                            ) : <span className="text-slate-600">—</span>}
+                          </td>
                         </tr>
                       )
                     })}
@@ -547,6 +677,66 @@ export default function ChartAnalysisModal({
                 </table>
               </div>
             </div>
+
+            {/* Correlation — only meaningful once there are two series to
+                relate. A single-parameter chart has no pair to report. */}
+            {chart.paramKeys.length > 1 && (
+              <div className="mt-3 rounded-xl p-3" style={inset}>
+                <div className="flex items-baseline justify-between gap-2 flex-wrap mb-2">
+                  <h3 className="text-[11px] font-semibold text-slate-200">How these parameters moved together</h3>
+                  <span className="text-[9px] text-slate-600">
+                    Pearson r over {data.length} buckets · same in every axis mode
+                  </span>
+                </div>
+
+                {!correlations.length ? (
+                  <p className="text-[10px] text-slate-500">
+                    Not enough overlapping data yet — a pair needs at least {MIN_PAIR_POINTS} buckets carrying both
+                    values, and both series must actually vary. Try a longer window.
+                  </p>
+                ) : (
+                  <>
+                    <div className="space-y-1.5">
+                      {correlations.slice(0, MAX_PAIRS_SHOWN).map((c) => {
+                        const pct = Math.min(100, Math.abs(c.r) * 100)
+                        const col = c.r >= 0 ? '#6366f1' : '#f97316'
+                        return (
+                          <div key={`${c.a}|${c.b}`} className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-300 truncate flex-1 min-w-0" title={`${nameOf(c.a)} vs ${nameOf(c.b)}`}>
+                              {nameOf(c.a)} <span className="text-slate-600">vs</span> {nameOf(c.b)}
+                            </span>
+                            <span className="h-1.5 rounded-full shrink-0" style={{ width: 60, background: '#1e2433' }}>
+                              <span className="block h-1.5 rounded-full" style={{ width: `${pct}%`, background: col }} />
+                            </span>
+                            <span className="text-[10px] font-medium tabular-nums w-11 text-right shrink-0" style={{ color: col }}>
+                              {c.r >= 0 ? '+' : ''}{c.r.toFixed(2)}
+                            </span>
+                            <span className="text-[9px] text-slate-500 w-28 shrink-0 hidden sm:inline">{rLabel(c.r)}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {/* Never let a top-N read as "this is all of them". */}
+                    {correlations.length > MAX_PAIRS_SHOWN && (
+                      <p className="text-[9px] text-slate-600 mt-2">
+                        Showing the {MAX_PAIRS_SHOWN} strongest of {correlations.length} reportable pairs
+                        {totalPairs > correlations.length ? ` (${totalPairs - correlations.length} more had too little overlapping data or a flat series)` : ''}.
+                      </p>
+                    )}
+                    {correlations.length <= MAX_PAIRS_SHOWN && totalPairs > correlations.length && (
+                      <p className="text-[9px] text-slate-600 mt-2">
+                        {totalPairs - correlations.length} of {totalPairs} pairs are not reportable — too little overlapping data, or one series never varied.
+                      </p>
+                    )}
+                    <p className="text-[9px] text-slate-600 mt-2 leading-relaxed">
+                      Measured on bucketed averages, so a coarser window smooths out brief divergence and tends to push
+                      values toward ±1. Association is not causation — two readings often track each other because both
+                      follow load or ambient temperature.
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
