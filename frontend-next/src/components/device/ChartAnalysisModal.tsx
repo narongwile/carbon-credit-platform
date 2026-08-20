@@ -27,7 +27,7 @@ import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISP
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
-import { X, Loader2, Download, LayoutDashboard, Pencil } from 'lucide-react'
+import { X, Loader2, Download, LayoutDashboard, Pencil, CalendarRange, ChevronDown } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -71,6 +71,8 @@ export default function ChartAnalysisModal({
   const live = useIsLive()
   const [quick, setQuick] = useState<string>('24h')
   const [custom, setCustom] = useState<{ from: string; to: string } | null>(null)
+  /** Phones only — the date inputs are always visible from sm up. */
+  const [showRange, setShowRange] = useState(false)
   const [axisMode, setAxisMode] = useState<AxisMode>('dual')
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [focusKey, setFocusKey] = useState<string | null>(null)
@@ -305,25 +307,41 @@ export default function ChartAnalysisModal({
               </button>
             ))}
           </div>
-          <input
-            type="datetime-local"
-            value={custom?.from ?? toDisplayInput(range.from)}
-            onChange={(e) => setCustom((c) => ({ from: e.target.value, to: c?.to ?? toDisplayInput(range.to) }))}
-            className="text-[11px] rounded-md px-2 py-1.5 text-slate-200" style={inset}
-          />
-          <span className="text-slate-600 text-[11px]">→</span>
-          <input
-            type="datetime-local"
-            value={custom?.to ?? toDisplayInput(range.to)}
-            onChange={(e) => setCustom((c) => ({ from: c?.from ?? toDisplayInput(range.from), to: e.target.value }))}
-            className="text-[11px] rounded-md px-2 py-1.5 text-slate-200" style={inset}
-          />
-          {custom && (
-            <button onClick={() => setCustom(null)} className="text-[11px] text-slate-500 hover:text-white underline">reset</button>
-          )}
-          <span className="text-[10px] text-slate-600" title={`All times shown in ${DISPLAY_TZ_LABEL}`}>
-            times in {DISPLAY_TZ_LABEL}
-          </span>
+          {/* A datetime-local input is ~200px wide, so the pair plus the zone
+              note takes three full rows on a 360px phone and pushes the chart
+              itself off the first screen. On phones they collapse behind this
+              toggle — the quick ranges above cover the common case — while
+              sm+ keeps them inline where there is room. */}
+          <button
+            onClick={() => setShowRange((v) => !v)}
+            aria-expanded={showRange}
+            className={`sm:hidden flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-md ${custom ? 'text-indigo-300' : 'text-slate-400'}`}
+            style={inset}
+          >
+            <CalendarRange size={12} /> {custom ? 'Custom range' : 'Pick dates'}
+            <ChevronDown size={12} className={showRange ? 'rotate-180 transition-transform' : 'transition-transform'} />
+          </button>
+          <div className={`${showRange ? 'flex' : 'hidden'} sm:flex flex-wrap items-center gap-2 w-full sm:w-auto`}>
+            <input
+              type="datetime-local"
+              value={custom?.from ?? toDisplayInput(range.from)}
+              onChange={(e) => setCustom((c) => ({ from: e.target.value, to: c?.to ?? toDisplayInput(range.to) }))}
+              className="text-[11px] rounded-md px-2 py-1.5 text-slate-200 min-w-0 flex-1 sm:flex-none" style={inset}
+            />
+            <span className="text-slate-600 text-[11px]">→</span>
+            <input
+              type="datetime-local"
+              value={custom?.to ?? toDisplayInput(range.to)}
+              onChange={(e) => setCustom((c) => ({ from: c?.from ?? toDisplayInput(range.from), to: e.target.value }))}
+              className="text-[11px] rounded-md px-2 py-1.5 text-slate-200 min-w-0 flex-1 sm:flex-none" style={inset}
+            />
+            {custom && (
+              <button onClick={() => setCustom(null)} className="text-[11px] text-slate-500 hover:text-white underline">reset</button>
+            )}
+            <span className="text-[10px] text-slate-600" title={`All times shown in ${DISPLAY_TZ_LABEL}`}>
+              times in {DISPLAY_TZ_LABEL}
+            </span>
+          </div>
 
           {chart.paramKeys.length > 1 && (
             <div className="flex items-center gap-1 ml-1 pl-2" style={{ borderLeft: '1px solid #1e2433' }}>
@@ -373,19 +391,27 @@ export default function ChartAnalysisModal({
         {/* Chart */}
         <div className="px-5">
           {!live ? (
-            <div className="h-[380px] flex items-center justify-center text-sm text-slate-600">
+            <div className="h-[260px] sm:h-[380px] flex items-center justify-center text-center px-4 text-sm text-slate-600">
               Switch to Live mode to see stored history.
             </div>
           ) : !visibleKeys.length ? (
-            <div className="h-[380px] flex items-center justify-center text-sm text-slate-600">
+            <div className="h-[260px] sm:h-[380px] flex items-center justify-center text-center px-4 text-sm text-slate-600">
               Every series is hidden — click a legend chip to show it again.
             </div>
           ) : data.length < 2 ? (
-            <div className="h-[380px] flex items-center justify-center text-sm text-slate-600">
+            <div className="h-[260px] sm:h-[380px] flex items-center justify-center text-center px-4 text-sm text-slate-600">
               {loading ? 'Loading…' : 'No readings stored in this period.'}
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={380}>
+            // min-w-0 matters inside the flex/grid ancestors this modal sits
+            // in: without it a flex child's default min-width:auto floors at
+            // its content width, and ResponsiveContainer measures that instead
+            // of the real column — the chart then overflows on iOS Safari
+            // rather than shrinking. The height steps down on phones so the
+            // chart and the stats under it are not separated by a full screen
+            // of scrolling.
+            <div className="w-full min-w-0 h-[260px] sm:h-[380px]">
+            <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={plotted} margin={{ top: 5, right: usesRightAxis ? 8 : 12, bottom: 0, left: -12 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
                 <XAxis dataKey="ts" type="number" scale="time" domain={[win.from, win.to]}
@@ -461,6 +487,7 @@ export default function ChartAnalysisModal({
                 })}
               </ComposedChart>
             </ResponsiveContainer>
+            </div>
           )}
           {axisMode === 'normalize' && data.length > 0 && (
             <p className="text-[9px] text-slate-600 mt-1">
@@ -473,36 +500,52 @@ export default function ChartAnalysisModal({
             a plain average of bucket averages. */}
         {stats.size > 0 && (
           <div className="px-5 pt-4 pb-5">
+            {/* Five columns of numbers do not fit a phone: the table's own
+                min-content width is ~340px against a ~294px container on a
+                360px Android, so with the rounded card's overflow-hidden alone
+                the Samples column was silently CLIPPED — cut off with no way
+                to reach it. The inner overflow-x-auto lets the table scroll
+                inside itself instead, leaving the page's own horizontal scroll
+                (and the rounded corners) intact. */}
             <div className="rounded-xl overflow-hidden" style={inset}>
-              <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="text-slate-500" style={{ borderBottom: '1px solid #1e2433' }}>
-                    <th className="text-left font-medium px-3 py-2">Parameter</th>
-                    <th className="text-right font-medium px-3 py-2">Min</th>
-                    <th className="text-right font-medium px-3 py-2">Average</th>
-                    <th className="text-right font-medium px-3 py-2">Max</th>
-                    <th className="text-right font-medium px-3 py-2">Samples</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chart.paramKeys.map((k, i) => {
-                    const s = stats.get(k)
-                    const unit = unitOf(k)
-                    return (
-                      <tr key={k} style={{ borderTop: i ? '1px solid #1e2433' : undefined, opacity: hidden.has(k) ? 0.4 : 1 }}>
-                        <td className="px-3 py-2 text-slate-300 flex items-center gap-1.5">
-                          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
-                          {nameOf(k)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-slate-400">{s ? `${s.min.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
-                        <td className="px-3 py-2 text-right text-slate-200 font-medium">{s ? `${s.avg.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
-                        <td className="px-3 py-2 text-right text-slate-400">{s ? `${s.max.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
-                        <td className="px-3 py-2 text-right text-slate-500">{s ? s.n.toLocaleString() : '—'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px] min-w-[340px]">
+                  <thead>
+                    <tr className="text-slate-500" style={{ borderBottom: '1px solid #1e2433' }}>
+                      <th className="text-left font-medium px-3 py-2">Parameter</th>
+                      <th className="text-right font-medium px-3 py-2">Min</th>
+                      <th className="text-right font-medium px-3 py-2">Average</th>
+                      <th className="text-right font-medium px-3 py-2">Max</th>
+                      <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Samples</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {chart.paramKeys.map((k, i) => {
+                      const s = stats.get(k)
+                      const unit = unitOf(k)
+                      return (
+                        <tr key={k} style={{ borderTop: i ? '1px solid #1e2433' : undefined, opacity: hidden.has(k) ? 0.4 : 1 }}>
+                          {/* The flex lives on an inner span, NOT the td: a
+                              display:flex td stops being a table-cell, which
+                              drops it out of the column sizing algorithm and
+                              lets this column drift out of line with its own
+                              header. */}
+                          <td className="px-3 py-2 text-slate-300">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
+                              {nameOf(k)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">{s ? `${s.min.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
+                          <td className="px-3 py-2 text-right text-slate-200 font-medium whitespace-nowrap">{s ? `${s.avg.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
+                          <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">{s ? `${s.max.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
+                          <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{s ? s.n.toLocaleString() : '—'}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
