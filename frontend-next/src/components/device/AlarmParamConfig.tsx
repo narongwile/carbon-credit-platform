@@ -44,6 +44,16 @@ export interface ExtendedAlarmParam extends AlarmParam {
   paramType?: ParamKind
   sourceFormula?: string
   riskInsight?: string
+  /**
+   * A key this device is genuinely publishing, for which no catalog entry (and
+   * therefore no engineered limit) exists. Its warn/critical are placeholders
+   * guessed from the key's spelling, NOT rationalized setpoints, so it is
+   * offered to the operator switched OFF: an alarm on a made-up limit is worse
+   * than no alarm, because it spends the operator's attention on a number
+   * nobody chose. ISA-18.2 §6 calls this out explicitly — every alarm needs a
+   * documented basis before it is allowed to annunciate.
+   */
+  unrationalized?: boolean
 }
 
 /**
@@ -403,41 +413,50 @@ export default function AlarmParamConfig({
       map.set(rowId(p), { ...p, label: labels[p.key] || p.label })
     }
 
+    // Bare keys already carried by a catalog row. The catalog is keyed by
+    // rowId (key::direction) because one sensor can hold two bands, but the
+    // discovery lists below carry BARE keys — so they must be matched against
+    // bare keys, never against the map's own rowIds.
+    //
+    // This used to do `map.has(k)` with a bare k against a rowId-keyed map,
+    // which can never match. Every parameter the device actually publishes was
+    // therefore added a SECOND time, as a phantom row with the guessed limits
+    // below, and phantom rows save into the rule with enabled:true like any
+    // other. On a real ETERNITY transformer publishing VoltAN ≈ 225 V that
+    // produced a duplicate 'VoltAN' rule at warn 80 V / critical 100 V —
+    // permanently CRITICAL on a perfectly healthy phase, while the real
+    // 241.5/253 V band sat right beside it.
+    const catalogKeys = new Set<string>()
+    for (const p of catalog) catalogKeys.add(p.key)
+
+    /** Placeholder shape for a key with no engineered limits behind it. */
+    const discovered = (k: string): ExtendedAlarmParam => {
+      const lower = k.toLowerCase()
+      const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('humid') || lower.includes('rh') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
+      const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') || lower.includes('pf') || lower.includes('bdv') ? 'low' : 'high'
+      return {
+        key: k,
+        label: labelOf(k),
+        unit,
+        direction,
+        warn: direction === 'high' ? 80 : 20,
+        critical: direction === 'high' ? 100 : 10,
+        paramType: 'reading',
+        unrationalized: true,
+      }
+    }
+
     // 2. Add keys configured in SENSOR READINGS (DisplayParamPicker)
     for (const k of configuredDisplayKeys) {
-      if (!map.has(k)) {
-        const lower = k.toLowerCase()
-        const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
-        const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') || lower.includes('pf') || lower.includes('bdv') ? 'low' : 'high'
-        map.set(k, {
-          key: k,
-          label: labelOf(k),
-          unit,
-          direction,
-          warn: direction === 'high' ? 80 : 20,
-          critical: direction === 'high' ? 100 : 10,
-          paramType: 'reading',
-        })
-      }
+      if (catalogKeys.has(k) || map.has(k)) continue
+      map.set(k, discovered(k))
     }
 
     // 3. Add any dynamically discovered wire keys from live telemetry / lastSample
     for (const k of discoveredWireKeys) {
       if (k === 'time' || k === 'ts' || k === 'id' || k === 'nodeId' || k === 'orgId' || k === 'domain' || k === 'status' || k === 'alarm') continue
-      if (!map.has(k)) {
-        const lower = k.toLowerCase()
-        const unit = lower.includes('temp') ? '°C' : lower.includes('volt') || lower.startsWith('v') ? 'V' : lower.includes('curr') || lower.startsWith('i') ? 'A' : lower.includes('thd') || lower.includes('level') || lower.includes('load') || lower.includes('pct') ? '%' : ''
-        const direction: 'high' | 'low' = lower.includes('level') || lower.includes('low') || lower.includes('batt') || lower.includes('pf') || lower.includes('bdv') ? 'low' : 'high'
-        map.set(k, {
-          key: k,
-          label: labelOf(k),
-          unit,
-          direction,
-          warn: direction === 'high' ? 80 : 20,
-          critical: direction === 'high' ? 100 : 10,
-          paramType: 'reading',
-        })
-      }
+      if (catalogKeys.has(k) || map.has(k)) continue
+      map.set(k, discovered(k))
     }
 
     // 4. User-created custom parameters
@@ -468,7 +487,11 @@ export default function AlarmParamConfig({
             warn: p.warn,
             critical: p.critical,
             rate: p.rate?.warn,
-            enabled: true,
+            // This seed runs for EVERY row and lands in `vals`, which every
+            // later read consults first — so an unconditional `true` here
+            // silently re-armed the rows the unrationalized rule is meant to
+            // leave off. The catalog rows still default on, as before.
+            enabled: !p.unrationalized,
           }
         }
       }
@@ -603,7 +626,9 @@ export default function AlarmParamConfig({
         warn: v?.warn ?? p.warn,
         critical: v?.critical ?? p.critical,
         rate: p.rate ? { ...p.rate, warn: v?.rate ?? p.rate.warn } : undefined,
-        enabled: v?.enabled !== false,
+        // An unrationalized row carries a guessed limit, so it only arms once
+        // the operator has actually chosen one (see ExtendedAlarmParam).
+        enabled: v?.enabled ?? !p.unrationalized,
       } as ParamRule
     })
 
@@ -627,7 +652,7 @@ export default function AlarmParamConfig({
    * a single mistake onto every device in the fleet at once. */
   const misordered = allParams.filter((p) => {
     const v = vals[rowId(p)]
-    if (v?.enabled === false) return false
+    if (!(v?.enabled ?? !p.unrationalized)) return false
     const warn = v?.warn ?? p.warn
     const critical = v?.critical ?? p.critical
     if (!Number.isFinite(warn) || !Number.isFinite(critical)) return false
@@ -1000,13 +1025,19 @@ export default function AlarmParamConfig({
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {filteredParams.map((p) => {
-                const current = vals[rowId(p)] ?? { warn: p.warn, critical: p.critical, enabled: true, rate: p.rate?.warn }
+                const current = vals[rowId(p)] ?? { warn: p.warn, critical: p.critical, enabled: !p.unrationalized, rate: p.rate?.warn }
                 const isEnabled = current.enabled !== false
                 const liveVal = liveReadings[p.key] ?? (devices.find((d) => d.id === nodeId) as any)?.lastSample?.[p.key]
 
                 return (
                   <tr
                     key={rowId(p)}
+                    // Surfaced for e2e/browser/test-alarm-discovery-ui.mjs:
+                    // the duplicate-row bug this guards against is only
+                    // countable if the row's identity is visible in the DOM.
+                    data-param-key={p.key}
+                    data-param-direction={p.direction}
+                    data-param-unrationalized={p.unrationalized ? 'true' : 'false'}
                     className={clsx(
                       'transition-colors hover:bg-white/[0.02]',
                       !isEnabled && 'opacity-40 bg-black/20'

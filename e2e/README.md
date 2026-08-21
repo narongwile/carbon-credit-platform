@@ -39,13 +39,17 @@ node test-dual-band-voltage.mjs      # over/under-voltage sharing one key, indep
 node test-studio-features.mjs        # brush, chart/table toggle, thresholds on-off, refresh, Δ Span
 node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id in the map popup
                                      #   ⚠️ CURRENTLY CANNOT RUN — see "Known gaps" below
+node test-alarm-discovery-ui.mjs     # each reading sensor gets ONE row in the alarm editor carrying its
+                                     #   engineered limits — no duplicate phantom row on a guessed limit,
+                                     #   and a discovered key with no catalog entry is offered switched OFF
 node test-reports-copy.mjs           # the reports page advertises only analyses the engine can
                                      #   actually back — no Duval triangle, no thermal aging factor,
                                      #   no IEEE 519/C57.104/60076/21 CFR conformance badges
 ```
 
-Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`
-and `test-reports-copy.mjs` actually exit non-zero on failure** — the other 30
+Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
+`test-reports-copy.mjs` and `test-alarm-discovery-ui.mjs` actually exit
+non-zero on failure** — the other 30
 count nothing and always exit 0. This paragraph used to claim they were all
 "safe to pipe into a CI job"; they are not. Piping the rest into CI today
 buys a job that goes green while assertions fail underneath it. Adding a
@@ -92,6 +96,9 @@ go run e2e/proofs/go-alarm-state-proof.go  # the exact state machine from worker
                                             #   extracted verbatim: proves two alarm bands sharing one telemetry
                                             #   key (e.g. over/under-voltage on the same phase) track independent
                                             #   state instead of one clobbering the other into a duplicate-alarm loop
+node e2e/proofs/test-alarm-param-discovery.mjs   # the alarm editor's catalog-vs-discovery resolution: bare wire
+                                            #   keys matched against a rowId-keyed (key::direction) catalog,
+                                            #   so a published sensor is never listed twice
 node e2e/proofs/test-real-device-fieldnames.mjs  # the REAL ETERNITY transformer's actual wire spellings
                                             #   (Oiltemp/H2/OilMoisture/Tamb, confirmed against a live MQTT
                                             #   payload) normalize to their canonical param keys through the
