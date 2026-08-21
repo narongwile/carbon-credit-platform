@@ -1061,10 +1061,27 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 			continue
 		}
 
-		ps, ok := ns.Params[p.Key]
+		// A single physical reading can carry two independent bands sharing
+		// one Key — a phase voltage alarms both 'high' (over-voltage) and
+		// 'low' (under-voltage) — as two separate RuleDefinition.Params
+		// entries. ns.Params used to be keyed by p.Key alone: with two such
+		// entries, both fetched/created the SAME *AlarmParamState, so
+		// whichever one ran second in this loop overwrote the ActiveLevel
+		// the other had just set. Proved with the real state machine: a
+		// steady 255V over-voltage reading raised CRITICAL once, then the
+		// paired under-voltage entry (same Key, opposite Direction) cleared
+		// that ActiveLevel back to "" on the very same frame, causing the
+		// over-voltage entry to re-raise an identical CRITICAL event on
+		// EVERY subsequent frame the voltage held steady — a duplicate-alarm
+		// storm, not just a missed one. Keying by (Key, Direction) gives each
+		// band its own dwell/hysteresis/PrevValue state, matching how
+		// evalParam in alarmEngine.ts and the Node-RED backend already keep
+		// per-param-entry local state rather than a shared map.
+		stateKey := p.Key + "\x1f" + p.Direction
+		ps, ok := ns.Params[stateKey]
 		if !ok {
 			ps = &AlarmParamState{}
-			ns.Params[p.Key] = ps
+			ns.Params[stateKey] = ps
 		}
 
 		// Rate Check

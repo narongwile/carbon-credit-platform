@@ -46,6 +46,23 @@ export interface ExtendedAlarmParam extends AlarmParam {
   riskInsight?: string
 }
 
+/**
+ * Identity for the CONFIG UI's own bookkeeping (catalog dedup, per-row edit
+ * state, React list keys) — NOT the identity the alarm engine evaluates on,
+ * which is `.key` alone against live telemetry (r.values[p.key] / t.Values[p.Key],
+ * identical in worker/main.go, alarmEngine.ts and the Node-RED backend).
+ *
+ * A single physical sensor can carry two independent alarm bands — a phase
+ * voltage alarms both over ('high') and under ('low') — as two ParamRule
+ * entries that share one `.key` and differ only in `.direction`. Every place
+ * in this editor that used to key a Map/Record by `.key` alone (the reading
+ * catalog, the per-row `vals` edit state, React's `key` prop) would silently
+ * merge those two rows into one, each write clobbering the other's numbers.
+ * `.direction` already disambiguates them, so no new field is needed on
+ * ParamRule itself — just a stable composite to key the UI's own state by.
+ */
+const rowId = (p: { key: string; direction: 'high' | 'low' }) => `${p.key}::${p.direction}`
+
 /** Physical Reading Parameters Catalog (Direct Sensors from Telemetry) */
 export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]> = {
   transformer: [
@@ -57,9 +74,39 @@ export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]>
     { key: 'coreTemp', label: 'Core Temperature', unit: '°C', direction: 'high', warn: 90, critical: 105, paramType: 'reading' },
 
     // ⚡️ Electrical Power Sensors
-    { key: 'voltageA', label: 'Phase A Voltage (V_an)', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
-    { key: 'voltageB', label: 'Phase B Voltage (V_bn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
-    { key: 'voltageC', label: 'Phase C Voltage (V_cn)', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
+    //
+    // VoltAN/BN/CN etc. are the real MQTT payload field names this platform's
+    // ETERNITY meters actually publish (confirmed against the device's real
+    // payload spec — the previous voltageA/B/C keys here were never once
+    // reported by anything: same class of dead-key bug as the removed
+    // Compound Alarms catalog, just in the reading list instead).
+    //
+    // Over-voltage and under-voltage are two INDEPENDENT bands on the SAME
+    // physical reading — one 'high', one 'low' — which is why each phase
+    // gets two catalog rows sharing one key. That only works because the
+    // config UI's own bookkeeping is keyed by rowId(key+direction), not key
+    // alone (see rowId's doc comment above); the alarm engine itself matches
+    // on .key exactly as before, so both rows evaluate independently against
+    // the same live reading.
+    //
+    // Assumes a 230V line-to-neutral LV nominal (400V line-to-line) — the
+    // Thai LV distribution standard, and the same number this catalog's
+    // dead voltageA/B/C entries already assumed. If a monitored transformer
+    // uses a different rated voltage, these thresholds need adjusting per
+    // device via this same editor; there is no per-transformer rated-voltage
+    // config to derive it from automatically yet.
+    { key: 'VoltAN', label: 'Phase A-N Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading', riskInsight: 'Equipment damage risk (> +10% of rated 230V)' },
+    { key: 'VoltAN', label: 'Phase A-N Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207, paramType: 'reading', riskInsight: 'Operational instability / low voltage trip (< -10% of rated 230V)' },
+    { key: 'VoltBN', label: 'Phase B-N Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading', riskInsight: 'Equipment damage risk (> +10% of rated 230V)' },
+    { key: 'VoltBN', label: 'Phase B-N Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207, paramType: 'reading', riskInsight: 'Operational instability / low voltage trip (< -10% of rated 230V)' },
+    { key: 'VoltCN', label: 'Phase C-N Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading', riskInsight: 'Equipment damage risk (> +10% of rated 230V)' },
+    { key: 'VoltCN', label: 'Phase C-N Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207, paramType: 'reading', riskInsight: 'Operational instability / low voltage trip (< -10% of rated 230V)' },
+    // The device computes phase unbalance onboard and publishes it directly
+    // (VoltUnbalanceAN/BN/CN) — trusted as-is, the same way oilTemp/hydrogen
+    // are trusted as-is, rather than re-derived from VoltAN/BN/CN here.
+    { key: 'VoltUnbalanceAN', label: 'Phase A-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading', riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)' },
+    { key: 'VoltUnbalanceBN', label: 'Phase B-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading', riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)' },
+    { key: 'VoltUnbalanceCN', label: 'Phase C-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading', riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)' },
     { key: 'currentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
     { key: 'currentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
     { key: 'currentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
@@ -241,7 +288,7 @@ export default function AlarmParamConfig({
   const schema = getAlarmSchema(domain)
   const setRule = useAlarmDB((s) => s.setRule)
   const hasHydrated = useAlarmDB((s) => s.hasHydrated)
-  const { labelOf } = useParamLabels(orgId || '', domain, nodeId)
+  const { labels, labelOf } = useParamLabels(orgId || '', domain, nodeId)
   const { devices } = useManagedDevices(orgId || '')
 
   // Current live sensor readings polled or subscribed
@@ -332,7 +379,28 @@ export default function AlarmParamConfig({
     // 1. Expected catalog for this domain
     const catalog = EXPECTED_PAYLOAD_CATALOG[domain] || schema?.params || []
     for (const p of catalog) {
-      map.set(p.key, { ...p, label: labelOf(p.key) })
+      // labelOf() (org-custom -> SCHEMA -> raw key) is deliberately NOT used
+      // here. Two problems, both from the same root cause: schemaLabel()
+      // does `ALARM_SCHEMA[domain].params.find(x => x.key === key)`, a
+      // single first-match lookup with no notion of direction — so for a
+      // dual-band key like VoltAN (an 'over-voltage' entry and an 'under-
+      // voltage' entry sharing that key) it resolves to the SAME label for
+      // BOTH catalog rows, always the first one registered. Confirmed in a
+      // real browser: both rows rendered "Phase A-N Voltage — Over-voltage",
+      // the second silently losing its own identity. And even without a
+      // direction clash, the bare-key fallback used to discard a real,
+      // deliberately-written catalog label in favor of the literal string
+      // "VoltAN" whenever nobody had bothered to rename it.
+      //
+      // Only the org's own explicit rename should ever override this
+      // catalog's per-band label — that rename is stored flat by key
+      // (labels[key]), so it necessarily applies identically to every band
+      // sharing that key (an org that renames "VoltAN" to "Substation A —
+      // Phase A" wants that context on both bands, just not a lost "Over/
+      // Under-voltage" suffix). The product-schema tier is skipped entirely
+      // here in favor of this catalog's own label, which for every entry in
+      // this file already IS the correct, direction-specific schema label.
+      map.set(rowId(p), { ...p, label: labels[p.key] || p.label })
     }
 
     // 2. Add keys configured in SENSOR READINGS (DisplayParamPicker)
@@ -374,11 +442,11 @@ export default function AlarmParamConfig({
 
     // 4. User-created custom parameters
     for (const cp of customParams) {
-      map.set(cp.key, { ...cp, paramType: 'reading' })
+      map.set(rowId(cp), { ...cp, paramType: 'reading' })
     }
 
     return Array.from(map.values())
-  }, [domain, schema, configuredDisplayKeys, discoveredWireKeys, customParams, labelOf])
+  }, [domain, schema, configuredDisplayKeys, discoveredWireKeys, customParams, labelOf, labels])
 
   const readingCount = useMemo(() => allParams.filter((p) => p.paramType !== 'compound').length, [allParams])
   const compoundCount = useMemo(() => allParams.filter((p) => p.paramType === 'compound').length, [allParams])
@@ -395,8 +463,8 @@ export default function AlarmParamConfig({
     setVals((prev) => {
       const next = { ...prev }
       for (const p of allParams) {
-        if (!next[p.key]) {
-          next[p.key] = {
+        if (!next[rowId(p)]) {
+          next[rowId(p)] = {
             warn: p.warn,
             critical: p.critical,
             rate: p.rate?.warn,
@@ -433,7 +501,7 @@ export default function AlarmParamConfig({
   const applyRule = (saved: NodeAlarmRule) => {
     const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }> = {}
     for (const p of saved.params ?? []) {
-      nextVals[p.key] = {
+      nextVals[rowId(p)] = {
         warn: p.warn,
         critical: p.critical,
         rate: p.rate?.warn,
@@ -526,7 +594,7 @@ export default function AlarmParamConfig({
   const buildRule = (): NodeAlarmRule | null => {
     if (!domain) return null
     const paramsOut: ParamRule[] = allParams.map((p) => {
-      const v = vals[p.key]
+      const v = vals[rowId(p)]
       return {
         key: p.key,
         label: p.label,
@@ -558,7 +626,7 @@ export default function AlarmParamConfig({
    * is the more dangerous one to leave unguarded, because Apply-to-all pushes
    * a single mistake onto every device in the fleet at once. */
   const misordered = allParams.filter((p) => {
-    const v = vals[p.key]
+    const v = vals[rowId(p)]
     if (v?.enabled === false) return false
     const warn = v?.warn ?? p.warn
     const critical = v?.critical ?? p.critical
@@ -615,7 +683,7 @@ export default function AlarmParamConfig({
     setCustomParams((prev) => [...prev.filter((x) => x.key !== key), p])
     setVals((prev) => ({
       ...prev,
-      [key]: { warn: newWarn, critical: newCritical, enabled: true },
+      [rowId(p)]: { warn: newWarn, critical: newCritical, enabled: true },
     }))
     setNewKey('')
     setNewLabel('')
@@ -628,7 +696,7 @@ export default function AlarmParamConfig({
     const catalog = EXPECTED_PAYLOAD_CATALOG[domain] || schema?.params || []
     const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }> = {}
     for (const p of catalog) {
-      nextVals[p.key] = { warn: p.warn, critical: p.critical, rate: p.rate?.warn, enabled: true }
+      nextVals[rowId(p)] = { warn: p.warn, critical: p.critical, rate: p.rate?.warn, enabled: true }
     }
     setVals(nextVals)
     setDwell(schema?.dwellMin ?? 3)
@@ -653,7 +721,7 @@ export default function AlarmParamConfig({
     if (liveVal === undefined || liveVal === null || isNaN(liveVal)) {
       return <span className="text-[10px] text-slate-600 font-mono">—</span>
     }
-    const v = vals[param.key] ?? param
+    const v = vals[rowId(param)] ?? param
     const isHigh = param.direction === 'high'
     const isCrit = isHigh ? liveVal >= v.critical : liveVal <= v.critical
     const isWarn = isHigh ? liveVal >= v.warn : liveVal <= v.warn
@@ -932,13 +1000,13 @@ export default function AlarmParamConfig({
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {filteredParams.map((p) => {
-                const current = vals[p.key] ?? { warn: p.warn, critical: p.critical, enabled: true, rate: p.rate?.warn }
+                const current = vals[rowId(p)] ?? { warn: p.warn, critical: p.critical, enabled: true, rate: p.rate?.warn }
                 const isEnabled = current.enabled !== false
                 const liveVal = liveReadings[p.key] ?? (devices.find((d) => d.id === nodeId) as any)?.lastSample?.[p.key]
 
                 return (
                   <tr
-                    key={p.key}
+                    key={rowId(p)}
                     className={clsx(
                       'transition-colors hover:bg-white/[0.02]',
                       !isEnabled && 'opacity-40 bg-black/20'
@@ -949,7 +1017,7 @@ export default function AlarmParamConfig({
                       <input
                         type="checkbox"
                         checked={isEnabled}
-                        onChange={() => toggleEnabled(p.key)}
+                        onChange={() => toggleEnabled(rowId(p))}
                         className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                       />
                     </td>
@@ -994,7 +1062,7 @@ export default function AlarmParamConfig({
                     <td className="py-2 px-3 whitespace-nowrap">
                       <button
                         type="button"
-                        onClick={() => toggleDirection(p.key)}
+                        onClick={() => toggleDirection(rowId(p))}
                         disabled={!isEnabled}
                         className={clsx(
                           'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition-all',
@@ -1024,7 +1092,7 @@ export default function AlarmParamConfig({
                         type="number"
                         disabled={!isEnabled}
                         value={current.warn}
-                        onChange={(e) => setVal(p.key, 'warn', +e.target.value)}
+                        onChange={(e) => setVal(rowId(p), 'warn', +e.target.value)}
                         className="w-20 rounded-md px-2 py-1 text-xs text-amber-300 font-mono outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
                         style={inset}
                       />
@@ -1036,7 +1104,7 @@ export default function AlarmParamConfig({
                         type="number"
                         disabled={!isEnabled}
                         value={current.critical}
-                        onChange={(e) => setVal(p.key, 'critical', +e.target.value)}
+                        onChange={(e) => setVal(rowId(p), 'critical', +e.target.value)}
                         className="w-20 rounded-md px-2 py-1 text-xs text-red-300 font-mono outline-none focus:ring-1 focus:ring-red-500 disabled:opacity-50"
                         style={inset}
                       />
@@ -1077,7 +1145,7 @@ export default function AlarmParamConfig({
                             type="number"
                             disabled={!isEnabled}
                             value={current.rate ?? p.rate.warn}
-                            onChange={(e) => setVal(p.key, 'rate', +e.target.value)}
+                            onChange={(e) => setVal(rowId(p), 'rate', +e.target.value)}
                             className="w-14 rounded-md px-2 py-1 text-xs text-indigo-300 font-mono outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                             style={inset}
                           />

@@ -38,9 +38,28 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
       { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 } },
       { key: 'windingTemp', label: 'Winding / Hot-spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110 },
       // ⚡️ Voltage & Power Quality
-      { key: 'overVoltage', label: 'Over Voltage', unit: '%', direction: 'high', warn: 105, critical: 110 },
-      { key: 'underVoltage', label: 'Under Voltage', unit: '%', direction: 'low', warn: 95, critical: 90 },
-      { key: 'voltageUnbalance', label: 'Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
+      //
+      // Real MQTT field names from the device's payload spec (VoltAN/BN/CN,
+      // VoltUnbalanceAN/BN/CN) — 'overVoltage'/'underVoltage'/'voltageUnbalance'
+      // used to sit here as percent-of-rated values under keys no device ever
+      // published, and because defaultNodeRule() below copies this list
+      // VERBATIM as the starting rule for every brand-new device, that meant
+      // every new transformer silently shipped with three enabled, permanently
+      // dead voltage alarms. Over/under-voltage are two independent bands (one
+      // 'high', one 'low') sharing one key per phase — see AlarmParamConfig's
+      // rowId() for why that needs no new field, just the direction each
+      // already carries. 230V line-to-neutral / 400V line-to-line is the Thai
+      // LV nominal this assumes; a transformer on a different rated voltage
+      // needs these retuned per device in Alarm & Notify.
+      { key: 'VoltAN', label: 'Phase A-N Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
+      { key: 'VoltAN', label: 'Phase A-N Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207 },
+      { key: 'VoltBN', label: 'Phase B-N Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
+      { key: 'VoltBN', label: 'Phase B-N Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207 },
+      { key: 'VoltCN', label: 'Phase C-N Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253 },
+      { key: 'VoltCN', label: 'Phase C-N Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207 },
+      { key: 'VoltUnbalanceAN', label: 'Phase A-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
+      { key: 'VoltUnbalanceBN', label: 'Phase B-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
+      { key: 'VoltUnbalanceCN', label: 'Phase C-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
       // 🔌 Current & Load
       { key: 'load', label: 'Over Current (Load)', unit: '%', direction: 'high', warn: 100, critical: 115 },
       // 🧪 DGA & Oil Quality

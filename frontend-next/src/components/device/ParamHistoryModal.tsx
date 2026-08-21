@@ -15,7 +15,7 @@
 // event worth looking at.
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { api, useIsLive } from '@/lib/api'
 import { ALARM_SCHEMA, defaultNodeRule, paramStatus, type AlarmParam } from '@/lib/alarmParams'
 import { useAlarmDB } from '@/server/alarmStore'
@@ -93,6 +93,15 @@ export default function ParamHistoryModal({
   /** The device's saved rule, server-first. Held so saving can extend it rather than rebuild it. */
   const [rule, setRuleState] = useState<NodeAlarmRule | null>(null)
   const [savingRule, setSavingRule] = useState(false)
+  /** Every saved band for the open key — usually 0 or 1, but a physical
+   * reading like a phase voltage can carry two independent rules on the
+   * same key, one 'high' (over-voltage) and one 'low' (under-voltage). This
+   * inline editor was built around exactly one rule per key: seeing two, it
+   * would silently EDIT WHICHEVER ONE .find() happened to return first and
+   * overwrite it into the other on save, corrupting a band the operator
+   * never touched. Kept read-only in that case instead. */
+  const [bands, setBands] = useState<NodeAlarmRule['params']>([])
+  const dualBand = bands.length > 1
 
   // A caller may open a key that is not in `params`: the device decides what it
   // reports, and a merged two-topic transformer sends far more than the six
@@ -106,9 +115,16 @@ export default function ParamHistoryModal({
     () => (known || !paramKey ? params : [...params, { key: paramKey, label: paramKey }]),
     [params, paramKey, known],
   )
-  const schemaParam: AlarmParam | undefined = domain
-    ? ALARM_SCHEMA[domain].params.find((p) => p.key === paramKey)
-    : undefined
+  // A key can carry two schema entries too (e.g. VoltAN over/under-voltage),
+  // not just two entries in a saved device rule — .find() below only ever
+  // returns the first (the 'high' band), so schemaMatches.length is checked
+  // alongside the device's own saved rule when deciding whether this key is
+  // dual-band.
+  const schemaMatches = useMemo(
+    () => (domain ? ALARM_SCHEMA[domain].params.filter((p) => p.key === paramKey) : []),
+    [domain, paramKey],
+  )
+  const schemaParam: AlarmParam | undefined = schemaMatches[0]
   const unit = param?.unit ?? schemaParam?.unit ?? ''
 
   // Esc closes, and the page behind must not scroll under the overlay.
@@ -131,8 +147,22 @@ export default function ParamHistoryModal({
       const local = hasHydrated ? useAlarmDB.getState().rules[nodeId] : undefined
       const r = remote ?? local ?? null
       setRuleState(r)
-      const saved = r?.params.find((x) => x.key === paramKey)
-      if (saved) {
+      const matches = r?.params.filter((x) => x.key === paramKey) ?? []
+      // A brand-new device with no saved rule yet is dual-band exactly when
+      // the PRODUCT SCHEMA is (e.g. VoltAN over/under-voltage) — its own
+      // rule.params is empty at that point, so matches.length alone would
+      // say "single band" and only show the schema's first ('high') match.
+      const effectiveBands = matches.length ? matches : schemaMatches
+      setBands(effectiveBands)
+      const saved = matches[0]
+      if (effectiveBands.length > 1) {
+        // Show the 'high' band's numbers if there is one, purely as the
+        // read-only reference line default — the panel below disables
+        // editing entirely once dualBand is true, so which one seeds the
+        // (inert) form fields doesn't matter for correctness.
+        const primary = effectiveBands.find((x) => x.direction === 'high') ?? effectiveBands[0]
+        setThresh({ warn: primary.warn, critical: primary.critical, direction: primary.direction, enabled: true })
+      } else if (saved) {
         setThresh({ warn: saved.warn, critical: saved.critical, direction: saved.direction, enabled: true })
       } else if (schemaParam) {
         setThresh({ warn: schemaParam.warn, critical: schemaParam.critical, direction: schemaParam.direction, enabled: true })
@@ -145,7 +175,7 @@ export default function ParamHistoryModal({
       }
     })()
     return () => { cancelled = true }
-  }, [nodeId, paramKey, schemaParam, hasHydrated, live])
+  }, [nodeId, paramKey, schemaParam, schemaMatches, hasHydrated, live])
 
   const range = useMemo(() => {
     if (custom) {
@@ -205,6 +235,7 @@ export default function ParamHistoryModal({
 
   const saveThreshold = async () => {
     if (!thresh) return
+    if (dualBand) return // guarded off in the UI too; belt-and-suspenders against a stale click
     setSavingRule(true)
     try {
       // Start from the saved rule so editing one parameter cannot reset the
@@ -254,6 +285,7 @@ export default function ParamHistoryModal({
   const blank = !!thresh && thresh.enabled && (!Number.isFinite(thresh.warn) || !Number.isFinite(thresh.critical))
   const invalid = !!thresh && thresh.enabled && !blank &&
     (thresh.direction === 'high' ? thresh.critical <= thresh.warn : thresh.critical >= thresh.warn)
+  const canEdit = canEditThresholds && !dualBand
 
   return (
     <div
@@ -370,8 +402,25 @@ export default function ParamHistoryModal({
                 <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
                 <Area dataKey="band" stroke="none" fill="#6366f1" fillOpacity={0.16} name="Min–Max" isAnimationActive={false} />
                 <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={1.6} dot={false} name="Average" isAnimationActive={false} />
-                {thresh && <ReferenceLine y={thresh.warn} stroke="#fbbf24" strokeDasharray="4 4" label={{ value: 'warn', fill: '#fbbf24', fontSize: 9, position: 'insideTopRight' }} />}
-                {thresh && <ReferenceLine y={thresh.critical} stroke="#ef4444" strokeDasharray="4 4" label={{ value: 'critical', fill: '#ef4444', fontSize: 9, position: 'insideTopRight' }} />}
+                {dualBand ? (
+                  // Both bands drawn from the real saved rule, not the single
+                  // `thresh` slot — that slot only ever holds one direction's
+                  // numbers, and drawing it alone here would silently hide
+                  // whichever band it didn't happen to pick.
+                  bands.map((b) => (
+                    <Fragment key={b.direction}>
+                      <ReferenceLine y={b.warn} stroke="#fbbf24" strokeDasharray="4 4"
+                        label={{ value: `${b.direction} warn`, fill: '#fbbf24', fontSize: 9, position: 'insideTopRight' }} />
+                      <ReferenceLine y={b.critical} stroke="#ef4444" strokeDasharray="4 4"
+                        label={{ value: `${b.direction} critical`, fill: '#ef4444', fontSize: 9, position: 'insideTopRight' }} />
+                    </Fragment>
+                  ))
+                ) : (
+                  <>
+                    {thresh && <ReferenceLine y={thresh.warn} stroke="#fbbf24" strokeDasharray="4 4" label={{ value: 'warn', fill: '#fbbf24', fontSize: 9, position: 'insideTopRight' }} />}
+                    {thresh && <ReferenceLine y={thresh.critical} stroke="#ef4444" strokeDasharray="4 4" label={{ value: 'critical', fill: '#ef4444', fontSize: 9, position: 'insideTopRight' }} />}
+                  </>
+                )}
               </ComposedChart>
             </ResponsiveContainer>
           )}
@@ -404,6 +453,18 @@ export default function ParamHistoryModal({
         <div className="p-5 pt-4">
           {(
             <div className="rounded-xl p-4" style={inset}>
+              {/* Read-only once a key carries two bands (e.g. a phase voltage
+                  alarmed both over and under) — editing here would silently
+                  overwrite whichever band .find() happened to return first
+                  with the other's numbers. Both bands are still drawn on the
+                  chart above; edit them from Alarm & Notify Settings, which
+                  shows each band as its own row. */}
+              {dualBand && (
+                <p className="text-[11px] text-amber-300 mb-3 flex items-center gap-1.5">
+                  <TrendingUp size={12} /> This reading has two alarm bands ({bands.map((b) => b.direction).join(' & ')}) —
+                  edit both from Alarm &amp; Notify Settings. Shown here read-only.
+                </p>
+              )}
               <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
                   <TrendingUp size={13} className="text-indigo-400" /> Alarm &amp; notify thresholds
@@ -417,7 +478,7 @@ export default function ParamHistoryModal({
                     LOW one" is the one thing the data cannot tell us. */}
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] text-slate-600">alarms when the value goes</span>
-                  <select value={thresh?.direction ?? 'high'} disabled={!canEditThresholds || !!schemaParam}
+                  <select value={thresh?.direction ?? 'high'} disabled={!canEdit || !!schemaParam}
                     onChange={(e) => setThresh((t) => (t ? { ...t, direction: e.target.value as 'high' | 'low' } : t))}
                     className="text-[10px] rounded px-1.5 py-1 text-slate-200 outline-none disabled:opacity-60"
                     style={{ background: '#0d1117', border: '1px solid #1e2433' }}
@@ -434,7 +495,7 @@ export default function ParamHistoryModal({
                   someone opens its chart. */}
               <label className="flex items-center gap-2 mb-3 text-[11px] cursor-pointer"
                 style={{ color: thresh?.enabled ? '#e2e8f0' : '#64748b' }}>
-                <input type="checkbox" checked={!!thresh?.enabled} disabled={!canEditThresholds}
+                <input type="checkbox" checked={!!thresh?.enabled} disabled={!canEdit}
                   onChange={(e) => setThresh((t) => (t ? { ...t, enabled: e.target.checked } : t))} />
                 Raise alarms for {param?.label ?? paramKey}
                 {!thresh?.enabled && <span className="text-slate-600">— currently not monitored</span>}
@@ -444,7 +505,7 @@ export default function ParamHistoryModal({
                   <span className="block text-[10px] text-amber-400 mb-1 uppercase tracking-wider">Warning</span>
                   <input type="number" step="any"
                     value={Number.isFinite(thresh?.warn as number) ? thresh!.warn : ''}
-                    disabled={!canEditThresholds || !thresh?.enabled}
+                    disabled={!canEdit || !thresh?.enabled}
                     placeholder={stats ? `observed ${stats.min.toFixed(1)}–${stats.max.toFixed(1)}` : ''}
                     onChange={(e) => setThresh((t) => (t ? { ...t, warn: e.target.value === '' ? NaN : Number(e.target.value) } : t))}
                     className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
@@ -454,7 +515,7 @@ export default function ParamHistoryModal({
                   <span className="block text-[10px] text-red-400 mb-1 uppercase tracking-wider">Critical</span>
                   <input type="number" step="any"
                     value={Number.isFinite(thresh?.critical as number) ? thresh!.critical : ''}
-                    disabled={!canEditThresholds || !thresh?.enabled}
+                    disabled={!canEdit || !thresh?.enabled}
                     placeholder={stats ? `observed ${stats.min.toFixed(1)}–${stats.max.toFixed(1)}` : ''}
                     onChange={(e) => setThresh((t) => (t ? { ...t, critical: e.target.value === '' ? NaN : Number(e.target.value) } : t))}
                     className="w-full rounded-lg px-3 py-2 text-sm text-white outline-none disabled:opacity-60"
@@ -475,7 +536,7 @@ export default function ParamHistoryModal({
               )}
               <button
                 onClick={saveThreshold}
-                disabled={!canEditThresholds || invalid || blank || savingRule}
+                disabled={!canEdit || invalid || blank || savingRule}
                 className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
                 style={gradient}
               >
