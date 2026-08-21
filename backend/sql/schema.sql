@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS alarm_events (
   param_label  VARCHAR(80) NOT NULL,
   severity     ENUM('WARNING','CRITICAL') NOT NULL,
   kind         ENUM('threshold','rate','offline') NOT NULL,
+  -- 'edge' = the firmware evaluated and reported this itself (P/alarm/{sid});
+  -- 'cloud' = the ingest engine derived it from a reading. See migrate-v50.
+  source       ENUM('edge','cloud') NOT NULL DEFAULT 'cloud',
   value        DECIMAL(12,3) NOT NULL,
   threshold    DECIMAL(12,3) NOT NULL,
   unit         VARCHAR(16),

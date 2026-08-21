@@ -50,6 +50,19 @@ await call('VoltUnbalanceAN', 'WARNING');
 t('VoltUnbalanceAN WARNING resolves a real, phase-specific message',
   sentSubject && sentSubject.includes('Phase A voltage unbalance high'), `got: ${sentSubject}`);
 
+// The Alarm List's External Fault/Event, raised by firmware and routed here
+// through the edge-alarm path (see test-edge-alarm-surfaces.mjs). Its
+// severity is Notice/Warning, which this platform expresses as WARNING.
+await call('externalFault', 'WARNING');
+t('externalFault WARNING resolves real external-fault text, not the fallback',
+  sentSubject && sentSubject.includes('External fault event'), `got: ${sentSubject}`);
+t('externalFault is categorised as an Event/Fault',
+  sentSubject && sentSubject.startsWith('Event/Fault |'), `got: ${sentSubject}`);
+
+await call('externalFault', 'CRITICAL');
+t('externalFault CRITICAL names the shutdown risk',
+  sentSubject && sentSubject.includes('animals, lightning'), `got: ${sentSubject}`);
+
 await call('someTrulyUnknownKey', 'WARNING');
 t('a genuinely unknown key still falls back gracefully (no throw, no blank)',
   sentSubject && sentSubject.includes('Warning threshold reached'), `got: ${sentSubject}`);

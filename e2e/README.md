@@ -96,6 +96,10 @@ go run e2e/proofs/go-alarm-state-proof.go  # the exact state machine from worker
                                             #   extracted verbatim: proves two alarm bands sharing one telemetry
                                             #   key (e.g. over/under-voltage on the same phase) track independent
                                             #   state instead of one clobbering the other into a duplicate-alarm loop
+node e2e/proofs/test-edge-alarm-surfaces.mjs     # a firmware-raised alarm (the Alarm List's External Fault/
+                                            #   Event) reaches alarm_events and the notifier instead of
+                                            #   dead-ending in edge_alarm_log, and does not re-notify while
+                                            #   the same alarm is already open
 node e2e/proofs/audit-catalog-vs-device.mjs      # every parameter the REAL fleet publishes (captured frames in
                                             #   e2e/fixtures/real-device-payloads.json) is addressable by some
                                             #   alarm rule, and no auto-armed alarm names a key nothing sends.

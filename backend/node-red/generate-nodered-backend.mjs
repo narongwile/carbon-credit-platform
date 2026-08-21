@@ -3294,19 +3294,54 @@ const edgeAlarmFunc = `
 const pool = global.get('pool'); const e = msg.payload;
 if (!pool || !e || !e.nodeId) return null;
 (async () => {
-  const opool = global.get('resolvePool')(await global.get('orgOfNode')(e.nodeId));   // org DB (control when flag off)
+  const orgId = await global.get('orgOfNode')(e.nodeId);
+  const opool = global.get('resolvePool')(orgId);   // org DB (control when flag off)
   const sev = (e.severity === 'CRITICAL' || e.severity === 'WARNING') ? e.severity : 'WARNING';
   // Find the alarm threshold from the rule for context
   const [rr] = await opool.query('SELECT rule_json FROM alarm_rules WHERE node_id=?', [e.nodeId]);
-  let threshold = null, dwellCount = null;
+  let threshold = null, dwellCount = null, label = e.paramKey, unit = '';
   if (rr.length) {
     const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;
     const param = (rule.params||[]).find(p => p.key === e.paramKey);
-    if (param) { threshold = sev === 'CRITICAL' ? param.critical : param.warn; dwellCount = rule.dwellMin; }
+    if (param) {
+      threshold = sev === 'CRITICAL' ? param.critical : param.warn;
+      dwellCount = rule.dwellMin;
+      label = param.label || label; unit = param.unit || '';
+    }
   }
   await opool.query(
     "INSERT INTO edge_alarm_log (node_id, param_key, severity, value, threshold, dwell_count, ts) VALUES (?,?,?,?,?,?,NOW(3))",
     [e.nodeId, e.paramKey, sev, e.value ?? null, threshold, dwellCount]);
+
+  // --- surface it where operators actually look --------------------------
+  // edge_alarm_log is written and read by nothing: no endpoint selects from
+  // it, no page renders it, and this node used to have no downstream wire.
+  // A fault the device detected and reported therefore never reached the
+  // alarm list, never notified and never escalated. Mirroring it into
+  // alarm_events puts it in front of the same UI, notifier and escalation
+  // scan every cloud-evaluated alarm already goes through; source='edge'
+  // preserves that the device, not the cloud, made the call.
+  //
+  // Suppressed while an equal-or-worse alarm on the same parameter is still
+  // open, so firmware repeating the condition re-notifies nobody. This
+  // mirrors how threshold alarms fire on transition rather than per sample.
+  const [open] = await opool.query(
+    "SELECT 1 FROM alarm_events WHERE node_id=? AND param_key=? AND cleared_at IS NULL" +
+    " AND (severity=? OR severity='CRITICAL') LIMIT 1", [e.nodeId, e.paramKey, sev]);
+  if (open.length) return;
+
+  const [nrow] = await opool.query('SELECT department_id FROM nodes WHERE id=?', [e.nodeId]);
+  const depId = nrow.length ? nrow[0].department_id : null;
+  const ts = e.ts ? new Date(e.ts) : new Date();
+  const id = 'ev-edge-' + e.nodeId + '-' + e.paramKey + '-' + ts.getTime();
+  await opool.query(
+    "INSERT IGNORE INTO alarm_events (id,node_id,org_id,department_id,param_key,param_label,severity,kind,source,value,threshold,unit,raised_at)" +
+    " VALUES (?,?,?,?,?,?,?, 'threshold','edge', ?,?,?,NOW(3))",
+    [id, e.nodeId, orgId, depId, e.paramKey, label, sev, e.value ?? 0, threshold ?? 0, unit]);
+
+  node.send({ payload: { id, nodeId:e.nodeId, orgId, departmentId:depId, paramKey:e.paramKey,
+    paramLabel:label, kind:'threshold', source:'edge', value:e.value ?? 0, unit,
+    threshold: threshold ?? 0, severity:sev, time: ts.toISOString() } });
 })().catch(err => node.error('edge-alarm: ' + err.message));
 return null;
 `
@@ -6242,7 +6277,10 @@ const flow = [
   // device logs: P/diag/log + P/ota/progress → device_logs
   fn('devlog', 'device log store', devlogFunc, 560, 20, [[]], 1, { libs: LIBS }),
   // edge alarm persistence: P/alarm/{sid} → edge_alarm_log
-  fn('edgealarm', 'edge alarm persist', edgeAlarmFunc, 560, -40, [[]], 1, { libs: LIBS }),
+  // Wired to notify + wsbroadcast: an alarm the firmware raised has to reach
+  // the same places a cloud-evaluated one does. This used to be [[]] — a dead
+  // end that wrote edge_alarm_log and stopped.
+  fn('edgealarm', 'edge alarm persist + surface', edgeAlarmFunc, 560, -40, [['notify', 'wsbroadcast']], 1, { libs: LIBS }),
 
   // global error catch → dead-letter (persist + warn); robustness
   { id: 'catchall', type: 'catch', z: 'be', name: 'catch all', scope: null, uncaught: false, x: 130, y: 540, wires: [['deadletter']] },
