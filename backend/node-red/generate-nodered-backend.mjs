@@ -1546,113 +1546,147 @@ if (__http) {
 }
 return null;`
 
-const notifyFunc = `
+
+const stormBatchFunc = `
 const e = msg.payload;
-if (!e) return null;
-// DB-per-tenant: notification_channels live in the alarm's org DB (control pool when flag off).
+if (!e || !e.paramKey || !e.severity) return null;
+
+const batchKey = 'alarm_batch_' + e.nodeId;
+const timerKey = 'alarm_timer_' + e.nodeId;
+
+let batch = global.get(batchKey) || [];
+batch.push(e);
+global.set(batchKey, batch);
+
+if (!global.get(timerKey)) {
+  const t = setTimeout(() => {
+    const finalBatch = global.get(batchKey) || [];
+    global.set(batchKey, []);
+    global.set(timerKey, null);
+    if (finalBatch.length > 0) {
+      node.send({ payload: finalBatch });
+    }
+  }, 10000);
+  global.set(timerKey, t);
+}
+return null;
+`
+
+const notifyFunc = `
+const alarms = Array.isArray(msg.payload) ? msg.payload : [msg.payload];
+if (!alarms || !alarms.length) return null;
+const e = alarms[0];
+if (!e.severity || !e.paramKey) return null; // Safety guard: ignore raw telemetry
+
 const pool = global.get('resolvePool')(e.orgId);
-// users + user_prefs are ALWAYS control-DB (accessFor/meGetFunc/mePutFunc all read/write
-// them via global.get('pool'), never resolvePool) — the per-user channel lookup below must
-// use the same pool those writes went to, or it joins against an empty/unmirrored table in
-// the tenant DB and silently notifies nobody.
 const controlPool = global.get('pool');
-const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new Date(e.time).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){}
+const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok';
+
+const formatTime = (ts) => {
+  try{ return new Date(ts).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){ return String(ts); }
+};
 
 // Domain-aware category & condition risk insight from industrial spec
 const __RISK_MAP = {
   oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },
+  Oiltemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },
   windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },
-  // VoltAN/BN/CN etc. are the real MQTT field names (confirmed against the
-  // device's payload spec) — 'overVoltage'/'underVoltage'/'voltageA/B/C'/
-  // 'voltageUnbalance' used to sit here describing keys no device ever
-  // published; a real VoltAN alarm would have silently fallen through to
-  // the generic "Parameter limit breached" fallback below instead of a
-  // useful risk description, exactly the kind of quality regression this
-  // map exists to prevent. Each phase key covers BOTH the over-voltage and
-  // under-voltage bands that can raise it (paramLabel already carries the
-  // "— Over-voltage" / "— Under-voltage" distinction in the alert's own
-  // subject line; the value vs limit numbers immediately below this text
-  // make the direction unambiguous without this line committing to one).
+  hydrogen: { cat: 'DGA Gas', critRisk: 'Corona discharge or partial arcing under oil (>300 ppm or rapid rate-of-rise)', warnRisk: 'Dissolved hydrogen elevated (>100 ppm)' },
+  H2: { cat: 'DGA Gas', critRisk: 'Corona discharge or partial arcing under oil (>300 ppm or rapid rate-of-rise)', warnRisk: 'Dissolved hydrogen elevated (>100 ppm)' },
+  moisture: { cat: 'Insulation', critRisk: 'Dielectric breakdown risk & bubble formation (>35 ppm)', warnRisk: 'Oil moisture elevated (>25 ppm)' },
+  OilMoisture: { cat: 'Insulation', critRisk: 'Dielectric breakdown risk & bubble formation (>35 ppm)', warnRisk: 'Oil moisture elevated (>25 ppm)' },
   VoltAN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase A-N voltage approaching its safe limit' },
   VoltBN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase B-N voltage approaching its safe limit' },
   VoltCN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase C-N voltage approaching its safe limit' },
   VoltUnbalanceAN: { cat: 'Power Quality', critRisk: 'Phase A unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase A voltage unbalance high (>2%)' },
   VoltUnbalanceBN: { cat: 'Power Quality', critRisk: 'Phase B unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase B voltage unbalance high (>2%)' },
   VoltUnbalanceCN: { cat: 'Power Quality', critRisk: 'Phase C unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase C voltage unbalance high (>2%)' },
+  CurrentUnbalanceA: { cat: 'Power Quality', critRisk: 'Phase A current unbalance critical (>20%)', warnRisk: 'Phase A current unbalance high (>10%)' },
+  CurrentUnbalanceB: { cat: 'Power Quality', critRisk: 'Phase B current unbalance critical (>20%)', warnRisk: 'Phase B current unbalance high (>10%)' },
+  CurrentUnbalanceC: { cat: 'Power Quality', critRisk: 'Phase C current unbalance critical (>20%)', warnRisk: 'Phase C current unbalance high (>10%)' },
   load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },
+  CurrentAVG: { cat: 'Current Load', critRisk: 'Continuous overload risk (>115% capacity)', warnRisk: 'Average current high (>100% capacity)' },
+  THD_VoltAB: { cat: 'Harmonics', critRisk: 'Severe harmonic distortion (>8% THDv)', warnRisk: 'Voltage harmonics elevated (>5% THDv)' },
+  THD_CurrentA: { cat: 'Harmonics', critRisk: 'Severe current harmonics (>15% THDi)', warnRisk: 'Current harmonics elevated (>8% THDi)' },
+  Tbox: { cat: 'Enclosure', critRisk: 'Control cabinet overheating', warnRisk: 'Control box temperature elevated' },
+  RHbox: { cat: 'Enclosure', critRisk: 'Critical cabinet humidity (>80%)', warnRisk: 'Control box humidity elevated' },
   externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },
   online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },
 };
+
 const __info = __RISK_MAP[e.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };
 const __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;
 const __catText = __info.cat;
-const __sevEmoji = e.severity === 'CRITICAL' ? '🔴' : '🟡';
+const topSeverity = alarms.some(a => a.severity === 'CRITICAL') ? 'CRITICAL' : 'WARNING';
+const __sevEmoji = topSeverity === 'CRITICAL' ? '🔴' : '🟡';
+const __sevColor = topSeverity === 'CRITICAL' ? '#EF4444' : '#FBBF24';
+const __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const isMulti = alarms.length > 1;
 
-const __isOffline = e.kind === 'offline';
-const __valueLine = __isOffline ? 'No telemetry received' : (e.value + (e.unit||''));
-const __limitLine = __isOffline ? '—' : (e.threshold + (e.unit||''));
-const text = '\\n' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + '\\n'
-  + '🏷 Category: ' + __catText + '\\n'
-  + '⚡️ Device: ' + e.nodeId + '\\n'
-  + '📊 Value: ' + __valueLine + ' (Limit: ' + __limitLine + ')\\n'
-  + '💡 Risk: ' + __riskText + '\\n'
-  + '🕒 Time: ' + when;
-const subject = 'ONEOPS ' + __sevEmoji + ' [' + e.severity + '] ' + (e.paramLabel || 'Alarm') + ' (' + __catText + ')';
+let text = '\\n' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? 'Multiple Alarms ('+alarms.length+')' : (e.paramLabel || 'Alarm')) + '\\n';
+text += '⚡️ Device: ' + e.nodeId + '\\n\\n';
 
-// --- Rich message payloads & Dynamic Email Templates -----------------------
-const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(/\\/+$/,'');
+alarms.forEach(a => {
+  const info = __RISK_MAP[a.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };
+  const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
+  const isOffline = a.kind === 'offline';
+  const valLine = isOffline ? 'No telemetry received' : (a.value + (a.unit||''));
+  const limLine = isOffline ? '—' : (a.threshold + (a.unit||''));
+  text += '🏷 ' + (a.paramLabel || 'Alarm') + ' (' + a.severity + ')\\n';
+  text += '📊 Value: ' + valLine + ' (Limit: ' + limLine + ')\\n';
+  text += '💡 Risk: ' + risk + '\\n';
+  text += '🕒 ' + formatTime(a.ts || a.time) + '\\n\\n';
+});
+
+const subject = 'ONEOPS ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms on ' + e.nodeId : (e.paramLabel || 'Alarm'));
+
+const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(new RegExp('/+$'),'');
 const __linkFor = (role) => {
   if (!__base || __base === '*') return '';
   const viewer = role === 'viewer' || role === 'customer';
   return __base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId);
 };
-const __sevColor = e.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';
-const __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-// LINE Flex bubble (Messaging API push only; LINE Notify takes plain text).
-const __flex = (link) => ({ type:'flex', altText: text, contents: { type:'bubble',
+// LINE Flex bubble
+const __flex = (link) => ({ type:'flex', altText: subject, contents: { type:'bubble',
   header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[
-    { type:'text', text: e.severity + ' · ' + __catText, color:'#FFFFFF', size:'xs', weight:'bold' },
-    { type:'text', text: String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },
-  body: { type:'box', layout:'vertical', spacing:'sm', contents: [
-    ['Category', String(__catText)],
-    ['Device', String(e.nodeId)],
-    ['Value', String(__valueLine)],
-    ['Limit', String(__limitLine)],
-    ['Risk/Condition', String(__riskText)],
-    ['Time', String(when)],
-  ].map(([k,v]) => ({ type:'box', layout:'baseline', spacing:'sm', contents:[
-    { type:'text', text:k, size:'sm', color:'#94A3B8', flex:3 },
-    { type:'text', text:v, size:'sm', color:'#0F172A', flex:5, weight: k==='Risk/Condition'?'bold':'regular', wrap:true } ] })) },
+    { type:'text', text: topSeverity + ' · ' + (isMulti ? 'Multiple Alarms' : (__RISK_MAP[e.paramKey]?.cat || 'Telemetry')), color:'#FFFFFF', size:'xs', weight:'bold' },
+    { type:'text', text: isMulti ? alarms.length + ' Active Alarms' : String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },
+  body: { type:'box', layout:'vertical', spacing:'md', contents: alarms.map(a => {
+    const info = __RISK_MAP[a.paramKey] || { cat: 'Telemetry', critRisk: 'Breach', warnRisk: 'Warning' };
+    const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
+    return { type:'box', layout:'vertical', spacing:'sm', contents:[
+      { type:'text', text: a.paramLabel||'Alarm', weight:'bold', size:'sm' },
+      { type:'text', text: 'Value: ' + (a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))), size:'xs', color:'#64748B' },
+      { type:'text', text: 'Risk: ' + risk, size:'xs', color:'#EF4444', wrap:true }
+    ]};
+  })},
   footer: link ? { type:'box', layout:'vertical', contents:[
     { type:'button', style:'primary', color:'#6366F1', height:'sm',
       action:{ type:'uri', label:'Open device', uri: link } } ] } : undefined } });
 
-// Telegram: HTML text + a URL button under the message.
-const __tgText = '<b>' + __sevEmoji + ' [' + __esc(e.severity) + '] ' + __esc(e.paramLabel || 'Alarm') + '</b>\\n'
-  + '🏷 <b>Category:</b> ' + __esc(__catText) + '\\n'
-  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n'
-  + '📊 <b>Value:</b> ' + __esc(__valueLine) + ' (Limit: ' + __esc(__limitLine) + ')\\n'
-  + '💡 <b>Risk/Condition:</b> ' + __esc(__riskText) + '\\n'
-  + '🕒 <b>Time:</b> ' + __esc(when);
+// Telegram
+const __tgText = '<b>' + __sevEmoji + ' [' + __esc(topSeverity) + '] ' + (isMulti ? alarms.length + ' Alarms' : __esc(e.paramLabel || 'Alarm')) + '</b>\\n'
+  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n\\n'
+  + alarms.map(a => {
+      const info = __RISK_MAP[a.paramKey] || { warnRisk: 'Warning' };
+      const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
+      return '🏷 <b>' + __esc(a.paramLabel || 'Alarm') + '</b> (' + __esc(a.severity) + ')\\n'
+      + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')\\n'
+      + '💡 <i>' + __esc(risk) + '</i>';
+    }).join('\\n\\n');
+
 const __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',
   reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined });
 
-// Google Chat cardsV2 — 'text' rides along so notifications and clients that
-// cannot render cards still show something useful.
-const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
-  header: { title: (e.severity==='CRITICAL'?'🔴 ':'🟠 ') + String(e.paramLabel||'Alarm'), subtitle: __catText + ' · ' + String(e.nodeId) },
-  sections: [{ widgets: [
-    { decoratedText: { topLabel:'Category', text: String(__catText) } },
-    { decoratedText: { topLabel:'Value', text: String(__valueLine) } },
-    { decoratedText: { topLabel:'Limit', text: String(__limitLine) } },
-    { decoratedText: { topLabel:'Condition / Risk', text: String(__riskText) } },
-    { decoratedText: { topLabel:'Time', text: String(when) } },
-    ...(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : []),
-  ] }] } }] });
+// Google Chat
+const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', card: {
+  header: { title: (topSeverity==='CRITICAL'?'🔴 ':'🟠 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },
+  sections: [{ widgets: alarms.map(a => ({ decoratedText: { topLabel: a.paramLabel||'Alarm', text: String(a.value||'Offline') + ' · ' + (__RISK_MAP[a.paramKey]?.warnRisk||'Warning') } })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])
+  }] } }] });
+
 (async () => {
   try {
-    // --- Org Email Template Load & Render ----------------------------------
     let orgName = e.orgId;
     try {
       const [orgRows] = await controlPool.query("SELECT name FROM organizations WHERE id=?", [e.orgId]);
@@ -1666,7 +1700,7 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
     } catch(_) {}
     if (!emailTpl) {
       emailTpl = {
-        subjectTemplate: '[{{severity}}] {{org_name}} Alert: {{device_name}} - {{param_label}} ({{category}})',
+        subjectTemplate: '[{{severity}}] {{org_name}} Alert: {{device_name}}',
         customHeaderNote: 'Attention: Automated priority alert triggered by {{org_name}} Industrial IoT Monitoring System.',
         customFooterSop: '',
         includeActionLink: true,
@@ -1679,20 +1713,14 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
       node_id: e.nodeId,
       org_id: e.orgId,
       org_name: orgName,
-      severity: e.severity,
-      category: __catText,
-      param_label: e.paramLabel || 'Alarm',
-      param_key: e.paramKey,
-      value: __valueLine,
-      threshold: __limitLine,
-      risk_insight: __riskText,
-      time: when,
+      severity: topSeverity,
+      category: isMulti ? 'Multiple Alarms' : (__RISK_MAP[e.paramKey]?.cat || 'Telemetry'),
+      param_label: isMulti ? 'Multiple Alarms' : e.paramLabel,
       sevEmoji: __sevEmoji,
     };
-
     const __renderTpl = (str) => String(str || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => (__templateVars[k] !== undefined ? __templateVars[k] : ''));
 
-    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}} - {{param_label}} ({{category}})');
+    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}}');
     const emailHeaderNote = __renderTpl(emailTpl.customHeaderNote);
     const emailFooterSop = __renderTpl(emailTpl.customFooterSop);
 
@@ -1700,20 +1728,24 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
       + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'
       + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'
       + '<div style=\"background-color: ' + __sevColor + '; padding: 18px 24px;\">'
-      + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">' + e.severity + ' · ' + __esc(__catText) + '</div>'
-      + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + __esc(e.paramLabel || 'Industrial Alarm') + '</div>'
+      + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">' + topSeverity + '</div>'
+      + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + __esc(isMulti ? alarms.length + ' Active Alarms' : (e.paramLabel || 'Industrial Alarm')) + '</div>'
       + '</div>'
       + (emailHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + __esc(emailHeaderNote) + '</div>' : '')
       + '<div style=\"padding: 24px;\">'
-      + '<table style=\"width: 100%; border-collapse: collapse; font-size: 13px;\">'
-      + '<tbody>'
-      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b; width: 140px;\">Device / Asset</td><td style=\"padding: 10px 0; color: #ffffff; font-weight: 600; font-family: monospace;\">' + __esc(e.nodeId) + '</td></tr>'
-      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Category</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + __esc(__catText) + '</td></tr>'
-      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Live Value</td><td style=\"padding: 10px 0; color: ' + __sevColor + '; font-weight: 700; font-size: 15px;\">' + __esc(__valueLine) + '</td></tr>'
-      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Alarm Limit</td><td style=\"padding: 10px 0; color: #cbd5e1;\">' + __esc(__limitLine) + '</td></tr>'
-      + '<tr style=\"border-bottom: 1px solid #1e2433;\"><td style=\"padding: 10px 0; color: #64748b;\">Risk &amp; Condition</td><td style=\"padding: 10px 0; color: #f59e0b; font-weight: 600;\">💡 ' + __esc(__riskText) + '</td></tr>'
-      + '<tr><td style=\"padding: 10px 0; color: #64748b;\">Timestamp</td><td style=\"padding: 10px 0; color: #94a3b8;\">' + __esc(when) + '</td></tr>'
-      + '</tbody></table>'
+      + '<div style=\"margin-bottom: 16px; color: #94a3b8; font-size: 14px;\">Device: <strong style=\"color:#fff; font-family:monospace;\">' + __esc(e.nodeId) + '</strong></div>'
+      
+      + alarms.map(a => {
+          const info = __RISK_MAP[a.paramKey] || { warnRisk: 'Warning' };
+          const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
+          const aColor = a.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';
+          return '<div style=\"margin-bottom: 16px; padding: 12px; background-color: #111827; border-left: 4px solid '+aColor+'; border-radius: 4px;\">'
+            + '<div style=\"font-weight: bold; color: #fff; margin-bottom: 4px;\">' + __esc(a.paramLabel || 'Alarm') + ' <span style=\"color:'+aColor+'; font-size:11px;\">['+a.severity+']</span></div>'
+            + '<div style=\"color: #cbd5e1; font-size: 13px; margin-bottom: 4px;\">Value: <strong style=\"color:'+aColor+';\">' + __esc(a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))) + '</strong> (Limit: ' + __esc(a.kind==='offline'?'—':(a.threshold+(a.unit||''))) + ')</div>'
+            + '<div style=\"color: #f59e0b; font-size: 12px;\">💡 ' + __esc(risk) + '</div>'
+            + '</div>';
+        }).join('')
+      
       + (emailFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + __esc(emailFooterSop) + '</div></div>' : '')
       + (emailTpl.includeActionLink && link ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')
       + '</div>'
@@ -1722,35 +1754,25 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
 
     const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');
 
-    // Per-tenant channels (org + dept) from DB — same routing as the Express service.
     let channels = [];
     if (pool && e.orgId) {
       const [rows] = await pool.query("SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)", [e.orgId, e.departmentId || null]);
       channels = rows;
     }
     const nc = await global.get('notifyConfig')();
-    // Fallback: DB/env single destination when no per-org DB channels are configured.
     if (!channels.length) {
       if (nc.lineToken) channels.push({ channel:'line', target:'' });
       if (nc.telegramToken) channels.push({ channel:'telegram', target:'' });
       if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
     }
     for (const c of channels) {
-      if (c.min_severity === 'CRITICAL' && e.severity !== 'CRITICAL') continue;   // severity filter
+      if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL') continue;
       try {
         if (c.channel === 'email') {
           const mc = await global.get('mailConfig')();
-          if (!mc.transport || !c.target) { node.warn('notify:email skipped — SMTP not configured / target missing'); continue; }
-          await mc.transport.sendMail({
-            from: mc.from,
-            to: c.target,
-            subject: emailSubject,
-            text: emailPlain,
-            html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')),
-          });
+          if (!mc.transport || !c.target) continue;
+          await mc.transport.sendMail({ from: mc.from, to: c.target, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')) });
         } else if (c.channel === 'line') {
-          // An org target may be "channelAccessToken@userId" (Messaging API push,
-          // which carries the Flex card) or a bare LINE Notify token (text only).
           const raw = String(c.target || nc.lineToken || '');
           const at = raw.lastIndexOf('@');
           const tok = at > 0 ? raw.slice(0, at) : raw;
@@ -1764,28 +1786,17 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
           const url = c.target || nc.googleChatWebhook;
           if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});
         }
-      } catch(err){ node.error('notify:'+c.channel+' '+err.message); }
+      } catch(err) { node.error('notify:'+c.channel+' '+err.message); }
     }
 
-    // --- Per-user channels (user_prefs) -------------------------------------
-    // The device pages let a user pick which of their own channels should alert
-    // them about a given node ("My Alert Settings"); until now that selection
-    // was stored and never read, so those switches did nothing.
-    //
-    // Strictly opt-in: only users with a saved selection for THIS node are
-    // contacted. Notifying everyone whose profile happens to hold a token would
-    // turn switching this on into a mass mailing.
+    // Per-user channels
     try {
-      const [urows] = await controlPool.query(
-        "SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?",
-        [e.orgId]);
+      const [urows] = await controlPool.query("SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?", [e.orgId]);
       for (const u of urows) {
         let pf = {};
         try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { continue; }
         const sel = (pf.alertChannels || {})[e.nodeId];
         if (!sel) continue;
-        // A user attached to a department only hears about that department's
-        // devices; admins (and users with no department) hear everything.
         const isAdmin = u.role === 'admin' || u.role === 'superadmin';
         if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;
 
@@ -1793,53 +1804,33 @@ const __gchat = (link) => ({ text, cardsV2: [{ cardId: 'oneops-alarm', card: {
           try {
             const mc = await global.get('mailConfig')();
             const link = __linkFor(u.role);
-            if (mc.transport) await mc.transport.sendMail({
-              from: mc.from,
-              to: u.email,
-              subject: emailSubject,
-              text: emailPlain,
-              html: emailTpl.format === 'text' ? undefined : emailHtml(link),
-            });
-            else node.warn('notify:user email skipped — SMTP not configured');
-          } catch(err){ node.error('notify:user-email '+err.message); }
+            if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(link) });
+          } catch(err) { node.error('notify:user-email '+err.message); }
         }
-        // Deep link points at the page this user can actually open: a viewer
-        // following an /admin/ link would just be bounced by the portal guard.
-        const link = __linkFor(u.role);
-        if (sel.telegram && pf.telegramBotApi) {
+        if (sel.telegram && pf.telegramChatId) {
           try {
-            // Profile field accepts "botToken" or "botToken@chat_id" (the token
-            // alone needs the platform-wide chat id to have somewhere to go).
-            const at = String(pf.telegramBotApi).lastIndexOf('@');
-            const tok = at > 0 ? String(pf.telegramBotApi).slice(0, at) : String(pf.telegramBotApi);
-            const chat = at > 0 ? String(pf.telegramBotApi).slice(at + 1) : nc.telegramChatId;
-            if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, link))});
-            else node.warn('notify:user telegram skipped — no chat id for '+u.id);
-          } catch(err){ node.error('notify:user-telegram '+err.message); }
+            const tg = nc.telegramToken;
+            if (tg) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(pf.telegramChatId, __linkFor(u.role)))});
+          } catch(err) { node.error('notify:user-telegram '+err.message); }
         }
-        if (sel.line && pf.lineMsgApi) {
+        if (sel.line && pf.lineUserId) {
           try {
-            // "channelAccessToken@userId" → Messaging API push, which is the only
-            // form that can carry the Flex card (LINE Notify was retired in 2025
-            // and only ever accepted plain text).
-            const at = String(pf.lineMsgApi).lastIndexOf('@');
-            const tok = at > 0 ? String(pf.lineMsgApi).slice(0, at) : String(pf.lineMsgApi);
-            const to  = at > 0 ? String(pf.lineMsgApi).slice(at + 1) : '';
-            if (to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(link)]})});
-            else await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
-          } catch(err){ node.error('notify:user-line '+err.message); }
+            const tok = nc.lineToken;
+            if (tok && pf.lineUserId) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to:pf.lineUserId,messages:[__flex(__linkFor(u.role))]})});
+          } catch(err) { node.error('notify:user-line '+err.message); }
         }
-        if (sel.googlechat && pf.googleChatApi) {
+        if (sel.googlechat && pf.googleChatWebhook) {
           try {
-            await fetch(String(pf.googleChatApi),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(link))});
-          } catch(err){ node.error('notify:user-googlechat '+err.message); }
+            await fetch(pf.googleChatWebhook,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});
+          } catch(err) { node.error('notify:user-googlechat '+err.message); }
         }
       }
-    } catch(err){ node.warn('notify:user-prefs '+err.message); }
-  } catch(err){ node.error('notify: '+err.message); }
+    } catch(err) { node.warn('notify:user-prefs '+err.message); }
+  } catch(err) { node.error('notify: '+err.message); }
 })();
-return null;
-`
+return null;`
+
+
 
 const normalizeFunc = `
 // Out1 = readings (→ ingest); Out2 = presence (→ device_presence);
@@ -6201,8 +6192,10 @@ const flow = [
   { id: 'mqttout', type: 'mqtt out', z: 'be', name: 'downlink', topic: '', qos: '', retain: '', broker: 'mqttbroker', x: 980, y: 470, wires: [] },
   { id: 'dbgMqttOut', type: 'debug', z: 'be', name: 'mqtt TX', active: true, complete: 'true', x: 980, y: 430, wires: [] },
 
-  fn('normalize', 'normalize (readings | presence | logs | edge-alarm)', normalizeFunc, 330, 140, [['ingest', 'wsbroadcast'], ['presence'], ['devlog'], ['edgealarm']], 4),
-  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['notify', 'wsbroadcast'], [], ['mqttout', 'dbgMqttOut']], 4, { libs: LIBS }),
+  fn('normalize', 'normalize (readings | presence | logs | edge-alarm)', normalizeFunc, 330, 140, [['ingest'], ['presence'], ['devlog'], ['edgealarm']], 4),
+  fn('ingest', 'ingest + evaluate + persist', ingestFunc, 560, 160, [['dbgIngest'], ['wsbroadcast'], [], ['mqttout', 'dbgMqttOut']], 4, { libs: LIBS }),
+  { id: 'mqttalarms', type: 'mqtt in', z: 'be', name: 'internal/alarms/live/#', topic: 'internal/alarms/live/#', qos: '0', datatype: 'json', broker: 'mqttbroker', x: 130, y: 180, wires: [['stormbatch', 'wsbroadcast']] },
+  fn('stormbatch', 'storm digest (10s window)', stormBatchFunc, 560, 200, [['notify']], 1),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
   // WebSocket bridge → frontend useMqttTelemetry (NEXT_PUBLIC_WS_URL)
   fn('wsbroadcast', 'ws broadcast (per-org fan-out)', wsBroadcastFunc, 820, 280, [['wsout']], 1),
@@ -6538,7 +6531,7 @@ httpIngest[1].name = 'POST /api/nodes/:id/readings'
 flow.push(...httpIngest)                 // keep the http response node (readpost_resp)
 // ingest output 3 → readings http response (only fired for HTTP-origin msgs)
 const ingestNode = flow.find((n) => n.id === 'ingest')
-ingestNode.wires = [['dbgIngest'], ['notify', 'wsbroadcast'], ['readpost_resp'], ['mqttout', 'dbgMqttOut']]
+ingestNode.wires = [['dbgIngest'], ['wsbroadcast'], ['readpost_resp'], ['mqttout', 'dbgMqttOut']]
 
 // Build-time guard: a function node that USES __CORS but was never prefixed
 // with the `CORS +` string (which is what actually declares `const __CORS=…`
@@ -6610,7 +6603,7 @@ ingestNode.wires = [['dbgIngest'], ['notify', 'wsbroadcast'], ['readpost_resp'],
     try {
       new vm.Script(`(async function(){\n${n.func}\n})`, { filename: `node_${n.id}.js` })
     } catch (err) {
-      syntaxErrors.push({ id: n.id, name: n.name || '', error: err.message })
+      syntaxErrors.push({ id: n.id, name: n.name || '', error: err.stack || err.message })
     }
   }
   if (syntaxErrors.length) {

@@ -192,42 +192,183 @@ export const LEGACY_WIRE_KEYS = new Set([
 ])
 
 /**
- * Standard Alarm Category and Condition / Risk Insights based on industrial transformer specification.
+ * Standard Alarm Category, Condition, Consequence Risk, ISA-18.2 Priority,
+ * and Operator Corrective SOP Action based on industrial transformer specifications.
  */
-export const ALARM_RISK_INSIGHTS: Record<string, { category: string; risk: string; condition: string }> = {
+export interface AlarmRiskInsight {
+  category: string
+  risk: string
+  condition: string
+  priority: 'EMERGENCY' | 'HIGH' | 'MEDIUM' | 'LOW'
+  action: string
+}
+
+export const ALARM_RISK_INSIGHTS: Record<string, AlarmRiskInsight> = {
   oilTemp: {
     category: 'Thermal & Oil',
-    risk: 'Winding/insulation damage risk',
+    risk: 'Accelerated paper insulation degradation & oil oxidation rate',
     condition: 'Top Oil Temperature > 85°C (Warning) / > 90°C (Critical)',
+    priority: 'HIGH',
+    action: 'Inspect radiator cooling fans, verify ambient air flow, and check transformer loading current.',
   },
-  windingTemp: {
+  Oiltemp: {
     category: 'Thermal & Oil',
-    risk: 'Hot-spot thermal degradation',
-    condition: 'Winding Temp > 95°C (Warning) / > 110°C (Critical)',
+    risk: 'Accelerated paper insulation degradation & oil oxidation rate',
+    condition: 'Top Oil Temperature > 85°C (Warning) / > 90°C (Critical)',
+    priority: 'HIGH',
+    action: 'Inspect radiator cooling fans, verify ambient air flow, and check transformer loading current.',
+  },
+  hydrogen: {
+    category: 'DGA Gas',
+    risk: 'Partial discharge, corona sparking, or localized low-energy arcing under oil',
+    condition: 'Dissolved H₂ > 100 ppm (Warning) / > 300 ppm (Critical) or Rate > 10 ppm/day',
+    priority: 'HIGH',
+    action: 'Order laboratory dissolved gas analysis (DGA) verification; monitor gassing rate trend.',
+  },
+  H2: {
+    category: 'DGA Gas',
+    risk: 'Partial discharge, corona sparking, or localized low-energy arcing under oil',
+    condition: 'Dissolved H₂ > 100 ppm (Warning) / > 300 ppm (Critical) or Rate > 10 ppm/day',
+    priority: 'HIGH',
+    action: 'Order laboratory dissolved gas analysis (DGA) verification; monitor gassing rate trend.',
+  },
+  moisture: {
+    category: 'Insulation',
+    risk: 'Reduced dielectric breakdown strength & accelerated bubble formation risk',
+    condition: 'Oil Moisture > 25 ppm (Warning) / > 35 ppm (Critical)',
+    priority: 'HIGH',
+    action: 'Schedule oil dehydration / filtration; check conservator silica gel breather condition.',
+  },
+  OilMoisture: {
+    category: 'Insulation',
+    risk: 'Reduced dielectric breakdown strength & accelerated bubble formation risk',
+    condition: 'Oil Moisture > 25 ppm (Warning) / > 35 ppm (Critical)',
+    priority: 'HIGH',
+    action: 'Schedule oil dehydration / filtration; check conservator silica gel breather condition.',
+  },
+  load: {
+    category: 'Current Load',
+    risk: 'Thermal overloading & winding hotspot damage exceeding nameplate rating',
+    condition: 'Load > 100% (Warning) / > 115% rated capacity (Critical)',
+    priority: 'HIGH',
+    action: 'Shed non-critical feeder loads; redistribute power across secondary substation buses.',
+  },
+  CurrentAVG: {
+    category: 'Current Load',
+    risk: 'Three-phase average current exceeding continuous thermal rating',
+    condition: 'Average Current > Warning/Critical threshold',
+    priority: 'HIGH',
+    action: 'Check plant demand curve; prepare backup feeder transfer if overload persists.',
+  },
+  VoltAN: {
+    category: 'Phase Voltage',
+    risk: 'Phase-A insulation dielectric overstress (>High) or motor stalling/overcurrent (<Low)',
+    condition: 'Phase A Voltage outside ±5% (Warning) / ±10% (Critical) of nominal',
+    priority: 'MEDIUM',
+    action: 'Verify On-Load Tap Changer (OLTC) position; check primary utility supply level.',
+  },
+  VoltBN: {
+    category: 'Phase Voltage',
+    risk: 'Phase-B insulation dielectric overstress (>High) or motor stalling/overcurrent (<Low)',
+    condition: 'Phase B Voltage outside ±5% (Warning) / ±10% (Critical) of nominal',
+    priority: 'MEDIUM',
+    action: 'Verify On-Load Tap Changer (OLTC) position; check primary utility supply level.',
+  },
+  VoltCN: {
+    category: 'Phase Voltage',
+    risk: 'Phase-C insulation dielectric overstress (>High) or motor stalling/overcurrent (<Low)',
+    condition: 'Phase C Voltage outside ±5% (Warning) / ±10% (Critical) of nominal',
+    priority: 'MEDIUM',
+    action: 'Verify On-Load Tap Changer (OLTC) position; check primary utility supply level.',
   },
   overVoltage: {
     category: 'Voltage',
-    risk: 'Equipment damage risk',
+    risk: 'Equipment insulation dielectric overstress & magnetic core saturation',
     condition: '> +5% of rated voltage (Warning) / > +10% of rated voltage (Critical)',
+    priority: 'MEDIUM',
+    action: 'Adjust substation voltage regulator / tap changer down.',
   },
   underVoltage: {
     category: 'Voltage',
-    risk: 'Operational instability / low voltage trip',
+    risk: 'Operational instability, motor overheating due to compensatory current draw',
     condition: '< -5% of rated voltage (Warning) / < -10% of rated voltage (Critical)',
-  },
-  load: {
-    category: 'Current',
-    risk: 'Immediate short circuit risk on critical breach',
-    condition: '> 100% to 115% rated capacity (Warning) / > 115% (Critical)',
+    priority: 'MEDIUM',
+    action: 'Check for heavy feeder startup or grid brownout condition.',
   },
   voltageUnbalance: {
     category: 'Power Quality',
-    risk: 'Phase unbalance motor heating & system stress',
-    condition: 'Voltage unbalance between phases > 2% (Warning) / > 5% (Critical)',
+    risk: 'Negative-sequence voltage causing excessive heating in 3-phase induction equipment',
+    condition: 'Voltage unbalance > 2% (Warning) / > 5% (Critical)',
+    priority: 'MEDIUM',
+    action: 'Rebalance single-phase connected branch loads across secondary phases.',
+  },
+  VoltUnbalanceAN: {
+    category: 'Power Quality',
+    risk: 'Phase-A voltage unbalance exceeding IEC 61000-2-4 tolerance',
+    condition: 'Phase-A unbalance > 2% (Warning) / > 5% (Critical)',
+    priority: 'MEDIUM',
+    action: 'Inspect phase load distribution on downstream panel boards.',
+  },
+  CurrentUnbalanceA: {
+    category: 'Power Quality',
+    risk: 'Current unbalance causing neutral current overheating and ground circulating flow',
+    condition: 'Current unbalance > 10% (Warning) / > 20% (Critical)',
+    priority: 'MEDIUM',
+    action: 'Balance load allocation across phases; check for open single-phase branch fuses.',
+  },
+  THD_VoltAB: {
+    category: 'Harmonics',
+    risk: 'Voltage harmonic distortion causing stray eddy current losses & transformer derating',
+    condition: 'THD Voltage > 5% (Warning) / > 8% (Critical) per IEEE 519',
+    priority: 'LOW',
+    action: 'Inspect active harmonic filters (AHF); identify variable frequency drives without chokes.',
+  },
+  THD_CurrentA: {
+    category: 'Harmonics',
+    risk: 'Current harmonic distortion causing neutral conductor heating & skin effect losses',
+    condition: 'THD Current > 8% (Warning) / > 15% (Critical)',
+    priority: 'LOW',
+    action: 'Audit non-linear loads on Phase A; verify line reactor impedance.',
+  },
+  Tbox: {
+    category: 'Enclosure',
+    risk: 'Elevated internal control cabinet temperature causing IoT gateway & PLC thermal wear',
+    condition: 'Control box temperature exceeding normal operational band',
+    priority: 'LOW',
+    action: 'Inspect control cabinet louvers, exhaust fan, and dust filter condition.',
+  },
+  RHbox: {
+    category: 'Enclosure',
+    risk: 'High cabinet relative humidity risking condensation on electronic terminal blocks',
+    condition: 'Control box humidity > 80%',
+    priority: 'LOW',
+    action: 'Inspect cabinet enclosure door gasket; verify anti-condensation space heater operation.',
   },
   externalFault: {
     category: 'Event/Fault',
-    risk: 'Transformer shutdown from external fault such as animals, lightning, or grid incident',
-    condition: 'Notice/Warning condition',
+    risk: 'Transformer protective trip from external surge, lightning, or grid incident',
+    condition: 'Buchi/Overcurrent protective trip assertion',
+    priority: 'EMERGENCY',
+    action: 'Do not re-energize without visual inspection, insulation resistance test, and oil sample.',
   },
+}
+
+/**
+ * Resolves standard ISA-18.2 Risk Insight metadata for any parameter key.
+ */
+export function getAlarmInsight(paramKey: string): AlarmRiskInsight | undefined {
+  if (!paramKey) return undefined
+  if (ALARM_RISK_INSIGHTS[paramKey]) return ALARM_RISK_INSIGHTS[paramKey]
+  const lower = paramKey.toLowerCase()
+  for (const [k, v] of Object.entries(ALARM_RISK_INSIGHTS)) {
+    if (k.toLowerCase() === lower) return v
+  }
+  if (lower.includes('temp')) return ALARM_RISK_INSIGHTS.oilTemp
+  if (lower.includes('volt') && lower.includes('unbal')) return ALARM_RISK_INSIGHTS.voltageUnbalance
+  if (lower.includes('curr') && lower.includes('unbal')) return ALARM_RISK_INSIGHTS.CurrentUnbalanceA
+  if (lower.includes('volt')) return ALARM_RISK_INSIGHTS.VoltAN
+  if (lower.includes('load') || lower.includes('curr')) return ALARM_RISK_INSIGHTS.load
+  if (lower.includes('h2') || lower.includes('hydro')) return ALARM_RISK_INSIGHTS.hydrogen
+  if (lower.includes('moist')) return ALARM_RISK_INSIGHTS.moisture
+  return undefined
 }

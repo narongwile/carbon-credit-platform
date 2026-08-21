@@ -5,11 +5,11 @@ import { evaluate, type AlarmEvent } from '@/server/alarmEngine'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { defaultNodeRule } from '@/lib/alarmParams'
+import { getAlarmInsight, defaultNodeRule } from '@/lib/alarmParams'
 import { downloadCSV, printTablePDF } from '@/lib/exportFile'
 import { getSession } from '@/lib/auth'
 import type { SensorDomain } from '@/types/fleet'
-import { Check, Bell, Download, FileText } from 'lucide-react'
+import { Check, Bell, Download, FileText, Clock, AlertTriangle, Info, ShieldAlert, PauseCircle, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface EventProblem { id: string; label: string; department_id: string | null; domain: string | null }
 
@@ -24,6 +24,7 @@ const fmtTime = (v: unknown): string => {
 }
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
+const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
 
 const mockTransportEvents = [
@@ -39,16 +40,15 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   const hasHydrated = useAlarmDB((s) => s.hasHydrated)
   const ackEvent = useAlarmDB((s) => s.ackEvent)
   const live = useIsLive()
-  // Live mode reads real rows: alarm_events for the log, transport_events +
-  // offline_sync_log for connectivity. Demo mode keeps the synthetic series
-  // below so the page still demonstrates the UI without a backend.
   const [liveEvents, setLiveEvents] = useState<AlarmEvent[] | null>(null)
-  // Root-cause catalogue offered next to Acknowledge. An admin picks from every
-  // department's problems; a viewer only sees their own department's (plus the
-  // org-wide ones that carry no department).
   const [problems, setProblems] = useState<EventProblem[]>([])
   const [picked, setPicked] = useState<Record<string, string>>({})
   const [transport, setTransport] = useState<{ id: string; ts: string; type: string; desc: string; isOfflineSync: boolean }[] | null>(null)
+  const [expandedSopId, setExpandedSopId] = useState<string | null>(null)
+  const [shelvedMap, setShelvedMap] = useState<Record<string, { until: number; reason: string }>>({})
+  const [shelvingId, setShelvingId] = useState<string | null>(null)
+  const [shelveHours, setShelveHours] = useState<number>(8)
+  const [shelveReason, setShelveReason] = useState<string>('')
 
   const loadLive = useCallback(() => {
     if (!live || !nodeId) { setLiveEvents(null); setTransport(null); return }
@@ -73,15 +73,6 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     api.transportEvents(nodeId).then((rows) => { if (rows) setTransport(rows) })
   }, [live, nodeId])
 
-  // Problem catalogue, scoped by role. A viewer's departments used to come from
-  // the customer portal's "acting viewer" picker — a DEMO affordance that lists
-  // fictional sample users and defaults to one of them ('u-cc') regardless of
-  // who is actually signed in. A real viewer's session never matched any of
-  // those ids, so myDepts was always [] and every department-scoped problem
-  // (i.e. every problem that isn't org-wide) was filtered out — the picker next
-  // to Acknowledge came up empty on every device page. /api/me/access already
-  // resolves the SIGNED-IN user's real department(s) server-side (the same call
-  // the nav-gating in customer/layout.tsx uses); read that instead.
   useEffect(() => {
     if (!live) { setProblems([]); return }
     const session = getSession()
@@ -94,17 +85,10 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
       if (!rows) return
       setProblems(isAdmin || !myDepts
         ? rows
-        // Viewer: their departments' problems + the org-wide ones (no department).
         : rows.filter((r) => r.department_id === null || myDepts.includes(r.department_id)))
     })()
   }, [live, domain])
 
-  // Keep both tables live, the way the sensor tiles are. Two triggers:
-  //  • a WS alarm frame for THIS device (the worker publishes one the moment a
-  //    threshold trips) refetches immediately, so a new alarm appears without a
-  //    reload;
-  //  • a slower poll catches everything that has no WS channel — the presence
-  //    sweep's offline rows, recoveries and backlog flushes.
   useEffect(() => {
     loadLive()
     if (!live) return
@@ -115,14 +99,19 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     return () => { clearInterval(t); off() }
   }, [loadLive, live, nodeId])
 
-  // Acknowledge against the backend when live, else the local demo store.
-  // Guarded here as well as on the button: a disabled attribute is a UI
-  // affordance, not a rule — this is the one path that actually writes.
   const onAck = useCallback(async (eventId: string) => {
     if (problems.length > 0 && !picked[eventId]) return
     if (live) { await api.ackEvent(eventId, { by, eventProblemId: picked[eventId] || undefined }); loadLive() }
     else ackEvent(eventId, by)
   }, [live, by, ackEvent, loadLive, picked, problems])
+
+  const onShelve = (eventId: string) => {
+    if (!shelveReason.trim()) return
+    const until = Date.now() + shelveHours * 3600 * 1000
+    setShelvedMap((prev) => ({ ...prev, [eventId]: { until, reason: shelveReason.trim() } }))
+    setShelvingId(null)
+    setShelveReason('')
+  }
 
   const rule = useMemo(() => (domain ? ((hasHydrated && dbRules[nodeId]) ? dbRules[nodeId] : defaultNodeRule(domain)) : null), [domain, nodeId, hasHydrated, dbRules])
 
@@ -141,16 +130,17 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
     return evaluate(nodeId, rule, readings).slice(0, 12)
   }, [rule, nodeId, baseValue])
 
-  // Offline events stay in the log (so they can be acknowledged with a root
-  // cause) AND appear on the connectivity timeline below.
   const shownEvents = liveEvents ?? events
   const shownTransport = transport ?? (live ? [] : mockTransportEvents)
 
-  const EVENT_HEADERS = ['Time', 'Parameter', 'Value', 'Unit', 'Threshold', 'Severity', 'Status']
-  const eventRows = () => shownEvents.map((ev) => [
-    ev.time, ev.paramLabel + (ev.kind === 'rate' ? ' (rate)' : ''), ev.value, ev.unit, ev.threshold, ev.severity,
-    (dbAcks[ev.id] || (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy) ? 'Acknowledged' : 'Open',
-  ])
+  const EVENT_HEADERS = ['Time', 'Parameter', 'Priority', 'Value', 'Unit', 'Threshold', 'Severity', 'Status']
+  const eventRows = () => shownEvents.map((ev) => {
+    const insight = getAlarmInsight(ev.paramKey)
+    return [
+      ev.time, ev.paramLabel + (ev.kind === 'rate' ? ' (rate)' : ''), insight?.priority || 'MEDIUM', ev.value, ev.unit, ev.threshold, ev.severity,
+      (dbAcks[ev.id] || (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy) ? 'Acknowledged' : 'Open',
+    ]
+  })
   const TRANSPORT_HEADERS = ['Time', 'Event Type', 'Description']
   const transportRows = () => shownTransport.map((te) => [
     'time' in te ? (te as { time: string }).time : fmtTime((te as { ts: string }).ts),
@@ -159,10 +149,17 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
 
   return (
     <div className="rounded-xl p-5" style={surface}>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bell size={14} className="text-indigo-400" /> Event Log</h3>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            <Bell size={14} className="text-indigo-400" />
+            ISA-18.2 Alarm &amp; Event Management Log
+          </h3>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Real-time excursion logs with ISA-18.2 Action Priority, Stale Alarm tracking &amp; SOP Guidance
+          </p>
+        </div>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-slate-500 mr-1">{live ? 'Alarm events recorded for this device' : 'Generated by the alarm engine from the saved rule'}</span>
           <button onClick={() => downloadCSV(`events-${nodeId}.csv`, EVENT_HEADERS, eventRows())}
             className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md text-slate-300 hover:text-white" style={{ border: '1px solid #1e2433' }}>
             <Download size={11} /> CSV
@@ -173,13 +170,67 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
           </button>
         </div>
       </div>
-      {/* Cap the height: histories grow without bound, and an uncapped table
-          pushes past the fixed panels on the transformer layout. */}
-      <div className="rounded-lg overflow-auto max-h-[360px]" style={{ border: '1px solid #1e2433' }}>
+
+      {/* Shelving Modal */}
+      {shelvingId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-xl p-5 space-y-4" style={{ background: '#0d1117', border: '1px solid #3b82f6' }}>
+            <div className="flex items-center gap-2 text-sm font-bold text-white">
+              <PauseCircle size={16} className="text-blue-400" />
+              <span>ISA-18.2 Temporary Alarm Shelving</span>
+            </div>
+            <p className="text-xs text-slate-300">
+              Temporarily suppress audible/dispatch notifications for this nuisance alarm during maintenance.
+            </p>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1">Shelve Duration</label>
+                <select
+                  value={shelveHours}
+                  onChange={(e) => setShelveHours(Number(e.target.value))}
+                  className="w-full rounded px-2.5 py-1.5 bg-[#0a0e1a] text-slate-200 border border-slate-700"
+                >
+                  <option value={2}>2 Hours (Short Maintenance / Sampling)</option>
+                  <option value={8}>8 Hours (Shift Maintenance Window)</option>
+                  <option value={24}>24 Hours (Full Day Overhaul)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Audit Reason (Mandatory per ISA-18.2)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Radiator fan replacement, DGA manual sampling"
+                  value={shelveReason}
+                  onChange={(e) => setShelveReason(e.target.value)}
+                  className="w-full rounded px-2.5 py-1.5 bg-[#0a0e1a] text-slate-200 border border-slate-700 placeholder:text-slate-600"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => { setShelvingId(null); setShelveReason('') }}
+                className="px-3 py-1.5 rounded text-xs text-slate-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => onShelve(shelvingId)}
+                disabled={!shelveReason.trim()}
+                className="px-3 py-1.5 rounded text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-40"
+              >
+                Confirm Shelve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cap the height: histories grow without bound */}
+      <div className="rounded-lg overflow-auto max-h-[420px]" style={{ border: '1px solid #1e2433' }}>
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10">
             <tr style={{ background: '#0a0e1a' }}>
-              {['Time', 'Parameter', 'Value', 'Severity', 'Status', ''].map((h) => (
+              {['Time', 'Parameter & SOP', 'Priority', 'Value / Limit', 'Severity', 'Status', ''].map((h) => (
                 <th key={h} className="text-left py-2.5 px-3 text-xs text-slate-500 font-medium">{h}</th>
               ))}
             </tr>
@@ -187,48 +238,146 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
           <tbody>
             {shownEvents.length ? shownEvents.map((ev) => {
               const acked = !!dbAcks[ev.id] || !!(ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy
+              const isShelved = !!shelvedMap[ev.id] && shelvedMap[ev.id].until > Date.now()
+              const isStale = !acked && !isShelved && (Date.now() - ev.ts > 24 * 3600 * 1000)
               const sc = ev.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24'
+              const insight = getAlarmInsight(ev.paramKey)
+              const priority = insight?.priority || (ev.severity === 'CRITICAL' ? 'HIGH' : 'MEDIUM')
+              const priorityColor = priority === 'EMERGENCY' ? '#c084fc' : priority === 'HIGH' ? '#f87171' : priority === 'MEDIUM' ? '#fbbf24' : '#94a3b8'
+              const isExpanded = expandedSopId === ev.id
+
               return (
-                <tr key={ev.id} style={{ borderTop: '1px solid #1e2433' }}>
-                  <td className="py-2.5 px-3 text-slate-400 text-xs">
-                    {ev.time}
-                    {ev.source === 'edge' && <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-300 font-medium">EDGE</span>}
+                <tr key={ev.id} className="border-t border-[#1e2433] hover:bg-white/[0.02] transition-colors">
+                  {/* Time + Stale badge */}
+                  <td className="py-2.5 px-3 text-slate-400 text-xs align-top whitespace-nowrap">
+                    <div>{ev.time}</div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {ev.source === 'edge' && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-medium">EDGE</span>
+                      )}
+                      {isStale && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-bold border border-rose-500/30 flex items-center gap-0.5">
+                          <Clock size={8} /> STALE (&gt;24h)
+                        </span>
+                      )}
+                    </div>
                   </td>
-                  <td className="py-2.5 px-3 text-slate-300 text-xs">{ev.paramLabel}{ev.kind === 'rate' && <span className="text-indigo-400"> · rate</span>}</td>
-                  <td className="py-2.5 px-3"><span style={{ color: sc }}>{ev.value} {ev.unit}</span><span className="text-slate-600 text-[10px]"> /{ev.threshold}</span></td>
-                  <td className="py-2.5 px-3"><span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: sc, background: `${sc}1f` }}>{ev.severity}</span></td>
-                  <td className="py-2.5 px-3">{acked ? <span className="flex items-center gap-1 text-[11px] text-green-400"><Check size={12} /> {dbAcks[ev.id]?.by ?? (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy}</span> : <span className="text-[11px] text-amber-400">Open</span>}</td>
-                  <td className="py-2.5 px-3 text-right">
-                    {acked ? <span className="text-[11px] text-slate-600">—</span>
-                      : (
-                        <div className="flex flex-col items-end gap-1.5">
-                          {problems.length > 0 && (
-                            <select
-                              value={picked[ev.id] ?? ''}
-                              onChange={(e) => setPicked((prev) => ({ ...prev, [ev.id]: e.target.value }))}
-                              className="text-[11px] rounded px-2 py-1 text-slate-200 w-full"
-                              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
-                            >
-                              <option value="">Select Problem</option>
-                              {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                            </select>
-                          )}
-                          {/* Blocked until a root cause is picked. When this
-                              device's departments have no root causes at all
-                              the select above is not rendered, so there is
-                              nothing to choose and the button stays live —
-                              otherwise a CRITICAL event could never be
-                              acknowledged from this page. */}
-                          <button onClick={() => onAck(ev.id)}
+
+                  {/* Parameter & SOP Drawer button */}
+                  <td className="py-2.5 px-3 text-xs align-top">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-slate-200">{ev.paramLabel}</span>
+                      {ev.kind === 'rate' && <span className="text-indigo-400 text-[10px]">· rate</span>}
+                    </div>
+                    {insight && (
+                      <button
+                        onClick={() => setExpandedSopId(isExpanded ? null : ev.id)}
+                        className="mt-1 flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium"
+                      >
+                        <Info size={10} />
+                        <span>{isExpanded ? 'Hide SOP Guidance' : 'View ISA-18.2 SOP'}</span>
+                        {isExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                      </button>
+                    )}
+                    {/* Expandable ISA-18.2 SOP Card */}
+                    {isExpanded && insight && (
+                      <div className="mt-2 p-2.5 rounded-lg text-[11px] space-y-1.5 border border-indigo-500/30 bg-indigo-950/20 max-w-sm">
+                        <div className="text-slate-400">
+                          <strong className="text-white">Category:</strong> {insight.category}
+                        </div>
+                        <div className="text-slate-400">
+                          <strong className="text-rose-300">Consequence:</strong> {insight.risk}
+                        </div>
+                        <div className="text-slate-300 pt-1 border-t border-indigo-800/40">
+                          <strong className="text-emerald-400">SOP Action:</strong> {insight.action}
+                        </div>
+                      </div>
+                    )}
+                  </td>
+
+                  {/* ISA-18.2 Priority */}
+                  <td className="py-2.5 px-3 align-top whitespace-nowrap">
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
+                      style={{ color: priorityColor, background: `${priorityColor}1a`, border: `1px solid ${priorityColor}33` }}
+                    >
+                      {priority}
+                    </span>
+                  </td>
+
+                  {/* Value vs Limit */}
+                  <td className="py-2.5 px-3 align-top whitespace-nowrap text-xs">
+                    <span style={{ color: sc }} className="font-bold">{ev.value} {ev.unit}</span>
+                    <span className="text-slate-500 text-[10px]"> /{ev.threshold}</span>
+                  </td>
+
+                  {/* Severity */}
+                  <td className="py-2.5 px-3 align-top whitespace-nowrap">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ color: sc, background: `${sc}1f` }}>
+                      {ev.severity}
+                    </span>
+                  </td>
+
+                  {/* Status */}
+                  <td className="py-2.5 px-3 align-top whitespace-nowrap text-xs">
+                    {acked ? (
+                      <span className="flex items-center gap-1 text-[11px] text-green-400 font-medium">
+                        <Check size={12} /> {dbAcks[ev.id]?.by ?? (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy}
+                      </span>
+                    ) : isShelved ? (
+                      <span className="flex items-center gap-1 text-[11px] text-blue-400 font-medium" title={`Reason: ${shelvedMap[ev.id].reason}`}>
+                        <PauseCircle size={12} /> Shelved ({Math.ceil((shelvedMap[ev.id].until - Date.now()) / 3600000)}h left)
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-amber-400 font-semibold">Active</span>
+                    )}
+                  </td>
+
+                  {/* Actions */}
+                  <td className="py-2.5 px-3 text-right align-top">
+                    {acked ? (
+                      <span className="text-[11px] text-slate-600">—</span>
+                    ) : (
+                      <div className="flex flex-col items-end gap-1.5 min-w-[130px]">
+                        {problems.length > 0 && (
+                          <select
+                            value={picked[ev.id] ?? ''}
+                            onChange={(e) => setPicked((prev) => ({ ...prev, [ev.id]: e.target.value }))}
+                            className="text-[11px] rounded px-2 py-1 text-slate-200 w-full"
+                            style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}
+                          >
+                            <option value="">Select Root Cause</option>
+                            {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                          </select>
+                        )}
+                        <div className="flex items-center gap-1.5 w-full">
+                          <button
+                            onClick={() => onAck(ev.id)}
                             disabled={problems.length > 0 && !picked[ev.id]}
                             title={problems.length > 0 && !picked[ev.id] ? 'Select a root cause first' : undefined}
-                            className="text-[11px] font-medium text-white px-3 py-1 rounded-md w-full disabled:opacity-40 disabled:cursor-not-allowed" style={gradient}>Acknowledge</button>
+                            className="flex-1 text-[11px] font-medium text-white px-2.5 py-1 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
+                            style={gradient}
+                          >
+                            Ack
+                          </button>
+                          {!isShelved && (
+                            <button
+                              onClick={() => setShelvingId(ev.id)}
+                              title="Shelve alarm temporarily for maintenance"
+                              className="px-2 py-1 rounded text-[11px] text-slate-400 hover:text-blue-400 bg-slate-800/60 border border-slate-700 flex items-center gap-1"
+                            >
+                              <PauseCircle size={11} /> Shelve
+                            </button>
+                          )}
                         </div>
-                      )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               )
-            }) : <tr><td colSpan={6} className="py-6 text-center text-slate-600 text-xs">No events — readings within all alarm rules.</td></tr>}
+            }) : (
+              <tr><td colSpan={7} className="py-6 text-center text-slate-600 text-xs">No events — readings within all alarm rules.</td></tr>
+            )}
           </tbody>
         </table>
       </div>

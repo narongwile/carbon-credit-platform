@@ -56,9 +56,9 @@ const INDUSTRIAL_DOMAINS = [
 const REPORT_SECTIONS = [
   {
     id: 'health',
-    name: 'Asset Health & DGA Diagnostic (IEEE C57 / IEC 60076)',
-    desc: 'Health index, Duval triangle risk, winding hot-spot & insulation thermal aging factor',
-    badge: 'IEEE C57.104',
+    name: 'Asset Health & Oil/DGA Excursion Summary',
+    desc: 'Health index scoring, dissolved hydrogen (H₂) trend, top oil temperature & insulation moisture tracking',
+    badge: 'Asset Health',
     icon: '🏥',
   },
   {
@@ -373,7 +373,7 @@ export default function ReportsPage() {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Enterprise IIoT analytics engine for IEEE C57.104, IEC 60076, IEEE 519, HACCP, and Scope 2 GHG Carbon Compliance.
+            Enterprise IIoT analytics engine for Transformer Health, Power Quality, Cold-Chain HACCP, and Scope 2 GHG Compliance.
           </p>
         </div>
         <div className="flex items-center gap-2">
