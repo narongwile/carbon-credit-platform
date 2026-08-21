@@ -1517,13 +1517,24 @@ const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok'; let when=e.time; try{ when=new
 const __RISK_MAP = {
   oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },
   windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },
-  overVoltage: { cat: 'Voltage', critRisk: 'Equipment damage risk (>+10% rated voltage)', warnRisk: 'Over voltage warning (>+5% rated voltage)' },
-  underVoltage: { cat: 'Voltage', critRisk: 'Low voltage operational trip (<-10% rated voltage)', warnRisk: 'Under voltage warning (<-5% rated voltage)' },
-  voltageA: { cat: 'Voltage', critRisk: 'Phase A equipment damage risk (>253V)', warnRisk: 'Phase A over voltage (>241.5V)' },
-  voltageB: { cat: 'Voltage', critRisk: 'Phase B equipment damage risk (>253V)', warnRisk: 'Phase B over voltage (>241.5V)' },
-  voltageC: { cat: 'Voltage', critRisk: 'Phase C equipment damage risk (>253V)', warnRisk: 'Phase C over voltage (>241.5V)' },
+  // VoltAN/BN/CN etc. are the real MQTT field names (confirmed against the
+  // device's payload spec) — 'overVoltage'/'underVoltage'/'voltageA/B/C'/
+  // 'voltageUnbalance' used to sit here describing keys no device ever
+  // published; a real VoltAN alarm would have silently fallen through to
+  // the generic "Parameter limit breached" fallback below instead of a
+  // useful risk description, exactly the kind of quality regression this
+  // map exists to prevent. Each phase key covers BOTH the over-voltage and
+  // under-voltage bands that can raise it (paramLabel already carries the
+  // "— Over-voltage" / "— Under-voltage" distinction in the alert's own
+  // subject line; the value vs limit numbers immediately below this text
+  // make the direction unambiguous without this line committing to one).
+  VoltAN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase A-N voltage approaching its safe limit' },
+  VoltBN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase B-N voltage approaching its safe limit' },
+  VoltCN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase C-N voltage approaching its safe limit' },
+  VoltUnbalanceAN: { cat: 'Power Quality', critRisk: 'Phase A unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase A voltage unbalance high (>2%)' },
+  VoltUnbalanceBN: { cat: 'Power Quality', critRisk: 'Phase B unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase B voltage unbalance high (>2%)' },
+  VoltUnbalanceCN: { cat: 'Power Quality', critRisk: 'Phase C unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase C voltage unbalance high (>2%)' },
   load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },
-  voltageUnbalance: { cat: 'Power Quality', critRisk: 'Phase unbalance critical (>5%)', warnRisk: 'Voltage unbalance high (>2%)' },
   externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },
   online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },
 };
