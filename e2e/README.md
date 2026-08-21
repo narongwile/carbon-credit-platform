@@ -46,14 +46,17 @@ node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id 
 node test-alarm-discovery-ui.mjs     # each reading sensor gets ONE row in the alarm editor carrying its
                                      #   engineered limits — no duplicate phantom row on a guessed limit,
                                      #   and a discovered key with no catalog entry is offered switched OFF
+node test-pdf-readability.mjs        # downloads the real report PDF and asserts on its content stream:
+                                     #   no white-on-white text, the dark heading colour is used, and the
+                                     #   footer disclaimer is not clipped off the right edge
 node test-reports-copy.mjs           # the reports page advertises only analyses the engine can
                                      #   actually back — no Duval triangle, no thermal aging factor,
                                      #   no IEEE 519/C57.104/60076/21 CFR conformance badges
 ```
 
 Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
-`test-reports-copy.mjs` and `test-alarm-discovery-ui.mjs` actually exit
-non-zero on failure** — the other 30
+`test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs` and
+`test-pdf-readability.mjs` actually exit non-zero on failure** — the other 30
 count nothing and always exit 0. This paragraph used to claim they were all
 "safe to pipe into a CI job"; they are not. Piping the rest into CI today
 buys a job that goes green while assertions fail underneath it. Adding a
