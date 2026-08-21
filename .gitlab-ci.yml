@@ -2,6 +2,7 @@ image: node:20
 
 stages:
   - sync
+  - test
   - build
   - deploy
 
@@ -69,16 +70,36 @@ pages:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
 
-# ── Node-RED Syntax & Integrity Gate ──────────────────────────────────────────
-# Validates that all 150+ function node JavaScript handlers parse without syntax errors.
-test_nodered_syntax:
-  stage: build
+# ── Automated Quality & Verification Gates ──────────────────────────────────
+test_proofs_and_integrity:
+  stage: test
   image: node:20-alpine
   script:
     - node backend/node-red/generate-nodered-backend.mjs
+    - node e2e/proofs/test-emailguard.mjs
+    - node e2e/proofs/test-riskmap.mjs
+    - node e2e/proofs/test-report-honesty.mjs
+    - node e2e/proofs/test-rate-of-rise.mjs
+    - node e2e/proofs/verify-pearson.mjs
+    - node e2e/proofs/test-real-device-fieldnames.mjs
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+test_frontend_lint:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend-next
+    - npm ci
+    - npm run lint
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+      changes:
+        - frontend-next/**/*
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
 # ── Next.js production frontend (frontend-next/) → GitLab Container Registry ──
 # Builds the static-export image and pushes it to this project's GitLab registry
