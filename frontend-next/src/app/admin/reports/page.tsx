@@ -15,6 +15,7 @@ import {
   type IIoTMetricSummary,
   type DeviceTelemetrySummary,
   type AlarmLogItem,
+  na,
 } from '@/lib/iiotReportGenerator'
 import {
   FileBarChart,
@@ -84,7 +85,7 @@ const REPORT_SECTIONS = [
   {
     id: 'executive',
     name: 'Executive Comprehensive Audit Summary',
-    desc: 'Full multi-section compliance synthesis with certified corporate sign-off block',
+    desc: 'Full multi-section synthesis of recorded telemetry, alarms and asset health',
     badge: 'Executive',
     icon: '📋',
   },
@@ -391,9 +392,9 @@ export default function ReportsPage() {
             <Activity size={13} className="text-emerald-400" />
           </div>
           <div className="text-xl font-black text-white">
-            {metrics?.healthIndexAvg ?? 98}<span className="text-xs text-slate-500 font-normal">/100</span>
+            {na(metrics?.healthIndexAvg)}<span className="text-xs text-slate-500 font-normal">/100</span>
           </div>
-          <div className="text-[10px] text-emerald-400 font-semibold">IEC 60076 Optimal</div>
+          <div className="text-[10px] text-slate-500 font-semibold">Mean of scored assets</div>
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
@@ -402,9 +403,9 @@ export default function ReportsPage() {
             <ShieldCheck size={13} className="text-indigo-400" />
           </div>
           <div className="text-xl font-black text-indigo-400">
-            {metrics?.complianceRate ?? 99.2}<span className="text-xs text-slate-500 font-normal">%</span>
+            {na(metrics?.complianceRate)}<span className="text-xs text-slate-500 font-normal">%</span>
           </div>
-          <div className="text-[10px] text-slate-500">IEEE &amp; HACCP Audit</div>
+          <div className="text-[10px] text-slate-500">Assets with no alarm</div>
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
@@ -413,7 +414,7 @@ export default function ReportsPage() {
             <Zap size={13} className="text-amber-400" />
           </div>
           <div className="text-xl font-black text-white truncate">
-            {(metrics?.totalEnergyKWh ?? 37500).toLocaleString()}<span className="text-xs text-slate-500 font-normal ml-1">kWh</span>
+            {na(metrics?.totalEnergyKWh)}<span className="text-xs text-slate-500 font-normal ml-1">kWh</span>
           </div>
           <div className="text-[10px] text-slate-500">Last {selectedDays} Days</div>
         </div>
@@ -424,7 +425,7 @@ export default function ReportsPage() {
             <Leaf size={13} className="text-emerald-400" />
           </div>
           <div className="text-xl font-black text-emerald-400 truncate">
-            {metrics?.carbonFootprintTCO2e ?? 18.74}<span className="text-xs text-slate-500 font-normal ml-1">tCO₂e</span>
+            {na(metrics?.carbonFootprintTCO2e)}<span className="text-xs text-slate-500 font-normal ml-1">tCO₂e</span>
           </div>
           <div className="text-[10px] text-slate-500">GHG Protocol Factor</div>
         </div>
@@ -446,7 +447,7 @@ export default function ReportsPage() {
             <Clock size={13} className="text-indigo-400" />
           </div>
           <div className="text-xl font-black text-white">
-            {metrics?.mttrMinutes ?? 35}<span className="text-xs text-slate-500 font-normal ml-1">min</span>
+            {na(metrics?.mttrMinutes)}<span className="text-xs text-slate-500 font-normal ml-1">min</span>
           </div>
           <div className="text-[10px] text-indigo-400">SLA Resolved</div>
         </div>

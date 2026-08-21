@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 // Realtime Industrial IoT reporting dashboard for department viewers.
 // Scoped to accessible products & devices with multi-format export:
-//   - Executive PDF with certified orgName branding
+//   - Executive PDF branded with the organization name
 //   - Multi-Sheet Excel Workbook (.xlsx)
 //   - RFC 4180 Structured CSV
 // ---------------------------------------------------------------------------
@@ -22,6 +22,7 @@ import {
   type IIoTMetricSummary,
   type DeviceTelemetrySummary,
   type AlarmLogItem,
+  na,
 } from '@/lib/iiotReportGenerator'
 import {
   FileBarChart,
@@ -142,7 +143,7 @@ export default function CustomerReportsPage() {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Download certified industrial telemetry, asset health indexes, and compliance summaries for your department.
+            Download recorded telemetry, asset health indexes and alarm history for your department.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -161,9 +162,9 @@ export default function CustomerReportsPage() {
             <Activity size={13} className="text-emerald-400" />
           </div>
           <div className="text-xl font-black text-white">
-            {metrics?.healthIndexAvg ?? 98}<span className="text-xs text-slate-500 font-normal">/100</span>
+            {na(metrics?.healthIndexAvg)}<span className="text-xs text-slate-500 font-normal">/100</span>
           </div>
-          <div className="text-[10px] text-emerald-400 font-semibold">Optimal</div>
+          <div className="text-[10px] text-slate-500 font-semibold">Mean of scored assets</div>
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
@@ -172,9 +173,9 @@ export default function CustomerReportsPage() {
             <ShieldCheck size={13} className="text-indigo-400" />
           </div>
           <div className="text-xl font-black text-indigo-400">
-            {metrics?.complianceRate ?? 99.2}<span className="text-xs text-slate-500 font-normal">%</span>
+            {na(metrics?.complianceRate)}<span className="text-xs text-slate-500 font-normal">%</span>
           </div>
-          <div className="text-[10px] text-slate-500">IEEE &amp; HACCP</div>
+          <div className="text-[10px] text-slate-500">Assets with no alarm</div>
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
@@ -183,7 +184,7 @@ export default function CustomerReportsPage() {
             <Zap size={13} className="text-amber-400" />
           </div>
           <div className="text-xl font-black text-white truncate">
-            {(metrics?.totalEnergyKWh ?? 37500).toLocaleString()}<span className="text-xs text-slate-500 font-normal ml-1">kWh</span>
+            {na(metrics?.totalEnergyKWh)}<span className="text-xs text-slate-500 font-normal ml-1">kWh</span>
           </div>
           <div className="text-[10px] text-slate-500">Last {days} Days</div>
         </div>
@@ -194,9 +195,9 @@ export default function CustomerReportsPage() {
             <Leaf size={13} className="text-emerald-400" />
           </div>
           <div className="text-xl font-black text-emerald-400 truncate">
-            {metrics?.carbonFootprintTCO2e ?? 18.74}<span className="text-xs text-slate-500 font-normal ml-1">tCO₂e</span>
+            {na(metrics?.carbonFootprintTCO2e)}<span className="text-xs text-slate-500 font-normal ml-1">tCO₂e</span>
           </div>
-          <div className="text-[10px] text-slate-500">GHG Protocol</div>
+          <div className="text-[10px] text-slate-500">From metered kWh only</div>
         </div>
       </div>
 
@@ -314,13 +315,16 @@ export default function CustomerReportsPage() {
                   <td className="py-3.5 px-4 text-slate-400 capitalize">{dev.domain}</td>
                   <td className="py-3.5 px-4 text-slate-300">{dev.location}</td>
                   <td className="py-3.5 px-4">
+                    {/* An unscored device reads as unscored — a grey dash, not
+                        a red 0/100 that looks like a measured failure. */}
                     <span
                       className={clsx(
                         'px-2 py-0.5 rounded font-mono font-bold text-[11px]',
-                        dev.healthScore >= 80 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                        dev.healthScore === null ? 'text-slate-500 bg-slate-500/10'
+                          : dev.healthScore >= 80 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
                       )}
                     >
-                      {dev.healthScore}/100
+                      {dev.healthScore === null ? '—' : `${dev.healthScore}/100`}
                     </span>
                   </td>
                   <td className="py-3.5 px-4">

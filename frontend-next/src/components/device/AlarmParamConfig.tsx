@@ -595,7 +595,33 @@ export default function AlarmParamConfig({
     }
   }
 
+  /** Enabled parameters whose critical limit sits on the wrong side of warn.
+   *
+   * paramStatus tests critical FIRST, so for a 'high' parameter with warn 90 /
+   * critical 80 everything above 80 reports CRITICAL and the warning tier can
+   * never fire — the operator loses their early notice and only ever sees the
+   * top severity. ParamHistoryModal already refuses to save this; this editor
+   * is the more dangerous one to leave unguarded, because Apply-to-all pushes
+   * a single mistake onto every device in the fleet at once. */
+  const misordered = allParams.filter((p) => {
+    const v = vals[p.key]
+    if (v?.enabled === false) return false
+    const warn = v?.warn ?? p.warn
+    const critical = v?.critical ?? p.critical
+    if (!Number.isFinite(warn) || !Number.isFinite(critical)) return false
+    return p.direction === 'high' ? critical <= warn : critical >= warn
+  })
+
   const persist = async () => {
+    if (misordered.length) {
+      toast.error(
+        `Critical must be ${misordered[0].direction === 'high' ? 'higher' : 'lower'} than warning for `
+        + `${misordered.map((p) => p.label).slice(0, 3).join(', ')}`
+        + `${misordered.length > 3 ? ` and ${misordered.length - 3} more` : ''}`
+        + ' — otherwise the warning level can never fire.'
+      )
+      return
+    }
     const rule = buildRule()
     if (!rule) return
     if (nodeId) {
@@ -608,6 +634,12 @@ export default function AlarmParamConfig({
   }
 
   const applyAll = () => {
+    // Same gate as persist(): this path is the one that would replicate a
+    // misordered pair across the whole fleet.
+    if (misordered.length) {
+      toast.error(`Fix the warning/critical order on ${misordered[0].label} before applying to all devices.`)
+      return
+    }
     const rule = buildRule()
     if (rule && onApplyAll) onApplyAll(rule)
   }

@@ -1,19 +1,26 @@
 'use client'
 
 // ---------------------------------------------------------------------------
-// Industrial IoT (IIoT) Multi-Domain Reporting Engine & Analytics
+// Industrial IoT (IIoT) Multi-Domain Reporting Engine
 // ---------------------------------------------------------------------------
-// Implements enterprise standards:
-//   - IEEE C57.104 / IEC 60076 (Transformers, DGA & Thermal Loading)
-//   - IEEE 519 (Power Quality, Harmonics & Power Factor)
-//   - HACCP / GDP / FDA 21 CFR Part 11 (Cold Chain, MKT & Excursions)
-//   - GHG Protocol Scope 2 (Carbon Emission tCO2e factor)
+// Reports what the fleet actually recorded: per-parameter min/avg/max from the
+// readings aggregate, real alarm history, and thresholds from each device's own
+// configured limits.
+//
+// It does NOT implement or certify against IEEE C57.104, IEC 60076, IEEE 519,
+// HACCP/GDP/21 CFR Part 11 or the GHG Protocol, and this header used to claim
+// all five. Two helpers below borrow published formulae — MKT (USP) and a grid
+// emission factor — and are labelled as such where they are used, but a
+// formula is not an accredited audit. Overstating that on an artifact someone
+// files with a regulator is a liability, not a feature.
 // ---------------------------------------------------------------------------
 
 import { api } from '@/lib/api'
 import { downloadXLSX, type Sheet } from '@/lib/xlsx'
 import { downloadCSVSections } from '@/lib/exportFile'
 import { fmtDateTime, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
+import { ALARM_SCHEMA, paramStatus } from '@/lib/alarmParams'
+import type { SensorDomain } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
 
 export interface IIoTReportOptions {
@@ -30,36 +37,44 @@ export interface IIoTReportOptions {
   devices: ManagedDevice[]
 }
 
+/** null means NOT MEASURED — render it as a dash, never as a number. */
 export interface IIoTMetricSummary {
   totalAssets: number
   activeAssets: number
-  healthIndexAvg: number
+  healthIndexAvg: number | null
   totalAlarms: number
   criticalAlarms: number
   resolvedAlarms: number
-  mttrMinutes: number
-  totalEnergyKWh: number
-  carbonFootprintTCO2e: number
-  complianceRate: number
+  mttrMinutes: number | null
+  totalEnergyKWh: number | null
+  carbonFootprintTCO2e: number | null
+  complianceRate: number | null
   mktTemperatureC?: number
 }
+
+/** Shared renderer for the nulls above, so no export path can quietly turn a
+ * missing measurement back into a number. */
+export const na = (v: number | null | undefined, suffix = ''): string =>
+  v === null || v === undefined ? '—' : `${typeof v === 'number' ? v.toLocaleString() : v}${suffix}`
 
 export interface DeviceTelemetrySummary {
   nodeId: string
   deviceName: string
   domain: string
   location: string
-  healthScore: number
+  healthScore: number | null
   status: string
   parameters: {
     key: string
     label: string
     unit: string
     samples: number
-    min: number
-    avg: number
-    max: number
-    compliance: boolean
+    min: number | null
+    avg: number | null
+    max: number | null
+    /** null = no configured limit for this parameter, so compliance is unknown
+     * rather than assumed. */
+    compliance: boolean | null
   }[]
 }
 
@@ -75,6 +90,9 @@ export interface AlarmLogItem {
   clearedAt?: string
   status: 'OPEN' | 'ACKNOWLEDGED' | 'CLEARED'
   ackBy?: string
+  /** Epoch copies kept for MTTR; the display fields above are localized. */
+  raisedAtMs?: number
+  clearedAtMs?: number | null
 }
 
 /**
@@ -125,97 +143,143 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
     return true
   })
 
-  // Fetch real readings summary from backend if live
-  let rawSummaries: any[] = []
+  // ---------------------------------------------------------------------
+  // Everything below reports MEASURED values only.
+  //
+  // This function used to substitute invented numbers wherever the backend
+  // returned nothing: a fixed four-parameter transformer profile ("samples:
+  // 720, min 42.5, avg 65.2, max 84.1, COMPLIANT") for any device with no
+  // stored aggregate, a fabricated CRITICAL alarm with a named acknowledging
+  // engineer, alarm counts floored at `|| 2`, energy as assets x days x 1250,
+  // and a compliance rate clamped up to a minimum of 85%. Those values were
+  // printed under IEEE C57.104 / IEC 60076 / HACCP / GHG Scope 2 headings and
+  // a "certified" sign-off block.
+  //
+  // A report that invents measurements is worse than one that fails, because
+  // nothing about it looks wrong. Anything not actually measured is null here
+  // and renders as an explicit dash downstream.
+  // ---------------------------------------------------------------------
+  let rawSummaries: { node_id: string; param_key: string; samples: string; avg: string; min: string; max: string }[] = []
   try {
-    const res = await api.reportSummary({ days: opts.days })
+    const res = await api.reportSummary({ days: opts.days, orgId: opts.orgId, domain: opts.domain })
     if (Array.isArray(res)) rawSummaries = res
   } catch (_) {}
 
-  // Build telemetry summaries for each device
   const summaries: DeviceTelemetrySummary[] = filteredDevices.map((dev) => {
     const devReadings = rawSummaries.filter((r) => r.node_id === dev.id)
-    
-    // Default baseline parameters if device has no stored aggregate yet
-    const params = devReadings.length
-      ? devReadings.map((r) => ({
-          key: r.param_key,
-          label: r.param_key,
-          unit: r.param_key.toLowerCase().includes('temp') ? '°C' : r.param_key.toLowerCase().includes('volt') ? 'V' : r.param_key.toLowerCase().includes('load') ? '%' : '',
-          samples: Number(r.samples) || 1,
-          min: Number(r.min) || 0,
-          avg: Number(r.avg) || 0,
-          max: Number(r.max) || 0,
-          compliance: Number(r.max) < 95,
-        }))
-      : [
-          { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', samples: 720, min: 42.5, avg: 65.2, max: 84.1, compliance: true },
-          { key: 'windingTemp', label: 'Winding Temperature', unit: '°C', samples: 720, min: 48.0, avg: 72.8, max: 91.4, compliance: true },
-          { key: 'load', label: 'Transformer Load', unit: '%', samples: 720, min: 28.5, avg: 64.2, max: 92.0, compliance: true },
-          { key: 'voltageA', label: 'Phase A Voltage', unit: 'V', samples: 720, min: 228.4, avg: 231.5, max: 234.8, compliance: true },
-        ]
+    const domain = String(dev.domain ?? dev.deviceType ?? '')
+    const schema = ALARM_SCHEMA[domain as SensorDomain]
 
-    const health = (dev as any).healthScore ?? ((dev.status as string) === 'alarm' ? 68 : dev.status === 'offline' ? 0 : 96)
+    const parameters = devReadings.map((r) => {
+      const min = Number(r.min), avg = Number(r.avg), max = Number(r.max)
+      // Compliance is judged against this parameter's OWN configured limit and
+      // direction. The previous rule was `max < 95` applied to every parameter
+      // whatever its unit — which marked a 230 V phase voltage as an excursion
+      // and a 94 % overload as compliant.
+      const p = schema?.params.find((x) => x.key === r.param_key)
+      const compliance = p ? paramStatus(p.direction === 'high' ? max : min, p) === 'NORMAL' : null
+      return {
+        key: r.param_key,
+        label: p?.label ?? r.param_key,
+        unit: p?.unit ?? '',
+        samples: Number(r.samples) || 0,
+        min: Number.isFinite(min) ? min : null,
+        avg: Number.isFinite(avg) ? avg : null,
+        max: Number.isFinite(max) ? max : null,
+        compliance,
+      }
+    })
+
     return {
       nodeId: dev.id,
       deviceName: dev.name || dev.id,
-      domain: String(dev.domain ?? dev.deviceType ?? 'transformer'),
-      location: dev.location || 'Substation 1',
-      healthScore: health,
+      domain: domain || '—',
+      location: dev.location || '—',
+      // No invented 96/68/0: an unknown score stays unknown.
+      healthScore: typeof (dev as { healthScore?: number }).healthScore === 'number'
+        ? (dev as { healthScore?: number }).healthScore as number
+        : null,
       status: dev.status,
-      parameters: params,
+      parameters,
     }
   })
 
-  // Compute aggregated metrics
+  // Real alarms for the window, from the same endpoint the Alarms page uses.
+  const windowStart = Date.now() - opts.days * 86400_000
+  const nodeIds = new Set(summaries.map((s) => s.nodeId))
+  let alarms: AlarmLogItem[] = []
+  try {
+    const rows = await api.orgAlarms(opts.orgId)
+    alarms = (rows ?? [])
+      .filter((r) => nodeIds.has(r.node_id))
+      .filter((r) => { const t = new Date(r.raised_at).getTime(); return !Number.isFinite(t) || t >= windowStart })
+      .map((r) => ({
+        id: r.id,
+        nodeId: r.node_id,
+        deviceName: r.node_name || r.node_id,
+        severity: r.severity,
+        paramLabel: r.param_label || r.param_key,
+        value: r.unit ? `${r.value} ${r.unit}` : r.value,
+        threshold: r.unit ? `${r.threshold} ${r.unit}` : r.threshold,
+        raisedAt: fmtDateTime(r.raised_at),
+        clearedAt: r.cleared_at ? fmtDateTime(r.cleared_at) : undefined,
+        status: r.cleared_at ? 'CLEARED' : r.acknowledged_at ? 'ACKNOWLEDGED' : 'OPEN',
+        ackBy: r.acknowledged_by ?? undefined,
+        raisedAtMs: new Date(r.raised_at).getTime(),
+        clearedAtMs: r.cleared_at ? new Date(r.cleared_at).getTime() : null,
+      }))
+  } catch (_) { alarms = [] }
+
   const totalAssets = summaries.length
   const activeAssets = summaries.filter((s) => s.status === 'online').length
-  const healthIndexAvg = totalAssets ? Math.round(summaries.reduce((a, b) => a + b.healthScore, 0) / totalAssets) : 98
-  
-  // Simulated or fetched alarms
-  const alarms: AlarmLogItem[] = summaries.flatMap((s, idx) => {
-    if (s.status === 'alarm' || s.healthScore < 80) {
-      return [
-        {
-          id: `alm-${s.nodeId}-${idx}`,
-          nodeId: s.nodeId,
-          deviceName: s.deviceName,
-          severity: 'CRITICAL',
-          paramLabel: 'Top Oil Temperature Excursion',
-          value: '92.4°C',
-          threshold: '90.0°C',
-          raisedAt: fmtDateTime(new Date(Date.now() - 4 * 3600000)),
-          clearedAt: fmtDateTime(new Date(Date.now() - 1 * 3600000)),
-          status: 'CLEARED',
-          ackBy: 'Duty Engineer',
-        },
-      ]
-    }
-    return []
-  })
+  const scored = summaries.map((s) => s.healthScore).filter((h): h is number => typeof h === 'number')
+  const healthIndexAvg = scored.length ? Math.round(scored.reduce((a, b) => a + b, 0) / scored.length) : null
 
-  const totalAlarms = alarms.length || 2
-  const criticalAlarms = alarms.filter((a) => a.severity === 'CRITICAL').length || 1
-  const resolvedAlarms = alarms.filter((a) => a.status === 'CLEARED').length || 1
-  const mttrMinutes = 35 // Average mean time to resolve (minutes)
-  
-  // Estimated energy throughput (approx 1,250 kWh per asset per day)
-  const totalEnergyKWh = Math.round(totalAssets * opts.days * 1250)
-  const carbonFootprintTCO2e = calculateCarbonTCO2e(totalEnergyKWh)
-  const complianceRate = totalAssets ? Number((((totalAssets - alarms.length) / totalAssets) * 100).toFixed(1)) : 99.2
+  const criticalAlarms = alarms.filter((a) => a.severity === 'CRITICAL').length
+  const resolvedAlarms = alarms.filter((a) => a.status === 'CLEARED').length
+
+  // MTTR over alarms that actually closed. No cleared alarm means there is no
+  // resolution time to report — not a flat 35 minutes.
+  const closed = alarms.filter((a) => a.clearedAtMs && a.raisedAtMs && a.clearedAtMs > a.raisedAtMs)
+  const mttrMinutes = closed.length
+    ? Math.round(closed.reduce((acc, a) => acc + ((a.clearedAtMs as number) - (a.raisedAtMs as number)), 0) / closed.length / 60000)
+    : null
+
+  // Energy is only reportable if a device actually meters it. Nothing in this
+  // platform measures kWh today, so rather than multiplying assets by a made-up
+  // 1,250 kWh/day and labelling the result a GHG Scope 2 figure, an absent
+  // meter reads as absent.
+  const ENERGY_KEYS = ['kwh', 'energy', 'energy_kwh', 'activeenergy']
+  let totalEnergyKWh: number | null = null
+  for (const s of summaries) {
+    for (const p of s.parameters) {
+      if (!ENERGY_KEYS.includes(p.key.toLowerCase())) continue
+      if (typeof p.max !== 'number') continue
+      totalEnergyKWh = (totalEnergyKWh ?? 0) + p.max
+    }
+  }
+  const carbonFootprintTCO2e = totalEnergyKWh === null ? null : calculateCarbonTCO2e(totalEnergyKWh)
+
+  // Share of assets that recorded no alarm in the window. Reported only when
+  // there are assets to judge, and never floored: an all-breaching fleet used
+  // to still print 85%.
+  const breached = new Set(alarms.map((a) => a.nodeId)).size
+  const complianceRate = totalAssets
+    ? Number((((totalAssets - breached) / totalAssets) * 100).toFixed(1))
+    : null
 
   return {
     metrics: {
       totalAssets,
       activeAssets,
       healthIndexAvg,
-      totalAlarms,
+      totalAlarms: alarms.length,
       criticalAlarms,
       resolvedAlarms,
       mttrMinutes,
       totalEnergyKWh,
       carbonFootprintTCO2e,
-      complianceRate: Math.max(85, Math.min(100, complianceRate)),
+      complianceRate,
     },
     summaries,
     alarms,
@@ -267,11 +331,12 @@ export async function exportIIoTPDF(
     body: [
       [
         `${data.metrics.totalAssets} Monitored`,
-        `${data.metrics.healthIndexAvg}/100 (${data.metrics.healthIndexAvg >= 90 ? 'Optimal' : 'Watch'})`,
-        `${data.metrics.complianceRate}% (IEC/IEEE)`,
-        `${data.metrics.totalEnergyKWh.toLocaleString()} kWh`,
-        `${data.metrics.carbonFootprintTCO2e} tCO2e`,
-        `${data.metrics.totalAlarms} Incidents (${data.metrics.mttrMinutes} min)`,
+        data.metrics.healthIndexAvg === null ? 'Not scored'
+          : `${data.metrics.healthIndexAvg}/100 (${data.metrics.healthIndexAvg >= 90 ? 'Optimal' : 'Watch'})`,
+        na(data.metrics.complianceRate, '%'),
+        na(data.metrics.totalEnergyKWh, ' kWh'),
+        na(data.metrics.carbonFootprintTCO2e, ' tCO2e'),
+        `${data.metrics.totalAlarms} Incidents (MTTR ${na(data.metrics.mttrMinutes, ' min')})`,
       ],
     ],
     theme: 'grid',
@@ -287,16 +352,19 @@ export async function exportIIoTPDF(
   doc.text('2. Monitored Asset Health & Telemetry Summary', 14, y)
 
   const devRows = data.summaries.flatMap((dev) =>
-    dev.parameters.map((p, idx) => [
+    // A device that stored nothing in the window gets one honest row saying
+    // exactly that, instead of silently contributing no rows (which reads as
+    // "nothing to report") or inheriting a fabricated parameter profile.
+    dev.parameters.length === 0
+      ? [[dev.deviceName, dev.location, 'No telemetry recorded in this period', '0', '—', '—', '—', 'NO DATA']]
+      : dev.parameters.map((p, idx) => [
       idx === 0 ? dev.deviceName : '',
       idx === 0 ? dev.location : '',
       `${p.label} (${p.unit})`,
       p.samples.toLocaleString(),
-      String(p.min),
-      String(p.avg),
-      String(p.max),
-      p.compliance ? 'COMPLIANT' : 'EXCURSION',
-    ])
+      na(p.min), na(p.avg), na(p.max),
+      p.compliance === null ? 'NO LIMIT SET' : p.compliance ? 'COMPLIANT' : 'EXCURSION',
+        ])
   )
 
   y += 5
@@ -361,7 +429,8 @@ export async function exportIIoTPDF(
   doc.setFont('helvetica', 'italic')
   doc.setTextColor(100, 116, 139)
   doc.text(
-    `This official operations report is certified by ${opts.orgName} Autonomous Industrial IoT Telemetry Platform.`,
+    `Generated by the ONEOPS monitoring platform for ${opts.orgName}. Values are as recorded by the devices; `
+      + `a dash means the platform holds no measurement for that item. Not an accredited compliance certificate.`,
     14,
     y
   )
@@ -388,13 +457,13 @@ export function exportIIoTXLSX(
         ['METRIC KPI', 'VALUE', 'UNIT / STANDARD'],
         ['Total Monitored Assets', data.metrics.totalAssets, 'Units'],
         ['Active Online Assets', data.metrics.activeAssets, 'Units'],
-        ['Fleet Health Index Score', data.metrics.healthIndexAvg, '/ 100 (IEC 60076 / IEEE)'],
-        ['Compliance Rate', `${data.metrics.complianceRate}%`, 'IEEE C57 / HACCP'],
-        ['Total Energy Consumption', data.metrics.totalEnergyKWh, 'kWh'],
-        ['Estimated Carbon Footprint', data.metrics.carbonFootprintTCO2e, 'tCO2e (GHG Scope 2)'],
+        ['Fleet Health Index Score', na(data.metrics.healthIndexAvg), '/ 100'],
+        ['Assets with no alarm this period', na(data.metrics.complianceRate, '%'), '% of monitored assets'],
+        ['Metered Energy Consumption', na(data.metrics.totalEnergyKWh), 'kWh (metered only)'],
+        ['Carbon from metered energy', na(data.metrics.carbonFootprintTCO2e), 'tCO2e (GHG Scope 2 factor)'],
         ['Total Alarm Incidents', data.metrics.totalAlarms, 'Events'],
         ['Critical Excursions', data.metrics.criticalAlarms, 'Events'],
-        ['Mean Time to Resolve (MTTR)', `${data.metrics.mttrMinutes} min`, 'SLA Response'],
+        ['Mean Time to Resolve (MTTR)', na(data.metrics.mttrMinutes, ' min'), 'Cleared alarms only'],
       ],
     },
     {
@@ -407,15 +476,13 @@ export function exportIIoTXLSX(
             dev.deviceName,
             dev.domain,
             dev.location,
-            dev.healthScore,
+            na(dev.healthScore),
             dev.status,
             p.label,
             p.unit,
             p.samples,
-            p.min,
-            p.avg,
-            p.max,
-            p.compliance ? 'COMPLIANT' : 'EXCURSION',
+            na(p.min), na(p.avg), na(p.max),
+            p.compliance === null ? 'NO LIMIT SET' : p.compliance ? 'COMPLIANT' : 'EXCURSION',
           ])
         ),
       ],
@@ -458,10 +525,10 @@ export function exportIIoTCSV(
       headers: ['Metric', 'Value', 'Unit'],
       rows: [
         ['Total Monitored Assets', data.metrics.totalAssets, 'Units'],
-        ['Fleet Health Index Score', data.metrics.healthIndexAvg, '/ 100'],
-        ['Compliance Rate', `${data.metrics.complianceRate}%`, 'IEC/IEEE'],
-        ['Total Energy Consumption', data.metrics.totalEnergyKWh, 'kWh'],
-        ['Estimated Carbon Footprint', data.metrics.carbonFootprintTCO2e, 'tCO2e'],
+        ['Fleet Health Index Score', na(data.metrics.healthIndexAvg), '/ 100'],
+        ['Assets with no alarm this period', na(data.metrics.complianceRate, '%'), '% of monitored assets'],
+        ['Metered Energy Consumption', na(data.metrics.totalEnergyKWh), 'kWh (metered only)'],
+        ['Carbon from metered energy', na(data.metrics.carbonFootprintTCO2e), 'tCO2e'],
         ['Total Alarms', data.metrics.totalAlarms, 'Events'],
       ],
     },
@@ -474,15 +541,13 @@ export function exportIIoTCSV(
           dev.deviceName,
           dev.domain,
           dev.location,
-          dev.healthScore,
+          na(dev.healthScore),
           dev.status,
           p.label,
           p.unit,
           p.samples,
-          p.min,
-          p.avg,
-          p.max,
-          p.compliance ? 'COMPLIANT' : 'EXCURSION',
+          na(p.min), na(p.avg), na(p.max),
+          p.compliance === null ? 'NO LIMIT SET' : p.compliance ? 'COMPLIANT' : 'EXCURSION',
         ])
       ),
     },
