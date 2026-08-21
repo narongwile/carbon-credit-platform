@@ -137,76 +137,30 @@ export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]>
   ],
 }
 
-/** Compound / Multi-condition Alarm Rules (Industrial Alarm List) */
+/**
+ * Compound / Multi-condition Alarm Rules (Industrial Alarm List) — EMPTY.
+ *
+ * This catalog used to carry 6 transformer entries (oil temp, over/under
+ * voltage, over current, voltage unbalance, external fault) with synthetic
+ * keys like 'alarm_oil_temp' that no device ever reports. The alarm engine
+ * matches purely by key against live telemetry (r.values[p.key] in both
+ * alarmEngine.ts and the backend generator), so enabling any of these rows
+ * produced a rule that looked configured — checkbox on, thresholds saved,
+ * badged "Alarm List" — and never once fired, at any reading. Proved by
+ * extracting evaluate() and feeding it a reading 10° past critical: the
+ * compound-keyed rule raised zero events while the equivalent real
+ * reading-parameter rule (key 'oilTemp') raised one.
+ *
+ * oilTemp and load already exist correctly-keyed in READING_PAYLOAD_CATALOG.
+ * overVoltage/underVoltage/voltageUnbalance had NO working equivalent at
+ * all — their 'sourceFormula' text described a percent-of-rated /
+ * phase-unbalance calculation that is not implemented anywhere in the
+ * readings pipeline, so there was no reading key they could have been
+ * pointed at even if renamed. Reintroducing them needs that computation
+ * built first, not a threshold row pointed at a value nothing produces.
+ */
 export const COMPOUND_ALARM_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]> = {
-  transformer: [
-    {
-      key: 'alarm_oil_temp',
-      label: 'Top Oil Temperature High / Critical',
-      unit: '°C',
-      direction: 'high',
-      warn: 85,
-      critical: 90,
-      paramType: 'compound',
-      sourceFormula: 'Evaluated from Top Oil Temperature (oilTemp)',
-      riskInsight: 'Winding / insulation damage risk (>90°C)',
-    },
-    {
-      key: 'alarm_over_voltage',
-      label: 'Over Voltage Warning / Critical',
-      unit: '%',
-      direction: 'high',
-      warn: 105,
-      critical: 110,
-      paramType: 'compound',
-      sourceFormula: 'Evaluated across Phase Voltages (> +5% / > +10% of rated 230V)',
-      riskInsight: 'Equipment damage risk (> +10%)',
-    },
-    {
-      key: 'alarm_under_voltage',
-      label: 'Under Voltage Warning / Critical',
-      unit: '%',
-      direction: 'low',
-      warn: 95,
-      critical: 90,
-      paramType: 'compound',
-      sourceFormula: 'Evaluated across Phase Voltages (< -5% / < -10% of rated 230V)',
-      riskInsight: 'Low voltage operational trip / brownout',
-    },
-    {
-      key: 'alarm_over_current',
-      label: 'Over Current (Overload) / Short Circuit',
-      unit: '%',
-      direction: 'high',
-      warn: 100,
-      critical: 115,
-      paramType: 'compound',
-      sourceFormula: 'Evaluated from Load Factor & Phase Currents (> 100% to 115% / > 115%)',
-      riskInsight: 'Immediate short circuit risk on critical breach (>115%)',
-    },
-    {
-      key: 'alarm_voltage_unbalance',
-      label: 'Voltage Unbalance High / Critical',
-      unit: '%',
-      direction: 'high',
-      warn: 2,
-      critical: 5,
-      paramType: 'compound',
-      sourceFormula: 'Calculated as (|V_max - V_min| / V_avg) * 100% between phases',
-      riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)',
-    },
-    {
-      key: 'alarm_external_fault',
-      label: 'External Fault / Event',
-      unit: '',
-      direction: 'high',
-      warn: 1,
-      critical: 1,
-      paramType: 'compound',
-      sourceFormula: 'Transformer shutdown / sudden trip from external cause',
-      riskInsight: 'Shutdown from external fault such as animals, lightning, or grid incident',
-    },
-  ],
+  transformer: [],
   carbonNode: [],
   bloodBox: [],
   automobile: [],
@@ -887,18 +841,23 @@ export default function AlarmParamConfig({
           <span>Reading Parameters ({readingCount})</span>
           <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 font-normal">Physical Sensors</span>
         </button>
-        <button
-          type="button"
-          onClick={() => setParamKindFilter('compound')}
-          className={clsx(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all',
-            paramKindFilter === 'compound' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-          )}
-        >
-          <Zap size={12} className={paramKindFilter === 'compound' ? 'text-white' : 'text-amber-400'} />
-          <span>Compound Alarms ({compoundCount})</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 font-normal">Alarm List</span>
-        </button>
+        {/* Hidden once empty, same convention CATEGORY_TABS already uses below
+            — a permanently-"(0)" tab that opens onto nothing is clutter, not
+            a feature, and every domain's compound catalog is empty now. */}
+        {compoundCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setParamKindFilter('compound')}
+            className={clsx(
+              'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all',
+              paramKindFilter === 'compound' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            <Zap size={12} className={paramKindFilter === 'compound' ? 'text-white' : 'text-amber-400'} />
+            <span>Compound Alarms ({compoundCount})</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-black/30 font-normal">Alarm List</span>
+          </button>
+        )}
       </div>
 
       {/* Category Tabs & Quick Search */}
