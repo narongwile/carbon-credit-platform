@@ -65,6 +65,28 @@ func (t TelemetryPayload) id() string {
 	return t.DeviceID
 }
 
+// dropNullValues removes keys the device published as JSON null from values.
+// encoding/json silently decodes a null into map[string]float64 as 0.0 — a
+// sensor with nothing to report (e.g. THD_VoltBC: null seen on a real payload)
+// would otherwise be stored and alarmed on as a genuine zero reading, the same
+// class of fabricated-number bug this codebase has already been through once.
+func dropNullValues(payload []byte, values map[string]float64) {
+	if len(values) == 0 {
+		return
+	}
+	var probe struct {
+		Values map[string]json.RawMessage `json:"values"`
+	}
+	if err := json.Unmarshal(payload, &probe); err != nil {
+		return
+	}
+	for k, raw := range probe.Values {
+		if string(raw) == "null" {
+			delete(values, k)
+		}
+	}
+}
+
 // isPresence reports whether this frame is a status/heartbeat rather than a
 // readings frame (no values → nothing to persist as readings).
 func (t TelemetryPayload) isPresence() bool {
@@ -1269,6 +1291,7 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		log.Printf("Failed to parse telemetry: %v", err)
 		return
 	}
+	dropNullValues(payload, t.Values)
 
 	// Accept device_id as an alias for nodeId (firmware status/heartbeat frames).
 	t.NodeID = t.id()
@@ -1504,13 +1527,27 @@ func getEnv(key, fallback string) string {
 // (ALARM_SCHEMA / the Node-RED normalize MAP). Devices publish e.g. oil_temp_c;
 // alarm rules and the UI address oilTemp. Both DGA spellings are accepted
 // because firmware in the field sends dga_h2_ppm.
+//
+// Oiltemp/H2/OilMoisture/Tamb are the real ETERNITY transformer's actual wire
+// spellings (confirmed against a live MQTT payload) — none of the spellings
+// above matched them, so oil temperature, hydrogen, moisture and ambient temp
+// were being stored under their raw wire keys and were invisible to every
+// alarm rule and device page, which only ever look up the canonical key.
+// Tbox/RHamb/RHbox (enclosure temp, ambient/enclosure humidity) are deliberately
+// NOT mapped here: there is no existing canonical param or defensible
+// engineering threshold for them yet, so they pass through unmapped rather than
+// being aliased to a made-up key nothing alarms on.
 var paramMap = map[string]string{
 	"oil_temp_c":           "oilTemp",
+	"Oiltemp":              "oilTemp",
 	"ambient_temp_c":       "ambientTemp",
+	"Tamb":                 "ambientTemp",
 	"winding_temp_c":       "windingTemp",
 	"dga_h2_ppm":           "hydrogen",
 	"hydrogen_ppm":         "hydrogen",
+	"H2":                   "hydrogen",
 	"moisture_ppm":         "moisture",
+	"OilMoisture":          "moisture",
 	"oil_level_pct":        "oilLevel",
 	"load_pct":             "load",
 	"door_state":           "door",

@@ -37,6 +37,11 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
       // 🌡️ Thermal & Oil
       { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 } },
       { key: 'windingTemp', label: 'Winding / Hot-spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110 },
+      // Was in READING_PAYLOAD_CATALOG but missing here, so defaultNodeRule()
+      // never seeded it into a new device's starting rule — the exact dead-key
+      // class of bug already fixed once for overVoltage/underVoltage/
+      // voltageUnbalance. Threshold copied verbatim from the reading catalog.
+      { key: 'ambientTemp', label: 'Ambient Temperature', unit: '°C', direction: 'high', warn: 45, critical: 55 },
       // ⚡️ Voltage & Power Quality
       //
       // Real MQTT field names from the device's payload spec (VoltAN/BN/CN,
@@ -189,6 +194,9 @@ export const LEGACY_WIRE_KEYS = new Set([
   'dga_h2_ppm', 'hydrogen_ppm', 'moisture_ppm', 'oil_level_pct', 'load_pct',
   'door_state', 'rh_pct', 'batt_pct', 'impact_g', 'baro_alt_m',
   'electrical_current_a', 'current_a',
+  // Real ETERNITY transformer wire spellings (confirmed against a live MQTT
+  // payload) — none of the spellings above matched them.
+  'Oiltemp', 'Tamb', 'H2', 'OilMoisture',
 ])
 
 /**

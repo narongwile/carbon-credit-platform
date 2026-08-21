@@ -1840,9 +1840,14 @@ const normalizeFunc = `
 //          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.
 // dga_h2_ppm is what firmware in the field actually publishes; hydrogen_ppm is
 // accepted too so either spelling maps to the canonical 'hydrogen' param.
-const MAP = { oil_temp_c:'oilTemp', ambient_temp_c:'ambientTemp', winding_temp_c:'windingTemp',
-  dga_h2_ppm:'hydrogen', hydrogen_ppm:'hydrogen',
-  moisture_ppm:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
+// Oiltemp/H2/OilMoisture/Tamb are the real ETERNITY transformer's actual wire
+// spellings (confirmed against a live MQTT payload) — kept in sync with
+// paramMap in worker/main.go. Tbox/RHamb/RHbox are deliberately NOT mapped:
+// no existing canonical param or defensible threshold exists for them yet.
+const MAP = { oil_temp_c:'oilTemp', Oiltemp:'oilTemp', ambient_temp_c:'ambientTemp', Tamb:'ambientTemp',
+  winding_temp_c:'windingTemp',
+  dga_h2_ppm:'hydrogen', hydrogen_ppm:'hydrogen', H2:'hydrogen',
+  moisture_ppm:'moisture', OilMoisture:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
   electrical_current_a:'current', current_a:'current',
   rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };
 const p = msg.payload;

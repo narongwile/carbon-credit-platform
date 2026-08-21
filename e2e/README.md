@@ -81,6 +81,14 @@ go run e2e/proofs/go-alarm-state-proof.go  # the exact state machine from worker
                                             #   extracted verbatim: proves two alarm bands sharing one telemetry
                                             #   key (e.g. over/under-voltage on the same phase) track independent
                                             #   state instead of one clobbering the other into a duplicate-alarm loop
+node e2e/proofs/test-real-device-fieldnames.mjs  # the REAL ETERNITY transformer's actual wire spellings
+                                            #   (Oiltemp/H2/OilMoisture/Tamb, confirmed against a live MQTT
+                                            #   payload) normalize to their canonical param keys through the
+                                            #   real generated Node-RED 'normalize' node — Tbox/RHamb/RHbox are
+                                            #   proved to pass through unmapped, not guessed at
+go run e2e/proofs/go-fieldnames-proof.go   # the same mapping in worker/main.go's paramMap, plus: a JSON null
+                                            #   in a values object (seen for real as THD_VoltBC: null) is
+                                            #   dropped instead of silently stored as a fabricated 0.0
 ```
 
 `test-emailguard.mjs` and `test-riskmap.mjs` read
