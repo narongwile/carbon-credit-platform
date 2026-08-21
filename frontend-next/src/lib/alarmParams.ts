@@ -121,15 +121,26 @@ export function paramStatus(value: number, p: AlarmParam): ParamStatus {
 export function healthFromValues(values: Record<string, number>, domain?: SensorDomain): number | null {
   if (!values || !Object.keys(values).length) return null
   const schema = getAlarmSchema(domain)
-  if (!schema) return 100
+  // No schema means there is nothing to score against — null, never 100.
+  // Scoring an unknown domain as perfect health is the exact failure this
+  // function's contract exists to prevent.
+  if (!schema) return null
   let penalty = 0
+  let seen = 0
   for (const p of schema.params) {
     const v = values[p.key]
     if (v === undefined) continue
+    seen++
     const st = paramStatus(v, p)
     if (st === 'CRITICAL') penalty += 25
     else if (st === 'WARNING') penalty += 10
   }
+  // A device can report plenty of values and still match NONE of the schema
+  // keys — a real ETERNITY transformer publishes Oiltemp/H2/RHamb/Tbox, not
+  // one of which is a schema key. Without this check such a device scores a
+  // green 100 out of an empty loop: a perfect health gauge derived from
+  // nothing, on a device nobody is actually monitoring.
+  if (!seen) return null
   return Math.max(0, Math.min(100, 100 - penalty))
 }
 

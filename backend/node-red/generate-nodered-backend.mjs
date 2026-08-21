@@ -4054,8 +4054,30 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 const emailTplTestFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 (async()=>{
-  const targetEmail = String(b.targetEmail || au.email || '').trim();
-  if(!targetEmail) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'Please provide a target email address'}; return msg; }
+  // The JWT carries {userId, orgId, role} and nothing else, so the original
+  // 'au.email' fallback here was dead code — targetEmail was ALWAYS whatever
+  // the caller put in the body, unvalidated. Sending platform-branded mail,
+  // with a caller-supplied subject/header/footer, to any address on the
+  // internet is a phishing relay wearing this platform's reputation, so the
+  // recipient now has to be a real person: the requester themselves, or
+  // another member of the same organization.
+  let requesterEmail = '';
+  try {
+    const [me] = await pool.query("SELECT email FROM users WHERE id=?", [au.userId]);
+    if (me.length) requesterEmail = String(me[0].email || '').trim();
+  } catch(e){}
+  const requested = String(b.targetEmail || '').trim();
+  let targetEmail = requesterEmail;
+  if (requested && requested.toLowerCase() !== requesterEmail.toLowerCase()) {
+    const [mate] = await pool.query("SELECT id FROM users WHERE email=? AND org_id=?", [requested, orgId]);
+    if (!mate.length) {
+      msg.headers=__CORS; msg.statusCode=403;
+      msg.payload={error:'Test emails can only be sent to a member of this organization'};
+      return msg;
+    }
+    targetEmail = requested;
+  }
+  if(!targetEmail) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'Your account has no email address on file to send the test to'}; return msg; }
   const mc = await global.get('mailConfig')();
   if(!mc.transport) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'SMTP server is not configured in platform settings'}; return msg; }
 
@@ -4093,9 +4115,24 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 
   const render = (s) => String(s || '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, k) => sampleData[k] ?? '');
   const subject = '[TEST] ' + render(tpl.subjectTemplate);
+  // The 'const text =' that owned the lines below had gone missing, leaving a
+  // dangling '+ ...' expression statement — legal JS that evaluates and throws
+  // the result away, so nothing declared 'text' while sendMail still passed
+  // it. Every call therefore died with "text is not defined" and this endpoint
+  // could never actually deliver a test message. A plain-text alternative is
+  // also not optional in a real mail: clients that refuse HTML, and spam
+  // filters that score multipart/alternative, both want it.
+  const text = 'ONEOPS ' + sampleData.severity + ' alert (TEST SIMULATION)\\n\\n'
+    + 'Device: ' + sampleData.device_name + ' (' + sampleData.node_id + ')\\n'
+    + 'Organization: ' + sampleData.org_name + '\\n'
+    + 'Category: ' + sampleData.category + '\\n'
+    + 'Parameter: ' + sampleData.param_label + '\\n'
+    + 'Value: ' + sampleData.value + ' (threshold ' + sampleData.threshold + ')\\n'
+    + 'Time: ' + sampleData.time + '\\n'
     + 'Risk: ' + sampleData.risk_insight + '\\n'
     + (tpl.customHeaderNote ? '\\nNotice: ' + render(tpl.customHeaderNote) + '\\n' : '')
-    + (tpl.customFooterSop ? '\\nSOP Protocol: ' + render(tpl.customFooterSop) + '\\n' : '');
+    + (tpl.customFooterSop ? '\\nSOP Protocol: ' + render(tpl.customFooterSop) + '\\n' : '')
+    + (tpl.includeActionLink ? '\\nOpen device: ' + sampleData.link + '\\n' : '');
 
   const html = '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'
     + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'

@@ -68,15 +68,24 @@ export function useOrgAlarms(orgId: string, opts?: { open?: boolean; pollMs?: nu
     }
   }, [load, pollMs])
 
-  // Instant refetch when a WebSocket alarm event arrives
+  // Refetch when a WebSocket alarm frame arrives, COALESCED.
+  //
+  // Refetching once per frame is fine for a single alarm and pathological for
+  // the case that matters: a substation tripping raises alarms on many devices
+  // and many parameters within the same second, and one full org-wide
+  // /alarms query per frame turns the worst moment for the operator into the
+  // worst moment for the API too. A short trailing window collapses that burst
+  // into a single fetch, which is all the UI needed anyway — the list is
+  // re-read whole, so N fetches and 1 fetch produce the same screen.
   useEffect(() => {
     if (!isLive() || !orgId) return
+    let timer: ReturnType<typeof setTimeout> | null = null
     const unsubscribe = subscribeTelemetry((f) => {
-      if (f?.type === 'alarm') {
-        load()
-      }
+      if (f?.type !== 'alarm') return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { timer = null; load() }, 400)
     })
-    return () => unsubscribe()
+    return () => { if (timer) clearTimeout(timer); unsubscribe() }
   }, [load, orgId])
 
   return { alarms, loaded, refetch: load }

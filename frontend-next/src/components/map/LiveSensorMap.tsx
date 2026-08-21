@@ -165,7 +165,7 @@ export default function LiveSensorMap({
   const popupHtml = (n: GeoNode) => {
     const cover = coversRef.current?.[n.id]
     const photo = cover
-      ? `<button type="button" class="gsm-photo-btn" data-node-id="${n.id}"
+      ? `<button type="button" class="gsm-photo-btn" data-node-id="${esc(n.id)}"
            style="display:block;width:100%;height:96px;padding:0;margin:0 0 8px;border:1px solid #1e2433;border-radius:6px;overflow:hidden;cursor:pointer;background:#0a0e1a">
            <img src="${api.nodePhotoUrl(n.id, cover.photoId, { thumb: true, v: cover.v })}" alt=""
              style="width:100%;height:100%;object-fit:cover;display:block" />
@@ -179,7 +179,7 @@ export default function LiveSensorMap({
       : ''
 
     const repositionBtn = editableRef.current
-      ? `<button type="button" class="gsm-reposition-btn" data-node-id="${n.id}"
+      ? `<button type="button" class="gsm-reposition-btn" data-node-id="${esc(n.id)}"
            style="display:flex;align-items:center;gap:5px;width:100%;margin-top:8px;padding:6px 8px;border-radius:6px;border:1px solid #6366f155;background:rgba(99,102,241,0.12);color:#a5b4fc;font-size:11px;font-weight:600;cursor:pointer">
            📍 ${n.approx ? 'Set position' : 'Reposition'}
          </button>`
@@ -252,7 +252,7 @@ export default function LiveSensorMap({
       ? `<div style="${SECTION}">Device</div>${connectivity}`
       : `<div style="color:#94a3b8;font-size:11px;margin-top:6px">Updated: ${esc(n.updated)}</div>`
 
-    const openBtn = `<button type="button" class="gsm-open-btn" data-node-id="${n.id}" data-domain="${n.domain}"
+    const openBtn = `<button type="button" class="gsm-open-btn" data-node-id="${esc(n.id)}" data-domain="${esc(n.domain)}"
          style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;margin-top:6px;padding:6px 8px;border-radius:6px;border:none;background:#6366f1;color:#ffffff;font-size:11px;font-weight:700;cursor:pointer">
          View Dashboard →
        </button>`
