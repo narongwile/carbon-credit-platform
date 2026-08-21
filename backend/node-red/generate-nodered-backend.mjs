@@ -545,19 +545,64 @@ global.set('ownOrg', async function(au, pool, sql, params){
 });
 function breaches(v,l,d){return d==='high'?v>=l:v<=l;}
 function cleared(v,l,d,h){return d==='high'?v<l-h:v>l+h;}
+// Rate-of-rise alarms declare their own time base in the unit string
+// ('ppm/day' for DGA gassing, '°C/h' for thermal). Returns that base in ms, or
+// null when the unit carries no interpretable denominator — in which case the
+// rate check is SKIPPED rather than guessed at, because the previous code
+// silently treated whatever the denominator said as if it were "per sample".
+// Parsed with string ops rather than a regex ON PURPOSE: this whole function
+// is emitted inside a template literal, where a regex like /\/\s*day$/ has its
+// backslashes eaten by the template's own escape handling and lands in the
+// generated node as //s*day$/ — a line comment that silently swallows the rest
+// of the line. (The generator's syntax gate catches it, but the safest fix is
+// to not write the hazard.)
+function rateWindowMs(unit){
+  const u=String(unit||'').toLowerCase().trim();
+  const i=u.lastIndexOf('/');
+  if(i<0) return null;
+  const per=u.slice(i+1).trim();
+  if(per==='day'||per==='d') return 86400000;
+  if(per==='hour'||per==='hr'||per==='h') return 3600000;
+  if(per==='min'||per==='minute') return 60000;
+  if(per==='sec'||per==='second'||per==='s') return 1000;
+  return null;
+}
+// Two samples close together turn sensor jitter into a huge extrapolated rate:
+// 0.1 ppm of noise across 1 second is 8,640 ppm/day. Requiring at least
+// window/24 between the compared samples caps that amplification at 24x — an
+// hour for a /day rate, 2.5 minutes for a /h rate.
+const RATE_MIN_DIVISOR = 24;
 function evaluate(nodeId, rule, readings, debounceJson){
   const out=[];
   // debounce_json overrides per-param dwell if present (§8 production debounce)
   const db = debounceJson || {};
   for(const p of rule.params){
-    let active=null, run=0, prev=null;
+    let active=null, run=0;
+    // Rate anchor: the sample the CURRENT one is measured against. Held
+    // separately from the previous sample because a rate needs a meaningful
+    // span of time behind it, so the anchor only advances once enough has
+    // elapsed (see RATE_MIN_DIVISOR) rather than on every reading.
+    let anchorV=null, anchorTs=null;
+    const rateWin = p.rate ? rateWindowMs(p.rate.unit) : null;
     const paramDb = db[p.key] || {};
     const dwellMin = paramDb.dwell_min ?? rule.dwellMin ?? 3;
     const cooldownS = paramDb.cooldown_s ?? 0;
     for(const r of readings){
       const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;
-      if(p.rate&&prev!==null){const d=p.direction==='high'?v-prev:prev-v; if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));}
-      prev=v;
+      if(rateWin){
+        if(anchorTs===null){ anchorV=v; anchorTs=r.ts; }
+        else {
+          const elapsed=r.ts-anchorTs;
+          if(elapsed>=rateWin/RATE_MIN_DIVISOR){
+            // Change per unit time, expressed in the SAME unit the rule
+            // declares — so a 'ppm/day' limit is now compared against an
+            // actual ppm/day figure instead of a raw sample-to-sample delta.
+            const d=((p.direction==='high'?v-anchorV:anchorV-v)*rateWin)/elapsed;
+            if(d>=p.rate.warn)out.push(mk(nodeId,p,'WARNING','rate',v,p.rate.warn,r));
+            anchorV=v; anchorTs=r.ts;
+          }
+        }
+      }
       const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;
       if(lvl){run++; if(run>=dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }
       else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}

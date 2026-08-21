@@ -56,25 +56,61 @@ const breaches = (v: number, limit: number, dir: 'high' | 'low') => (dir === 'hi
 const cleared = (v: number, limit: number, dir: 'high' | 'low', hyst: number) =>
   dir === 'high' ? v < limit - hyst : v > limit + hyst
 
+/**
+ * A rate-of-rise alarm declares its own time base in its unit string
+ * ('ppm/day' for DGA gassing, '°C/h' for thermal). Returns that base in ms, or
+ * null when the unit has no interpretable denominator — the rate check is then
+ * SKIPPED rather than guessed at, because the previous code silently treated
+ * whatever the denominator said as if it meant "per sample".
+ */
+export function rateWindowMs(unit: string | undefined): number | null {
+  const u = String(unit ?? '').toLowerCase()
+  if (/\/\s*(day|d)$/.test(u)) return 86_400_000
+  if (/\/\s*(hour|hr|h)$/.test(u)) return 3_600_000
+  if (/\/\s*(min|minute)$/.test(u)) return 60_000
+  if (/\/\s*(sec|second|s)$/.test(u)) return 1_000
+  return null
+}
+
+/** Two samples close together turn sensor jitter into a huge extrapolated
+ * rate: 0.1 ppm of noise across 1 second is 8,640 ppm/day. Requiring at least
+ * window/24 between the compared samples caps that amplification at 24x — an
+ * hour for a /day rate, 2.5 minutes for a /h rate. */
+const RATE_MIN_DIVISOR = 24
+
 // Evaluate one parameter's series → events on each activation (not per sample).
 function evalParam(nodeId: string, p: ParamRule, readings: Reading[], dwell: number, hyst: number): AlarmEvent[] {
   const out: AlarmEvent[] = []
   let active: Severity | null = null // currently-firing level
   let run = 0                        // consecutive breaching samples
-  let prev: number | null = null
+  // Rate anchor: the sample the current one is measured against. Held apart
+  // from "the previous reading" because a rate needs a meaningful span of time
+  // behind it, so it only advances once enough has elapsed.
+  let anchorV: number | null = null
+  let anchorTs: number | null = null
+  const rateWin = p.rate ? rateWindowMs(p.rate.unit) : null
 
   for (const r of readings) {
     const v = r.values[p.key]
     if (v === undefined || Number.isNaN(v)) continue
 
-    // ----- rate-of-rise (debounced: only when not already firing) -----
-    if (p.rate && prev !== null) {
-      const delta = p.direction === 'high' ? v - prev : prev - v
-      if (delta >= p.rate.warn) {
-        out.push(mkEvent(nodeId, p, 'WARNING', 'rate', v, p.rate.warn, r))
+    // ----- rate-of-rise, as change per unit time in the rule's OWN unit -----
+    if (rateWin && p.rate) {
+      if (anchorTs === null) {
+        anchorV = v
+        anchorTs = r.ts
+      } else {
+        const elapsed = r.ts - anchorTs
+        if (elapsed >= rateWin / RATE_MIN_DIVISOR) {
+          const delta = p.direction === 'high' ? v - (anchorV as number) : (anchorV as number) - v
+          if ((delta * rateWin) / elapsed >= p.rate.warn) {
+            out.push(mkEvent(nodeId, p, 'WARNING', 'rate', v, p.rate.warn, r))
+          }
+          anchorV = v
+          anchorTs = r.ts
+        }
       }
     }
-    prev = v
 
     // ----- multi-level threshold with dwell + hysteresis -----
     const level: Severity | null = breaches(v, p.critical, p.direction) ? 'CRITICAL'

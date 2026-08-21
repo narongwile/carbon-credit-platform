@@ -78,7 +78,13 @@ type RuleParam struct {
 	Critical  float64 `json:"critical"`
 	Direction string  `json:"direction"`
 	Unit      string  `json:"unit"`
-	Rate      *struct {
+	Rate *struct {
+		// Unit carries the rate's own time base ('ppm/day', '°C/h') and was
+		// previously dropped during unmarshal — leaving the worker with a
+		// threshold number and no idea what period it applied to, which is
+		// how the rate check ended up comparing a raw frame-to-frame delta
+		// against a per-day limit.
+		Unit string  `json:"unit"`
 		Warn float64 `json:"warn"`
 	} `json:"rate,omitempty"`
 }
@@ -92,7 +98,12 @@ type RuleDefinition struct {
 type AlarmParamState struct {
 	ActiveLevel  string
 	RunCount     int
+	// Rate anchor: the sample a rate-of-rise check measures the current one
+	// against. Deliberately NOT "the previous sample" — a rate needs a
+	// meaningful span of time behind it, so this only advances once enough has
+	// elapsed (see rateMinDivisor).
 	PrevValue    *float64
+	PrevValueTs  time.Time
 	LastRaisedAt time.Time
 }
 
@@ -1020,6 +1031,45 @@ func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
 	return r, true
 }
 
+// rateWindow reads the time base a rate-of-rise alarm declares in its own unit
+// string ('ppm/day' for DGA gassing, '°C/h' for thermal). Returns 0 when the
+// unit carries no interpretable denominator, in which case the caller SKIPS the
+// rate check rather than guessing — the previous code silently treated whatever
+// the denominator said as if it meant "per sample".
+func rateWindow(unit string) time.Duration {
+	u := strings.ToLower(strings.TrimSpace(unit))
+	i := strings.LastIndex(u, "/")
+	if i < 0 {
+		return 0
+	}
+	switch strings.TrimSpace(u[i+1:]) {
+	case "day", "d":
+		return 24 * time.Hour
+	case "hour", "hr", "h":
+		return time.Hour
+	case "min", "minute":
+		return time.Minute
+	case "sec", "second", "s":
+		return time.Second
+	}
+	return 0
+}
+
+// Two samples close together turn sensor jitter into a huge extrapolated rate:
+// 0.1 ppm of noise across 1 second is 8,640 ppm/day. Requiring at least
+// window/rateMinDivisor between the compared samples caps that amplification
+// at 24x — an hour for a /day rate, 2.5 minutes for a /h rate.
+const rateMinDivisor = 24
+
+// rateWindowFor is 0 when the param has no rate rule at all, or when its unit
+// has no interpretable time base — both mean "no rate check".
+func rateWindowFor(p RuleParam) time.Duration {
+	if p.Rate == nil {
+		return 0
+	}
+	return rateWindow(p.Rate.Unit)
+}
+
 func breaches(v, l float64, dir string) bool {
 	if dir == "high" {
 		return v >= l
@@ -1084,21 +1134,31 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 			ns.Params[stateKey] = ps
 		}
 
-		// Rate Check
-		if p.Rate != nil && ps.PrevValue != nil {
-			var d float64
-			if p.Direction == "high" {
-				d = val - *ps.PrevValue
-			} else {
-				d = *ps.PrevValue - val
+		// Rate Check — change per unit time, in the SAME unit the rule
+		// declares, so a 'ppm/day' limit is compared against an actual
+		// ppm/day figure instead of a raw frame-to-frame delta.
+		if rateWin := rateWindowFor(p); rateWin > 0 {
+			if ps.PrevValue == nil {
+				valCopy := val
+				ps.PrevValue = &valCopy
+				ps.PrevValueTs = ts
+			} else if elapsed := ts.Sub(ps.PrevValueTs); elapsed >= rateWin/rateMinDivisor {
+				delta := val - *ps.PrevValue
+				if p.Direction != "high" {
+					delta = *ps.PrevValue - val
+				}
+				d := delta * float64(rateWin) / float64(elapsed)
+				if d >= p.Rate.Warn {
+					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, "WARNING", "rate", val, p.Rate.Warn)
+				}
+				valCopy := val
+				ps.PrevValue = &valCopy
+				ps.PrevValueTs = ts
 			}
-			if d >= p.Rate.Warn {
-				emitAlarm(tenantDB, client, orgID, depID, t, ts, p, "WARNING", "rate", val, p.Rate.Warn)
-			}
+			// Below the minimum elapsed time the anchor is deliberately left
+			// where it is: advancing it every frame is what made the old
+			// version measure over one sampling interval instead of a real span.
 		}
-
-		valCopy := val
-		ps.PrevValue = &valCopy
 
 		// Threshold Check
 		lvl := ""

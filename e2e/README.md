@@ -73,6 +73,10 @@ node e2e/proofs/test-riskmap.mjs           # extracts the REAL generated notify 
 node e2e/proofs/test-report-honesty.mjs    # greps the IIoT report generator + both reports pages (comments
                                             #   stripped first) for every fabricated constant/fallback this session
                                             #   found and removed — fails if any of them come back
+node e2e/proofs/test-rate-of-rise.mjs      # rate-of-rise measured as change per unit time in the rule's own
+                                            #   unit (ppm/day, °C/h), driven through the REAL generated Node-RED
+                                            #   evaluate() — not a raw sample-to-sample delta
+go run e2e/proofs/go-rate-of-rise-proof.go # the same semantics in worker/main.go, confirming both engines agree
 go run e2e/proofs/go-alarm-state-proof.go  # the exact state machine from worker/main.go's evaluateAlarms,
                                             #   extracted verbatim: proves two alarm bands sharing one telemetry
                                             #   key (e.g. over/under-voltage on the same phase) track independent
