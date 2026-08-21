@@ -2,6 +2,7 @@ image: node:20
 
 stages:
   - sync
+  - test
   - build
   - deploy
 
@@ -69,16 +70,66 @@ pages:
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
 
-# ── Node-RED Syntax & Integrity Gate ──────────────────────────────────────────
-# Validates that all 150+ function node JavaScript handlers parse without syntax errors.
-test_nodered_syntax:
-  stage: build
+# ── Automated Quality & Verification Gates ──────────────────────────────────
+test_proofs_and_integrity:
+  stage: test
   image: node:20-alpine
   script:
     - node backend/node-red/generate-nodered-backend.mjs
+    - node e2e/proofs/test-emailguard.mjs
+    - node e2e/proofs/test-riskmap.mjs
+    - node e2e/proofs/test-report-honesty.mjs
+    - node e2e/proofs/test-rate-of-rise.mjs
+    - node e2e/proofs/verify-pearson.mjs
+    - node e2e/proofs/test-real-device-fieldnames.mjs
+    - node e2e/proofs/test-alarm-param-discovery.mjs
+    - node e2e/proofs/test-edge-alarm-surfaces.mjs
+    # Fails if an auto-armed alarm ever again names a key the fleet does not
+    # publish, or if a published parameter becomes unreachable by any rule.
+    - node e2e/proofs/audit-catalog-vs-device.mjs
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# The alarm engine that actually runs against live MQTT is Go, and its
+# behaviour has to keep agreeing with the Node-RED one proved above — these
+# are the same scenarios translated, so a drift between the two engines fails
+# here rather than in the field.
+test_worker_proofs:
+  stage: test
+  image: golang:1.22-alpine
+  script:
+    # worker/ carries its own go.mod, so vet has to run from inside it —
+    # `go vet ./worker/...` from the repo root fails with "directory prefix
+    # worker does not contain main module".
+    - (cd worker && go vet ./...)
+    # The proofs are standalone stdlib-only mains and run from the root.
+    - go run e2e/proofs/go-rate-of-rise-proof.go
+    - go run e2e/proofs/go-alarm-state-proof.go
+    - go run e2e/proofs/go-fieldnames-proof.go
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+test_frontend_lint:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd frontend-next
+    - npm ci
+    - npm run lint
+    # A type error never reaches `next lint` — it surfaces only at build or
+    # here, and the build job runs in a later stage behind a Docker-in-Docker
+    # service, so this is the cheapest place to catch it.
+    - npx tsc --noEmit
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+      changes:
+        - frontend-next/**/*
+    - if: $CI_PIPELINE_SOURCE == "web"
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
 
 # ── Next.js production frontend (frontend-next/) → GitLab Container Registry ──
 # Builds the static-export image and pushes it to this project's GitLab registry

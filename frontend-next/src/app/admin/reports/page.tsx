@@ -73,9 +73,14 @@ const INDUSTRIAL_DOMAINS = [
 const REPORT_SECTIONS = [
   {
     id: 'health',
-    name: 'Asset Health & Telemetry Summary',
-    desc: 'Per-asset health score, plus every monitored parameter’s min/avg/max, sample count and compliance against that device’s own configured limits',
-    badge: 'Telemetry',
+    // Merge note: both branches independently removed the Duval-triangle /
+    // hot-spot / thermal-aging claim from this entry. This keeps the other
+    // branch's naming of the specific parameters (they are all genuinely
+    // published and alarmed: hydrogen, oilTemp, moisture) together with what
+    // the Asset_Health_Analytics sheet actually emits for each of them.
+    name: 'Asset Health & Oil/DGA Excursion Summary',
+    desc: 'Per-asset health score, dissolved hydrogen (H₂), top oil temperature and insulation moisture — min/avg/max with sample counts, and compliance against each device’s own configured limits',
+    badge: 'Asset Health',
     icon: '🏥',
   },
   {

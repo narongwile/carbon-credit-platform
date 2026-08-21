@@ -6,13 +6,17 @@ never trusted on inspection alone. These scripts are that verification,
 saved so it survives past one session instead of living only in a shell
 history that disappears on restart.
 
-**This is not wired into CI yet.** `.gitlab-ci.yml` currently runs `npm run
-build` and a Node-RED syntax gate, nothing else — no `tsc --noEmit`, no
-`eslint`, and none of what's in here. A bot commit (or any commit) can
-reintroduce any bug these scripts catch and nothing will flag it before
-deploy. Wiring a job that runs `npm run build && npx tsc --noEmit && npx
-eslint src` plus the two directories below is the natural next step, not
-yet done.
+**`proofs/` is wired into CI; `browser/` is not.** `.gitlab-ci.yml` has a
+`test` stage that runs every script in `proofs/` — the Node-RED generator and
+its syntax gate, all nine Node proofs, and the three Go proofs — plus `npm run
+lint` and `npx tsc --noEmit`. A commit that reintroduces any bug those catch
+now fails the pipeline before it can deploy.
+
+The `browser/` suites still are not: they need a Chromium, a `next dev` and
+the mock backend running together, which the current runners are not set up
+for. Until that exists, the browser scripts are run by hand — and note that
+all but three of them do not exit non-zero on failure (see below), so they
+cannot simply be dropped into a job as they stand.
 
 ## `browser/` — Playwright suites against a mock backend
 
