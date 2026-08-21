@@ -96,6 +96,10 @@ go run e2e/proofs/go-alarm-state-proof.go  # the exact state machine from worker
                                             #   extracted verbatim: proves two alarm bands sharing one telemetry
                                             #   key (e.g. over/under-voltage on the same phase) track independent
                                             #   state instead of one clobbering the other into a duplicate-alarm loop
+node e2e/proofs/audit-catalog-vs-device.mjs      # every parameter the REAL fleet publishes (captured frames in
+                                            #   e2e/fixtures/real-device-payloads.json) is addressable by some
+                                            #   alarm rule, and no auto-armed alarm names a key nothing sends.
+                                            #   Prints a full reachability report; exits non-zero on either bug
 node e2e/proofs/test-alarm-param-discovery.mjs   # the alarm editor's catalog-vs-discovery resolution: bare wire
                                             #   keys matched against a rowId-keyed (key::direction) catalog,
                                             #   so a published sensor is never listed twice

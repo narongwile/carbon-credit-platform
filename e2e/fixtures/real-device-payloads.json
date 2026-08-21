@@ -1,0 +1,68 @@
+{
+  "_comment": [
+    "Real MQTT frames captured from the live ETERNITY fleet, supplied by the",
+    "platform owner. This is the ground truth for which parameters actually",
+    "exist — every alarm threshold, catalog entry and paramMap alias is",
+    "checked against this file rather than against what the code assumes.",
+    "",
+    "Three DISTINCT feeds, not one schema:",
+    "  tr-111  a power meter using SHORT names (Va/Ia/Pa/PFa/kWh3p/GHG)",
+    "  tr-222  the transformer sensor box only (oil temp, H2, enclosure T/RH)",
+    "  tr-221  a power meter using LONG names, PLUS the same box sensors",
+    "",
+    "Note PFA/PFB/PFC/PFTotal and THD_VoltBC arrive as JSON null — a sensor",
+    "with nothing to report. worker/main.go's dropNullValues strips those so",
+    "they are never stored or alarmed on as a fabricated 0.0."
+  ],
+  "frames": [
+    {
+      "nodeId": "tr-111",
+      "ts": 1787322350633,
+      "values": {
+        "Va": 227.737548828125, "Vb": 228.6529541015625, "Vc": 226.292724609375,
+        "Ia": 46.8743896484375, "Ib": 52.4468994140625, "Ic": 123.78600311279297,
+        "Pa": 220.67892456054688, "Pb": 610.6854858398438, "Pc": 604.8920288085938,
+        "VAa": 8204.3583984375, "VAb": 10170.7177734375, "VAc": 27985.40625,
+        "VARa": 8201.724609375, "VARb": -10152.546875, "VARc": -27978.296875,
+        "PFa": 0.026897668838500977, "PFb": 0.06004345417022705, "PFc": 0.021614432334899902,
+        "I3pavg": 73.97552490234375, "I3p": 221.9268798828125,
+        "P3p": 1642.9783935546875, "VA3p": 46498.5390625, "VAR3p": -30056.576171875,
+        "PF3p": 0.05458641052246094, "Hz": 50.0107421875,
+        "kWh3p": 38130.5234375, "GHG": 22824.9313296875,
+        "V3pab": 397.8214111328125, "V3pbc": 395.0775146484375,
+        "V3pca": 394.939453125, "V3pavg": 395.946044921875
+      }
+    },
+    {
+      "nodeId": "tr-222",
+      "ts": 1787322340991,
+      "values": {
+        "Tbox": 32.1, "RHbox": 57.3, "Oiltemp": 33.2, "Tamb": 29.9,
+        "RHamb": 65.9, "H2": 3, "OilMoisture": 0
+      }
+    },
+    {
+      "nodeId": "tr-221",
+      "ts": 1787322340990,
+      "values": {
+        "CurrentA": 0, "CurrentB": 0, "CurrentC": 0, "CurrentN": 0, "CurrentAVG": 0,
+        "CurrentUnbalanceA": 0, "CurrentUnbalanceB": 0, "CurrentUnbalanceC": 0,
+        "VoltAB": 396.24688720703125, "VoltBC": 398.45123291015625, "VoltCA": 394.6485595703125,
+        "VoltAN": 227.7310791015625, "VoltBN": 229.8409881591797, "VoltCN": 229.0985565185547,
+        "VoltLN_AVG": 228.8902130126953,
+        "VoltUnbalanceAB": 0.05095129460096359, "VoltUnbalanceBC": 0.5050713419914246,
+        "VoltUnbalanceCA": 0.45411238074302673, "VoltUnbalanceAN": 0.5064147710800171,
+        "VoltUnbalanceBN": 0.41538482904434204, "VoltUnbalanceCN": 0.09102333337068558,
+        "ActivepowerA": 0, "ActivepowerB": 0, "ActivepowerC": 0, "ActivepowerTotal": 0,
+        "ReactivepowerA": 0, "ReactivepowerB": 0, "ReactivepowerC": 0, "ReactivepowerTotal": 0,
+        "ApparentpowerA": 0, "ApparentpowerB": 0, "ApparentpowerC": 0, "ApparentpowerTotal": 0,
+        "PFA": null, "PFB": null, "PFC": null, "PFTotal": null,
+        "Hz": 50.012779235839844, "kWh": 9577.810546875,
+        "THD_CurrentA": 0, "THD_CurrentB": 0, "THD_CurrentC": 0,
+        "THD_VoltAB": 0, "THD_VoltBC": null, "THD_VoltCA": 0,
+        "Tbox": 32.1, "RHbox": 57.3, "Oiltemp": 33.2, "Tamb": 29.9,
+        "RHamb": 65.9, "H2": 3, "OilMoisture": 0
+      }
+    }
+  ]
+}

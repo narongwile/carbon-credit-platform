@@ -117,17 +117,89 @@ export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]>
     { key: 'VoltUnbalanceAN', label: 'Phase A-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading', riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)' },
     { key: 'VoltUnbalanceBN', label: 'Phase B-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading', riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)' },
     { key: 'VoltUnbalanceCN', label: 'Phase C-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading', riskInsight: 'Phase unbalance motor heating & system stress (>2% / >5%)' },
-    { key: 'currentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
-    { key: 'currentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
-    { key: 'currentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading' },
-    { key: 'currentN', label: 'Neutral Current', unit: 'A', direction: 'high', warn: 50, critical: 100, paramType: 'reading' },
-    { key: 'load', label: 'Load Factor', unit: '%', direction: 'high', warn: 100, critical: 115, paramType: 'reading' },
-    { key: 'powerFactor', label: 'Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75, paramType: 'reading' },
-    { key: 'frequency', label: 'Frequency', unit: 'Hz', direction: 'high', warn: 51.5, critical: 52.5, paramType: 'reading' },
-    { key: 'thd_v', label: 'Voltage THD', unit: '%', direction: 'high', warn: 5, critical: 8, paramType: 'reading' },
-    { key: 'thd_i', label: 'Current THD', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading' },
-    { key: 'activePower', label: 'Active Power', unit: 'kW', direction: 'high', warn: 800, critical: 1000, paramType: 'reading' },
-    { key: 'apparentPower', label: 'Apparent Power', unit: 'kVA', direction: 'high', warn: 1000, critical: 1250, paramType: 'reading' },
+    // Line-to-line voltages, 400 V nominal — the same ±5% / ±10% bands as the
+    // line-to-neutral pairs above, expressed directly in volts.
+    { key: 'VoltAB', label: 'Line A-B Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 420, critical: 440, paramType: 'reading', riskInsight: 'Equipment damage risk (> +5% / +10% of rated 400V)' },
+    { key: 'VoltAB', label: 'Line A-B Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 380, critical: 360, paramType: 'reading', riskInsight: 'Operational instability / low voltage trip (< -5% / -10% of rated 400V)' },
+    { key: 'VoltBC', label: 'Line B-C Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 420, critical: 440, paramType: 'reading' },
+    { key: 'VoltBC', label: 'Line B-C Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 380, critical: 360, paramType: 'reading' },
+    { key: 'VoltCA', label: 'Line C-A Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 420, critical: 440, paramType: 'reading' },
+    { key: 'VoltCA', label: 'Line C-A Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 380, critical: 360, paramType: 'reading' },
+    { key: 'VoltLN_AVG', label: 'Line-Neutral Average Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 241.5, critical: 253, paramType: 'reading' },
+    { key: 'VoltLN_AVG', label: 'Line-Neutral Average Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 218.5, critical: 207, paramType: 'reading' },
+    // Line-to-line unbalance, same 2% / 5% basis as the L-N unbalance above.
+    { key: 'VoltUnbalanceAB', label: 'Line A-B Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading' },
+    { key: 'VoltUnbalanceBC', label: 'Line B-C Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading' },
+    { key: 'VoltUnbalanceCA', label: 'Line C-A Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5, paramType: 'reading' },
+
+    // Currents, in AMPS as the meter reports them — NOT as a percent of rated
+    // capacity. The Alarm List specifies over-current at ">100% / >115% of
+    // rated", but no rated current is derivable here: rated_kva is stored on
+    // the nameplate and nothing computes a load percentage from it, so the old
+    // 'load' entry named a value no device has ever published. Alarming on the
+    // measured ampere directly needs no such computation — but the correct
+    // ampere for "100% of rated" differs per transformer, so these ship
+    // unrationalized: named, offered, and switched OFF until the operator
+    // enters the limit for that unit.
+    { key: 'CurrentA', label: 'Phase A Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading', unrationalized: true, riskInsight: 'Overload / short-circuit risk — set from this transformer’s rated current' },
+    { key: 'CurrentB', label: 'Phase B Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading', unrationalized: true },
+    { key: 'CurrentC', label: 'Phase C Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading', unrationalized: true },
+    { key: 'CurrentN', label: 'Neutral Current', unit: 'A', direction: 'high', warn: 50, critical: 100, paramType: 'reading', unrationalized: true },
+    { key: 'CurrentAVG', label: 'Average Current', unit: 'A', direction: 'high', warn: 400, critical: 500, paramType: 'reading', unrationalized: true },
+    // Current unbalance has no single accepted limit the way the 2%/5%
+    // voltage figure does — it is derated against motor/load type — so the
+    // operator sets it rather than inheriting an invented number.
+    { key: 'CurrentUnbalanceA', label: 'Phase A Current Unbalance', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading', unrationalized: true },
+    { key: 'CurrentUnbalanceB', label: 'Phase B Current Unbalance', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading', unrationalized: true },
+    { key: 'CurrentUnbalanceC', label: 'Phase C Current Unbalance', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading', unrationalized: true },
+
+    // Power factor: 0.85 is the threshold Thai utilities levy a PF penalty at.
+    { key: 'PFTotal', label: 'Power Factor (3-phase)', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75, paramType: 'reading', riskInsight: 'Utility power-factor penalty below 0.85' },
+    { key: 'PFA', label: 'Phase A Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75, paramType: 'reading' },
+    { key: 'PFB', label: 'Phase B Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75, paramType: 'reading' },
+    { key: 'PFC', label: 'Phase C Power Factor', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75, paramType: 'reading' },
+
+    // Frequency needs BOTH bands — the grid drifts in both directions, and a
+    // high-only entry (as this used to be) cannot see an under-frequency
+    // event at all. 50 Hz nominal, ±1% warning / ±2% critical.
+    { key: 'Hz', label: 'Frequency — Over', unit: 'Hz', direction: 'high', warn: 50.5, critical: 51, paramType: 'reading' },
+    { key: 'Hz', label: 'Frequency — Under', unit: 'Hz', direction: 'low', warn: 49.5, critical: 49, paramType: 'reading' },
+
+    // Voltage THD: 5% warning / 8% critical is the usual LV distribution
+    // practice. Current THD has no equivalent single figure — its limit is a
+    // function of the short-circuit-to-load-current ratio at the point of
+    // common coupling — so it is left for the operator.
+    { key: 'THD_VoltAB', label: 'Voltage THD A-B', unit: '%', direction: 'high', warn: 5, critical: 8, paramType: 'reading' },
+    { key: 'THD_VoltBC', label: 'Voltage THD B-C', unit: '%', direction: 'high', warn: 5, critical: 8, paramType: 'reading' },
+    { key: 'THD_VoltCA', label: 'Voltage THD C-A', unit: '%', direction: 'high', warn: 5, critical: 8, paramType: 'reading' },
+    { key: 'THD_CurrentA', label: 'Current THD A', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading', unrationalized: true },
+    { key: 'THD_CurrentB', label: 'Current THD B', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading', unrationalized: true },
+    { key: 'THD_CurrentC', label: 'Current THD C', unit: '%', direction: 'high', warn: 10, critical: 20, paramType: 'reading', unrationalized: true },
+
+    // Power and energy scale with the installation, so no universal limit.
+    { key: 'ActivepowerTotal', label: 'Active Power (3-phase)', unit: 'W', direction: 'high', warn: 800000, critical: 1000000, paramType: 'reading', unrationalized: true },
+    { key: 'ActivepowerA', label: 'Phase A Active Power', unit: 'W', direction: 'high', warn: 300000, critical: 400000, paramType: 'reading', unrationalized: true },
+    { key: 'ActivepowerB', label: 'Phase B Active Power', unit: 'W', direction: 'high', warn: 300000, critical: 400000, paramType: 'reading', unrationalized: true },
+    { key: 'ActivepowerC', label: 'Phase C Active Power', unit: 'W', direction: 'high', warn: 300000, critical: 400000, paramType: 'reading', unrationalized: true },
+    { key: 'ApparentpowerTotal', label: 'Apparent Power (3-phase)', unit: 'VA', direction: 'high', warn: 1000000, critical: 1250000, paramType: 'reading', unrationalized: true },
+    { key: 'ApparentpowerA', label: 'Phase A Apparent Power', unit: 'VA', direction: 'high', warn: 400000, critical: 500000, paramType: 'reading', unrationalized: true },
+    { key: 'ApparentpowerB', label: 'Phase B Apparent Power', unit: 'VA', direction: 'high', warn: 400000, critical: 500000, paramType: 'reading', unrationalized: true },
+    { key: 'ApparentpowerC', label: 'Phase C Apparent Power', unit: 'VA', direction: 'high', warn: 400000, critical: 500000, paramType: 'reading', unrationalized: true },
+    { key: 'ReactivepowerTotal', label: 'Reactive Power (3-phase)', unit: 'VAR', direction: 'high', warn: 500000, critical: 700000, paramType: 'reading', unrationalized: true },
+    { key: 'ReactivepowerA', label: 'Phase A Reactive Power', unit: 'VAR', direction: 'high', warn: 200000, critical: 300000, paramType: 'reading', unrationalized: true },
+    { key: 'ReactivepowerB', label: 'Phase B Reactive Power', unit: 'VAR', direction: 'high', warn: 200000, critical: 300000, paramType: 'reading', unrationalized: true },
+    { key: 'ReactivepowerC', label: 'Phase C Reactive Power', unit: 'VAR', direction: 'high', warn: 200000, critical: 300000, paramType: 'reading', unrationalized: true },
+    // Reported only by the short-name meter (tr-111) and left unaliased on
+    // purpose — see paramMap in worker/main.go. I3p is a three-phase TOTAL
+    // current, not the average CurrentAVG holds; V3pavg averages the
+    // LINE-TO-LINE voltages (≈396 V), not the line-to-neutral ones
+    // VoltLN_AVG averages (≈229 V). Folding either into its near-namesake
+    // would compare a reading against a limit meant for a different quantity.
+    { key: 'I3p', label: '3-Phase Total Current', unit: 'A', direction: 'high', warn: 1200, critical: 1500, paramType: 'reading', unrationalized: true },
+    { key: 'V3pavg', label: 'Line-Line Average Voltage — Over-voltage', unit: 'V', direction: 'high', warn: 420, critical: 440, paramType: 'reading' },
+    { key: 'V3pavg', label: 'Line-Line Average Voltage — Under-voltage', unit: 'V', direction: 'low', warn: 380, critical: 360, paramType: 'reading' },
+    { key: 'GHG', label: 'Greenhouse Gas (meter-reported)', unit: 'gCO₂e', direction: 'high', warn: 100000, critical: 200000, paramType: 'reading', unrationalized: true, riskInsight: 'Carbon figure computed onboard the meter — cumulative, not a fault condition' },
+    { key: 'kWh', label: 'Energy Counter', unit: 'kWh', direction: 'high', warn: 1000000, critical: 2000000, paramType: 'reading', unrationalized: true, riskInsight: 'Cumulative counter — rises forever; alarm only if you mean a billing ceiling' },
 
     // 🧪 DGA & Oil Quality Sensors
     { key: 'hydrogen', label: 'Hydrogen H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 150, critical: 300, rate: { unit: 'ppm/day', warn: 10 }, paramType: 'reading' },
@@ -144,6 +216,16 @@ export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]>
     { key: 'acidity', label: 'Oil Acidity', unit: 'mg KOH/g', direction: 'high', warn: 0.15, critical: 0.3, paramType: 'reading' },
 
     // 🛡️ Mechanical & Environmental Sensors
+    //
+    // Tbox / RHbox / RHamb are published by the real ETERNITY sensor box on
+    // every frame. They ship unrationalized: enclosure temperature and
+    // humidity limits depend on the cabinet's own rating and on the local dew
+    // point, and there is no defensible number that holds for every site — so
+    // they are named and offered, with the limit left to whoever knows the
+    // installation.
+    { key: 'Tbox', label: 'Enclosure Temperature', unit: '°C', direction: 'high', warn: 50, critical: 60, paramType: 'reading', unrationalized: true, riskInsight: 'RTU / electronics enclosure — set from the cabinet’s rated maximum' },
+    { key: 'RHbox', label: 'Enclosure Humidity', unit: '%', direction: 'high', warn: 70, critical: 85, paramType: 'reading', unrationalized: true, riskInsight: 'Condensation risk inside the enclosure — depends on local dew point' },
+    { key: 'RHamb', label: 'Ambient Humidity', unit: '%', direction: 'high', warn: 80, critical: 90, paramType: 'reading', unrationalized: true },
     { key: 'pressure', label: 'Tank Pressure', unit: 'kPa', direction: 'high', warn: 35, critical: 50, paramType: 'reading' },
     { key: 'partialDischarge', label: 'Partial Discharge (PD)', unit: 'pC', direction: 'high', warn: 200, critical: 500, paramType: 'reading' },
     { key: 'vibration', label: 'Vibration Velocity', unit: 'mm/s', direction: 'high', warn: 4.5, critical: 7.1, paramType: 'reading' },

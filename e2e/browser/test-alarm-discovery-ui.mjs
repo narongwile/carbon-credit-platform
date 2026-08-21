@@ -50,6 +50,7 @@ const counts = await page.evaluate(() => {
 // Fail loudly instead of passing quietly.
 const rows = await page.evaluate(() => [...document.querySelectorAll('[data-param-key]')].map((r) => ({
   key: r.getAttribute('data-param-key'),
+  direction: r.getAttribute('data-param-direction'),
   unrationalized: r.getAttribute('data-param-unrationalized') === 'true',
   checked: !!r.querySelector('input[type=checkbox]')?.checked,
 })));
@@ -77,13 +78,31 @@ if (Object.keys(counts).length === 0) {
   t('over-voltage and under-voltage bands both present',
     /Over-voltage/i.test(body) && /Under-voltage/i.test(body));
 } else {
-  for (const [k, n] of Object.entries(counts)) {
-    if (k === 'VoltAN' || k === 'VoltBN' || k === 'VoltCN') {
-      t(`${k} has exactly its 2 bands`, n === 2, `${n} row(s)`);
-    } else {
-      t(`${k} has exactly 1 row`, n === 1, `${n} row(s)`);
-    }
+  // The real invariant is not "one row per key" — a sensor legitimately
+  // carries two bands (over- and under-voltage, over- and under-frequency),
+  // and the catalog now defines several. What must never happen is two rows
+  // for the same key in the SAME direction, which is precisely the shape the
+  // phantom duplicate took: a second 'high' row beside the catalog's 'high'
+  // one, with a guessed limit, colliding on rowId and on the worker's alarm
+  // state key alike.
+  const byKeyDir = new Map();
+  for (const r of rows) {
+    const id = `${r.key}::${r.direction}`;
+    byKeyDir.set(id, (byKeyDir.get(id) || 0) + 1);
   }
+  const collided = [...byKeyDir.entries()].filter(([, n]) => n > 1);
+  t('no key+direction pair appears twice (the phantom-duplicate shape)',
+    collided.length === 0, collided.length ? collided.map(([id, n]) => `${id}×${n}`).join(', ') : `${byKeyDir.size} distinct rows`);
+
+  // And a dual-band key must carry exactly one 'high' and one 'low'.
+  const dual = Object.entries(counts).filter(([, n]) => n === 2).map(([k]) => k);
+  for (const k of dual) {
+    const dirs = rows.filter((r) => r.key === k).map((r) => r.direction).sort();
+    t(`${k}'s two rows are one high + one low band`,
+      dirs.length === 2 && dirs[0] === 'high' && dirs[1] === 'low', dirs.join('+'));
+  }
+  const over = Object.entries(counts).filter(([, n]) => n > 2);
+  t('no key has more than two bands', over.length === 0, over.map(([k, n]) => `${k}×${n}`).join(', '));
 }
 
 await page.screenshot({ path: './screenshots/alarm-discovery.png' });

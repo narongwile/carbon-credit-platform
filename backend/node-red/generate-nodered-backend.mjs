@@ -1858,7 +1858,20 @@ const MAP = { oil_temp_c:'oilTemp', Oiltemp:'oilTemp', ambient_temp_c:'ambientTe
   dga_h2_ppm:'hydrogen', hydrogen_ppm:'hydrogen', H2:'hydrogen',
   moisture_ppm:'moisture', OilMoisture:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
   electrical_current_a:'current', current_a:'current',
-  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt' };
+  rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt',
+  // Power meter model B (short names) -> model A (long names), so one alarm
+  // rule covers both meters in the fleet. Kept in sync with paramMap in
+  // worker/main.go, which carries the full rationale — including why V3pavg,
+  // I3p and GHG are deliberately NOT aliased.
+  Va:'VoltAN', Vb:'VoltBN', Vc:'VoltCN',
+  Ia:'CurrentA', Ib:'CurrentB', Ic:'CurrentC',
+  Pa:'ActivepowerA', Pb:'ActivepowerB', Pc:'ActivepowerC',
+  VAa:'ApparentpowerA', VAb:'ApparentpowerB', VAc:'ApparentpowerC',
+  VARa:'ReactivepowerA', VARb:'ReactivepowerB', VARc:'ReactivepowerC',
+  PFa:'PFA', PFb:'PFB', PFc:'PFC',
+  I3pavg:'CurrentAVG', P3p:'ActivepowerTotal', VA3p:'ApparentpowerTotal',
+  VAR3p:'ReactivepowerTotal', PF3p:'PFTotal',
+  V3pab:'VoltAB', V3pbc:'VoltBC', V3pca:'VoltCA', kWh3p:'kWh' };
 const p = msg.payload;
 const topo = (msg.topic||'').split('/');
 const fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;

@@ -100,7 +100,7 @@ type RuleParam struct {
 	Critical  float64 `json:"critical"`
 	Direction string  `json:"direction"`
 	Unit      string  `json:"unit"`
-	Rate *struct {
+	Rate      *struct {
 		// Unit carries the rate's own time base ('ppm/day', '°C/h') and was
 		// previously dropped during unmarshal — leaving the worker with a
 		// threshold number and no idea what period it applied to, which is
@@ -118,8 +118,8 @@ type RuleDefinition struct {
 }
 
 type AlarmParamState struct {
-	ActiveLevel  string
-	RunCount     int
+	ActiveLevel string
+	RunCount    int
 	// Rate anchor: the sample a rate-of-rise check measures the current one
 	// against. Deliberately NOT "the previous sample" — a rate needs a
 	// meaningful span of time behind it, so this only advances once enough has
@@ -1557,6 +1557,52 @@ var paramMap = map[string]string{
 	"batt_pct":             "battery",
 	"impact_g":             "impact",
 	"baro_alt_m":           "baroAlt",
+
+	// --- power meter model B (short names) -> model A (long names) ---------
+	//
+	// The fleet runs two meter models that measure the same quantities under
+	// different spellings: tr-221 publishes CurrentA/ActivepowerA/PFA, tr-111
+	// publishes Ia/Pa/PFa. Aliasing model B onto model A's names lets ONE
+	// alarm rule cover both, instead of every threshold having to be entered
+	// twice under two spellings.
+	//
+	// Only pairs whose meaning is confirmed identical from the captured
+	// frames (e2e/fixtures/real-device-payloads.json) are aliased. Three are
+	// deliberately NOT:
+	//   V3pavg  averages LINE-TO-LINE (395.9 V) while VoltLN_AVG averages
+	//           line-to-neutral (228.9 V) — same word "avg", different
+	//           measurement; folding them together would compare a 400 V
+	//           quantity against a 230 V limit.
+	//   I3p     is a three-phase total (221.9 A ≈ Ia+Ib+Ic), not the average
+	//           CurrentAVG holds.
+	//   GHG     has no model-A counterpart at all.
+	"Va":     "VoltAN",
+	"Vb":     "VoltBN",
+	"Vc":     "VoltCN",
+	"Ia":     "CurrentA",
+	"Ib":     "CurrentB",
+	"Ic":     "CurrentC",
+	"Pa":     "ActivepowerA",
+	"Pb":     "ActivepowerB",
+	"Pc":     "ActivepowerC",
+	"VAa":    "ApparentpowerA",
+	"VAb":    "ApparentpowerB",
+	"VAc":    "ApparentpowerC",
+	"VARa":   "ReactivepowerA",
+	"VARb":   "ReactivepowerB",
+	"VARc":   "ReactivepowerC",
+	"PFa":    "PFA",
+	"PFb":    "PFB",
+	"PFc":    "PFC",
+	"I3pavg": "CurrentAVG",
+	"P3p":    "ActivepowerTotal",
+	"VA3p":   "ApparentpowerTotal",
+	"VAR3p":  "ReactivepowerTotal",
+	"PF3p":   "PFTotal",
+	"V3pab":  "VoltAB",
+	"V3pbc":  "VoltBC",
+	"V3pca":  "VoltCA",
+	"kWh3p":  "kWh",
 }
 
 // canonicalParam returns the canonical key for a raw wire key (unchanged when

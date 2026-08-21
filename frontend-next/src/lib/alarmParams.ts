@@ -36,7 +36,6 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
     params: [
       // 🌡️ Thermal & Oil
       { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 85, critical: 90, rate: { unit: '°C/h', warn: 3 } },
-      { key: 'windingTemp', label: 'Winding / Hot-spot Temp', unit: '°C', direction: 'high', warn: 95, critical: 110 },
       // Was in READING_PAYLOAD_CATALOG but missing here, so defaultNodeRule()
       // never seeded it into a new device's starting rule — the exact dead-key
       // class of bug already fixed once for overVoltage/underVoltage/
@@ -65,12 +64,38 @@ export const ALARM_SCHEMA: Record<SensorDomain, DomainAlarmSchema> = {
       { key: 'VoltUnbalanceAN', label: 'Phase A-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
       { key: 'VoltUnbalanceBN', label: 'Phase B-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
       { key: 'VoltUnbalanceCN', label: 'Phase C-N Voltage Unbalance', unit: '%', direction: 'high', warn: 2, critical: 5 },
-      // 🔌 Current & Load
-      { key: 'load', label: 'Over Current (Load)', unit: '%', direction: 'high', warn: 100, critical: 115 },
       // 🧪 DGA & Oil Quality
       { key: 'hydrogen', label: 'Hydrogen H₂ (DGA)', unit: 'ppm', direction: 'high', warn: 150, critical: 300, rate: { unit: 'ppm/day', warn: 10 } },
       { key: 'moisture', label: 'Moisture', unit: 'ppm', direction: 'high', warn: 25, critical: 35 },
-      { key: 'oilLevel', label: 'Oil Level', unit: '%', direction: 'low', warn: 70, critical: 60 },
+      // ⚡️ Power quality — published by the meter on every frame.
+      { key: 'PFTotal', label: 'Power Factor (3-phase)', unit: 'PF', direction: 'low', warn: 0.85, critical: 0.75 },
+      { key: 'Hz', label: 'Frequency — Over', unit: 'Hz', direction: 'high', warn: 50.5, critical: 51 },
+      { key: 'Hz', label: 'Frequency — Under', unit: 'Hz', direction: 'low', warn: 49.5, critical: 49 },
+      { key: 'THD_VoltAB', label: 'Voltage THD A-B', unit: '%', direction: 'high', warn: 5, critical: 8 },
+      { key: 'THD_VoltBC', label: 'Voltage THD B-C', unit: '%', direction: 'high', warn: 5, critical: 8 },
+      { key: 'THD_VoltCA', label: 'Voltage THD C-A', unit: '%', direction: 'high', warn: 5, critical: 8 },
+      // ---------------------------------------------------------------------
+      // DELIBERATELY ABSENT: windingTemp, load, oilLevel.
+      //
+      // This list is copied VERBATIM by defaultNodeRule() into the starting
+      // rule of every new transformer, so anything here is armed on day one.
+      // All three named a key that no device in the fleet has ever published
+      // (proved in e2e/proofs/audit-catalog-vs-device.mjs against captured
+      // frames) — an alarm that shows as configured and enabled in the editor
+      // and cannot fire at any reading, which is worse than no alarm because
+      // it reads as coverage.
+      //
+      // 'load' additionally asked for a percentage of rated capacity that
+      // nothing computes: rated_kva sits on the nameplate and no code path
+      // turns it into a load percentage. The Alarm List's over-current
+      // requirement is served instead by CurrentA/B/C in the reading catalog,
+      // alarmed directly in amps — no derivation involved.
+      //
+      // windingTemp and oilLevel remain in READING_PAYLOAD_CATALOG so a
+      // transformer that does carry a winding probe or a level float can
+      // still enable them; they are simply no longer armed by default on
+      // hardware that has neither.
+      // ---------------------------------------------------------------------
     ],
     dwellMin: 5,
     hysteresis: 2,
@@ -197,6 +222,11 @@ export const LEGACY_WIRE_KEYS = new Set([
   // Real ETERNITY transformer wire spellings (confirmed against a live MQTT
   // payload) — none of the spellings above matched them.
   'Oiltemp', 'Tamb', 'H2', 'OilMoisture',
+  // Short-name power meter (tr-111), aliased onto the long-name meter's keys
+  // so one alarm rule covers both models. See paramMap in worker/main.go.
+  'Va', 'Vb', 'Vc', 'Ia', 'Ib', 'Ic', 'Pa', 'Pb', 'Pc',
+  'VAa', 'VAb', 'VAc', 'VARa', 'VARb', 'VARc', 'PFa', 'PFb', 'PFc',
+  'I3pavg', 'P3p', 'VA3p', 'VAR3p', 'PF3p', 'V3pab', 'V3pbc', 'V3pca', 'kWh3p',
 ])
 
 /**
