@@ -38,10 +38,21 @@ node test-mobile-responsive.mjs      # same feature at 360x640 / 393x852 — 30 
 node test-dual-band-voltage.mjs      # over/under-voltage sharing one key, independent state
 node test-studio-features.mjs        # brush, chart/table toggle, thresholds on-off, refresh, Δ Span
 node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id in the map popup
+                                     #   ⚠️ CURRENTLY CANNOT RUN — see "Known gaps" below
+node test-reports-copy.mjs           # the reports page advertises only analyses the engine can
+                                     #   actually back — no Duval triangle, no thermal aging factor,
+                                     #   no IEEE 519/C57.104/60076/21 CFR conformance badges
 ```
 
-Each script prints `PASS`/`FAIL` lines and exits non-zero on any failure —
-safe to pipe into a CI job once one exists. `mock-backend.mjs` is the
+Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`
+and `test-reports-copy.mjs` actually exit non-zero on failure** — the other 30
+count nothing and always exit 0. This paragraph used to claim they were all
+"safe to pipe into a CI job"; they are not. Piping the rest into CI today
+buys a job that goes green while assertions fail underneath it. Adding a
+pass/fail counter and `process.exit(fail ? 1 : 0)` to each is a prerequisite
+for the CI work described at the top of this file, not a follow-up to it.
+
+`mock-backend.mjs` is the
 shared dependency every other script in this folder assumes is already
 running on `:4001`; it needs a fresh restart between runs of scripts that
 mutate its in-memory state (creating a chart, moving a device, etc.) or
@@ -96,6 +107,23 @@ go run e2e/proofs/go-fieldnames-proof.go   # the same mapping in worker/main.go'
 backend/node-red/generate-nodered-backend.mjs` first if the generator
 source has changed since the committed flow was last built, or they'll be
 proving yesterday's behavior.
+
+## `test-xss-map-popup.mjs` cannot currently run
+
+It looks for a fleet device named "Evil Device" whose id is
+`TR-X" onmouseover=alert(1) x="`, and asserts the map popup escapes it.
+`mock-backend.mjs` has never contained that device — `git log --all -S` finds
+the string only in the test file itself — so the fixture the test needs has
+never existed, and the test has failed since the day it was committed.
+
+Two of its six checks still print PASS ("no onmouseover attribute was
+injected", "hovering executed no script"). Those pass **vacuously**: with no
+hostile input on the page there is nothing to inject. They are not evidence.
+
+The escaping fix itself is real and unaffected — `esc()` in
+`components/map/LiveSensorMap.tsx` escapes `& < > " '` and is applied at every
+popup interpolation point. What is missing is the fixture that would prove it.
+Seeding that device into `mock-backend.mjs` is the fix.
 
 ## Known gaps these do NOT cover
 

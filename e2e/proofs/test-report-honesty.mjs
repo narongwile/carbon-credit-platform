@@ -33,5 +33,37 @@ for (const [n, s] of [['admin', adm], ['customer', cus]]) {
 t('admin: no ?? 35 MTTR fallback', !adm.includes('mttrMinutes ?? 35'));
 t('no "certified" claim left in generator footer', !/certified by/.test(src));
 
+// ---------------------------------------------------------------------------
+// Advertised analyses that do not exist in the codebase.
+//
+// The reports page used to sell Duval triangle risk, a winding hot-spot
+// calculation, an insulation thermal aging factor and IEEE 519 harmonic
+// analysis, alongside badges asserting IEEE C57.104 / IEC 60076 / HACCP /
+// FDA 21 CFR compliance — while iiotReportGenerator.ts's own header
+// explicitly disclaims implementing or certifying against every one of them.
+// grep the generator for any of these and there is nothing to find.
+//
+// This is checked on the UI copy, not the generator: the lie was never in the
+// maths, it was in what the screen promised the maths would do.
+// ---------------------------------------------------------------------------
+const PHANTOM_ANALYSES = [
+  ['Duval triangle', /duval/i],
+  ['thermal aging factor', /aging factor/i],
+  ['IEEE 519 harmonic analysis', /IEEE ?519/i],
+  ['IEC 60076 conformance', /IEC ?60076/i],
+  ['IEEE C57.104 conformance', /C57\.?104/i],
+  ['FDA 21 CFR conformance', /21 ?CFR/i],
+];
+for (const [label, re] of PHANTOM_ANALYSES) {
+  t(`admin reports page does not advertise ${label}`, !re.test(adm));
+  t(`customer reports page does not advertise ${label}`, !re.test(cus));
+}
+
+// The generator genuinely implements these two published formulae, so the UI
+// is allowed to name them — this asserts the honest copy stayed, guarding the
+// opposite failure (over-correcting into claiming nothing at all).
+t('MKT is still implemented in the generator', /function calculateMKT/.test(src));
+t('admin reports page still credits MKT to USP', /MKT/.test(adm) && /USP/i.test(adm));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

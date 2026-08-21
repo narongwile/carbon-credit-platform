@@ -53,33 +53,50 @@ const INDUSTRIAL_DOMAINS = [
   { id: 'bloodBox', label: 'BloodBOX (Cold Transit)', icon: ShieldCheck },
 ]
 
+// Each entry below names ONLY what the generator actually computes — see
+// IIoTMetricSummary and the Asset_Health_Analytics sheet in
+// lib/iiotReportGenerator.ts, whose own header explicitly disclaims
+// implementing or certifying against IEEE C57.104, IEC 60076, IEEE 519,
+// HACCP/GDP/21 CFR Part 11 and the GHG Protocol.
+//
+// This list used to contradict that disclaimer directly: it advertised Duval
+// triangle risk, a winding hot-spot calculation and an insulation thermal
+// aging factor, none of which exist anywhere in the codebase — and the real
+// ETERNITY transformer does not even publish the CH₄/C₂H₂/C₂H₄ a Duval
+// triangle needs, only H₂. It also claimed IEEE 519 harmonic analysis, load
+// factor, peak kVA and power factor, none of which are computed either.
+// Someone filing one of these reports with a regulator on the strength of
+// those badges would be filing an unbacked claim.
+//
+// MKT (USP) and the grid emission factor ARE implemented and are named as the
+// borrowed published formulae they are — a formula is not an accredited audit.
 const REPORT_SECTIONS = [
   {
     id: 'health',
-    name: 'Asset Health & DGA Diagnostic (IEEE C57 / IEC 60076)',
-    desc: 'Health index, Duval triangle risk, winding hot-spot & insulation thermal aging factor',
-    badge: 'IEEE C57.104',
+    name: 'Asset Health & Telemetry Summary',
+    desc: 'Per-asset health score, plus every monitored parameter’s min/avg/max, sample count and compliance against that device’s own configured limits',
+    badge: 'Telemetry',
     icon: '🏥',
   },
   {
     id: 'energy',
-    name: 'Energy & Power Quality Profile (IEEE 519 / Peak Demand)',
-    desc: 'Load factor %, peak kVA/kW, power factor penalty risks & Scope 2 GHG carbon emissions',
-    badge: 'GHG Scope 2',
+    name: 'Energy & Carbon Summary',
+    desc: 'Recorded energy total (kWh) and a Scope 2 carbon estimate derived from a published grid emission factor',
+    badge: 'Scope 2 estimate',
     icon: '⚡',
   },
   {
     id: 'coldchain',
-    name: 'Cold-Chain & MKT Excursions (HACCP / GDP / FDA 21 CFR)',
-    desc: 'Mean kinetic temperature (MKT °C), cumulative temperature breach hours & defrost cycles',
-    badge: 'HACCP / GDP',
+    name: 'Cold-Chain Temperature Summary',
+    desc: 'Mean kinetic temperature (MKT °C, USP formula) and recorded temperature excursions against configured limits',
+    badge: 'MKT (USP)',
     icon: '❄️',
   },
   {
     id: 'alarm',
-    name: 'Alarm History & SOP Compliance Audit',
-    desc: 'Complete excursion logs, engineer acknowledgment timestamps & MTTR response analysis',
-    badge: 'SLA Audit',
+    name: 'Alarm History & Response Log',
+    desc: 'Complete alarm log with open/acknowledged/cleared state, acknowledgment timestamps & mean time to resolve (MTTR)',
+    badge: 'Alarm log',
     icon: '🔔',
   },
   {
@@ -373,7 +390,7 @@ export default function ReportsPage() {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Enterprise IIoT analytics engine for IEEE C57.104, IEC 60076, IEEE 519, HACCP, and Scope 2 GHG Carbon Compliance.
+            Reports what the fleet actually recorded — telemetry summaries, alarm history and asset health, measured against each device’s own configured limits. Not an accredited compliance audit.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -521,7 +538,7 @@ export default function ReportsPage() {
             {/* Specialized Report Sections */}
             <div className="space-y-2.5">
               <label className="block text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
-                Select Report Modules &amp; Compliance Standards
+                Select Report Modules
               </label>
               <div className="space-y-2">
                 {REPORT_SECTIONS.map((sec) => {
