@@ -36,6 +36,7 @@ cd e2e/browser
 node test-chart-analysis-modal.mjs   # Chart Analysis modal, admin + viewer — 66 assertions
 node test-mobile-responsive.mjs      # same feature at 360x640 / 393x852 — 30 assertions
 node test-dual-band-voltage.mjs      # over/under-voltage sharing one key, independent state
+node test-studio-features.mjs        # brush, chart/table toggle, thresholds on-off, refresh, Δ Span
 node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id in the map popup
 ```
 

@@ -9,13 +9,21 @@
 // The inline card chart (MultiParamChart, 180px, no min-max band, no
 // thresholds, quick-range only) is deliberately light so a page with several
 // charts stays scannable. This modal is where the same data gets the room to
-// be actually useful: a real time range picker, the min/max band under each
-// average line (readingsGetFunc already returns v_min/v_max/n per bucket —
-// nothing new to fetch), the device's real alarm thresholds as reference
-// lines (per PARAMETER, from the same NodeAlarmRule every other chart reads —
-// a combined chart alarms identically to viewing one series alone), a
-// per-series stats table weighted correctly by each bucket's sample count,
-// and CSV export.
+// be actually useful:
+//
+//   - a real time range picker (1h…30d + an explicit from/to)
+//   - the min/max band under each average line, from the v_min/v_max/n
+//     readingsGetFunc already returns per bucket — nothing new to fetch
+//   - the device's real alarm thresholds as reference lines, per PARAMETER,
+//     from the same NodeAlarmRule every other chart reads (so a combined
+//     chart alarms identically to viewing one series alone), toggleable
+//   - a brush to narrow to a sub-range without refetching
+//   - chart view OR the raw bucketed samples behind it, sharing one pivot
+//     with the CSV export so the file always matches the screen
+//   - per-series stats weighted by each bucket's own sample count, with
+//     direction-aware alarm status and a peak-breach marker
+//   - Pearson correlation across every parameter pair, stated with its own
+//     limits rather than presented as fact
 // ---------------------------------------------------------------------------
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
@@ -26,9 +34,12 @@ import { paramStatus, type ParamStatus } from '@/lib/alarmParams'
 import { downloadCSV } from '@/lib/exportFile'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import {
-  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
+  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Brush,
 } from 'recharts'
-import { X, Loader2, Download, LayoutDashboard, Pencil, CalendarRange, ChevronDown } from 'lucide-react'
+import {
+  X, Loader2, Download, LayoutDashboard, Pencil, CalendarRange, ChevronDown,
+  RefreshCw, Table as TableIcon, LineChart as LineChartIcon,
+} from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -102,8 +113,20 @@ export default function ChartAnalysisModal({
   const [axisMode, setAxisMode] = useState<AxisMode>('dual')
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [focusKey, setFocusKey] = useState<string | null>(null)
+  /** Chart vs the raw sample table behind it. An operator writing up an
+   * excursion needs the actual numbers at the actual timestamps, not a
+   * reading taken off a pixel. */
+  const [viewMode, setViewMode] = useState<'chart' | 'table'>('chart')
+  /** Threshold reference lines can be switched off: on a chart mixing several
+   * parameters that each carry warn+critical, the lines can outnumber the
+   * data and bury the trend they exist to contextualise. */
+  const [showThresholds, setShowThresholds] = useState(true)
   const [rows, setRows] = useState<Row[] | null>(null)
   const [loading, setLoading] = useState(false)
+  /** Bumped to force a refetch of the SAME window — the range-derived effect
+   * below can't see that new samples have landed since it last ran. */
+  const [reloadTick, setReloadTick] = useState(0)
+  const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
   const [win, setWin] = useState<{ from: number; to: number }>(() => ({ from: Date.now() - 1440 * 60_000, to: Date.now() }))
   const [rule, setRule] = useState<NodeAlarmRule | null>(null)
 
@@ -145,10 +168,13 @@ export default function ChartAnalysisModal({
     setLoading(true)
     const bucketSec = Math.max(60, (range.to - range.from) / 1000 / MAX_POINTS)
     api.readingsWindow(nodeId, toUTC(range.from), toUTC(range.to), bucketSec, chart.paramKeys.join(','))
-      .then((r) => { if (!cancelled) { setRows((r ?? []) as Row[]); setWin(range) } })
+      .then((r) => { if (!cancelled) { setRows((r ?? []) as Row[]); setWin(range); setLastLoadedAt(new Date()) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [live, nodeId, chart.paramKeys, range])
+    // reloadTick is a deliberate dependency with no other use: it is what lets
+    // the Refresh button re-run this for an unchanged range.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, nodeId, chart.paramKeys, range, reloadTick])
 
   useEffect(() => load(), [load])
 
@@ -252,7 +278,7 @@ export default function ChartAnalysisModal({
     const m = new Map<string, {
       min: number; max: number; avg: number; n: number
       latest: number | null; latestStatus: ParamStatus | null; peakStatus: ParamStatus | null
-      pctAlarm: number; rule: ParamRule | null
+      pctAlarm: number; rule: ParamRule | null; delta: number
     }>()
     for (const k of chart.paramKeys) {
       const p = rule?.params.find((x) => x.key === k) ?? null
@@ -280,6 +306,10 @@ export default function ChartAnalysisModal({
         peakStatus: p && peak !== null ? paramStatus(peak, p) : null,
         pctAlarm: (breachN / n) * 100,
         rule: p,
+        // Peak-to-trough swing across the window. Two parameters can share a
+        // mean and behave completely differently — one steady, one oscillating
+        // hard — and this is the column that separates them.
+        delta: max - min,
       })
     }
     return m
@@ -339,20 +369,32 @@ export default function ChartAnalysisModal({
     ? [...visibleKeys.filter((k) => k !== focusKey), focusKey]
     : visibleKeys
 
+  /** The long readings list pivoted to one row per timestamp — built ONCE and
+   * shared by the table view and the CSV export, so the file always matches
+   * what is on screen. (It also replaces a filter-inside-map that rescanned
+   * every reading for every timestamp: quadratic in the row count, which a
+   * 30-day window at 360 buckets across several parameters makes felt.) */
+  const tableRows = useMemo(() => {
+    const byTime = new Map<string, { takenAt: string; values: Record<string, number>; mins: Record<string, number>; maxes: Record<string, number> }>()
+    for (const r of rows ?? []) {
+      let slot = byTime.get(r.taken_at)
+      if (!slot) { slot = { takenAt: r.taken_at, values: {}, mins: {}, maxes: {} }; byTime.set(r.taken_at, slot) }
+      slot.values[r.param_key] = Number(r.value)
+      if (r.v_min !== undefined) slot.mins[r.param_key] = Number(r.v_min)
+      if (r.v_max !== undefined) slot.maxes[r.param_key] = Number(r.v_max)
+    }
+    return Array.from(byTime.values())
+      .sort((a, b) => new Date(a.takenAt).getTime() - new Date(b.takenAt).getTime())
+  }, [rows])
+
   const exportCsv = () => {
     downloadCSV(
       `${nodeId}_${chart.title.replace(/[^a-z0-9]+/gi, '_')}_${toUTC(win.from).slice(0, 10)}_${toUTC(win.to).slice(0, 10)}.csv`,
       ['Time', ...chart.paramKeys.flatMap((k) => [`${nameOf(k)}${unitOf(k) ? ` (${unitOf(k)})` : ''}`, `${nameOf(k)} min`, `${nameOf(k)} max`])],
-      (rows ?? []).length
-        ? Array.from(new Map((rows ?? []).map((r) => [r.taken_at, r])).keys()).sort().map((takenAt) => {
-            const atTime = (rows ?? []).filter((r) => r.taken_at === takenAt)
-            const byKey = new Map(atTime.map((r) => [r.param_key, r]))
-            return [fmtDateTime(takenAt), ...chart.paramKeys.flatMap((k) => {
-              const r = byKey.get(k)
-              return [r ? r.value : '', r?.v_min ?? '', r?.v_max ?? '']
-            })]
-          })
-        : [],
+      tableRows.map((r) => [
+        fmtDateTime(r.takenAt),
+        ...chart.paramKeys.flatMap((k) => [r.values[k] ?? '', r.mins[k] ?? '', r.maxes[k] ?? '']),
+      ]),
     )
   }
 
@@ -455,8 +497,43 @@ export default function ChartAnalysisModal({
             </div>
           )}
 
+          {/* Thresholds on/off — only meaningful when this device actually has
+              saved limits for at least one of the plotted parameters, and
+              never in normalize mode where the lines are hidden anyway
+              (they are real-unit values against a 0–100% axis). */}
+          {axisMode !== 'normalize' && chart.paramKeys.some((k) => stats.get(k)?.rule) && (
+            <button
+              onClick={() => setShowThresholds((v) => !v)}
+              aria-pressed={showThresholds}
+              title="Show or hide the warning/critical reference lines"
+              className={`text-[11px] px-2.5 py-1 rounded-md font-medium ${showThresholds ? 'text-amber-300' : 'text-slate-500'}`}
+              style={showThresholds ? { background: 'rgba(251,191,36,0.12)', border: '1px solid rgba(251,191,36,0.35)' } : inset}
+            >
+              Thresholds
+            </button>
+          )}
+
           <div className="ml-auto flex items-center gap-2">
             {loading && <Loader2 size={13} className="animate-spin text-indigo-400" />}
+
+            {/* Chart / raw-samples toggle */}
+            <div className="flex items-center gap-0.5 p-0.5 rounded-md" style={inset}>
+              <button onClick={() => setViewMode('chart')} title="Chart view" aria-pressed={viewMode === 'chart'}
+                className={`p-1 rounded ${viewMode === 'chart' ? 'text-white bg-slate-700' : 'text-slate-500'}`}>
+                <LineChartIcon size={13} />
+              </button>
+              <button onClick={() => setViewMode('table')} title="Raw telemetry samples" aria-pressed={viewMode === 'table'}
+                className={`p-1 rounded ${viewMode === 'table' ? 'text-white bg-slate-700' : 'text-slate-500'}`}>
+                <TableIcon size={13} />
+              </button>
+            </div>
+
+            <button onClick={() => setReloadTick((t) => t + 1)} disabled={loading}
+              title="Refresh — re-read this same window" aria-label="Refresh"
+              className="p-1.5 rounded-md text-slate-400 disabled:opacity-40" style={inset}>
+              <RefreshCw size={12} className={loading ? 'animate-spin text-indigo-400' : ''} />
+            </button>
+
             <button onClick={exportCsv} disabled={!rows?.length}
               className="flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md text-slate-300 disabled:opacity-40" style={inset}>
               <Download size={12} /> CSV
@@ -493,6 +570,54 @@ export default function ChartAnalysisModal({
           {!live ? (
             <div className="h-[260px] sm:h-[380px] flex items-center justify-center text-center px-4 text-sm text-slate-600">
               Switch to Live mode to see stored history.
+            </div>
+          ) : viewMode === 'table' ? (
+            /* The numbers behind the line. Same rows, same bucketing, same
+               order as the CSV export — so what an operator reads here is
+               exactly what they will hand over in the file. */
+            <div className="rounded-xl overflow-hidden" style={inset}>
+              <div className="flex items-center justify-between gap-2 px-3 py-2" style={{ borderBottom: '1px solid #1e2433' }}>
+                <span className="text-[11px] font-semibold text-slate-200">
+                  Recorded telemetry samples ({tableRows.length.toLocaleString()} row{tableRows.length === 1 ? '' : 's'})
+                </span>
+                <button onClick={exportCsv} disabled={!rows?.length}
+                  className="flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 disabled:opacity-40">
+                  <Download size={11} /> Download CSV
+                </button>
+              </div>
+              <div className="overflow-auto max-h-[380px]">
+                <table className="w-full text-[11px]" style={{ minWidth: 120 + chart.paramKeys.length * 110 }}>
+                  <thead className="sticky top-0 z-10" style={{ background: '#0d1117' }}>
+                    <tr className="text-slate-500" style={{ borderBottom: '1px solid #1e2433' }}>
+                      <th className="text-left font-medium px-3 py-2 whitespace-nowrap">Timestamp</th>
+                      {chart.paramKeys.map((k, i) => (
+                        <th key={k} className="text-right font-medium px-3 py-2 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: PALETTE[i % PALETTE.length] }} />
+                            {nameOf(k)}{unitOf(k) ? ` (${unitOf(k)})` : ''}
+                          </span>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tableRows.length === 0 ? (
+                      <tr><td colSpan={1 + chart.paramKeys.length} className="px-3 py-6 text-center text-slate-600">
+                        {loading ? 'Loading…' : 'No readings stored in this period.'}
+                      </td></tr>
+                    ) : tableRows.map((r, i) => (
+                      <tr key={r.takenAt} style={{ borderTop: i ? '1px solid #1e2433' : undefined }}>
+                        <td className="px-3 py-1.5 text-slate-400 whitespace-nowrap">{fmtDateTime(r.takenAt)}</td>
+                        {chart.paramKeys.map((k) => (
+                          <td key={k} className="px-3 py-1.5 text-right text-slate-200 whitespace-nowrap tabular-nums">
+                            {typeof r.values[k] === 'number' ? (r.values[k] as number).toFixed(2) : '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           ) : !visibleKeys.length ? (
             <div className="h-[260px] sm:h-[380px] flex items-center justify-center text-center px-4 text-sm text-slate-600">
@@ -570,7 +695,7 @@ export default function ChartAnalysisModal({
                     Drawing every device's built-in schema default here would
                     show limits nobody actually configured for THIS chart's
                     parameters; only real, saved rule entries are rendered. */}
-                {visibleKeys.map((key) => {
+                {(showThresholds ? visibleKeys : []).map((key) => {
                   const p = rule?.params.find((x) => x.key === key)
                   if (!p || axisMode === 'normalize') return null
                   const i = chart.paramKeys.indexOf(key)
@@ -585,6 +710,13 @@ export default function ChartAnalysisModal({
                     </Fragment>
                   )
                 })}
+                {/* Drag to narrow the view to a sub-range without refetching —
+                    the excursion is usually minutes wide inside a window
+                    measured in hours. travellerWidth is bumped from the 5px
+                    default because the handles are a touch target on a phone. */}
+                <Brush dataKey="ts" height={22} travellerWidth={10}
+                  stroke="#6366f1" fill="#0d1117"
+                  tickFormatter={(v) => fmtTick(Number(v))} />
               </ComposedChart>
             </ResponsiveContainer>
             </div>
@@ -616,6 +748,7 @@ export default function ChartAnalysisModal({
                       <th className="text-right font-medium px-3 py-2">Min</th>
                       <th className="text-right font-medium px-3 py-2">Average</th>
                       <th className="text-right font-medium px-3 py-2">Max</th>
+                      <th className="text-right font-medium px-3 py-2 whitespace-nowrap" title="Peak-to-trough swing across this window (max − min)">Δ Span</th>
                       <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Samples</th>
                       <th className="text-left font-medium px-3 py-2 whitespace-nowrap" title="Status of the most recent reading in this window, evaluated against this device's saved rule">Latest</th>
                       <th className="text-right font-medium px-3 py-2 whitespace-nowrap" title="Share of the window whose bucket average sat in warning or critical">In alarm</th>
@@ -641,6 +774,7 @@ export default function ChartAnalysisModal({
                           <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">{s ? `${s.min.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
                           <td className="px-3 py-2 text-right text-slate-200 font-medium whitespace-nowrap">{s ? `${s.avg.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
                           <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">{s ? `${s.max.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
+                          <td className="px-3 py-2 text-right text-slate-400 whitespace-nowrap">{s ? `${s.delta.toFixed(2)}${unit ? ` ${unit}` : ''}` : '—'}</td>
                           <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{s ? s.n.toLocaleString() : '—'}</td>
                           {/* No saved rule for this parameter means there is
                               nothing to diagnose against — an em dash, not a
@@ -739,6 +873,24 @@ export default function ChartAnalysisModal({
             )}
           </div>
         )}
+
+        {/* Footer — when this data was actually read, and how it was reduced.
+            Both matter for trusting what is on screen: a chart with no
+            timestamp could be minutes stale, and a 30-day window is bucketed
+            hard enough that "no spike visible" needs the caveat that the
+            min–max band, not the line, is what preserves one. */}
+        <div className="flex items-center justify-between gap-3 flex-wrap px-5 py-3"
+          style={{ borderTop: '1px solid #1e2433' }}>
+          <span className="text-[10px] text-slate-500">
+            {lastLoadedAt
+              ? <>Last updated {fmtDateTime(lastLoadedAt)}{rows?.length ? ` · ${tableRows.length.toLocaleString()} buckets, averaged per bucket` : ''}</>
+              : 'Not loaded yet'}
+          </span>
+          <button onClick={onClose}
+            className="text-[11px] px-3 py-1.5 rounded-lg font-medium text-slate-300 hover:text-white" style={inset}>
+            Close analysis
+          </button>
+        </div>
       </div>
     </div>
   )
