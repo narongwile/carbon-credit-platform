@@ -125,16 +125,17 @@ export default function DisplayParamPicker({
       // whole fleet. Widening scope is always an explicit choice.
       setScopeMode('devices')
       setTargets([nodeId])
-    })
     return () => { cancelled = true }
   }, [orgId, domain, nodeId, deptId])
+
+  const uniqueAvailable = useMemo(() => Array.from(new Set(available)), [available])
 
   const toggle = (k: string) =>
     setSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]))
 
   // What the input shows: the admin's unsaved edit, else the name in force.
   const nameOf = (k: string) => draft[k] ?? labelOf(k)
-  const allSelected = available.length > 0 && available.every((k) => selected.includes(k))
+  const allSelected = uniqueAvailable.length > 0 && uniqueAvailable.every((k) => selected.includes(k))
 
   const deviceWord = domain === 'transformer' ? 'transformer' : 'device of this product'
   const deptName = deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'that department') : ''
@@ -221,7 +222,7 @@ export default function DisplayParamPicker({
             </select>
           </label>
           <p className="text-[11px] text-slate-500">
-            {available.length} parameter{available.length === 1 ? '' : 's'} reported by this device.
+            {uniqueAvailable.length} parameter{uniqueAvailable.length === 1 ? '' : 's'} reported by this device.
             {selected.length === 0 && ' Nothing selected — every parameter is shown.'}
           </p>
           {/* Say where the values on screen came from, so an admin does not
@@ -240,7 +241,7 @@ export default function DisplayParamPicker({
         </div>
 
         <div className="p-5 grid grid-cols-2 gap-1.5 overflow-y-auto">
-          {available.length === 0 && (
+          {uniqueAvailable.length === 0 && (
             <p className="col-span-2 text-xs text-slate-600">This device has not reported any readings yet.</p>
           )}
           {/* Each box: tick on the left, the EDITABLE display name next to it,
@@ -249,7 +250,7 @@ export default function DisplayParamPicker({
               — it stays visible so an admin can always tell which wire value
               a name belongs to, which matters most on exactly the keys worth
               renaming (RHamb, Tbox, THD_VoltCA…). */}
-          {available.map((k) => {
+          {uniqueAvailable.map((k) => {
             const on = selected.includes(k)
             const isList = layoutOf(k) === 'list'
             return (
@@ -364,15 +365,15 @@ export default function DisplayParamPicker({
                 the genuinely different unconfigured state reachable, which
                 also lets a NEW key the device starts reporting later appear on
                 its own instead of being excluded by a frozen list. */}
-            <button onClick={() => setSelected(allSelected ? [] : [...available])}
-              disabled={!available.length}
+            <button onClick={() => setSelected(allSelected ? [] : [...uniqueAvailable])}
+              disabled={!uniqueAvailable.length}
               className="px-4 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white disabled:opacity-40" style={inset}>
               {allSelected ? 'Clear' : 'Select all'}
             </button>
           </div>
           {allSelected && (
             <p className="text-[11px] text-slate-600">
-              All {available.length} selected. Clearing instead leaves it unconfigured — which also shows everything,
+              All {uniqueAvailable.length} selected. Clearing instead leaves it unconfigured — which also shows everything,
               including any new parameter this device starts reporting later.
             </p>
           )}

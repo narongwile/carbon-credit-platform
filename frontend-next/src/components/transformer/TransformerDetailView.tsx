@@ -1015,20 +1015,50 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     .filter(([k]) => shown(k))
     .sort(([a], [b]) => a.localeCompare(b))
 
-  // Everything on screen is switchable inside the history modal — including the
-  // extras, whose keys are not in ALARM_SCHEMA. Listing only the schema params
-  // left an extra opening under the wrong heading.
-  // Exactly the cards on screen, so the modal's switcher and the panel can
-  // never disagree about which parameters this device has. An unrecognised key
-  // has no built-in name and falls back to the key itself — unless an admin
-  // has given it one, which is what custom names exist for.
-  const modalParams: ModalParam[] = cards.map((c) => ({ key: c.key, label: c.label, unit: c.reading.unit || undefined }))
-  // The picker offers the six named slots plus whatever else this device has
-  // actually reported, so an unconfigured org sees the same list it now shows.
-  const available = [
-    ...ALARM_SCHEMA.transformer.params.map((p) => p.key),
-    ...Object.keys(values ?? {}).filter((k) => !CANONICAL.has(k)).sort((a, b) => a.localeCompare(b)),
-  ]
+  // Everything reported by this device is switchable inside the history modal, visualizer studio,
+  // and custom chart builder — including DGA (hydrogen, moisture) and raw extras (Tbox, RHamb, RHbox),
+  // regardless of whether an individual sensor card is currently hidden from the compact SENSOR READINGS.
+  const modalParams: ModalParam[] = useMemo(() => {
+    const paramMap = new Map<string, ModalParam>()
+    // 1. Add all cards currently rendered
+    for (const c of cards) {
+      paramMap.set(c.key, { key: c.key, label: c.label, unit: c.reading.unit || undefined })
+    }
+    // 2. Add all parameters this device has reported in live values
+    if (values) {
+      for (const k of Object.keys(values)) {
+        if (!paramMap.has(k)) {
+          const p = schemaByKey[k]
+          paramMap.set(k, {
+            key: k,
+            label: paramLabel(k),
+            unit: p?.unit ?? undefined,
+          })
+        }
+      }
+    }
+    // 3. Fallback to schema params if empty
+    if (paramMap.size === 0) {
+      for (const p of ALARM_SCHEMA.transformer.params) {
+        if (!paramMap.has(p.key)) {
+          paramMap.set(p.key, { key: p.key, label: p.label, unit: p.unit || undefined })
+        }
+      }
+    }
+    return Array.from(paramMap.values())
+  }, [cards, values, schemaByKey, paramLabel])
+
+  // The picker offers all parameters this device has reported or that belong to the schema,
+  // deduplicated and cleanly ordered: reported keys first, then schema keys.
+  const available = useMemo(() => {
+    const reportedKeys = Object.keys(values ?? {})
+    const schemaKeys = ALARM_SCHEMA.transformer.params.map((p) => p.key)
+    const combined = [
+      ...reportedKeys,
+      ...schemaKeys,
+    ]
+    return Array.from(new Set(combined))
+  }, [values])
 
   const statusColors = {
     NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.1)', border: 'rgba(74,222,128,0.2)' },
@@ -1426,7 +1456,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           slotIndex={editingTrendSlotIndex}
           currentA={chartSlots[editingTrendSlotIndex * 2]?.key ?? ''}
           currentB={chartSlots[editingTrendSlotIndex * 2 + 1]?.key ?? ''}
-          availableCards={cards.map((c) => ({ key: c.key, label: c.label, unit: c.reading.unit || undefined }))}
+          availableCards={modalParams}
           onClose={() => setEditingTrendSlotIndex(null)}
           onSave={(paramA, paramB) => saveTrendSlot(editingTrendSlotIndex, paramA, paramB)}
           onReset={resetTrendSlots}
