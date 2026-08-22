@@ -43,6 +43,11 @@ node test-dual-band-voltage.mjs      # over/under-voltage sharing one key, indep
 node test-studio-features.mjs        # brush, chart/table toggle, thresholds on-off, refresh, Δ Span
 node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id in the map popup
                                      #   ⚠️ CURRENTLY CANNOT RUN — see "Known gaps" below
+node test-transformer-detail-crash.mjs  # the transformer detail page renders on a fresh load instead of
+                                     #   crashing with "Rendered more hooks than during the previous render" —
+                                     #   two hooks used to run after a conditional early return, so the very
+                                     #   first render (data still loading) skipped them and the next render
+                                     #   didn't, a full-page crash on every single visit (fixed in 1ae5996f)
 node test-iiot-ux-upgrades.mjs       # the 5 features named in the "industrial iiot UX upgrades" commit really
                                      #   work in a real browser: jump-to-peak zoom, chart snapshot, inline
                                      #   alarm tuning, live-stream pause, drag-and-drop dashboard cards.
