@@ -982,6 +982,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       localStorage.removeItem(`pinned_trend_slots_${id}`)
     } catch {}
     setEditingTrendSlotIndex(null)
+  }
+
   // Everything reported by this device is switchable inside the history modal, visualizer studio,
   // and custom chart builder — including DGA (hydrogen, moisture) and raw extras (Tbox, RHamb, RHbox),
   // regardless of whether an individual sensor card is currently hidden from the compact SENSOR READINGS.
