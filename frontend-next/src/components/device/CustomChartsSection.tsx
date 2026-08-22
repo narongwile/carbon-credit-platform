@@ -17,7 +17,7 @@ import ChartAnalysisModal from './ChartAnalysisModal'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
-import { Plus, Pencil, LayoutDashboard, Maximize2 } from 'lucide-react'
+import { Plus, Pencil, LayoutDashboard, Maximize2, Pause, Play, ArrowUp, ArrowDown } from 'lucide-react'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const tooltipStyle = { background: '#0d1117', border: '1px solid #1e2433', borderRadius: '8px', fontSize: '11px' }
@@ -64,8 +64,10 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
   const [axisMode, setAxisMode] = useState<AxisMode>('dual')
   const [rows, setRows] = useState<Row[] | null>(null)
   const [loading, setLoading] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
 
   const load = useCallback(() => {
+    if (isPaused) return
     let cancelled = false
     setLoading(true)
     const minutes = QUICK.find((q) => q.id === quick)?.minutes ?? 1440
@@ -76,9 +78,14 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
       .then((r) => { if (!cancelled) setRows((r ?? []) as Row[]) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [nodeId, chart.paramKeys, quick])
+  }, [nodeId, chart.paramKeys, quick, isPaused])
 
-  useEffect(() => load(), [load])
+  useEffect(() => {
+    load()
+    if (isPaused) return
+    const timer = setInterval(load, 30_000)
+    return () => clearInterval(timer)
+  }, [load, isPaused])
 
   const data = useMemo(() => {
     const spanHours = quick === '7d' ? 168 : quick === '24h' ? 24 : 1
@@ -185,6 +192,16 @@ function MultiParamChart({ nodeId, chart, paramByKey }: { nodeId: string; chart:
             ))}
           </div>
         )}
+        {/* Pause / Resume Live Stream */}
+        <button
+          onClick={() => setIsPaused((p) => !p)}
+          title={isPaused ? 'Resume live refresh' : 'Pause live refresh to inspect tooltips'}
+          className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-medium ${isPaused ? 'text-amber-300 bg-amber-500/20 border border-amber-500/40' : 'text-emerald-400'}`}
+          style={isPaused ? {} : inset}
+        >
+          {isPaused ? <Play size={10} /> : <Pause size={10} />}
+          <span>{isPaused ? 'Paused' : 'Live'}</span>
+        </button>
         {loading && <span className="text-[10px] text-slate-600 ml-1">loading…</span>}
       </div>
       {!data.length ? (
@@ -247,8 +264,16 @@ export default function CustomChartsSection({
 }) {
   const live = useIsLive()
   const [charts, setCharts] = useState<ChartDefinition[] | null>(null)
+  const [chartOrder, setChartOrder] = useState<string[]>([])
   const [editing, setEditing] = useState<ChartDefinition | 'new' | null>(null)
   const [expanded, setExpanded] = useState<ChartDefinition | null>(null)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`custom_charts_order_${nodeId}`)
+      if (saved) setChartOrder(JSON.parse(saved))
+    } catch {}
+  }, [nodeId])
 
   const reload = useCallback(() => {
     if (!live) { setCharts([]); return }
@@ -262,6 +287,34 @@ export default function CustomChartsSection({
     for (const p of availableParams) m.set(p.key, p)
     return m
   }, [availableParams])
+
+  const orderedCharts = useMemo(() => {
+    if (!charts) return null
+    if (!chartOrder.length) return charts
+    const list = [...charts]
+    return list.sort((a, b) => {
+      const ia = chartOrder.indexOf(a.id)
+      const ib = chartOrder.indexOf(b.id)
+      if (ia === -1 && ib === -1) return 0
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+  }, [charts, chartOrder])
+
+  const moveChart = (idx: number, delta: number) => {
+    if (!orderedCharts) return
+    const targetIdx = idx + delta
+    if (targetIdx < 0 || targetIdx >= orderedCharts.length) return
+    const newCharts = [...orderedCharts]
+    const [moved] = newCharts.splice(idx, 1)
+    newCharts.splice(targetIdx, 0, moved)
+    const newOrder = newCharts.map((c) => c.id)
+    setChartOrder(newOrder)
+    try {
+      localStorage.setItem(`custom_charts_order_${nodeId}`, JSON.stringify(newOrder))
+    } catch {}
+  }
 
   // Nothing configured and the viewer cannot add one — no point showing an
   // empty section header on every device page that has never used this.
@@ -283,19 +336,39 @@ export default function CustomChartsSection({
 
       {!live ? (
         <p className="text-[11px] text-slate-600">Switch to Live mode to configure custom charts.</p>
-      ) : charts === null ? (
+      ) : orderedCharts === null ? (
         <p className="text-[11px] text-slate-600">Loading…</p>
-      ) : charts.length === 0 ? (
+      ) : orderedCharts.length === 0 ? (
         <p className="text-[11px] text-slate-600">
           No custom charts yet{canConfigure ? ' — combine any parameters this device reports into a chart of your own.' : '.'}
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {charts.map((c) => (
+          {orderedCharts.map((c, idx) => (
             <div key={c.id} className="rounded-xl p-3" style={inset}>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[11px] font-medium text-slate-200 truncate">{c.title}</div>
                 <div className="flex items-center gap-0.5 shrink-0">
+                  {canConfigure && orderedCharts.length > 1 && (
+                    <div className="flex items-center mr-1">
+                      <button
+                        onClick={() => moveChart(idx, -1)}
+                        disabled={idx === 0}
+                        title="Move chart earlier"
+                        className="p-1 rounded text-slate-500 hover:text-indigo-400 disabled:opacity-20"
+                      >
+                        <ArrowUp size={10} />
+                      </button>
+                      <button
+                        onClick={() => moveChart(idx, 1)}
+                        disabled={idx === orderedCharts.length - 1}
+                        title="Move chart later"
+                        className="p-1 rounded text-slate-500 hover:text-indigo-400 disabled:opacity-20"
+                      >
+                        <ArrowDown size={10} />
+                      </button>
+                    </div>
+                  )}
                   <button onClick={() => setExpanded(c)} title="Expand — chart visualize analysis"
                     className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5">
                     <Maximize2 size={11} />
@@ -329,6 +402,7 @@ export default function CustomChartsSection({
       {expanded && (
         <ChartAnalysisModal
           nodeId={nodeId}
+          orgId={orgId}
           chart={expanded}
           paramByKey={paramByKey}
           onClose={() => setExpanded(null)}

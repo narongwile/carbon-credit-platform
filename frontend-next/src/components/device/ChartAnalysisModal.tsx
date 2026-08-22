@@ -39,6 +39,7 @@ import {
 import {
   X, Loader2, Download, LayoutDashboard, Pencil, CalendarRange, ChevronDown,
   RefreshCw, Table as TableIcon, LineChart as LineChartIcon,
+  Camera, Target, Sliders, Check, AlertCircle,
 } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -93,9 +94,10 @@ const AXIS_MODES: { id: AxisMode; label: string; title: string }[] = [
 interface Row { param_key: string; value: number; taken_at: string; v_min?: number; v_max?: number; n?: number }
 
 export default function ChartAnalysisModal({
-  nodeId, deviceName, chart, paramByKey, onClose, onEdit,
+  nodeId, orgId, deviceName, chart, paramByKey, onClose, onEdit,
 }: {
   nodeId: string
+  orgId?: string
   deviceName?: string
   chart: ChartDefinition
   paramByKey: Map<string, AvailableParam>
@@ -129,6 +131,26 @@ export default function ChartAnalysisModal({
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null)
   const [win, setWin] = useState<{ from: number; to: number }>(() => ({ from: Date.now() - 1440 * 60_000, to: Date.now() }))
   const [rule, setRule] = useState<NodeAlarmRule | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  // Inline Threshold Tuning State
+  const [tuningParam, setTuningParam] = useState<{
+    key: string
+    label: string
+    unit: string
+    direction: 'high' | 'low'
+    warn: number
+    critical: number
+  } | null>(null)
+  const [tuningError, setTuningError] = useState<string | null>(null)
+  const [tuningSaving, setTuningSaving] = useState(false)
+
+  // Auto-clear toast after 3s
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [toast])
 
   // Esc closes, and the page behind must not scroll under the overlay — same
   // contract every other modal on this page follows.
@@ -398,6 +420,144 @@ export default function ChartAnalysisModal({
     )
   }
 
+  const saveTunedThreshold = async () => {
+    if (!tuningParam || !rule) return
+    const { key, direction, warn, critical } = tuningParam
+    if (direction === 'high' && critical <= warn) {
+      setTuningError('Critical limit must be greater than Warning limit for High alarm')
+      return
+    }
+    if (direction === 'low' && critical >= warn) {
+      setTuningError('Critical limit must be less than Warning limit for Low alarm')
+      return
+    }
+    setTuningSaving(true)
+    setTuningError(null)
+    try {
+      const updatedParams = rule.params.map((p) =>
+        p.key === key ? { ...p, warn, critical, direction } : p
+      )
+      if (!updatedParams.some((p) => p.key === key)) {
+        updatedParams.push({
+          key,
+          label: nameOf(key),
+          unit: unitOf(key),
+          direction,
+          warn,
+          critical,
+        })
+      }
+      const updatedRule: NodeAlarmRule = {
+        ...rule,
+        params: updatedParams,
+      }
+      const res = await api.putRule(nodeId, { orgId: orgId ?? 'org-1', rule: updatedRule })
+      if (res && (res as unknown as { ok?: boolean }).ok !== false) {
+        setRule(updatedRule)
+        setTuningParam(null)
+        setToast(`Thresholds updated for ${nameOf(key)}`)
+      } else {
+        setTuningError('Failed to save threshold changes to server')
+      }
+    } catch (e) {
+      setTuningError(String(e || 'Save failed'))
+    } finally {
+      setTuningSaving(false)
+    }
+  }
+
+  const copyChartImage = async () => {
+    try {
+      const svg = document.querySelector('div[role="dialog"] .recharts-surface') as SVGGraphicsElement | null
+      if (!svg) {
+        setToast('No chart to export')
+        return
+      }
+      const svgData = new XMLSerializer().serializeToString(svg)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const URL = window.URL || window.webkitURL || window
+      const blobURL = URL.createObjectURL(svgBlob)
+
+      const img = new Image()
+      img.onload = async () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = (svg.clientWidth || 800) * 2
+        canvas.height = (svg.clientHeight || 400) * 2
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.fillStyle = '#0d1117'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+          canvas.toBlob(async (pngBlob) => {
+            if (!pngBlob) return
+            try {
+              if (navigator.clipboard && window.ClipboardItem) {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })])
+                setToast('Chart image copied to clipboard!')
+              } else {
+                const a = document.createElement('a')
+                a.href = URL.createObjectURL(pngBlob)
+                a.download = `${chart.title || 'chart'}-${quick}.png`
+                a.click()
+                setToast('Chart PNG downloaded!')
+              }
+            } catch {
+              const a = document.createElement('a')
+              a.href = URL.createObjectURL(pngBlob)
+              a.download = `${chart.title || 'chart'}-${quick}.png`
+              a.click()
+              setToast('Chart PNG downloaded!')
+            }
+          }, 'image/png')
+        }
+      }
+      img.src = blobURL
+    } catch {
+      setToast('Could not copy chart image')
+    }
+  }
+
+  const jumpToPeak = () => {
+    if (!data.length) return
+    let peakTs = 0
+    let maxRatio = -Infinity
+
+    for (const d of data) {
+      for (const k of visibleKeys) {
+        const v = d[k]
+        if (typeof v !== 'number' || Number.isNaN(v)) continue
+        const p = rule?.params.find((x) => x.key === k)
+        if (p) {
+          const ratio = p.direction === 'high' ? v / (p.warn || 1) : (p.warn || 1) / Math.max(0.001, v)
+          if (ratio > maxRatio) {
+            maxRatio = ratio
+            peakTs = Number(d.ts)
+          }
+        } else {
+          const r = ranges.get(k)
+          if (r && r.max > r.min) {
+            const ratio = (v - r.min) / (r.max - r.min)
+            if (ratio > maxRatio) {
+              maxRatio = ratio
+              peakTs = Number(d.ts)
+            }
+          }
+        }
+      }
+    }
+
+    if (peakTs > 0) {
+      const padMs = Math.max(30 * 60_000, spanMs * 0.15)
+      const newFrom = Math.max(win.from, peakTs - padMs)
+      const newTo = Math.min(win.to, peakTs + padMs)
+      setCustom({ from: toDisplayInput(newFrom), to: toDisplayInput(newTo) })
+      setToast('Zoomed to peak excursion!')
+    } else {
+      setToast('No peak excursion found')
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-[110] flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto"
@@ -516,6 +676,28 @@ export default function ChartAnalysisModal({
           <div className="ml-auto flex items-center gap-2">
             {loading && <Loader2 size={13} className="animate-spin text-indigo-400" />}
 
+            {/* Jump to peak excursion */}
+            <button
+              onClick={jumpToPeak}
+              disabled={!data.length}
+              title="Jump to Peak / Excursion — focus zoom around the maximum deviation in this window"
+              className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-md text-amber-300 hover:text-amber-200 disabled:opacity-40"
+              style={inset}
+            >
+              <Target size={12} className="text-amber-400" /> <span className="hidden md:inline">Jump Peak</span>
+            </button>
+
+            {/* 1-click Copy chart image / download */}
+            <button
+              onClick={copyChartImage}
+              disabled={!data.length}
+              title="Copy Chart Image (PNG) to clipboard or download snapshot"
+              className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-md text-slate-300 hover:text-white disabled:opacity-40"
+              style={inset}
+            >
+              <Camera size={12} className="text-indigo-400" /> <span className="hidden md:inline">Snapshot</span>
+            </button>
+
             {/* Chart / raw-samples toggle */}
             <div className="flex items-center gap-0.5 p-0.5 rounded-md" style={inset}>
               <button onClick={() => setViewMode('chart')} title="Chart view" aria-pressed={viewMode === 'chart'}
@@ -540,6 +722,18 @@ export default function ChartAnalysisModal({
             </button>
           </div>
         </div>
+
+        {/* Floating Toast Notification */}
+        {toast && (
+          <div className="mx-5 mb-2 py-1.5 px-3 rounded-lg text-xs bg-indigo-950/80 text-indigo-200 border border-indigo-500/40 flex items-center justify-between animate-fade-in">
+            <span className="flex items-center gap-1.5 font-medium">
+              <Check size={13} className="text-emerald-400" /> {toast}
+            </span>
+            <button onClick={() => setToast(null)} className="text-slate-400 hover:text-white">
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
         {/* Legend — hover isolates a series, click hides/shows it. Series stay
             hidden by simply not rendering their Area/Line/ReferenceLine; this
@@ -741,7 +935,7 @@ export default function ChartAnalysisModal({
                 (and the rounded corners) intact. */}
             <div className="rounded-xl overflow-hidden" style={inset}>
               <div className="overflow-x-auto">
-                <table className="w-full text-[11px] min-w-[560px]">
+                <table className="w-full text-[11px] min-w-[620px]">
                   <thead>
                     <tr className="text-slate-500" style={{ borderBottom: '1px solid #1e2433' }}>
                       <th className="text-left font-medium px-3 py-2">Parameter</th>
@@ -752,12 +946,15 @@ export default function ChartAnalysisModal({
                       <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Samples</th>
                       <th className="text-left font-medium px-3 py-2 whitespace-nowrap" title="Status of the most recent reading in this window, evaluated against this device's saved rule">Latest</th>
                       <th className="text-right font-medium px-3 py-2 whitespace-nowrap" title="Share of the window whose bucket average sat in warning or critical">In alarm</th>
+                      <th className="text-center font-medium px-3 py-2 whitespace-nowrap" title="Engineered warning / critical alarm thresholds">Thresholds</th>
+                      {onEdit && <th className="text-right font-medium px-3 py-2 whitespace-nowrap">Action</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {chart.paramKeys.map((k, i) => {
                       const s = stats.get(k)
                       const unit = unitOf(k)
+                      const p = rule?.params.find((x) => x.key === k)
                       return (
                         <tr key={k} style={{ borderTop: i ? '1px solid #1e2433' : undefined, opacity: hidden.has(k) ? 0.4 : 1 }}>
                           {/* The flex lives on an inner span, NOT the td: a
@@ -804,6 +1001,42 @@ export default function ChartAnalysisModal({
                               </span>
                             ) : <span className="text-slate-600">—</span>}
                           </td>
+                          {/* Warn / Crit limits */}
+                          <td className="px-3 py-2 text-center whitespace-nowrap text-[10px]">
+                            {p ? (
+                              <span className="inline-flex items-center gap-1 font-mono">
+                                <span className="text-amber-300/90">{p.warn}</span>
+                                <span className="text-slate-600">/</span>
+                                <span className="text-rose-400/90">{p.critical}</span>
+                                <span className="text-slate-500 text-[9px]">{unit}</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-600">None</span>
+                            )}
+                          </td>
+                          {/* Inline Tune Action */}
+                          {onEdit && (
+                            <td className="px-3 py-2 text-right whitespace-nowrap">
+                              <button
+                                onClick={() => {
+                                  const cur = rule?.params.find((x) => x.key === k)
+                                  setTuningParam({
+                                    key: k,
+                                    label: nameOf(k),
+                                    unit: unitOf(k),
+                                    direction: cur?.direction ?? 'high',
+                                    warn: cur?.warn ?? (s ? +(s.avg * 1.15).toFixed(1) : 80),
+                                    critical: cur?.critical ?? (s ? +(s.avg * 1.3).toFixed(1) : 90),
+                                  })
+                                  setTuningError(null)
+                                }}
+                                title={`Tune alarm thresholds for ${nameOf(k)}`}
+                                className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded text-indigo-300 hover:text-white bg-indigo-500/10 hover:bg-indigo-500/25 border border-indigo-500/30 transition-colors"
+                              >
+                                <Sliders size={10} /> Tune
+                              </button>
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -891,6 +1124,80 @@ export default function ChartAnalysisModal({
             Close analysis
           </button>
         </div>
+        {/* Inline Threshold Tuning Modal */}
+        {tuningParam && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={() => setTuningParam(null)}>
+            <div className="w-full max-w-sm rounded-xl p-5 space-y-4 shadow-2xl border border-indigo-500/50" style={{ background: '#0d1117' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sliders size={16} className="text-indigo-400" />
+                  <h4 className="text-sm font-bold text-white">Tune Alarm Thresholds</h4>
+                </div>
+                <button onClick={() => setTuningParam(null)} className="text-slate-400 hover:text-white"><X size={16} /></button>
+              </div>
+              <div className="text-xs text-slate-300">
+                Parameter: <span className="font-semibold text-white">{tuningParam.label}</span> {tuningParam.unit && `(${tuningParam.unit})`}
+              </div>
+              {tuningError && (
+                <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2">
+                  <AlertCircle size={14} className="shrink-0" />
+                  <span>{tuningError}</span>
+                </div>
+              )}
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="text-slate-400 block mb-1">Alarm Direction</label>
+                  <select
+                    value={tuningParam.direction}
+                    onChange={(e) => setTuningParam({ ...tuningParam, direction: e.target.value as 'high' | 'low' })}
+                    className="w-full rounded-lg px-3 py-2 bg-[#0a0e1a] text-slate-200 border border-slate-700 focus:border-indigo-500 focus:outline-none"
+                  >
+                    <option value="high">High Alarm (Triggers when value rises above limit)</option>
+                    <option value="low">Low Alarm (Triggers when value drops below limit)</option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-amber-300 block mb-1 font-medium">Warning Limit</label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={tuningParam.warn}
+                      onChange={(e) => setTuningParam({ ...tuningParam, warn: parseFloat(e.target.value) || 0 })}
+                      className="w-full rounded-lg px-3 py-2 bg-[#0a0e1a] text-slate-200 border border-amber-500/40 focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-rose-400 block mb-1 font-medium">Critical Limit</label>
+                    <input
+                      type="number"
+                      step="any"
+                      value={tuningParam.critical}
+                      onChange={(e) => setTuningParam({ ...tuningParam, critical: parseFloat(e.target.value) || 0 })}
+                      className="w-full rounded-lg px-3 py-2 bg-[#0a0e1a] text-slate-200 border border-rose-500/40 focus:border-rose-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  onClick={() => setTuningParam(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveTunedThreshold}
+                  disabled={tuningSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {tuningSaving && <Loader2 size={12} className="animate-spin" />}
+                  Save &amp; Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

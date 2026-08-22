@@ -49,6 +49,26 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   const [shelvingId, setShelvingId] = useState<string | null>(null)
   const [shelveHours, setShelveHours] = useState<number>(8)
   const [shelveReason, setShelveReason] = useState<string>('')
+  const [isOffline, setIsOffline] = useState(false)
+  const [quickNotes, setQuickNotes] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false)
+    const handleOffline = () => setIsOffline(true)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    if (typeof navigator !== 'undefined') setIsOffline(!navigator.onLine)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  const triggerHaptic = () => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(30) } catch {}
+    }
+  }
 
   const loadLive = useCallback(() => {
     if (!live || !nodeId) { setLiveEvents(null); setTransport(null); return }
@@ -225,6 +245,17 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
         </div>
       )}
 
+      {/* Offline Status Banner */}
+      {isOffline && (
+        <div className="mb-3 p-2.5 rounded-lg bg-amber-950/80 border border-amber-500/50 text-amber-200 text-xs flex items-center justify-between animate-pulse">
+          <span className="flex items-center gap-2 font-medium">
+            <AlertTriangle size={14} className="text-amber-400 shrink-0" />
+            Offline Mode — Showing cached events (Reconnecting...)
+          </span>
+          <span className="text-[10px] text-amber-300/80">Local Buffer Active</span>
+        </div>
+      )}
+
       {/* Cap the height: histories grow without bound */}
       <div className="rounded-lg overflow-auto max-h-[420px]" style={{ border: '1px solid #1e2433' }}>
         <table className="w-full text-sm">
@@ -338,8 +369,8 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                     {acked ? (
                       <span className="text-[11px] text-slate-600">—</span>
                     ) : (
-                      <div className="flex flex-col items-end gap-1.5 min-w-[130px]">
-                        {problems.length > 0 && (
+                      <div className="flex flex-col items-end gap-1.5 min-w-[140px]">
+                        {problems.length > 0 ? (
                           <select
                             value={picked[ev.id] ?? ''}
                             onChange={(e) => setPicked((prev) => ({ ...prev, [ev.id]: e.target.value }))}
@@ -349,22 +380,50 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                             <option value="">Select Root Cause</option>
                             {problems.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
                           </select>
+                        ) : (
+                          <div className="flex flex-wrap gap-1 justify-end max-w-[210px] mb-0.5">
+                            {[
+                              { label: '🌀 Fan Check', text: 'Cooling fan inspection' },
+                              { label: '🔧 Tech Entry', text: 'Technician dispatched' },
+                              { label: '⚡️ Load Shed', text: 'Temporary load shed' },
+                              { label: '🔍 Transient', text: 'Transient surge' },
+                            ].map((chip) => (
+                              <button
+                                key={chip.label}
+                                type="button"
+                                onClick={() => {
+                                  triggerHaptic()
+                                  onAck(ev.id)
+                                }}
+                                title={`Quick ACK: ${chip.text}`}
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800/80 hover:bg-indigo-600 text-slate-300 hover:text-white border border-slate-700/80 transition-colors"
+                              >
+                                {chip.label}
+                              </button>
+                            ))}
+                          </div>
                         )}
                         <div className="flex items-center gap-1.5 w-full">
                           <button
-                            onClick={() => onAck(ev.id)}
+                            onClick={() => {
+                              triggerHaptic()
+                              onAck(ev.id)
+                            }}
                             disabled={problems.length > 0 && !picked[ev.id]}
                             title={problems.length > 0 && !picked[ev.id] ? 'Select a root cause first' : undefined}
-                            className="flex-1 text-[11px] font-medium text-white px-2.5 py-1 rounded-md disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="flex-1 text-[11px] font-medium text-white px-2.5 py-1.5 rounded-md min-h-[34px] sm:min-h-[28px] touch-manipulation disabled:opacity-40 disabled:cursor-not-allowed"
                             style={gradient}
                           >
                             Ack
                           </button>
                           {!isShelved && (
                             <button
-                              onClick={() => setShelvingId(ev.id)}
+                              onClick={() => {
+                                triggerHaptic()
+                                setShelvingId(ev.id)
+                              }}
                               title="Shelve alarm temporarily for maintenance"
-                              className="px-2 py-1 rounded text-[11px] text-slate-400 hover:text-blue-400 bg-slate-800/60 border border-slate-700 flex items-center gap-1"
+                              className="px-2 py-1.5 rounded text-[11px] text-slate-400 hover:text-blue-400 bg-slate-800/60 border border-slate-700 flex items-center gap-1 min-h-[34px] sm:min-h-[28px] touch-manipulation"
                             >
                               <PauseCircle size={11} /> Shelve
                             </button>

@@ -38,7 +38,7 @@ import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
-  BarChart2, FileText
+  BarChart2, FileText, GripVertical,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Link from 'next/link'
@@ -317,7 +317,20 @@ function HealthGauge({ value }: { value: number }) {
   )
 }
 
-function SensorCard({ label, icon, sensor, onOpen }: { label: string; icon: React.ReactNode; sensor: SensorReading; onOpen?: () => void }) {
+function SensorCard({
+  label, icon, sensor, onOpen, isDraggable, onDragStart, onDragOver, onDrop, onDragEnd, isOver,
+}: {
+  label: string
+  icon: React.ReactNode
+  sensor: SensorReading
+  onOpen?: () => void
+  isDraggable?: boolean
+  onDragStart?: (e: React.DragEvent) => void
+  onDragOver?: (e: React.DragEvent) => void
+  onDrop?: (e: React.DragEvent) => void
+  onDragEnd?: (e: React.DragEvent) => void
+  isOver?: boolean
+}) {
   const statusConfig = {
     NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.1)', border: 'rgba(74,222,128,0.15)' },
     WARNING: { color: '#fbbf24', bg: 'rgba(251,191,36,0.1)', border: 'rgba(251,191,36,0.15)' },
@@ -341,28 +354,39 @@ function SensorCard({ label, icon, sensor, onOpen }: { label: string; icon: Reac
     : ''
 
   return (
-    // A button so the whole card is one keyboard-reachable target — the history
-    // and threshold editor live behind it.
-    <button
-      type="button"
-      onClick={onOpen}
-      title={`Open ${label} history`}
-      className="w-full text-left rounded-xl p-4 transition-all hover:border-indigo-500/30 cursor-pointer"
-      style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+    <div
+      draggable={isDraggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      className={`relative w-full rounded-xl transition-all ${isOver ? 'ring-2 ring-indigo-500 scale-[1.02]' : ''}`}
     >
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: sc.bg }}>
-            <span style={{ color: sc.color }}>{icon}</span>
+      <button
+        type="button"
+        onClick={onOpen}
+        title={`Open ${label} history`}
+        className="w-full text-left rounded-xl p-4 transition-all hover:border-indigo-500/30 cursor-pointer"
+        style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-2">
+            {isDraggable && (
+              <span className="text-slate-600 hover:text-slate-400 cursor-grab active:cursor-grabbing mr-0.5" title="Drag to reorder">
+                <GripVertical size={13} />
+              </span>
+            )}
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: sc.bg }}>
+              <span style={{ color: sc.color }}>{icon}</span>
+            </div>
+            <span className="text-xs text-slate-400">{label}</span>
           </div>
-          <span className="text-xs text-slate-400">{label}</span>
-        </div>
-        <span
-          className="text-[9px] px-1.5 py-0.5 rounded-full font-bold"
-          style={{ background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}
-        >
-          {sensor.status}
-        </span>
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded-full font-bold"
+            style={{ background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}
+          >
+            {sensor.status}
+          </span>
       </div>
 
       <div className="flex items-baseline gap-1 mb-1">
@@ -393,6 +417,7 @@ function SensorCard({ label, icon, sensor, onOpen }: { label: string; icon: Reac
         />
       </svg>
     </button>
+  </div>
   )
 }
 
@@ -740,11 +765,54 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     return out
   }, [live, values, series, schemaByKey, isShown, layoutOf, paramLabel, transformer])
 
+  const [cardOrder, setCardOrder] = useState<string[]>([])
+  const [draggedCardKey, setDraggedCardKey] = useState<string | null>(null)
+  const [dragOverCardKey, setDragOverCardKey] = useState<string | null>(null)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`sensor_card_order_${id}`)
+      if (saved) setCardOrder(JSON.parse(saved))
+    } catch {}
+  }, [id])
+
+  const handleCardDrop = (targetKey: string) => {
+    if (!draggedCardKey || draggedCardKey === targetKey) {
+      setDraggedCardKey(null)
+      setDragOverCardKey(null)
+      return
+    }
+    const currentKeys = bigCards.map((c) => c.key)
+    const srcIdx = currentKeys.indexOf(draggedCardKey)
+    const dstIdx = currentKeys.indexOf(targetKey)
+    if (srcIdx < 0 || dstIdx < 0) return
+    const newOrder = [...currentKeys]
+    newOrder.splice(srcIdx, 1)
+    newOrder.splice(dstIdx, 0, draggedCardKey)
+    setCardOrder(newOrder)
+    try {
+      localStorage.setItem(`sensor_card_order_${id}`, JSON.stringify(newOrder))
+    } catch {}
+    setDraggedCardKey(null)
+    setDragOverCardKey(null)
+  }
+
   // Split for rendering: cards keep the tiles they always had, list rows go
   // beneath as one dense block. modalParams (below) stays built from the full
   // `cards` set, so the history switcher offers a list-tier parameter too —
   // demoting a value's LAYOUT never demotes its history.
-  const bigCards = useMemo(() => cards.filter((c) => c.layout !== 'list'), [cards])
+  const bigCards = useMemo(() => {
+    const raw = cards.filter((c) => c.layout !== 'list')
+    if (!cardOrder.length) return raw
+    return [...raw].sort((a, b) => {
+      const ia = cardOrder.indexOf(a.key)
+      const ib = cardOrder.indexOf(b.key)
+      if (ia === -1 && ib === -1) return 0
+      if (ia === -1) return 1
+      if (ib === -1) return -1
+      return ia - ib
+    })
+  }, [cards, cardOrder])
   const listCards = useMemo(() => cards.filter((c) => c.layout === 'list'), [cards])
 
   // The two trend charts, resolved against this device's real parameters
@@ -928,7 +996,32 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           </div>
           {/* One card per parameter the device actually reports */}
           {bigCards.map((c) => (
-            <SensorCard key={c.key} label={c.label} icon={c.icon} sensor={c.reading} onOpen={() => setOpenParam(c.key)} />
+            <SensorCard
+              key={c.key}
+              label={c.label}
+              icon={c.icon}
+              sensor={c.reading}
+              onOpen={() => setOpenParam(c.key)}
+              isDraggable={canConfigure}
+              onDragStart={(e) => {
+                setDraggedCardKey(c.key)
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                if (dragOverCardKey !== c.key) setDragOverCardKey(c.key)
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                handleCardDrop(c.key)
+              }}
+              onDragEnd={() => {
+                setDraggedCardKey(null)
+                setDragOverCardKey(null)
+              }}
+              isOver={dragOverCardKey === c.key && draggedCardKey !== c.key}
+            />
           ))}
           <SensorListSection
             items={listCards.map((c) => ({ key: c.key, label: c.label, value: c.reading.value, unit: c.reading.unit, status: c.reading.status }))}
