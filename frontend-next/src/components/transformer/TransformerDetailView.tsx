@@ -777,15 +777,15 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // card = a full SensorCard (icon, number, sparkline); list = a dense row
   // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
   // device's twenty-odd secondary values do not each cost a full card's worth
-  // of space. A key with no entry defaults to 'card', which is also what every
-  // selection made before this existed already renders as.
   const [paramLayout, setParamLayout] = useState<Record<string, ParamLayout>>({})
+  const [paramScope, setParamScope] = useState<DisplayParamScope>('none')
   useEffect(() => {
     if (!live) return
     let cancelled = false
     api.displayParams(orgId, 'transformer', id).then((r) => {
       if (cancelled || !r) return
       setShowKeys(r.paramKeys?.length ? r.paramKeys : null)
+      setParamScope(r.scope ?? 'none')
       setParamLayout(r.layout ?? {})
     })
     return () => { cancelled = true }
@@ -1048,17 +1048,14 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     return Array.from(paramMap.values())
   }, [cards, values, schemaByKey, paramLabel])
 
-  // The picker offers all parameters this device has reported or that belong to the schema,
-  // deduplicated and cleanly ordered: reported keys first, then schema keys.
+  // The picker offers only parameters THIS device actually reports (device-driven self-discovery).
+  // If in demo mode or reporting nothing yet, falls back to canonical schema parameters.
   const available = useMemo(() => {
-    const reportedKeys = Object.keys(values ?? {})
-    const schemaKeys = ALARM_SCHEMA.transformer.params.map((p) => p.key)
-    const combined = [
-      ...reportedKeys,
-      ...schemaKeys,
-    ]
-    return Array.from(new Set(combined))
-  }, [values])
+    if (live && values && Object.keys(values).length > 0) {
+      return Object.keys(values).sort((a, b) => a.localeCompare(b))
+    }
+    return Array.from(new Set(ALARM_SCHEMA.transformer.params.map((p) => p.key)))
+  }, [live, values])
 
   const statusColors = {
     NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.1)', border: 'rgba(74,222,128,0.2)' },

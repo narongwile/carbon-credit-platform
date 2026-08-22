@@ -108,6 +108,8 @@ export default function DisplayParamPicker({
     return () => { cancelled = true }
   }, [orgId])
 
+  const uniqueAvailable = useMemo(() => Array.from(new Set(available)), [available])
+
   // Re-read whenever the department changes: the picker must show what THAT
   // scope currently holds, not what the last one did.
   useEffect(() => {
@@ -115,20 +117,30 @@ export default function DisplayParamPicker({
     let cancelled = false
     api.displayParams(orgId, domain, nodeId, deptId).then((r) => {
       if (cancelled || !r) return
-      setSelected(r.paramKeys ?? [])
-      setScope(r.scope ?? 'none')
+      const loadedScope = r.scope ?? 'none'
+      const loadedKeys = r.paramKeys ?? []
+      setScope(loadedScope)
       setLayout(r.layout ?? {})
-      // Deliberately NOT re-derived from the loaded scope. It used to be
-      // `!scope.startsWith('node')`, so a device merely INHERITING the
-      // org-wide list came up with "apply to every device" pre-ticked, and
-      // adjusting one device's parameters overwrote the shared row for the
-      // whole fleet. Widening scope is always an explicit choice.
+      // If this specific device has an explicit selection (node or node+dept):
+      if (loadedScope.startsWith('node') && loadedKeys.length > 0) {
+        setSelected(loadedKeys)
+      } else if (loadedScope === 'org' && loadedKeys.length > 0) {
+        // If inheriting an org-wide default from a device with different telemetry:
+        const matches = loadedKeys.filter((k) => uniqueAvailable.includes(k))
+        if (matches.length > 0) {
+          setSelected(loadedKeys)
+        } else {
+          setSelected([...uniqueAvailable])
+        }
+      } else {
+        setSelected([...uniqueAvailable])
+      }
+      // Deliberately NOT re-derived from the loaded scope. Widening scope is always an explicit choice.
       setScopeMode('devices')
       setTargets([nodeId])
+    })
     return () => { cancelled = true }
-  }, [orgId, domain, nodeId, deptId])
-
-  const uniqueAvailable = useMemo(() => Array.from(new Set(available)), [available])
+  }, [orgId, domain, nodeId, deptId, uniqueAvailable])
 
   const toggle = (k: string) =>
     setSelected((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]))
