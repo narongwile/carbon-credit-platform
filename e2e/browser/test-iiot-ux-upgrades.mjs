@@ -66,12 +66,22 @@ if (modalOpen) {
     const dialogOpen = await warnInput.count() > 0;
     t('tuning dialog opens with editable warn/critical inputs', dialogOpen);
     if (dialogOpen) {
-      // Non-vacuity + honesty check: does the UI disclose that a suggested
-      // value (when no rule exists yet) is a guess, not an engineering limit?
+      // Provenance-badge honesty check (fixed in 4d9f29d3, merged into this
+      // branch): the tuning dialog must label WHERE the pre-filled warn/
+      // critical came from — a saved device rule ("⚙️ Configured Limit"), the
+      // reading catalog's standard entry ("📘 Standard"), an unrationalized
+      // catalog entry that depends on nameplate rating ("⚠️ Unrationalized"),
+      // or a statistical guess with no engineering basis at all
+      // ("📊 Statistical Suggestion", Thai-language notice box). Exactly one
+      // must be shown for whichever origin this parameter actually has —
+      // this only proves the mechanism is wired up in a live render, not
+      // which specific origin fires (that's covered by reading
+      // resolveInitialThreshold's source directly).
+      const badges = ['Configured Limit', 'Standard', 'Unrationalized', 'Statistical Suggestion'];
       const dialogText = await page.locator('body').innerText();
-      const disclosesGuess = /suggest|estimate|observed|not an? (engineering )?limit|guess/i.test(dialogText);
-      t('if a value was pre-filled from observed data, the dialog discloses it is a suggestion, not a limit',
-        disclosesGuess, disclosesGuess ? 'disclosed' : 'NOT DISCLOSED — see audit note below');
+      const shown = badges.filter((b) => dialogText.includes(b));
+      t('the tuning dialog shows exactly one threshold-provenance badge',
+        shown.length === 1, shown.length ? `shown: ${shown.join(', ')}` : 'NONE shown — provenance is undisclosed');
       // Close without saving — this test must not mutate the alarm rule.
       const cancelBtn = page.locator('button:has-text("Cancel")').first();
       if (await cancelBtn.count()) await cancelBtn.click();

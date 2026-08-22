@@ -46,9 +46,9 @@ node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id 
 node test-iiot-ux-upgrades.mjs       # the 5 features named in the "industrial iiot UX upgrades" commit really
                                      #   work in a real browser: jump-to-peak zoom, chart snapshot, inline
                                      #   alarm tuning, live-stream pause, drag-and-drop dashboard cards.
-                                     #   Also flags (does not fail on) an honesty gap: the tuning dialog's
-                                     #   auto-suggested warn/critical (avg*1.15/1.3 for a param with no
-                                     #   existing rule) is not labelled as a guess anywhere in the UI
+                                     #   Also asserts the tuning dialog's threshold-provenance badge (added in
+                                     #   4d9f29d3) is shown — a saved rule, a catalog standard, an
+                                     #   unrationalized catalog entry, or a disclosed statistical guess
 node test-alarm-discovery-ui.mjs     # each reading sensor gets ONE row in the alarm editor carrying its
                                      #   engineered limits — no duplicate phantom row on a guessed limit,
                                      #   and a discovered key with no catalog entry is offered switched OFF
