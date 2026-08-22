@@ -38,7 +38,7 @@ import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
-  BarChart2, FileText, GripVertical,
+  BarChart2, FileText, GripVertical, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Link from 'next/link'
@@ -480,6 +480,104 @@ function TrendChart({ a, b }: { a: ChartSlot | null; b: ChartSlot | null }) {
   )
 }
 
+function TrendChartConfigModal({
+  slotIndex,
+  currentA,
+  currentB,
+  availableCards,
+  onClose,
+  onSave,
+  onReset,
+}: {
+  slotIndex: number
+  currentA: string
+  currentB: string
+  availableCards: { key: string; label: string; unit?: string }[]
+  onClose: () => void
+  onSave: (paramA: string, paramB: string) => void
+  onReset: () => void
+}) {
+  const [paramA, setParamA] = useState(currentA || availableCards[0]?.key || '')
+  const [paramB, setParamB] = useState(currentB || '')
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-xl p-5 space-y-4 shadow-2xl border border-indigo-500/40" style={{ background: '#0d1117' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal size={15} className="text-indigo-400" />
+            <h4 className="text-sm font-bold text-white">Customize Overview Chart {slotIndex + 1}</h4>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={16} /></button>
+        </div>
+
+        <p className="text-[11px] text-slate-400">
+          Choose which parameters from this device to pin onto this overview chart.
+        </p>
+
+        <div className="space-y-3 text-xs">
+          <div>
+            <label className="text-amber-300 block mb-1 font-medium">Primary Series (Left Axis - {slotIndex === 0 ? 'Orange' : 'Cyan'})</label>
+            <select
+              value={paramA}
+              onChange={(e) => setParamA(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 bg-[#0a0e1a] text-slate-200 border border-slate-700 focus:border-indigo-500 focus:outline-none"
+            >
+              {availableCards.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label} {c.unit ? `(${c.unit})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-indigo-300 block mb-1 font-medium">Secondary Series (Right Axis - {slotIndex === 0 ? 'Purple' : 'Violet'})</label>
+            <select
+              value={paramB}
+              onChange={(e) => setParamB(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 bg-[#0a0e1a] text-slate-200 border border-slate-700 focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="">(None — Single Series View)</option>
+              {availableCards.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label} {c.unit ? `(${c.unit})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-[11px] text-slate-500 hover:text-amber-300 underline"
+          >
+            Reset Auto
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => onSave(paramA, paramB)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500"
+            >
+              Save &amp; Apply
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Unacknowledged alarms for this device. In Live mode these are the real
 // alarm_events rows (the demo store's alarms belong to the mock fleet and would
 // contradict the Event Log below); acknowledging happens in that Event Log,
@@ -817,17 +915,74 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }, [cards, cardOrder])
   const listCards = useMemo(() => cards.filter((c) => c.layout === 'list'), [cards])
 
-  // The two trend charts, resolved against this device's real parameters
+  // Pinned/Customized parameter configuration for the two overview trend charts:
+  // [ [slot0A, slot0B], [slot1A, slot1B] ]
+  const [customTrendSlots, setCustomTrendSlots] = useState<[[string, string], [string, string]] | null>(null)
+  const [editingTrendSlotIndex, setEditingTrendSlotIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`pinned_trend_slots_${id}`)
+      if (saved) setCustomTrendSlots(JSON.parse(saved))
+    } catch {}
+  }, [id])
+
+  // The two trend charts, auto-resolved against this device's real parameters
   // (see CHART_ROLES). Built from `cards` so it works identically in Live
-  // mode (history from the stored readings) and Demo mode (the seeded six),
-  // and so the charts can never offer a parameter the panel above does not
-  // have — including one an admin has hidden.
-  const chartSlots = useMemo(
+  // mode (history from the stored readings) and Demo mode (the seeded six).
+  const autoChartSlots = useMemo(
     () => resolveChartSlots(cards.map((c) => ({
       key: c.key, label: c.label, unit: c.reading.unit || undefined, history: c.reading.history ?? [],
     }))),
     [cards],
   )
+
+  const chartSlots = useMemo(() => {
+    if (!customTrendSlots) return autoChartSlots
+    const paramMap = new Map(cards.map((c) => [c.key, c]))
+    const resolveSlot = (key: string, fallback: ChartSlot | null, color: string): ChartSlot | null => {
+      if (!key) return null
+      const card = paramMap.get(key)
+      if (!card) return fallback
+      return {
+        key: card.key,
+        label: card.label,
+        unit: card.reading.unit || undefined,
+        color,
+        history: card.reading.history ?? [],
+      }
+    }
+    return [
+      resolveSlot(customTrendSlots[0][0], autoChartSlots[0], '#f97316'),
+      resolveSlot(customTrendSlots[0][1], autoChartSlots[1], '#6366f1'),
+      resolveSlot(customTrendSlots[1][0], autoChartSlots[2], '#22d3ee'),
+      resolveSlot(customTrendSlots[1][1], autoChartSlots[3], '#a78bfa'),
+    ]
+  }, [customTrendSlots, autoChartSlots, cards])
+
+  const saveTrendSlot = (slotIdx: number, paramA: string, paramB: string) => {
+    const s0A = chartSlots[0]?.key ?? ''
+    const s0B = chartSlots[1]?.key ?? ''
+    const s1A = chartSlots[2]?.key ?? ''
+    const s1B = chartSlots[3]?.key ?? ''
+    const base: [[string, string], [string, string]] = customTrendSlots
+      ? [[...customTrendSlots[0]], [...customTrendSlots[1]]]
+      : [[s0A, s0B], [s1A, s1B]]
+    base[slotIdx] = [paramA, paramB]
+    setCustomTrendSlots(base)
+    try {
+      localStorage.setItem(`pinned_trend_slots_${id}`, JSON.stringify(base))
+    } catch {}
+    setEditingTrendSlotIndex(null)
+  }
+
+  const resetTrendSlots = () => {
+    setCustomTrendSlots(null)
+    try {
+      localStorage.removeItem(`pinned_trend_slots_${id}`)
+    } catch {}
+    setEditingTrendSlotIndex(null)
+  }
 
 
   if (!transformer) {
@@ -1114,11 +1269,23 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               const target = a?.key ?? b?.key ?? null
               return (
                 <div key={i} className="p-3" style={i === 0 ? { borderRight: '1px solid #1e2433' } : undefined}>
-                  <button type="button" onClick={() => target && setOpenParam(target)} disabled={!target}
-                    className="w-full flex items-center justify-between mb-2 group disabled:cursor-default" title={target ? 'Open history' : undefined}>
-                    <div className="text-[10px] text-slate-500 uppercase tracking-wider group-enabled:group-hover:text-indigo-400 truncate">{title}</div>
-                    {target && <div className="text-[10px] text-slate-600 group-hover:text-indigo-400 flex-shrink-0 ml-2">Last 12h · click for history</div>}
-                  </button>
+                  <div className="w-full flex items-center justify-between mb-2 gap-1.5">
+                    <button type="button" onClick={() => target && setOpenParam(target)} disabled={!target}
+                      className="flex-1 flex items-center justify-between group disabled:cursor-default min-w-0 text-left" title={target ? 'Open history' : undefined}>
+                      <div className="text-[10px] text-slate-500 uppercase tracking-wider group-enabled:group-hover:text-indigo-400 truncate">{title}</div>
+                      {target && <div className="text-[10px] text-slate-600 group-hover:text-indigo-400 flex-shrink-0 ml-2 hidden sm:block">Last 12h · click for history</div>}
+                    </button>
+                    {canConfigure && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingTrendSlotIndex(i)}
+                        title={`Customize parameters for Chart ${i + 1}`}
+                        className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-white/5 transition-colors shrink-0"
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    )}
+                  </div>
                   <div className="w-full min-w-0 h-[155px]">
                     <TrendChart a={a} b={b} />
                   </div>
@@ -1251,6 +1418,18 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           params={modalParams}
           initialKey={openParam}
           onClose={() => setOpenParam(null)}
+        />
+      )}
+
+      {editingTrendSlotIndex !== null && (
+        <TrendChartConfigModal
+          slotIndex={editingTrendSlotIndex}
+          currentA={chartSlots[editingTrendSlotIndex * 2]?.key ?? ''}
+          currentB={chartSlots[editingTrendSlotIndex * 2 + 1]?.key ?? ''}
+          availableCards={cards.map((c) => ({ key: c.key, label: c.label, unit: c.reading.unit || undefined }))}
+          onClose={() => setEditingTrendSlotIndex(null)}
+          onSave={(paramA, paramB) => saveTrendSlot(editingTrendSlotIndex, paramA, paramB)}
+          onReset={resetTrendSlots}
         />
       )}
 
