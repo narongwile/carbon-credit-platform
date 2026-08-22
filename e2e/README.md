@@ -43,6 +43,9 @@ node test-dual-band-voltage.mjs      # over/under-voltage sharing one key, indep
 node test-studio-features.mjs        # brush, chart/table toggle, thresholds on-off, refresh, Δ Span
 node test-xss-map-popup.mjs          # stored-XSS regression: hostile device id in the map popup
                                      #   ⚠️ CURRENTLY CANNOT RUN — see "Known gaps" below
+node test-param-label-bands.mjs      # a parameter is named for the value it MEASURES, not for one of its
+                                     #   alarm bands — a key carrying an over- and an under- rule (Hz, VoltAN)
+                                     #   must not surface as "Frequency — Over" on the readings picker
 node test-transformer-detail-crash.mjs  # the transformer detail page renders on a fresh load instead of
                                      #   crashing with "Rendered more hooks than during the previous render" —
                                      #   two hooks used to run after a conditional early return, so the very
@@ -66,8 +69,10 @@ node test-reports-copy.mjs           # the reports page advertises only analyses
 ```
 
 Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
-`test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs` and
-`test-pdf-readability.mjs` actually exit non-zero on failure** — the other 30
+`test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs`,
+`test-pdf-readability.mjs`, `test-transformer-detail-crash.mjs`,
+`test-param-label-bands.mjs` and `test-iiot-ux-upgrades.mjs` actually exit
+non-zero on failure** — the rest
 count nothing and always exit 0. This paragraph used to claim they were all
 "safe to pipe into a CI job"; they are not. Piping the rest into CI today
 buys a job that goes green while assertions fail underneath it. Adding a
@@ -118,6 +123,9 @@ node e2e/proofs/test-edge-alarm-surfaces.mjs     # a firmware-raised alarm (the 
                                             #   Event) reaches alarm_events and the notifier instead of
                                             #   dead-ending in edge_alarm_log, and does not re-notify while
                                             #   the same alarm is already open
+node e2e/proofs/test-schema-label-bands.mjs      # schemaLabel() — the label resolver shared by five screens —
+                                            #   returns the measured quantity for a dual-band key, and leaves
+                                            #   every single-band label exactly as it was
 node e2e/proofs/audit-catalog-vs-device.mjs      # every parameter the REAL fleet publishes (captured frames in
                                             #   e2e/fixtures/real-device-payloads.json) is addressable by some
                                             #   alarm rule, and no auto-armed alarm names a key nothing sends.

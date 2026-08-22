@@ -63,7 +63,7 @@ const PENDING = process.env.EMPTY ? [] : [
     id: 'TRA-9F2C', org_id: 'org-1', org_name: 'KMUTT', domain: 'transformer', name: 'TRA-9F2C',
     mqtt_prefix: 'telemetry/org-1/eternity/TRA-9F2C', first_seen: new Date(Date.now() - 48000).toISOString(),
     last_seen: new Date(Date.now() - 3000).toISOString(), online: 1,
-    last_sample: { oilTemp: 63.4, hydrogen: 118, moisture: 21, load: 72, extraSensor: 5 },
+    last_sample: { oilTemp: 63.4, hydrogen: 118, moisture: 21, load: 72, extraSensor: 5, Hz: 50.01, VoltAN: 227.7 },
   },
 ];
 
@@ -150,7 +150,7 @@ const server = http.createServer(async (req, res) => {
       presence: { online: 1, last_seen: new Date(Date.now() - 4000).toISOString(), rssi: -61, batt: 87, fw: '1.4.2', transport: 'wifi' },
       // Same shape as the pending row's last_sample on purpose: three matched,
       // two extra, and 'winding' from the spec absent.
-      values: { oilTemp: 63.4, hydrogen: 118, moisture: 21, load: 72, extraSensor: 5 },
+      values: { oilTemp: 63.4, hydrogen: 118, moisture: 21, load: 72, extraSensor: 5, Hz: 50.01, VoltAN: 227.7 },
       lastReadingAt: new Date(Date.now() - 4000).toISOString(),
     });
   }
