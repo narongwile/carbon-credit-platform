@@ -322,14 +322,17 @@ export default function CustomChartsSection({
 
   return (
     <div className="flex-shrink-0 p-3" style={{ borderTop: '1px solid #1e2433' }}>
-      <div className="flex items-center gap-2 mb-2">
+      <div className="flex items-center gap-2 mb-2 relative z-10">
         <div className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
           <LayoutDashboard size={11} /> Custom Charts
         </div>
         {canConfigure && live && (
-          <button onClick={() => setEditing('new')} title="Add a chart"
-            className="ml-auto flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400">
-            <Plus size={11} /> Add chart
+          <button
+            onClick={() => setEditing('new')}
+            title="Add a chart"
+            className="ml-auto flex items-center gap-1 text-[10px] text-slate-400 hover:text-indigo-400 font-medium py-1 px-2 rounded-md hover:bg-white/5 transition-colors cursor-pointer"
+          >
+            <Plus size={12} /> Add chart
           </button>
         )}
       </div>

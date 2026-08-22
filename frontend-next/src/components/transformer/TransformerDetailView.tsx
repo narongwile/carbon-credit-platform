@@ -453,28 +453,30 @@ function TrendChart({ a, b }: { a: ChartSlot | null; b: ChartSlot | null }) {
 
   if (!data.length) {
     return (
-      <div className="h-[140px] flex items-center justify-center text-[11px] text-slate-600">
+      <div className="h-[150px] flex items-center justify-center text-[11px] text-slate-600">
         {a || b ? 'No stored readings in the last 12h' : 'This device reports no parameters yet'}
       </div>
     )
   }
 
   return (
-    <ResponsiveContainer width="100%" height={140}>
-      <LineChart data={data} margin={{ top: 5, right: 5, bottom: 0, left: -20 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
-        <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false}
-          interval="preserveStartEnd" minTickGap={28} />
-        <YAxis yAxisId="a" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-        <YAxis yAxisId="b" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-        <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }} />
-        <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }} />
-        {a && <Line yAxisId="a" type="monotone" dataKey="a" stroke={a.color} strokeWidth={1.5} dot={false}
-          name={nameOf(a)} connectNulls isAnimationActive={false} />}
-        {b && <Line yAxisId="b" type="monotone" dataKey="b" stroke={b.color} strokeWidth={1.5} dot={false}
-          name={nameOf(b)} connectNulls isAnimationActive={false} />}
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="w-full h-[150px]">
+      <ResponsiveContainer width="100%" height={150}>
+        <LineChart data={data} margin={{ top: 5, right: 5, bottom: 4, left: -20 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
+          <XAxis dataKey="time" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false}
+            interval="preserveStartEnd" minTickGap={28} />
+          <YAxis yAxisId="a" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+          <YAxis yAxisId="b" orientation="right" tick={{ fill: '#475569', fontSize: 10 }} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+          <Tooltip contentStyle={tooltipStyle} labelStyle={{ color: '#94a3b8' }} />
+          <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '2px' }} />
+          {a && <Line yAxisId="a" type="monotone" dataKey="a" stroke={a.color} strokeWidth={1.5} dot={false}
+            name={nameOf(a)} connectNulls isAnimationActive={false} />}
+          {b && <Line yAxisId="b" type="monotone" dataKey="b" stroke={b.color} strokeWidth={1.5} dot={false}
+            name={nameOf(b)} connectNulls isAnimationActive={false} />}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
@@ -883,71 +885,74 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
 
   return (
     <div className="h-full flex flex-col overflow-y-auto" style={{ background: '#0a0e1a' }}>
-      {/* Top bar */}
-      <div className="flex items-center gap-4 px-4 py-2.5 flex-shrink-0" style={{ background: '#0d1117', borderBottom: '1px solid #1e2433' }}>
-        <Link href={backHref} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-white transition-colors">
-          <ChevronLeft size={16} />
-          Back
-        </Link>
-        <div className="h-4 w-px" style={{ background: '#1e2433' }} />
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-white">{transformer.name}</span>
-          <span
-            className="text-[10px] px-2 py-0.5 rounded-full font-bold"
-            style={{ background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}
-          >
-            {transformer.status}
-          </span>
+      {/* Sticky Header Group: Top bar + Mobile Tab Switcher */}
+      <div className="sticky top-0 z-30 flex-shrink-0 bg-[#0d1117] border-b border-[#1e2433] shadow-md">
+        {/* Top bar */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4 px-3 sm:px-4 py-2.5">
+          <Link href={backHref} className="flex items-center gap-1.5 text-xs sm:text-sm text-slate-500 hover:text-white transition-colors">
+            <ChevronLeft size={16} />
+            Back
+          </Link>
+          <div className="h-4 w-px hidden sm:block" style={{ background: '#1e2433' }} />
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <span className="text-xs sm:text-sm font-bold text-white truncate max-w-[130px] sm:max-w-none">{transformer.name}</span>
+            <span
+              className="text-[9px] sm:text-[10px] px-1.5 sm:px-2 py-0.5 rounded-full font-bold"
+              style={{ background: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}
+            >
+              {transformer.status}
+            </span>
+          </div>
+          <div className="h-4 w-px hidden sm:block" style={{ background: '#1e2433' }} />
+          <div className="hidden md:flex items-center gap-1.5 text-xs text-slate-500">
+            <MapPin size={11} />
+            {displayLocation}
+          </div>
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            {/* Was a permanently spinning "Live" — it said nothing about the device. */}
+            <DeviceLiveStatus nodeId={transformer.id} />
+            <NodeReportButton nodeId={transformer.id} deviceName={transformer.name} domain="transformer" />
+            {/* No role gate: the backend's 'node' policy has already proved this
+                caller may read this device, so anyone who can see the page may
+                export what is on it. */}
+            <button onClick={() => setExporting(true)} title="Export this device's data for a date range"
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-medium text-slate-300 hover:text-white transition-colors"
+              style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
+              <Share2 size={12} /> <span className="hidden xs:inline">Export</span>
+            </button>
+            <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-colors">
+              <Maximize2 size={14} />
+            </button>
+          </div>
         </div>
-        <div className="h-4 w-px" style={{ background: '#1e2433' }} />
-        <div className="flex items-center gap-1.5 text-xs text-slate-500">
-          <MapPin size={11} />
-          {displayLocation}
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          {/* Was a permanently spinning "Live" — it said nothing about the device. */}
-          <DeviceLiveStatus nodeId={transformer.id} />
-          <NodeReportButton nodeId={transformer.id} deviceName={transformer.name} domain="transformer" />
-          {/* No role gate: the backend's 'node' policy has already proved this
-              caller may read this device, so anyone who can see the page may
-              export what is on it. */}
-          <button onClick={() => setExporting(true)} title="Export this device's data for a date range"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-300 hover:text-white transition-colors"
-            style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
-            <Share2 size={12} /> Export
-          </button>
-          <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-colors">
-            <Maximize2 size={14} />
-          </button>
-        </div>
-      </div>
 
-      {/* Mobile Tab Switcher (< lg screen) */}
-      <div className="lg:hidden flex items-center justify-between bg-[#0d1117] border-b border-[#1e2433] p-1.5 sticky top-0 z-20 overflow-x-auto gap-1">
-        {[
-          { id: 'overview', label: 'Overview', icon: <Activity size={13} /> },
-          { id: 'visuals', label: '3D & Assets', icon: <Camera size={13} /> },
-          { id: 'charts', label: 'Charts', icon: <BarChart2 size={13} /> },
-          { id: 'logs', label: 'Logs & Docs', icon: <FileText size={13} /> },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setMobileTab(tab.id as any)}
-            className={clsx(
-              'flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap',
-              mobileTab === tab.id
-                ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            )}
-          >
-            {tab.icon}
-            <span>{tab.label}</span>
-          </button>
-        ))}
+        {/* Mobile Tab Switcher (< lg screen) */}
+        <div className="lg:hidden flex items-center justify-between border-t border-[#1e2433] p-1.5 overflow-x-auto gap-1 bg-[#0a0e1a]">
+          {[
+            { id: 'overview', label: 'Overview', icon: <Activity size={13} /> },
+            { id: 'visuals', label: '3D & Assets', icon: <Camera size={13} /> },
+            { id: 'charts', label: 'Charts', icon: <BarChart2 size={13} /> },
+            { id: 'logs', label: 'Logs & Docs', icon: <FileText size={13} /> },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setMobileTab(tab.id as any)}
+              className={clsx(
+                'flex-1 flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all whitespace-nowrap',
+                mobileTab === tab.id
+                  ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200'
+              )}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Main content - responsive layout (tabbed on mobile, 3-column on lg) */}
-      <div className="flex flex-col lg:flex-row gap-0 overflow-y-auto lg:overflow-hidden min-h-0 flex-1" style={{ minHeight: '520px' }}>
+      <div className="flex flex-col lg:flex-row gap-0 overflow-y-auto lg:overflow-hidden min-h-0 flex-1 lg:min-h-[520px]">
         {/* Left panel - sensor cards (and mobile overview top summary) */}
         <div className={clsx(
           'w-full lg:w-56 flex-shrink-0 p-3 space-y-2 overflow-visible lg:overflow-y-auto border-b lg:border-b-0',
@@ -1114,7 +1119,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     <div className="text-[10px] text-slate-500 uppercase tracking-wider group-enabled:group-hover:text-indigo-400 truncate">{title}</div>
                     {target && <div className="text-[10px] text-slate-600 group-hover:text-indigo-400 flex-shrink-0 ml-2">Last 12h · click for history</div>}
                   </button>
-                  <div className="w-full min-w-0 h-[100px]">
+                  <div className="w-full min-w-0 h-[155px]">
                     <TrendChart a={a} b={b} />
                   </div>
                 </div>
