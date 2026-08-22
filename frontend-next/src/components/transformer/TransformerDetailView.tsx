@@ -982,39 +982,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       localStorage.removeItem(`pinned_trend_slots_${id}`)
     } catch {}
     setEditingTrendSlotIndex(null)
-  }
-
-
-  if (!transformer) {
-    return (
-      <div className="flex items-center justify-center h-full p-6">
-        <div className="max-w-md text-center">
-          <div className="text-slate-500">
-            {fleetLoaded ? 'Transformer not found' : 'Loading transformer…'}
-          </div>
-          {/* Deliberately the same wording whether the id does not exist or
-              exists but is not granted to this viewer's department — telling
-              them apart would confirm the existence of devices they may not
-              see. */}
-          {fleetLoaded && (
-            <p className="text-sm text-slate-600 mt-2">
-              No transformer with id “{id}” is available to you.
-            </p>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  // Keys already shown as one of the six named cards above.
-  const CANONICAL = new Set(Object.values(LIVE_PARAM))
-  /** No selection saved = not configured = show everything, never nothing. */
-  const shown = isShown
-  const extras = Object.entries(values ?? {})
-    .filter(([k]) => !CANONICAL.has(k))
-    .filter(([k]) => shown(k))
-    .sort(([a], [b]) => a.localeCompare(b))
-
   // Everything reported by this device is switchable inside the history modal, visualizer studio,
   // and custom chart builder — including DGA (hydrogen, moisture) and raw extras (Tbox, RHamb, RHbox),
   // regardless of whether an individual sensor card is currently hidden from the compact SENSOR READINGS.
@@ -1056,6 +1023,36 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     }
     return Array.from(new Set(ALARM_SCHEMA.transformer.params.map((p) => p.key)))
   }, [live, values])
+
+  if (!transformer) {
+    return (
+      <div className="flex items-center justify-center h-full p-6">
+        <div className="max-w-md text-center">
+          <div className="text-slate-500">
+            {fleetLoaded ? 'Transformer not found' : 'Loading transformer…'}
+          </div>
+          {/* Deliberately the same wording whether the id does not exist or
+              exists but is not granted to this viewer's department — telling
+              them apart would confirm the existence of devices they may not
+              see. */}
+          {fleetLoaded && (
+            <p className="text-sm text-slate-600 mt-2">
+              No transformer with id “{id}” is available to you.
+            </p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // Keys already shown as one of the six named cards above.
+  const CANONICAL = new Set(Object.values(LIVE_PARAM))
+  /** No selection saved = not configured = show everything, never nothing. */
+  const shown = isShown
+  const extras = Object.entries(values ?? {})
+    .filter(([k]) => !CANONICAL.has(k))
+    .filter(([k]) => shown(k))
+    .sort(([a], [b]) => a.localeCompare(b))
 
   const statusColors = {
     NORMAL: { color: '#4ade80', bg: 'rgba(74,222,128,0.1)', border: 'rgba(74,222,128,0.2)' },
