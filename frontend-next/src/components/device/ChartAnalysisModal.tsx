@@ -32,6 +32,8 @@ import type { AvailableParam } from './ChartBuilderModal'
 import type { NodeAlarmRule, ParamRule } from '@/server/alarmEngine'
 import { paramStatus, type ParamStatus } from '@/lib/alarmParams'
 import { downloadCSV } from '@/lib/exportFile'
+import type { SensorDomain } from '@/types/fleet'
+import { READING_PAYLOAD_CATALOG } from '@/components/device/AlarmParamConfig'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Brush,
@@ -39,7 +41,7 @@ import {
 import {
   X, Loader2, Download, LayoutDashboard, Pencil, CalendarRange, ChevronDown,
   RefreshCw, Table as TableIcon, LineChart as LineChartIcon,
-  Camera, Target, Sliders, Check, AlertCircle,
+  Camera, Target, Sliders, Check, AlertCircle, AlertTriangle,
 } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -93,11 +95,14 @@ const AXIS_MODES: { id: AxisMode; label: string; title: string }[] = [
 
 interface Row { param_key: string; value: number; taken_at: string; v_min?: number; v_max?: number; n?: number }
 
+export type ThresholdOrigin = 'saved' | 'catalog_standard' | 'catalog_unrationalized' | 'statistical_fallback'
+
 export default function ChartAnalysisModal({
-  nodeId, orgId, deviceName, chart, paramByKey, onClose, onEdit,
+  nodeId, orgId, domain = 'transformer', deviceName, chart, paramByKey, onClose, onEdit,
 }: {
   nodeId: string
   orgId?: string
+  domain?: SensorDomain
   deviceName?: string
   chart: ChartDefinition
   paramByKey: Map<string, AvailableParam>
@@ -133,7 +138,7 @@ export default function ChartAnalysisModal({
   const [rule, setRule] = useState<NodeAlarmRule | null>(null)
   const [toast, setToast] = useState<string | null>(null)
 
-  // Inline Threshold Tuning State
+  // Inline Threshold Tuning State with Provenance Origin
   const [tuningParam, setTuningParam] = useState<{
     key: string
     label: string
@@ -141,9 +146,57 @@ export default function ChartAnalysisModal({
     direction: 'high' | 'low'
     warn: number
     critical: number
+    origin: ThresholdOrigin
+    statBaseline?: { avg: number; min: number; max: number }
   } | null>(null)
   const [tuningError, setTuningError] = useState<string | null>(null)
   const [tuningSaving, setTuningSaving] = useState(false)
+
+  // Resolve initial threshold values following honest engineering hierarchy:
+  // 1. Saved device rule
+  // 2. Reading payload catalog (standard vs unrationalized)
+  // 3. Statistical fallback with clear disclosure
+  const resolveInitialThreshold = useCallback((key: string, s?: { avg: number; min: number; max: number; n: number }) => {
+    // 1. Check if device already has a saved limit
+    const saved = rule?.params.find((x) => x.key === key)
+    if (saved) {
+      return {
+        direction: saved.direction ?? 'high',
+        warn: saved.warn,
+        critical: saved.critical,
+        origin: 'saved' as ThresholdOrigin,
+      }
+    }
+
+    // 2. Look up in READING_PAYLOAD_CATALOG for this domain
+    const activeDomain = domain ?? 'transformer'
+    const catalogList = READING_PAYLOAD_CATALOG[activeDomain] ?? []
+    const catEntry = catalogList.find((x) => x.key === key)
+    if (catEntry) {
+      return {
+        direction: catEntry.direction ?? 'high',
+        warn: catEntry.warn,
+        critical: catEntry.critical,
+        origin: (catEntry.unrationalized ? 'catalog_unrationalized' : 'catalog_standard') as ThresholdOrigin,
+      }
+    }
+
+    // 3. Fallback to statistical suggestion (for uncataloged parameters like Tbox, RHamb, RHbox)
+    const direction: 'high' | 'low' = 'high'
+    let warn = 0
+    let critical = 0
+    if (s && s.n > 0) {
+      warn = +(s.avg * 1.15).toFixed(1)
+      critical = +(s.avg * 1.30).toFixed(1)
+    }
+    return {
+      direction,
+      warn,
+      critical,
+      origin: 'statistical_fallback' as ThresholdOrigin,
+      statBaseline: s && s.n > 0 ? { avg: s.avg, min: s.min, max: s.max } : undefined,
+    }
+  }, [rule, domain])
 
   // Auto-clear toast after 3s
   useEffect(() => {
@@ -1003,30 +1056,51 @@ export default function ChartAnalysisModal({
                           </td>
                           {/* Warn / Crit limits */}
                           <td className="px-3 py-2 text-center whitespace-nowrap text-[10px]">
-                            {p ? (
-                              <span className="inline-flex items-center gap-1 font-mono">
-                                <span className="text-amber-300/90">{p.warn}</span>
-                                <span className="text-slate-600">/</span>
-                                <span className="text-rose-400/90">{p.critical}</span>
-                                <span className="text-slate-500 text-[9px]">{unit}</span>
-                              </span>
-                            ) : (
-                              <span className="text-slate-600">None</span>
-                            )}
+                            {(() => {
+                              if (p) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 font-mono">
+                                    <span className="text-amber-300/90">{p.warn}</span>
+                                    <span className="text-slate-600">/</span>
+                                    <span className="text-rose-400/90">{p.critical}</span>
+                                    <span className="text-slate-500 text-[9px]">{unit}</span>
+                                  </span>
+                                )
+                              }
+                              const activeDomain = domain ?? 'transformer'
+                              const cat = READING_PAYLOAD_CATALOG[activeDomain]?.find((x) => x.key === k)
+                              if (cat && !cat.unrationalized) {
+                                return (
+                                  <span className="inline-flex items-center gap-1 font-mono text-slate-500" title="Standard catalog limit (not saved on device)">
+                                    <span>{cat.warn}</span>
+                                    <span className="text-slate-700">/</span>
+                                    <span>{cat.critical}</span>
+                                    <span className="text-[9px] text-emerald-500/80">(std)</span>
+                                  </span>
+                                )
+                              }
+                              return (
+                                <span className="text-slate-600 text-[10px]" title="No engineered standard limit defined">
+                                  — <span className="text-[9px] opacity-75">(unrationalized)</span>
+                                </span>
+                              )
+                            })()}
                           </td>
                           {/* Inline Tune Action */}
                           {onEdit && (
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               <button
                                 onClick={() => {
-                                  const cur = rule?.params.find((x) => x.key === k)
+                                  const init = resolveInitialThreshold(k, s)
                                   setTuningParam({
                                     key: k,
                                     label: nameOf(k),
                                     unit: unitOf(k),
-                                    direction: cur?.direction ?? 'high',
-                                    warn: cur?.warn ?? (s ? +(s.avg * 1.15).toFixed(1) : 80),
-                                    critical: cur?.critical ?? (s ? +(s.avg * 1.3).toFixed(1) : 90),
+                                    direction: init.direction,
+                                    warn: init.warn,
+                                    critical: init.critical,
+                                    origin: init.origin,
+                                    statBaseline: init.statBaseline,
                                   })
                                   setTuningError(null)
                                 }}
@@ -1127,7 +1201,7 @@ export default function ChartAnalysisModal({
         {/* Inline Threshold Tuning Modal */}
         {tuningParam && (
           <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm" onClick={() => setTuningParam(null)}>
-            <div className="w-full max-w-sm rounded-xl p-5 space-y-4 shadow-2xl border border-indigo-500/50" style={{ background: '#0d1117' }} onClick={(e) => e.stopPropagation()}>
+            <div className="w-full max-w-md rounded-xl p-5 space-y-4 shadow-2xl border border-indigo-500/50" style={{ background: '#0d1117' }} onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Sliders size={16} className="text-indigo-400" />
@@ -1135,9 +1209,73 @@ export default function ChartAnalysisModal({
                 </div>
                 <button onClick={() => setTuningParam(null)} className="text-slate-400 hover:text-white"><X size={16} /></button>
               </div>
-              <div className="text-xs text-slate-300">
-                Parameter: <span className="font-semibold text-white">{tuningParam.label}</span> {tuningParam.unit && `(${tuningParam.unit})`}
+
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-xs text-slate-300">
+                  Parameter: <span className="font-semibold text-white">{tuningParam.label}</span> {tuningParam.unit && `(${tuningParam.unit})`}
+                </div>
+                {tuningParam.origin === 'saved' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    ⚙️ Configured Limit
+                  </span>
+                )}
+                {tuningParam.origin === 'catalog_standard' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    📘 Standard (Catalog)
+                  </span>
+                )}
+                {tuningParam.origin === 'catalog_unrationalized' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    ⚠️ Unrationalized
+                  </span>
+                )}
+                {tuningParam.origin === 'statistical_fallback' && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                    📊 Statistical Suggestion
+                  </span>
+                )}
               </div>
+
+              {/* Context / Honesty Notice Box */}
+              {tuningParam.origin === 'statistical_fallback' && (
+                <div className="p-2.5 rounded-lg bg-purple-950/50 border border-purple-500/40 text-purple-200 text-xs space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5 text-purple-300">
+                    <AlertTriangle size={13} className="shrink-0 text-purple-400" />
+                    <span>ข้อเสนอแนะจากสถิติ (ไม่มีค่ามาตรฐานวิศวกรรม)</span>
+                  </div>
+                  <p className="text-[10px] text-purple-200/90 leading-normal">
+                    {tuningParam.statBaseline ? (
+                      <>
+                        พารามิเตอร์นี้ยังไม่มีค่ามาตรฐานวิศวกรรมในระบบ ตัวเลขเริ่มต้นคำนวณจากค่าเฉลี่ยสถิติ{' '}
+                        <span className="font-semibold text-white">{tuningParam.statBaseline.avg.toFixed(1)} {tuningParam.unit}</span>{' '}
+                        (+15% Warn / +30% Critical) เท่านั้น มิใช่ค่ามาตรฐานทางวิศวกรรม กรุณาตรวจสอบและปรับแก้ตามสเปกจริง
+                      </>
+                    ) : (
+                      <>พารามิเตอร์นี้ไม่มีค่ามาตรฐานทางวิศวกรรมในระบบ กรุณาระบุค่าเกณฑ์เตือนตามสเปกของอุปกรณ์</>
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {tuningParam.origin === 'catalog_unrationalized' && (
+                <div className="p-2.5 rounded-lg bg-amber-950/50 border border-amber-500/40 text-amber-200 text-xs space-y-1">
+                  <div className="font-semibold flex items-center gap-1.5 text-amber-300">
+                    <AlertTriangle size={13} className="shrink-0 text-amber-400" />
+                    <span>พารามิเตอร์ขึ้นอยู่กับพิกัดหม้อแปลง (Unrationalized)</span>
+                  </div>
+                  <p className="text-[10px] text-amber-200/90 leading-normal">
+                    ค่าปลอดภัยของพารามิเตอร์นี้ (เช่น กระแส, กำลังไฟฟ้า) แตกต่างกันตามขนาดพิกัด kVA ของหม้อแปลงแต่ละเครื่อง กรุณากำหนดตาม Nameplate หรือการคำนวณของวิศวกรไฟฟ้า
+                  </p>
+                </div>
+              )}
+
+              {tuningParam.origin === 'catalog_standard' && (
+                <div className="p-2 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-200 text-[10px] flex items-center gap-1.5">
+                  <Check size={13} className="text-emerald-400 shrink-0" />
+                  <span>ค่าเริ่มต้นดึงมาจากมาตรฐานวิศวกรรมในระบบ (IEEE / IEC / Utility Standard)</span>
+                </div>
+              )}
+
               {tuningError && (
                 <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-500/40 text-rose-200 text-xs flex items-center gap-2">
                   <AlertCircle size={14} className="shrink-0" />

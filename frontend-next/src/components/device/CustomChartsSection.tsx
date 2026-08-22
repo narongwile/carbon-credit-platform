@@ -403,6 +403,7 @@ export default function CustomChartsSection({
         <ChartAnalysisModal
           nodeId={nodeId}
           orgId={orgId}
+          domain={domain}
           chart={expanded}
           paramByKey={paramByKey}
           onClose={() => setExpanded(null)}
