@@ -67,6 +67,18 @@ spec:
               value: ingest
             - name: MQTT_SUB_TOPIC
               value: "telemetry/#"
+            # Reject frames whose payload nodeId disagrees with the topic that
+            # carried them. MQTT authorises a PUBLISH by topic and cannot see
+            # inside the payload, so without this a device allowed onto its own
+            # topic can still write readings and raise alarms as any other node
+            # in any other org just by naming it in the body.
+            #
+            # Set to "warn" for a migration window to log mismatches without
+            # dropping them — watch `identity-mismatch` in the worker's
+            # heartbeat line, and switch back once it reads 0. See the
+            # hardening rollout in infra/PRODUCTION-RUNBOOK.md.
+            - name: MQTT_IDENTITY_ENFORCE
+              value: "enforce"
             # DB-per-tenant: ON — MUST match Node-RED's TENANT_DB_MODE in
             # node-red.yaml. See that file's comment for the enable date and the
             # backfill this required before flipping.

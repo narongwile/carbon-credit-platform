@@ -279,8 +279,16 @@ CREATE TABLE IF NOT EXISTS device_presence (
   rssi        SMALLINT,
   batt        TINYINT,
   fw          VARCHAR(32),
+  -- Uptime tracking detects two physical devices publishing under one node id:
+  -- MQTT hands a subscriber no publisher identity, so a repeated BACKWARDS jump
+  -- in uptime is the only in-band evidence that more than one board is claiming
+  -- this id (or that one is boot-looping). See migrate-v51.sql.
+  last_uptime          BIGINT UNSIGNED NULL,
+  uptime_regressions   SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+  uptime_window_start  DATETIME(3) NULL,
+  identity_conflict_at DATETIME(3) NULL,
   last_sample JSON,   -- latest telemetry values (used by the pending-approval screen)
-  INDEX (online, last_seen)
+  INDEX (online, last_seen), INDEX (identity_conflict_at)
 );
 -- migrate-v9.sql — Firmware reliability + OTA + offline buffer support
 USE iothub;

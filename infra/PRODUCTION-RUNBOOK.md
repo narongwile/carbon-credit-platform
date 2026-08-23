@@ -283,7 +283,12 @@ the ACL restricts each device to its own topic namespace.
 | User | Password | Permissions |
 |---|---|---|
 | `admin`  | `iothub.2026` | full access (`#`) — for backend services and ops tools |
-| `device` | `iothub.2026` | scoped — publish `devices/<clientid>/#`, subscribe `cmd/<clientid>/#` |
+| `device` | `iothub.2026` | scoped by clientid — see the topic table and the warning below it |
+
+> ⚠️ **One shared login for the entire fleet.** Every device authenticates as
+> `device` with the same password, so recovering it from a single board in the
+> field (flash dumps are not hard) yields the whole fleet, and there is no
+> per-device revocation. Step 5 of the rollout below replaces this.
 
 ### Endpoints
 
@@ -297,17 +302,76 @@ the ACL restricts each device to its own topic namespace.
 ### Topic naming convention
 
 ```
+telemetry/<orgId>/<product>/<nodeId>[/...]   ← what the fleet actually uses
 devices/<clientid>/...        device publishes its own data
 sensors/<clientid>/...        sensor readings
-telemetry/<clientid>/...      heartbeat / status
 cmd/<clientid>/...            commands TO the device (subscribe)
 config/<clientid>/...         config push TO the device (subscribe)
 broadcast/...                 broadcast to all devices (subscribe-only)
 ```
 
-`<clientid>` is the MQTT `clientId` set by the device on connect. The ACL
-enforces that a device with `clientid=esp32-001` can only publish to
-`devices/esp32-001/...` — it cannot impersonate other devices.
+The ingest path is `telemetry/<orgId>/<product>/<nodeId>` — four segments,
+with the node id LAST. `worker/main.go`'s `autoRegisterPending` parses the org
+and product out of it, and `topicNodeID` reads the id from position 3. Real
+frames look like `telemetry/org-1/eternity/tr-111`, and alarm subtopics extend
+it (`telemetry/org-1/eternity/tr-222/alarm/hydrogen`) without moving the id.
+
+`<clientid>` is the MQTT `clientId` set by the device on connect, and the ACL
+scopes each device to its own topics with it.
+
+> **Read this before trusting the line above.** Until the ACL fix that ships
+> with `topicNodeID`, this section claimed the scoping was enforced while the
+> production `acl.conf` actually granted `device` the open wildcards
+> `publish telemetry/#, sensors/#, transformers/#` and
+> `subscribe cmd/#, config/#, telemetry/#`. Any device could therefore publish
+> as any node in any org, and read the whole multi-tenant fleet's telemetry.
+> The UAT file was scoped but pinned the clientid at the wrong position
+> (`telemetry/${clientid}/#`), so it matched nothing real.
+>
+> Two further limits still apply, and neither is closed by the ACL alone:
+>
+> 1. **The ACL binds a clientid, not an identity.** Every device shares the one
+>    `device` login, so a client may present any clientid it likes. Scoping
+>    bounds accidental cross-talk between honest devices; it does not stop
+>    someone who has the shared password. Per-device credentials are what turn
+>    `${clientid}` into an authenticated claim — see the rollout below.
+> 2. **MQTT authorises the TOPIC, never the payload.** The broker cannot see
+>    the `nodeId` inside a frame, so a device allowed onto its own topic could
+>    still name another node in the body. `worker/main.go` now rejects any
+>    frame whose payload `nodeId` disagrees with its topic
+>    (`MQTT_IDENTITY_ENFORCE=warn` downgrades this to log-only for a migration
+>    window; the heartbeat line reports `identity-mismatch` counts either way).
+
+### Hardening rollout — order matters
+
+Applying the scoped ACL before confirming clientids will disconnect the fleet.
+
+1. **Verify the assumption first.** The scoped rules require
+   `clientid == nodeId`. Check what is actually connected — EMQX Dashboard →
+   Clients, or:
+   ```bash
+   curl -s -u "$APIKEY_ID:$APIKEY_SECRET" \
+     "https://emqx.thermexpertise.com/api/v5/clients?limit=1000" \
+     | jq -r '.data[] | "\(.clientid)\t\(.username)"' | sort
+   ```
+   Any device whose clientid is not its node id will be denied by the new ACL.
+   Fix those first (firmware) or the fleet drops when you apply it.
+2. **Arm the payload check in warn mode.** Deploy the worker with
+   `MQTT_IDENTITY_ENFORCE=warn` and watch a few heartbeat lines. A steady
+   `0 identity-mismatch` means no device disagrees with its own topic.
+3. **Switch it to enforce** (the default — remove the env var).
+4. **Apply the scoped ACL**, then confirm every device reconnects and
+   `ingest … N readings` keeps climbing.
+5. **Per-device credentials.** Issue one per node at approval time via the
+   same EMQX REST endpoint the seed Job already uses
+   (`POST /api/v5/authentication/password_based:built_in_database/users`),
+   push it to the device over `config/<clientid>/`, and narrow the shared
+   `device` login to bootstrap only. This is what actually authenticates a
+   device — and it must be provisioned **per board after flashing**, not baked
+   into a firmware image, or two boards from the same image still share one
+   identity.
+6. **Move devices to TLS 8883.** The listener already exists; `1883` sends the
+   shared password in clear.
 
 ### Quick test (laptop → VPS)
 

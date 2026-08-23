@@ -455,18 +455,39 @@ extraDeploy:
         {allow, {user, "nodered"}, all, ["app/#", "iot/#", "transformers/#", "telemetry/#"]}.
         {allow, {user, "ingest"}, all, ["telemetry/#", "transformers/#", "sensors/#", "$share/ingest-worker/#"]}.
 
-        %% Devices — scoped by clientid (and fallback for telemetry/transformers)
+        %% Devices — scoped by clientid.
+        %%
+        %% The telemetry pattern MUST match the real topic convention,
+        %% telemetry/{orgId}/{product}/{nodeId}[/...] — the same shape
+        %% autoRegisterPending parses in worker/main.go. The node id sits at
+        %% position 3, so the two leading segments are single-level wildcards
+        %% and ${clientid} pins the last one. (The UAT file had
+        %% "telemetry/${clientid}/#", which pins position 1 instead and would
+        %% deny every real device.)
+        %%
+        %% These were "sensors/#", "telemetry/#", "transformers/#" — open
+        %% wildcards that let any device publish as any node in any org, and
+        %% subscribe "telemetry/#" read the entire multi-tenant fleet's
+        %% telemetry. PRODUCTION-RUNBOOK.md already described the scoped
+        %% posture below as though it were in force; it was not.
+        %%
+        %% NOTE: this is only as strong as the credential behind it. While
+        %% every device shares one "device" login, a client can still present
+        %% any clientid it likes, so these rules bound accidental cross-talk
+        %% and honest-device isolation — not a determined attacker. Per-device
+        %% credentials are what make ${clientid} an authenticated claim; see
+        %% the rollout in PRODUCTION-RUNBOOK.md.
         {allow, {user, "device"}, publish, [
             "devices/${clientid}/#",
-            "sensors/#",
-            "telemetry/#",
-            "transformers/#"
+            "sensors/${clientid}/#",
+            "telemetry/+/+/${clientid}",
+            "telemetry/+/+/${clientid}/#",
+            "transformers/${clientid}/#"
         ]}.
         {allow, {user, "device"}, subscribe, [
-            "cmd/#",
-            "config/#",
-            "broadcast/#",
-            "telemetry/#"
+            "cmd/${clientid}/#",
+            "config/${clientid}/#",
+            "broadcast/#"
         ]}.
 
         %% Allow anyone to subscribe to $SYS health topics? NO — keep deny.

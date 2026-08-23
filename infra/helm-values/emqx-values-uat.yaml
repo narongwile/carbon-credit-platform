@@ -463,11 +463,17 @@ extraDeploy:
         {allow, {user, "backend"}, all, ["app/#", "$SYS/#"]}.
         {allow, {user, "nodered"}, all, ["app/#", "iot/#"]}.
 
-        %% Devices — scoped by clientid
+        %% Devices — scoped by clientid.
+        %%
+        %% "telemetry/${clientid}/#" pinned the clientid at position 1, but the
+        %% real convention is telemetry/{orgId}/{product}/{nodeId} — so that
+        %% rule matched nothing a real device publishes and every frame fell
+        %% through to {deny, all}. Fixed to pin position 3, matching prod.
         {allow, {user, "device"}, publish, [
             "devices/${clientid}/#",
             "sensors/${clientid}/#",
-            "telemetry/${clientid}/#"
+            "telemetry/+/+/${clientid}",
+            "telemetry/+/+/${clientid}/#"
         ]}.
         {allow, {user, "device"}, subscribe, [
             "cmd/${clientid}/#",

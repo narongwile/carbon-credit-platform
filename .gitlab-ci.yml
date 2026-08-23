@@ -84,6 +84,11 @@ test_proofs_and_integrity:
     - node e2e/proofs/test-real-device-fieldnames.mjs
     - node e2e/proofs/test-alarm-param-discovery.mjs
     - node e2e/proofs/test-edge-alarm-surfaces.mjs
+    # A parameter is named for what it measures, not for one of its alarm bands.
+    - node e2e/proofs/test-schema-label-bands.mjs
+    # Security controls: the EMQX ACL patterns must match every real fleet
+    # topic and deny impersonation / cross-tenant reads.
+    - node e2e/proofs/test-mqtt-acl.mjs
     # Fails if an auto-armed alarm ever again names a key the fleet does not
     # publish, or if a published parameter becomes unreachable by any rule.
     - node e2e/proofs/audit-catalog-vs-device.mjs
@@ -108,6 +113,8 @@ test_worker_proofs:
     - go run e2e/proofs/go-rate-of-rise-proof.go
     - go run e2e/proofs/go-alarm-state-proof.go
     - go run e2e/proofs/go-fieldnames-proof.go
+    # Payload-vs-topic identity, and duplicate-device detection via uptime.
+    - go run e2e/proofs/go-identity-proof.go
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"

@@ -87,6 +87,42 @@ func dropNullValues(payload []byte, values map[string]float64) {
 	}
 }
 
+// topicNodeID returns the node id a telemetry topic names, or "" when the topic
+// does not follow the convention.
+//
+// The convention is telemetry/{orgId}/{product}/{nodeId}[/...] — the same one
+// autoRegisterPending already parses for the org and product segments, and the
+// same one every real frame observed from the fleet uses. Subtopics under the
+// node id (…/alarm/{sid}, …/status) keep the id in the same position, so the
+// index is fixed rather than counted from the end.
+func topicNodeID(topic string) string {
+	parts := strings.Split(topic, "/")
+	// A shared subscription ($share/{group}/…) is stripped by the broker before
+	// delivery, so what arrives here is always the publish topic itself.
+	if len(parts) < 4 || parts[0] != "telemetry" {
+		return ""
+	}
+	return parts[3]
+}
+
+// identityEnforced reports whether a frame whose payload nodeId disagrees with
+// its topic should be REJECTED (true) or merely logged (false).
+//
+// Enforcing is the correct posture and the default: MQTT authorises a PUBLISH
+// by topic, so the topic is the only part of a frame the broker's ACL has any
+// say over. The payload is opaque to it. Trusting the payload's nodeId while
+// the ACL guards the topic means a device permitted to publish only its own
+// topic can still write readings, and raise alarms, as ANY other node in ANY
+// other org simply by naming it in the body.
+//
+// MQTT_IDENTITY_ENFORCE=warn downgrades this to log-only. That exists for one
+// job: a fleet with firmware nobody has audited yet can be watched for a few
+// days ("0 rejected" in the heartbeat line means nothing disagrees) before the
+// control is armed. It is not a setting to leave on.
+func identityEnforced() bool {
+	return !strings.EqualFold(strings.TrimSpace(getEnv("MQTT_IDENTITY_ENFORCE", "enforce")), "warn")
+}
+
 // isPresence reports whether this frame is a status/heartbeat rather than a
 // readings frame (no values → nothing to persist as readings).
 func (t TelemetryPayload) isPresence() bool {
@@ -142,7 +178,13 @@ var (
 	statPresence atomic.Int64
 	statDropped  atomic.Int64
 	statErrors   atomic.Int64
-	statDevices  sync.Map // nodeId -> struct{}, distinct devices seen this window
+	// Frames whose payload nodeId disagreed with the topic that carried them.
+	// Surfaced in the heartbeat line because the number an operator needs
+	// before arming enforcement is "is this ever non-zero on my fleet?".
+	statIdentityRejected atomic.Int64
+	// Nodes newly flagged as having two devices publishing under one id.
+	statIdentityConflicts atomic.Int64
+	statDevices           sync.Map // nodeId -> struct{}, distinct devices seen this window
 
 	startTime         = time.Now()
 	lastTelemetryUnix atomic.Int64
@@ -579,9 +621,11 @@ func heartbeatLoop() {
 		if lastMs > 0 {
 			lastAge = time.Since(time.Unix(lastMs, 0)).Round(time.Second).String()
 		}
-		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d device(s) [mqtt_connected=%v, last_telemetry=%s]",
-			window, statReadings.Swap(0), statPresence.Swap(0), statDropped.Swap(0), statErrors.Swap(0), devices,
-			mqttClient != nil && mqttClient.IsConnected(), lastAge)
+		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d identity-mismatch, %d identity-conflict, %d device(s) [mqtt_connected=%v, identity=%s, last_telemetry=%s]",
+			window, statReadings.Swap(0), statPresence.Swap(0), statDropped.Swap(0), statErrors.Swap(0),
+			statIdentityRejected.Swap(0), statIdentityConflicts.Swap(0), devices,
+			mqttClient != nil && mqttClient.IsConnected(),
+			map[bool]string{true: "enforce", false: "warn"}[identityEnforced()], lastAge)
 	}
 }
 
@@ -870,11 +914,54 @@ func updatePresence(t TelemetryPayload) {
 	var prev sql.NullInt64
 	var lastSeen sql.NullTime
 	var lastReadingAt sql.NullTime
-	if err := controlDB.QueryRow("SELECT online, last_seen, last_reading_at FROM device_presence WHERE node_id = ?", t.NodeID).Scan(&prev, &lastSeen, &lastReadingAt); err == nil {
+	var lastUptime sql.NullInt64
+	var uptimeRegressions sql.NullInt64
+	var uptimeWindowStart sql.NullTime
+	var identityConflictAt sql.NullTime
+	if err := controlDB.QueryRow(
+		"SELECT online, last_seen, last_reading_at, last_uptime, uptime_regressions, uptime_window_start, identity_conflict_at "+
+			"FROM device_presence WHERE node_id = ?", t.NodeID,
+	).Scan(&prev, &lastSeen, &lastReadingAt, &lastUptime, &uptimeRegressions, &uptimeWindowStart, &identityConflictAt); err == nil {
 		wasOffline = prev.Valid && prev.Int64 == 0
 		wasOnline = prev.Valid && prev.Int64 == 1
 		if online == 1 && wasOffline && lastSeen.Valid {
 			downFor = time.Since(lastSeen.Time).Round(time.Second)
+		}
+	}
+
+	// ── Two devices under one node id? ───────────────────────────────────────
+	// Only frames that actually carry an uptime participate; firmware that
+	// never sends one simply never contributes evidence either way.
+	var uptimeOut, regressionsOut interface{}
+	var windowStartOut interface{}
+	var flagConflict bool
+	if t.Uptime != nil {
+		var prevUptime *int64
+		if lastUptime.Valid {
+			v := lastUptime.Int64
+			prevUptime = &v
+		}
+		var windowStart *time.Time
+		if uptimeWindowStart.Valid {
+			w := uptimeWindowStart.Time
+			windowStart = &w
+		}
+		grace := false
+		// Only worth the query when there is actually a backwards jump to explain.
+		if prevUptime != nil && *t.Uptime < *prevUptime {
+			grace = recentOtaReboot(t.NodeID)
+		}
+		nextRegressions, nextWindow, flagged := noteUptime(
+			prevUptime, *t.Uptime, int(uptimeRegressions.Int64), windowStart, time.Now(), grace)
+		uptimeOut, regressionsOut, windowStartOut = *t.Uptime, nextRegressions, nextWindow
+		// Flag once per episode: an already-flagged node keeps its original
+		// timestamp so "since when" is not reset by every further frame.
+		flagConflict = flagged && !identityConflictAt.Valid
+		if flagConflict {
+			statIdentityConflicts.Add(1)
+			log.Printf("IDENTITY CONFLICT %s: uptime went backwards %d times in %s "+
+				"(two devices publishing under this id, or one boot-looping) — flagged for admin review",
+				t.NodeID, nextRegressions, uptimeRegressionWindow)
 		}
 	}
 	// A merged pair (nodes.merge_into, resolveFeed) shares ONE presence row
@@ -913,11 +1000,24 @@ func updatePresence(t TelemetryPayload) {
 	if t.FW != "" {
 		fw = t.FW
 	}
+	// identity_conflict_at is set only on the frame that crosses the threshold
+	// and is otherwise left untouched — COALESCE keeps an existing flag (and
+	// its original timestamp) until an admin clears it, and NULL on a normal
+	// frame never clears one.
+	var conflictOut interface{}
+	if flagConflict {
+		conflictOut = time.Now()
+	}
 	if _, err := controlDB.Exec(
-		"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) VALUES (?, ?, NOW(3), ?, ?, ?) "+
+		"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw, last_uptime, uptime_regressions, uptime_window_start, identity_conflict_at) "+
+			"VALUES (?, ?, NOW(3), ?, ?, ?, ?, COALESCE(?,0), ?, ?) "+
 			"ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), "+
-			"rssi=COALESCE(VALUES(rssi),rssi), batt=COALESCE(VALUES(batt),batt), fw=COALESCE(VALUES(fw),fw)",
-		t.NodeID, online, rssi, batt, fw); err != nil {
+			"rssi=COALESCE(VALUES(rssi),rssi), batt=COALESCE(VALUES(batt),batt), fw=COALESCE(VALUES(fw),fw), "+
+			"last_uptime=COALESCE(VALUES(last_uptime),last_uptime), "+
+			"uptime_regressions=COALESCE(VALUES(uptime_regressions),uptime_regressions), "+
+			"uptime_window_start=COALESCE(VALUES(uptime_window_start),uptime_window_start), "+
+			"identity_conflict_at=COALESCE(identity_conflict_at,VALUES(identity_conflict_at))",
+		t.NodeID, online, rssi, batt, fw, uptimeOut, regressionsOut, windowStartOut, conflictOut); err != nil {
 		log.Printf("Presence update failed for %s: %v", t.NodeID, err)
 		return
 	}
@@ -1082,6 +1182,72 @@ func rateWindow(unit string) time.Duration {
 // window/rateMinDivisor between the compared samples caps that amplification
 // at 24x — an hour for a /day rate, 2.5 minutes for a /h rate.
 const rateMinDivisor = 24
+
+// ── Duplicate-identity detection via uptime ────────────────────────────────
+//
+// A device's uptime only ever climbs. It jumps BACKWARDS exactly once when
+// that device reboots — and repeatedly when two boards are alternating under
+// one node id, because each frame reports its own board's uptime. So the
+// count inside a window, not any single jump, is what separates the two.
+//
+// Two boards on a 30s heartbeat regress on roughly every other frame: ~15
+// inside this window. A device that rebooted regresses once. A device stuck
+// in a boot loop also regresses repeatedly — which is equally worth an
+// operator's attention, so the flag is named for the evidence (uptime went
+// backwards repeatedly) rather than asserting which of the two it is.
+const (
+	uptimeRegressionWindow    = 15 * time.Minute
+	uptimeRegressionThreshold = 3
+	// A backwards jump within this long after an OTA deployment started is the
+	// reboot that OTA asked for, so it is not counted at all.
+	uptimeOtaGrace = 30 * time.Minute
+)
+
+// recentOtaReboot reports whether an OTA deployment for this node could
+// explain a reboot right now — checked before counting a regression so a
+// fleet-wide firmware rollout does not flag every device it touches.
+func recentOtaReboot(nodeID string) bool {
+	var n int
+	if err := controlDB.QueryRow(
+		"SELECT COUNT(*) FROM ota_deployments WHERE node_id=? AND started_at >= (NOW(3) - INTERVAL ? SECOND)",
+		nodeID, int(uptimeOtaGrace.Seconds())).Scan(&n); err != nil {
+		// Table missing (pre-v9) or unreachable: do not let a diagnostic query
+		// decide whether telemetry is trusted. Assume no OTA and carry on.
+		return false
+	}
+	return n > 0
+}
+
+// noteUptime folds one reported uptime into the node's regression state and
+// returns the columns to write. Pure apart from the OTA lookup, so the whole
+// rule is testable without a database — see e2e/proofs/go-identity-proof.go.
+//
+// prevUptime/regressions/windowStart are this node's stored state; `now` is
+// the frame's arrival time.
+func noteUptime(prevUptime *int64, reported int64, regressions int, windowStart *time.Time, now time.Time, otaGrace bool) (nextRegressions int, nextWindowStart time.Time, flagged bool) {
+	// First uptime ever seen, or no backwards jump: nothing to count. The
+	// window is left running so unrelated regressions minutes apart still
+	// accumulate toward the threshold.
+	if prevUptime == nil || reported >= *prevUptime {
+		if windowStart == nil {
+			return regressions, now, false
+		}
+		return regressions, *windowStart, false
+	}
+	if otaGrace {
+		if windowStart == nil {
+			return regressions, now, false
+		}
+		return regressions, *windowStart, false
+	}
+	// A regression. Start a fresh window if there is none or the old one has
+	// expired, so counts never carry across unrelated weeks.
+	if windowStart == nil || now.Sub(*windowStart) > uptimeRegressionWindow {
+		return 1, now, false
+	}
+	next := regressions + 1
+	return next, *windowStart, next >= uptimeRegressionThreshold
+}
 
 // rateWindowFor is 0 when the param has no rate rule at all, or when its unit
 // has no interpretable time base — both mean "no rate check".
@@ -1298,6 +1464,23 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	if t.NodeID == "" {
 		log.Printf("Missing nodeId/device_id in telemetry payload")
 		return
+	}
+
+	// ── Identity: the topic and the payload must name the SAME node ──────────
+	// Checked against the PUBLISHING id, before resolveFeed redirects a merged
+	// secondary onto its primary — a feed publishes on its own topic under its
+	// own id, and it is that pairing the broker authorised.
+	if claimed := topicNodeID(msg.Topic()); claimed != "" && claimed != t.NodeID {
+		statIdentityRejected.Add(1)
+		verb := "REJECTED"
+		if !identityEnforced() {
+			verb = "ALLOWED (MQTT_IDENTITY_ENFORCE=warn)"
+		}
+		log.Printf("Identity mismatch %s: topic %q names %q but payload claims %q",
+			verb, msg.Topic(), claimed, t.NodeID)
+		if identityEnforced() {
+			return
+		}
 	}
 
 	// A secondary feed is redirected to its primary BEFORE anything is recorded,

@@ -8,7 +8,7 @@ history that disappears on restart.
 
 **`proofs/` is wired into CI; `browser/` is not.** `.gitlab-ci.yml` has a
 `test` stage that runs every script in `proofs/` — the Node-RED generator and
-its syntax gate, all nine Node proofs, and the three Go proofs — plus `npm run
+its syntax gate, all eleven Node proofs, and the four Go proofs — plus `npm run
 lint` and `npx tsc --noEmit`. A commit that reintroduces any bug those catch
 now fails the pipeline before it can deploy.
 
@@ -123,6 +123,13 @@ node e2e/proofs/test-edge-alarm-surfaces.mjs     # a firmware-raised alarm (the 
                                             #   Event) reaches alarm_events and the notifier instead of
                                             #   dead-ending in edge_alarm_log, and does not re-notify while
                                             #   the same alarm is already open
+node e2e/proofs/test-mqtt-acl.mjs                # the EMQX ACL in infra/helm-values (prod AND uat) matches every
+                                            #   real fleet topic and denies impersonation, cross-device cmd/
+                                            #   config reads and cross-tenant telemetry reads
+go run e2e/proofs/go-identity-proof.go      # the two identity controls in worker/main.go: a frame's payload
+                                            #   nodeId must agree with its topic, and a repeated BACKWARDS jump
+                                            #   in uptime flags two devices publishing under one node id
+                                            #   (without flagging an ordinary reboot or an OTA rollout)
 node e2e/proofs/test-schema-label-bands.mjs      # schemaLabel() — the label resolver shared by five screens —
                                             #   returns the measured quantity for a dual-band key, and leaves
                                             #   every single-band label exactly as it was
