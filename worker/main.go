@@ -87,6 +87,65 @@ func dropNullValues(payload []byte, values map[string]float64) {
 	}
 }
 
+// ── Device clock sanity ────────────────────────────────────────────────────
+//
+// A device timestamp used to be trusted on the single test `> 0`. Every ESP32
+// failure mode around clocks lands outside that check and is silent:
+//
+//   - seconds instead of milliseconds — the most common firmware slip. A real
+//     1787402633520 sent as 1787402633 is read as 1970-01-21, 56 years back.
+//   - booted, publishing, NTP not synced yet — time() is near zero or is
+//     millis() since boot, so again 1970.
+//   - a clock set into the future — nothing bounded that at all.
+//
+// None of these produce an error anywhere. A past-dated reading is stored,
+// rolled into a phantom rollup bucket, then deleted by the next retention
+// tick for being older than READINGS_RETENTION_DAYS — the operator sees a
+// device that is plainly online reporting no data, with nothing in the logs.
+// A future-dated one is worse: it is never purged, never appears in a "last
+// 24h" window, and poisons the rate-of-rise anchor (AlarmParamState.
+// PrevValueTs). Every later frame then computes a NEGATIVE elapsed, fails the
+// minimum-span test, and never advances the anchor — so rate-of-rise stays
+// dead for that parameter until the worker restarts.
+const (
+	// Readings older than this are treated as a wrong clock rather than as
+	// history. Comfortably wider than any offline backlog the store-and-forward
+	// buffer replays (offline_sync_log), so a genuine catch-up is not rejected.
+	maxClockLag = 90 * 24 * time.Hour
+	// Nothing measured can be dated ahead of now. A small allowance absorbs
+	// ordinary NTP jitter and the flight time of the frame itself.
+	maxClockSkewAhead = 5 * time.Minute
+)
+
+// acceptTimestamp turns a device-supplied epoch-ms into a trustworthy time.
+// Out-of-range values fall back to arrival time — the reading itself is real
+// and is kept; only its claimed clock is not believed.
+func acceptTimestamp(nodeID string, epochMs int64) time.Time {
+	now := time.Now()
+	if epochMs <= 0 {
+		return now
+	}
+	ts := time.UnixMilli(epochMs)
+	if ts.After(now.Add(maxClockSkewAhead)) {
+		statClockRejected.Add(1)
+		log.Printf("Clock skew %s: timestamp %s is in the future — using arrival time instead", nodeID, ts.Format(time.RFC3339))
+		return now
+	}
+	if now.Sub(ts) > maxClockLag {
+		statClockRejected.Add(1)
+		// Name the likely cause: a 10-digit value is seconds, and dividing a
+		// real millisecond clock by 1000 lands almost exactly here.
+		hint := "device clock not set (NTP not synced?)"
+		if epochMs > 1_000_000_000 && epochMs < 10_000_000_000 {
+			hint = "looks like SECONDS sent where milliseconds are expected"
+		}
+		log.Printf("Clock skew %s: timestamp %s is %s old — %s; using arrival time instead",
+			nodeID, ts.Format(time.RFC3339), now.Sub(ts).Round(time.Hour), hint)
+		return now
+	}
+	return ts
+}
+
 // topicNodeID returns the node id a telemetry topic names, or "" when the topic
 // does not follow the convention.
 //
@@ -184,7 +243,11 @@ var (
 	statIdentityRejected atomic.Int64
 	// Nodes newly flagged as having two devices publishing under one id.
 	statIdentityConflicts atomic.Int64
-	statDevices           sync.Map // nodeId -> struct{}, distinct devices seen this window
+	// Frames whose device clock was outside the trustworthy window and were
+	// stamped with arrival time instead. A steadily rising count means a
+	// device's clock needs fixing, not that the platform is dropping data.
+	statClockRejected atomic.Int64
+	statDevices       sync.Map // nodeId -> struct{}, distinct devices seen this window
 
 	startTime         = time.Now()
 	lastTelemetryUnix atomic.Int64
@@ -621,9 +684,9 @@ func heartbeatLoop() {
 		if lastMs > 0 {
 			lastAge = time.Since(time.Unix(lastMs, 0)).Round(time.Second).String()
 		}
-		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d identity-mismatch, %d identity-conflict, %d device(s) [mqtt_connected=%v, identity=%s, last_telemetry=%s]",
+		log.Printf("ingest %s: %d readings, %d presence, %d dropped, %d errors, %d identity-mismatch, %d identity-conflict, %d clock-skew, %d device(s) [mqtt_connected=%v, identity=%s, last_telemetry=%s]",
 			window, statReadings.Swap(0), statPresence.Swap(0), statDropped.Swap(0), statErrors.Swap(0),
-			statIdentityRejected.Swap(0), statIdentityConflicts.Swap(0), devices,
+			statIdentityRejected.Swap(0), statIdentityConflicts.Swap(0), statClockRejected.Swap(0), devices,
 			mqttClient != nil && mqttClient.IsConnected(),
 			map[bool]string{true: "enforce", false: "warn"}[identityEnforced()], lastAge)
 	}
@@ -1330,6 +1393,20 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 				valCopy := val
 				ps.PrevValue = &valCopy
 				ps.PrevValueTs = ts
+			} else if ts.Before(ps.PrevValueTs) {
+				// The anchor is NEWER than this frame. Two ways that happens: a
+				// device flushing an offline backlog replays older frames, or a
+				// bad clock stamped the anchor into the future.
+				//
+				// Either way the anchor is unusable — every elapsed against it
+				// is negative, so it fails the minimum-span test below, and the
+				// branch that advances the anchor is the same one that never
+				// runs. Rate-of-rise then stayed dead for this parameter until
+				// the worker restarted. Re-anchoring here costs one rate window
+				// of coverage instead of all of it.
+				valCopy := val
+				ps.PrevValue = &valCopy
+				ps.PrevValueTs = ts
 			} else if elapsed := ts.Sub(ps.PrevValueTs); elapsed >= rateWin/rateMinDivisor {
 				delta := val - *ps.PrevValue
 				if p.Direction != "high" {
@@ -1535,14 +1612,8 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
-	var ts time.Time
-	if t.Timestamp > 0 {
-		// Assume timestamp in milliseconds
-		ts = time.UnixMilli(t.Timestamp)
-	} else {
-		ts = time.Now()
-		t.Timestamp = ts.UnixMilli()
-	}
+	ts := acceptTimestamp(t.NodeID, t.Timestamp)
+	t.Timestamp = ts.UnixMilli()
 
 	record := &kgo.Record{
 		Topic: "telemetry-events",

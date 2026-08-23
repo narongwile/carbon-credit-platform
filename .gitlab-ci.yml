@@ -115,6 +115,9 @@ test_worker_proofs:
     - go run e2e/proofs/go-fieldnames-proof.go
     # Payload-vs-topic identity, and duplicate-device detection via uptime.
     - go run e2e/proofs/go-identity-proof.go
+    # Device clock sanity: a bad timestamp must not silently vanish a reading
+    # into 1970 (retention then deletes it) nor permanently kill rate-of-rise.
+    - go run e2e/proofs/go-clock-proof.go
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"

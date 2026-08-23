@@ -8,7 +8,7 @@ history that disappears on restart.
 
 **`proofs/` is wired into CI; `browser/` is not.** `.gitlab-ci.yml` has a
 `test` stage that runs every script in `proofs/` — the Node-RED generator and
-its syntax gate, all eleven Node proofs, and the four Go proofs — plus `npm run
+its syntax gate, all eleven Node proofs, and the five Go proofs — plus `npm run
 lint` and `npx tsc --noEmit`. A commit that reintroduces any bug those catch
 now fails the pipeline before it can deploy.
 
@@ -126,6 +126,11 @@ node e2e/proofs/test-edge-alarm-surfaces.mjs     # a firmware-raised alarm (the 
 node e2e/proofs/test-mqtt-acl.mjs                # the EMQX ACL in infra/helm-values (prod AND uat) matches every
                                             #   real fleet topic and denies impersonation, cross-device cmd/
                                             #   config reads and cross-tenant telemetry reads
+go run e2e/proofs/go-clock-proof.go         # a device clock outside the trustworthy window falls back to
+                                            #   arrival time instead of landing a reading in 1970 (where the
+                                            #   retention pass then deletes it, silently), and a poisoned or
+                                            #   out-of-order rate anchor re-anchors instead of killing
+                                            #   rate-of-rise for that parameter until the worker restarts
 go run e2e/proofs/go-identity-proof.go      # the two identity controls in worker/main.go: a frame's payload
                                             #   nodeId must agree with its topic, and a repeated BACKWARDS jump
                                             #   in uptime flags two devices publishing under one node id
