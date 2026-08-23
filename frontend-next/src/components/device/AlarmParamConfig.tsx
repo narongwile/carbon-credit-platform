@@ -383,6 +383,16 @@ export default function AlarmParamConfig({
   const { labels, labelOf } = useParamLabels(orgId || '', domain, nodeId)
   const { devices } = useManagedDevices(orgId || '')
 
+  /** 'reported' = only what this device sends; 'all' = the whole catalog. */
+  const [scopeFilter, setScopeFilter] = useState<'reported' | 'all'>('reported')
+  /**
+   * Keys the SAVED rule already covers. Kept apart from `vals`, which the
+   * seeding effect fills for every catalog row — so `vals` cannot answer
+   * "was this parameter actually configured on this device", and using it
+   * to decide visibility would show all 80 rows again.
+   */
+  const [ruleKeys, setRuleKeys] = useState<Set<string>>(new Set())
+
   // Current live sensor readings polled or subscribed
   const [liveReadings, setLiveReadings] = useState<Record<string, number>>({})
   const [configuredDisplayKeys, setConfiguredDisplayKeys] = useState<string[]>([])
@@ -465,6 +475,19 @@ export default function AlarmParamConfig({
   // -------------------------------------------------------------------------
   // Unified Parameter List: Catalog + Live Samples + Display Params + Custom
   // -------------------------------------------------------------------------
+  /**
+   * Keys THIS device has actually reported — the same evidence SENSOR READINGS
+   * is built from (api.latest + the fleet row's lastSample). null on the
+   * org-level editor, where there is no single device to scope to.
+   */
+  const reportedKeys = useMemo(() => {
+    if (!nodeId) return null
+    const s = new Set<string>(Object.keys(liveReadings))
+    const dev = devices.find((d) => d.id === nodeId) as { lastSample?: Record<string, unknown> } | undefined
+    if (dev?.lastSample) for (const k of Object.keys(dev.lastSample)) s.add(k)
+    return s
+  }, [nodeId, liveReadings, devices])
+
   const allParams: ExtendedAlarmParam[] = useMemo(() => {
     const map = new Map<string, ExtendedAlarmParam>()
 
@@ -614,6 +637,11 @@ export default function AlarmParamConfig({
       }
     }
     setVals((prev) => ({ ...prev, ...nextVals }))
+    // Remember which parameters this rule actually covers, so the
+    // reported-only filter never hides an alarm someone configured — including
+    // one whose sensor has since stopped reporting, which is exactly when you
+    // most need to reach it.
+    setRuleKeys(new Set((saved.params ?? []).map((p) => p.key)))
     if (saved.debounceJson) setDbVals(saved.debounceJson)
     if (saved.dwellMin !== undefined) setDwell(saved.dwellMin)
     if (saved.hysteresis !== undefined) setHyst(saved.hysteresis)
@@ -679,6 +707,23 @@ export default function AlarmParamConfig({
       list = list.filter((p) => p.paramType === 'compound')
     }
 
+    // Scope to what THIS device actually reports.
+    //
+    // The catalog is a menu for every transformer this platform supports — 80
+    // rows. A given unit publishes a fraction of it: the fleet's sensor box
+    // sends 7 values, so 91% of the editor was parameters that device will
+    // never report. That is not just noise; it is the same trap the dead-key
+    // bugs came from, because every one of those rows can be enabled and
+    // configured and will then never fire at any reading.
+    //
+    // A row survives the filter if the device has reported it OR the saved
+    // rule already contains it — an alarm you have configured must stay
+    // visible (and disable-able) even during an outage, or after a sensor
+    // fails and stops reporting the very parameter you were watching.
+    if (scopeFilter === 'reported' && reportedKeys && reportedKeys.size > 0) {
+      list = list.filter((p) => reportedKeys.has(p.key) || ruleKeys.has(p.key))
+    }
+
     if (activeTab !== 'all') {
       list = list.filter((p) => classifyParam(p.key, domain) === activeTab)
     }
@@ -693,7 +738,7 @@ export default function AlarmParamConfig({
       )
     }
     return list
-  }, [allParams, paramKindFilter, activeTab, searchQuery, domain])
+  }, [allParams, paramKindFilter, activeTab, searchQuery, domain, scopeFilter, reportedKeys, ruleKeys])
 
   // Build current rule for persistence
   const buildRule = (): NodeAlarmRule | null => {
@@ -1064,6 +1109,34 @@ export default function AlarmParamConfig({
               )
             })}
           </div>
+
+          {/* Scope: this device's own sensors, or the whole catalog.
+              Only offered on a per-device editor — the org-level one has no
+              single device whose readings could scope it. */}
+          {reportedKeys && reportedKeys.size > 0 && (
+            <div className="flex items-center gap-1 flex-shrink-0" data-scope-filter>
+              <button
+                onClick={() => setScopeFilter('reported')}
+                title="Only parameters this device actually reports — plus any it already has an alarm on"
+                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap"
+                style={scopeFilter === 'reported'
+                  ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#fff' }
+                  : { ...inset, color: '#94a3b8' }}
+              >
+                This device&apos;s sensors
+              </button>
+              <button
+                onClick={() => setScopeFilter('all')}
+                title="Every parameter this product supports — use to pre-configure an alarm before the sensor reports"
+                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap"
+                style={scopeFilter === 'all'
+                  ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#fff' }
+                  : { ...inset, color: '#94a3b8' }}
+              >
+                Full catalog
+              </button>
+            </div>
+          )}
 
           {/* Instant Search Bar */}
           <div className="relative min-w-[200px] flex-shrink-0">

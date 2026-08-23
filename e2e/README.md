@@ -57,6 +57,9 @@ node test-iiot-ux-upgrades.mjs       # the 5 features named in the "industrial i
                                      #   Also asserts the tuning dialog's threshold-provenance badge (added in
                                      #   4d9f29d3) is shown — a saved rule, a catalog standard, an
                                      #   unrationalized catalog entry, or a disclosed statistical guess
+node test-alarm-scope-filter.mjs     # the per-device alarm editor lists what THAT device reports (plus
+                                     #   anything its saved rule covers), not all 80 catalog rows — and
+                                     #   "Full catalog" still reveals them for pre-configuration
 node test-alarm-discovery-ui.mjs     # each reading sensor gets ONE row in the alarm editor carrying its
                                      #   engineered limits — no duplicate phantom row on a guessed limit,
                                      #   and a discovered key with no catalog entry is offered switched OFF
@@ -71,7 +74,8 @@ node test-reports-copy.mjs           # the reports page advertises only analyses
 Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
 `test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs`,
 `test-pdf-readability.mjs`, `test-transformer-detail-crash.mjs`,
-`test-param-label-bands.mjs` and `test-iiot-ux-upgrades.mjs` actually exit
+`test-param-label-bands.mjs`, `test-alarm-scope-filter.mjs` and
+`test-iiot-ux-upgrades.mjs` actually exit
 non-zero on failure** — the rest
 count nothing and always exit 0. This paragraph used to claim they were all
 "safe to pipe into a CI job"; they are not. Piping the rest into CI today
