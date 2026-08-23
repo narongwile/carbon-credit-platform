@@ -962,6 +962,47 @@ global.set('notifyAdminNewUser', async function(pool, orgId, newUser){
   }
 });
 
+// Notify the new User themselves that their account was created and is
+// waiting on an admin to approve it — companion to notifyAdminNewUser, which
+// only reaches the org's admins. Without this, a self-registered (or
+// admin-created-as-pending) user has no way to know their signup even
+// worked until someone tells them out of band.
+global.set('notifyUserPendingApproval', async function(pool, orgId, newUser){
+  try {
+    if (!newUser || !newUser.email) return;
+    const mc = await global.get('mailConfig')();
+
+    const subject = '⏳ Your ONEOPS account is pending approval';
+    const text = 'Hello ' + newUser.name + ',\\n\\n' +
+      'Thanks for registering for organization "' + orgId + '".\\n\\n' +
+      'Your account has been created but is not active yet — an administrator ' +
+      'needs to review and approve it before you can sign in. You will receive ' +
+      'another email as soon as your account is activated.\\n\\n' +
+      '• Name: ' + newUser.name + '\\n' +
+      '• Email: ' + newUser.email + '\\n\\n' +
+      'No action is needed from you right now.\\n\\n' +
+      'Best regards,\\nONEOPS System';
+
+    const html = '<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; border: 1px solid #1e293b;">' +
+      '<h2 style="color: #fbbf24; margin-top: 0;">⏳ Your Account is Pending Approval</h2>' +
+      '<p>Hello <strong>' + newUser.name + '</strong>,</p>' +
+      '<p>Thanks for registering for organization <strong style="color: #a5b4fc;">' + orgId + '</strong>. Your account has been created but is not active yet — an administrator needs to review and approve it before you can sign in.</p>' +
+      '<table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #1e293b; border-radius: 8px; overflow: hidden;">' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8; width: 140px;">Name</td><td style="padding: 10px 16px; font-weight: bold; color: #ffffff;">' + newUser.name + '</td></tr>' +
+      '<tr><td style="padding: 10px 16px; color: #94a3b8;">Email</td><td style="padding: 10px 16px; color: #ffffff;">' + newUser.email + '</td></tr>' +
+      '</table>' +
+      '<p>You will receive another email as soon as your account is activated. No action is needed from you right now.</p>' +
+      '<p style="font-size: 12px; color: #64748b; margin-top: 24px;">ONEOPS Industrial Platform</p>' +
+      '</div>';
+
+    if (mc.transport) {
+      await mc.transport.sendMail({ from: mc.from, to: newUser.email, subject, text, html }).catch(()=>{});
+    }
+  } catch (err) {
+    node.warn('notifyUserPendingApproval failed: ' + err.message);
+  }
+});
+
 // Notify User when their account is activated/approved by Admin or created manually
 global.set('notifyUserActivated', async function(pool, orgId, user, deptNames){
   try {
@@ -1225,9 +1266,11 @@ if(!b.name||!b.email||!b.password){msg.headers=__CORS;msg.statusCode=400;msg.pay
     await pool.query("INSERT INTO users (id,org_id,department_id,email,phone,name,role,password_hash) VALUES (?,?,?,?,?,?,?,?)", [userId, orgId, deptId, b.email, phone||null, b.name, role, hash]);
   }
 
-  // If user is pending approval, notify the Organization's Admin(s) via Email & Telegram
+  // If user is pending approval, notify the Organization's Admin(s) via Email & Telegram,
+  // and let the new user themselves know their signup is waiting on approval.
   if (userStatus === 'pending') {
     global.get('notifyAdminNewUser')(pool, orgId, { name: b.name, email: b.email, phone });
+    global.get('notifyUserPendingApproval')(pool, orgId, { name: b.name, email: b.email });
   }
 
   // Always mirror user into tenant DB if tenant DB exists
@@ -5957,6 +6000,13 @@ if(!b.name){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'name requi
       } catch(e) {}
     }
     global.get('notifyUserActivated')(pool, orgId, { name: b.name, email: b.email, username: uname, role: b.role||'viewer' }, deptNamesStr);
+  }
+
+  // Admin created this user directly with status "Pending Approval" — the user
+  // themselves has no other way to learn the account exists until approved.
+  const isNewlyPending = !prevUser && targetStatus === 'pending';
+  if (isNewlyPending && b.email) {
+    global.get('notifyUserPendingApproval')(pool, orgId, { name: b.name, email: b.email });
   }
 
   // Always mirror user into tenant DB if tenant DB exists
