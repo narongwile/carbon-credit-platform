@@ -7,9 +7,15 @@ import { fileURLToPath } from 'url'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-// Storage path for shared messages
-const DATA_DIR = process.env.AGENT_BOARD_DIR || path.join(__dirname, 'data')
-const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json')
+// Environment variables support
+const DEFAULT_AGENT_NAME = process.env.AGENT_NAME || 'antigravity'
+const DB_PATH =
+  process.env.AGENT_BOARD_DB ||
+  (process.env.AGENT_BOARD_DIR
+    ? path.join(process.env.AGENT_BOARD_DIR, 'board.json')
+    : path.join(__dirname, 'data', 'messages.json'))
+const DATA_DIR = path.dirname(DB_PATH)
+const MESSAGES_FILE = DB_PATH
 
 function ensureStorage() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -160,7 +166,7 @@ function handleToolCall(name, args) {
       id,
       timestamp: new Date().toISOString(),
       to: args.to || 'all',
-      from: args.from || 'antigravity',
+      from: args.from || DEFAULT_AGENT_NAME,
       topic: args.topic,
       message: args.message,
       priority: args.priority || 'normal',
@@ -179,7 +185,7 @@ function handleToolCall(name, args) {
   }
 
   if (name === 'agent_read_inbox') {
-    const forAgent = (args.for_agent || 'all').toLowerCase()
+    const forAgent = (args.for_agent || DEFAULT_AGENT_NAME || 'all').toLowerCase()
     const unreadOnly = !!args.unread_only
     const limit = args.limit || 20
 
@@ -211,7 +217,7 @@ function handleToolCall(name, args) {
     const replyObj = {
       id: 'rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       timestamp: new Date().toISOString(),
-      from: args.from || 'antigravity',
+      from: args.from || DEFAULT_AGENT_NAME,
       reply: args.reply,
     }
     target.replies = target.replies || []
@@ -227,7 +233,7 @@ function handleToolCall(name, args) {
 
   if (name === 'agent_mark_as_read') {
     const ids = args.message_ids || []
-    const agent = 'antigravity'
+    const agent = DEFAULT_AGENT_NAME
     let updated = 0
     for (const m of messages) {
       if (ids.includes(m.id)) {
