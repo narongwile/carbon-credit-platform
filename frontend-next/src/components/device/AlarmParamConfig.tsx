@@ -572,8 +572,35 @@ export default function AlarmParamConfig({
     return Array.from(map.values())
   }, [domain, schema, configuredDisplayKeys, discoveredWireKeys, customParams, labelOf, labels])
 
-  const readingCount = useMemo(() => allParams.filter((p) => p.paramType !== 'compound').length, [allParams])
-  const compoundCount = useMemo(() => allParams.filter((p) => p.paramType === 'compound').length, [allParams])
+  /**
+   * allParams narrowed to the scope the operator has selected — the honest
+   * denominator for every count this editor shows.
+   *
+   * The scope filter used to live inside filteredParams alone, so it hid rows
+   * from the table while every badge above the table kept counting the whole
+   * catalog: the header read "80 parameters mapped" and the tab read "All
+   * Parameters (80)" over a table showing 9. That contradicts SENSOR READINGS
+   * on the same page (which lists only what the device reports) and reads as a
+   * bug in the scoping rather than what it was — a stale count.
+   *
+   * Category tab counts, the reading/compound split and filteredParams all
+   * derive from this, so a switch to "Full catalog" moves every number
+   * together. buildRule()/misordered deliberately keep using allParams: what
+   * gets SAVED and validated must not depend on which rows are on screen.
+   */
+  const scopedParams = useMemo(() => {
+    // A row survives if the device has reported it OR the saved rule already
+    // contains it — an alarm you have configured must stay visible (and
+    // disable-able) during an outage, or after a sensor fails and stops
+    // reporting the very parameter you were watching.
+    if (scopeFilter === 'reported' && reportedKeys && reportedKeys.size > 0) {
+      return allParams.filter((p) => reportedKeys.has(p.key) || ruleKeys.has(p.key))
+    }
+    return allParams
+  }, [allParams, scopeFilter, reportedKeys, ruleKeys])
+
+  const readingCount = useMemo(() => scopedParams.filter((p) => p.paramType !== 'compound').length, [scopedParams])
+  const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
 
   // Active parameter configuration values
   const [vals, setVals] = useState<Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }>>({})
@@ -679,7 +706,7 @@ export default function AlarmParamConfig({
   // Filtering & Category Tabs
   // -------------------------------------------------------------------------
   const categoryCounts = useMemo(() => {
-    const subset = allParams.filter((p) => {
+    const subset = scopedParams.filter((p) => {
       if (paramKindFilter === 'reading') return p.paramType !== 'compound'
       if (paramKindFilter === 'compound') return p.paramType === 'compound'
       return true
@@ -697,31 +724,21 @@ export default function AlarmParamConfig({
       counts[cat] = (counts[cat] || 0) + 1
     }
     return counts
-  }, [allParams, paramKindFilter, domain])
+  }, [scopedParams, paramKindFilter, domain])
 
   const filteredParams = useMemo(() => {
-    let list = allParams
-    if (paramKindFilter === 'reading') {
-      list = list.filter((p) => p.paramType !== 'compound')
-    } else if (paramKindFilter === 'compound') {
-      list = list.filter((p) => p.paramType === 'compound')
-    }
-
-    // Scope to what THIS device actually reports.
-    //
-    // The catalog is a menu for every transformer this platform supports — 80
+    // Already scoped to what THIS device reports (see scopedParams). The
+    // catalog is a menu for every transformer this platform supports — 80
     // rows. A given unit publishes a fraction of it: the fleet's sensor box
     // sends 7 values, so 91% of the editor was parameters that device will
     // never report. That is not just noise; it is the same trap the dead-key
     // bugs came from, because every one of those rows can be enabled and
     // configured and will then never fire at any reading.
-    //
-    // A row survives the filter if the device has reported it OR the saved
-    // rule already contains it — an alarm you have configured must stay
-    // visible (and disable-able) even during an outage, or after a sensor
-    // fails and stops reporting the very parameter you were watching.
-    if (scopeFilter === 'reported' && reportedKeys && reportedKeys.size > 0) {
-      list = list.filter((p) => reportedKeys.has(p.key) || ruleKeys.has(p.key))
+    let list = scopedParams
+    if (paramKindFilter === 'reading') {
+      list = list.filter((p) => p.paramType !== 'compound')
+    } else if (paramKindFilter === 'compound') {
+      list = list.filter((p) => p.paramType === 'compound')
     }
 
     if (activeTab !== 'all') {
@@ -738,7 +755,7 @@ export default function AlarmParamConfig({
       )
     }
     return list
-  }, [allParams, paramKindFilter, activeTab, searchQuery, domain, scopeFilter, reportedKeys, ruleKeys])
+  }, [scopedParams, paramKindFilter, activeTab, searchQuery, domain])
 
   // Build current rule for persistence
   const buildRule = (): NodeAlarmRule | null => {
@@ -910,7 +927,7 @@ export default function AlarmParamConfig({
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-white">Alarm Thresholds &amp; Telemetry Payload</span>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-indigo-950 text-indigo-300 border border-indigo-800/60">
-              {allParams.length} parameters mapped
+              {scopedParams.length} parameters mapped
             </span>
           </div>
           <p className="text-[11px] text-slate-400 mt-0.5">
@@ -1047,7 +1064,7 @@ export default function AlarmParamConfig({
           )}
         >
           <Sliders size={12} />
-          <span>All Parameters ({allParams.length})</span>
+          <span>All Parameters ({scopedParams.length})</span>
         </button>
         <button
           type="button"

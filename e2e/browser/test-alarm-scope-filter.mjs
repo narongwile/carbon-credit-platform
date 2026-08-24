@@ -30,6 +30,18 @@ const rowCount = () => page.locator('[data-param-key]').count();
 const shownKeys = () => page.evaluate(() =>
   [...new Set([...document.querySelectorAll('[data-param-key]')].map((r) => r.getAttribute('data-param-key')))]);
 
+// The two counts the header advertises. Both used to be rendered from the
+// unscoped catalog while the table below them was scoped, so the editor
+// claimed "80 parameters mapped" over 9 visible rows — contradicting SENSOR
+// READINGS on the same page, which lists only what the device reports.
+const nFrom = async (locator, re) => {
+  const txt = await locator.first().textContent();
+  const m = (txt || '').match(re);
+  return m ? Number(m[1]) : NaN;
+};
+const badgeCount = () => nFrom(page.locator('text=/\\d+ parameters mapped/'), /(\d+) parameters mapped/);
+const tabCount = () => nFrom(page.locator('button:has-text("All Parameters")'), /All Parameters \((\d+)\)/);
+
 await page.goto('http://localhost:3901/', { waitUntil: 'domcontentloaded' });
 await page.evaluate(() => {
   localStorage.setItem('oneops_token', 'faketoken');
@@ -52,6 +64,16 @@ const scopedKeys = await shownKeys();
 t('the editor opens scoped to this device, not the full catalog', scoped > 0 && scoped < 30,
   `${scoped} rows: ${JSON.stringify(scopedKeys)}`);
 
+// The counts the header advertises must describe the table underneath it.
+// Both tabs default to "all", so with no category tab or search applied the
+// visible row count IS the scoped total.
+const scopedBadge = await badgeCount();
+const scopedTab = await tabCount();
+t('the "parameters mapped" badge counts the scoped list, not the catalog',
+  scopedBadge === scoped, `badge says ${scopedBadge}, table shows ${scoped}`);
+t('the "All Parameters" tab counts the scoped list, not the catalog',
+  scopedTab === scoped, `tab says ${scopedTab}, table shows ${scoped}`);
+
 // --- non-vacuity: the catalog really is much larger than what is shown ----
 // Without this the assertion above would pass on a broken editor showing
 // nothing at all.
@@ -60,6 +82,18 @@ await page.waitForTimeout(900);
 const full = await rowCount();
 t('"Full catalog" reveals the whole product menu', full > scoped * 3,
   `${scoped} scoped vs ${full} full — ${Math.round((1 - scoped / full) * 100)}% was noise`);
+
+// Non-vacuity for the two count assertions above: they must track the scope,
+// not merely happen to equal a constant. A badge hardcoded to the catalog
+// total would have matched in "Full catalog" and failed only when scoped;
+// one that never updated would pass scoped and fail here.
+const fullBadge = await badgeCount();
+const fullTab = await tabCount();
+t('the badge follows the scope switch up to the full catalog',
+  fullBadge === full && fullBadge > scopedBadge,
+  `badge ${scopedBadge} → ${fullBadge}, table ${scoped} → ${full}`);
+t('the "All Parameters" tab follows the scope switch too',
+  fullTab === full && fullTab > scopedTab, `tab ${scopedTab} → ${fullTab}, table ${scoped} → ${full}`);
 
 // --- and back again -------------------------------------------------------
 await page.locator("button:has-text(\"This device's sensors\")").first().click();
