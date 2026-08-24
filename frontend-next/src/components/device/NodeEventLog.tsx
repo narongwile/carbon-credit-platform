@@ -173,10 +173,10 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
         <div>
           <h3 className="text-sm font-semibold text-white flex items-center gap-2">
             <Bell size={14} className="text-indigo-400" />
-            ISA-18.2 Alarm &amp; Event Management Log
+            Alarm &amp; Event Management Log
           </h3>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Real-time excursion logs with ISA-18.2 Action Priority, Stale Alarm tracking &amp; SOP Guidance
+            Real-time excursion logs with Action Priority, Stale Alarm tracking &amp; SOP Guidance
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -197,7 +197,7 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
           <div className="w-full max-w-md rounded-xl p-5 space-y-4" style={{ background: '#0d1117', border: '1px solid #3b82f6' }}>
             <div className="flex items-center gap-2 text-sm font-bold text-white">
               <PauseCircle size={16} className="text-blue-400" />
-              <span>ISA-18.2 Temporary Alarm Shelving</span>
+              <span>Temporary Alarm Shelving</span>
             </div>
             <p className="text-xs text-slate-300">
               Temporarily suppress audible/dispatch notifications for this nuisance alarm during maintenance.
@@ -216,7 +216,7 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                 </select>
               </div>
               <div>
-                <label className="text-slate-400 block mb-1">Audit Reason (Mandatory per ISA-18.2)</label>
+                <label className="text-slate-400 block mb-1">Audit Reason (Mandatory)</label>
                 <input
                   type="text"
                   placeholder="e.g. Radiator fan replacement, DGA manual sampling"
@@ -306,11 +306,11 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                         className="mt-1 flex items-center gap-1 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium"
                       >
                         <Info size={10} />
-                        <span>{isExpanded ? 'Hide SOP Guidance' : 'View ISA-18.2 SOP'}</span>
+                        <span>{isExpanded ? 'Hide SOP Guidance' : 'View SOP'}</span>
                         {isExpanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                       </button>
                     )}
-                    {/* Expandable ISA-18.2 SOP Card */}
+                    {/* Expandable SOP Card */}
                     {isExpanded && insight && (
                       <div className="mt-2 p-2.5 rounded-lg text-[11px] space-y-1.5 border border-indigo-500/30 bg-indigo-950/20 max-w-sm">
                         <div className="text-slate-400">
@@ -326,7 +326,7 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
                     )}
                   </td>
 
-                  {/* ISA-18.2 Priority */}
+                  {/* Priority */}
                   <td className="py-2.5 px-3 align-top whitespace-nowrap">
                     <span
                       className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
