@@ -155,7 +155,7 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
 
   const EVENT_HEADERS = ['Time', 'Parameter', 'Priority', 'Value', 'Unit', 'Threshold', 'Severity', 'Status']
   const eventRows = () => shownEvents.map((ev) => {
-    const insight = getAlarmInsight(ev.paramKey)
+    const insight = getAlarmInsight(ev.paramKey, domain)
     return [
       ev.time, ev.paramLabel + (ev.kind === 'rate' ? ' (rate)' : ''), insight?.priority || 'MEDIUM', ev.value, ev.unit, ev.threshold, ev.severity,
       (dbAcks[ev.id] || (ev as AlarmEvent & { acknowledgedBy?: string }).acknowledgedBy) ? 'Acknowledged' : 'Open',
@@ -272,7 +272,7 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
               const isShelved = !!shelvedMap[ev.id] && shelvedMap[ev.id].until > Date.now()
               const isStale = !acked && !isShelved && (Date.now() - ev.ts > 24 * 3600 * 1000)
               const sc = ev.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24'
-              const insight = getAlarmInsight(ev.paramKey)
+              const insight = getAlarmInsight(ev.paramKey, domain)
               const priority = insight?.priority || (ev.severity === 'CRITICAL' ? 'HIGH' : 'MEDIUM')
               const priorityColor = priority === 'EMERGENCY' ? '#c084fc' : priority === 'HIGH' ? '#f87171' : priority === 'MEDIUM' ? '#fbbf24' : '#94a3b8'
               const isExpanded = expandedSopId === ev.id

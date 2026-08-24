@@ -86,6 +86,10 @@ test_proofs_and_integrity:
     - node e2e/proofs/test-edge-alarm-surfaces.mjs
     # A parameter is named for what it measures, not for one of its alarm bands.
     - node e2e/proofs/test-schema-label-bands.mjs
+    # tempHigh/tempLow mean physically different things on carbonNode (fridge)
+    # vs bloodBox (blood cold-chain) — a bare-key insight lookup must not let
+    # one domain's wording leak onto the other's alarm.
+    - node e2e/proofs/test-alarm-insight-domain-scoping.mjs
     # Security controls: the EMQX ACL patterns must match every real fleet
     # topic and deny impersonation / cross-tenant reads.
     - node e2e/proofs/test-mqtt-acl.mjs

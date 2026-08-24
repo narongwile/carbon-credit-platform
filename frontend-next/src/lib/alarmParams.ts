@@ -389,20 +389,67 @@ export const ALARM_RISK_INSIGHTS: Record<string, AlarmRiskInsight> = {
     priority: 'EMERGENCY',
     action: 'Do not re-energize without visual inspection, insulation resistance test, and oil sample.',
   },
-  // Refrigerator Data Logger (carbonNode / refrigerationDataLogger)
+  // tempHigh/tempLow are canonical keys shared by BOTH carbonNode (fridge) and
+  // bloodBox (blood cold-chain) — see ALARM_SCHEMA.carbonNode/.bloodBox above,
+  // same key names, different thresholds. A bare entry here would apply to
+  // whichever domain asked first, regardless of which one it actually
+  // describes — refrigerator troubleshooting text ("check door seal gasket")
+  // on a blood-unit temperature excursion, or vice versa. Domain-qualified
+  // keys ('carbonNode:tempHigh', not 'tempHigh') let getAlarmInsight() resolve
+  // the right one; the bare tempHigh/tempLow below are a generic, domain-
+  // neutral fallback for a THIRD domain that reuses the name with no insight
+  // of its own — deliberately not worded for either fridge or blood, so it
+  // is honestly generic rather than accidentally specific to the wrong one.
   tempHigh: {
+    category: 'Temperature',
+    risk: 'Reading is above the configured upper threshold for this parameter',
+    condition: 'Value above the warning/critical limit configured for this device',
+    priority: 'MEDIUM',
+    action: 'Check the device dashboard for this parameter’s configured limits and recent trend.',
+  },
+  tempLow: {
+    category: 'Temperature',
+    risk: 'Reading is below the configured lower threshold for this parameter',
+    condition: 'Value below the warning/critical limit configured for this device',
+    priority: 'MEDIUM',
+    action: 'Check the device dashboard for this parameter’s configured limits and recent trend.',
+  },
+  // Refrigerator Data Logger (carbonNode / refrigerationDataLogger)
+  'carbonNode:tempHigh': {
     category: 'Refrigeration Thermal',
     risk: 'Loss of refrigerated storage preservation; thermal degradation of perishable inventory',
     condition: 'Internal Temp > 8°C (Warning) / > 10°C (Critical)',
     priority: 'HIGH',
     action: 'Check door seal gasket, verify evaporator fan operation, and inspect compressor cooling cycle.',
   },
-  tempLow: {
+  'carbonNode:tempLow': {
     category: 'Refrigeration Thermal',
     risk: 'Accidental freezing hazard for chilled inventory / ice formation on evaporator fins',
     condition: 'Internal Temp < 2°C (Warning) / < 0°C (Critical)',
     priority: 'HIGH',
     action: 'Check thermostat setpoint; verify defrost cycle timer and temperature sensor calibration.',
+  },
+  // BloodBOX Cold-Chain (bloodBox) — never had its own entry before; a
+  // bloodBox tempHigh/tempLow alarm fell through to oilTemp's transformer-oil
+  // text via getAlarmInsight()'s fuzzy 'includes(temp)' fallback, which is
+  // just as wrong as the carbonNode text this collision would otherwise
+  // replace it with. EMERGENCY (not HIGH, unlike carbonNode) because this is
+  // a product-safety excursion on stored blood units, not equipment wear —
+  // ISA-18.2 priority reflects response urgency, and losing a blood cold-chain
+  // is not equivalent to a compressor running hot.
+  'bloodBox:tempHigh': {
+    category: 'Cold-Chain Excursion',
+    risk: 'Blood product temperature excursion above the validated cold-chain range',
+    condition: 'Internal Temp > 6°C (Warning) / > 8°C (Critical)',
+    priority: 'EMERGENCY',
+    action: 'Isolate the affected unit(s) and follow your blood bank’s cold-chain excursion SOP before any further transit or storage decision.',
+  },
+  'bloodBox:tempLow': {
+    category: 'Cold-Chain Excursion',
+    risk: 'Risk of inadvertent freezing — blood product may be compromised',
+    condition: 'Internal Temp < 2°C (Warning) / < 1°C (Critical)',
+    priority: 'EMERGENCY',
+    action: 'Isolate the affected unit(s) and follow your blood bank’s cold-chain excursion SOP before any further transit or storage decision.',
   },
   door: {
     category: 'Enclosure & Access',
@@ -429,9 +476,18 @@ export const ALARM_RISK_INSIGHTS: Record<string, AlarmRiskInsight> = {
 
 /**
  * Resolves standard ISA-18.2 Risk Insight metadata for any parameter key.
+ *
+ * `domain` disambiguates keys two domains both use for physically different
+ * things (tempHigh/tempLow: carbonNode fridge vs. bloodBox cold-chain — see
+ * the comment above those entries). Checked first, ahead of the bare-key
+ * match, so a domain-qualified entry always wins over the generic fallback.
  */
-export function getAlarmInsight(paramKey: string): AlarmRiskInsight | undefined {
+export function getAlarmInsight(paramKey: string, domain?: SensorDomain): AlarmRiskInsight | undefined {
   if (!paramKey) return undefined
+  if (domain) {
+    const scoped = ALARM_RISK_INSIGHTS[`${domain}:${paramKey}`]
+    if (scoped) return scoped
+  }
   if (ALARM_RISK_INSIGHTS[paramKey]) return ALARM_RISK_INSIGHTS[paramKey]
   const lower = paramKey.toLowerCase()
   for (const [k, v] of Object.entries(ALARM_RISK_INSIGHTS)) {
