@@ -389,6 +389,42 @@ export const ALARM_RISK_INSIGHTS: Record<string, AlarmRiskInsight> = {
     priority: 'EMERGENCY',
     action: 'Do not re-energize without visual inspection, insulation resistance test, and oil sample.',
   },
+  // Refrigerator Data Logger (carbonNode / refrigerationDataLogger)
+  tempHigh: {
+    category: 'Refrigeration Thermal',
+    risk: 'Loss of refrigerated storage preservation; thermal degradation of perishable inventory',
+    condition: 'Internal Temp > 8°C (Warning) / > 10°C (Critical)',
+    priority: 'HIGH',
+    action: 'Check door seal gasket, verify evaporator fan operation, and inspect compressor cooling cycle.',
+  },
+  tempLow: {
+    category: 'Refrigeration Thermal',
+    risk: 'Accidental freezing hazard for chilled inventory / ice formation on evaporator fins',
+    condition: 'Internal Temp < 2°C (Warning) / < 0°C (Critical)',
+    priority: 'HIGH',
+    action: 'Check thermostat setpoint; verify defrost cycle timer and temperature sensor calibration.',
+  },
+  door: {
+    category: 'Enclosure & Access',
+    risk: 'Prolonged warm air ingress, humidity condensation, and continuous compressor overload',
+    condition: 'Door Open > 5 min (Warning) / > 15 min (Critical)',
+    priority: 'MEDIUM',
+    action: 'Ensure refrigerator door is fully shut; inspect magnetic gasket alignment and latch mechanism.',
+  },
+  door_state: {
+    category: 'Enclosure & Access',
+    risk: 'Door ajar or opened during active refrigeration cycle',
+    condition: 'Door Switch State Asserted (Open)',
+    priority: 'MEDIUM',
+    action: 'Close cabinet door immediately to preserve cold temperature envelope.',
+  },
+  current: {
+    category: 'Compressor Electrical',
+    risk: 'Compressor motor overcurrent from dirty condenser, low refrigerant charge, or bearing friction',
+    condition: 'Compressor Draw > 5A (Warning) / > 10A (Critical)',
+    priority: 'HIGH',
+    action: 'Clean condenser heat exchanger; verify refrigerant line pressure and motor run capacitor.',
+  },
 }
 
 /**
