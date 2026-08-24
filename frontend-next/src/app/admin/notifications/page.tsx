@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
-import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDept, eventProblems as mockEventProblems } from '@/lib/orgData'
+import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
 import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
 import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
@@ -13,7 +13,7 @@ import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig, EventProblem } from '@/types/org'
 import { getSession } from '@/lib/auth'
-import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, Check, ListChecks, Plus, Trash2 } from 'lucide-react'
+import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, ListChecks, Plus, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -74,40 +74,8 @@ export default function AlarmNotificationPage() {
     toast.success(`Applied to ${targets.length} ${DOMAIN_META[product].platform} node(s) across your org`)
   }
   const [scope, setScope] = useState<'all' | string>('all')
-  const [deptScope, setDeptScope] = useState<'all' | string>('all')
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
-  // Which events this user wants to be notified about. Loaded from their
-  // stored prefs below — it used to be seeded with three HARDCODED MOCK ids
-  // ('ev-temp-high', 'ev-door-open', 'ev-offline') that exist only in
-  // orgData.ts, never in a real event_problems table, and was never read back
-  // from the server at all. So every visit reset the selection to three ids
-  // that match nothing, and pressing Save wrote those ids over whatever the
-  // user had actually chosen last time.
-  const [events, setEvents] = useState<string[]>([])
-  // The rest of this user's prefs blob, kept so Save can write it back
-  // untouched — see the comment on save().
-  const [otherPrefs, setOtherPrefs] = useState<Record<string, unknown>>({})
-  const [prefsLoaded, setPrefsLoaded] = useState(false)
   const [saved, setSaved] = useState(false)
-
-  useEffect(() => {
-    const s = getSession()
-    // Demo mode has no stored prefs to read; these three ids are real entries
-    // in orgData's mock catalogue, so they still make a sensible pre-selection
-    // there. They are NOT seeded in live mode, where they match nothing.
-    if (!live) { setEvents(['ev-temp-high', 'ev-door-open', 'ev-offline']); setPrefsLoaded(true); return }
-    if (!s) { setPrefsLoaded(true); return }
-    let cancelled = false
-    api.getMyConfig(s.id).then((r) => {
-      if (cancelled) return
-      const prefs = (r?.prefs ?? {}) as Record<string, unknown>
-      const { notificationEvents, ...rest } = prefs
-      setEvents(Array.isArray(notificationEvents) ? (notificationEvents as string[]) : [])
-      setOtherPrefs(rest)
-      setPrefsLoaded(true)
-    })
-    return () => { cancelled = true }
-  }, [live])
 
   // Which channel set is being edited: '' = the ORG-level fallback, or a
   // department id for that department's own destinations. notify() delivers an
@@ -165,31 +133,18 @@ export default function AlarmNotificationPage() {
     api.eventProblems(orgId).then((rows) => {
       if (cancelled || !rows) return
       const grouped: Record<string, EventProblem[]> = {}
-      const orgWide: EventProblem[] = []
       for (const r of rows) {
-        // A NULL department_id means org-wide, not malformed. These used to be
-        // `continue`d away, so a problem defined for the whole organization
-        // was invisible in Event Selection below and could never be subscribed
-        // to — even though the backend deliberately returns them (epListFunc
-        // matches "department_id=? OR department_id IS NULL") and the viewer's
-        // own alarm pages already honour them.
-        if (!r.department_id) { orgWide.push({ id: r.id, label: r.label }); continue }
+        // A NULL department_id means org-wide — it belongs to no single
+        // department's catalog, so it has no row to edit here.
+        if (!r.department_id) continue
         ;(grouped[r.department_id] ??= []).push({ id: r.id, label: r.label, departmentId: r.department_id })
       }
       setDeptEvents(grouped)
-      setOrgWideEvents(orgWide)
     })
     return () => { cancelled = true }
   }, [live, orgId])
-  // Org-wide problems are kept apart from deptEvents: that map is keyed by
-  // department for the per-department editor, and an org-wide row belongs to
-  // no department — but it still has to appear in the selection list.
-  const [orgWideEvents, setOrgWideEvents] = useState<EventProblem[]>([])
   const [newEvent, setNewEvent] = useState('')
   const deptList = deptEvents[deptId] ?? []
-  // Event Selection & Edit (below) reuses the same real, per-department fetch
-  // — flattened — instead of the separate hardcoded mock list it read before.
-  const eventProblems = live ? [...orgWideEvents, ...Object.values(deptEvents).flat()] : mockEventProblems
   const addDeptEvent = async () => {
     if (!newEvent.trim() || !deptId) return
     const label = newEvent.trim()
@@ -227,7 +182,6 @@ export default function AlarmNotificationPage() {
   // offer severity routing.
   const setMinSeverity = (id: string, minSeverity: 'WARNING' | 'CRITICAL') =>
     setChannels((c) => c.map((x) => (x.id === id ? { ...x, minSeverity } : x)))
-  const toggleEvent = (id: string) => setEvents((e) => (e.includes(id) ? e.filter((x) => x !== id) : [...e, id]))
 
   const save = async () => {
     const user = getSession()
@@ -240,21 +194,10 @@ export default function AlarmNotificationPage() {
       toast.success('Notification preferences saved (demo — not persisted)')
       return
     }
-    if (!prefsLoaded) { toast.error('Still loading your preferences — try again in a moment'); return }
-    // putMyConfig REPLACES the whole prefs blob (mePutFunc does
-    // prefs=VALUES(prefs), not a merge), so posting a bare
-    // { notificationEvents } silently deleted every other preference this user
-    // had: their phone and name from the Profile panel, emailAlerts from
-    // Settings, and every per-device alert channel from MyAlertSettings.
-    // Spread the rest back in, the same way ProfilePanel and MyAlertSettings
-    // already do. The result was ALSO not checked, so a rejected write still
-    // reported success.
-    const prefsRes = await api.putMyConfig(user.id, { ...otherPrefs, notificationEvents: events })
-    if (!prefsRes) { toast.error('Failed to save your event selection'); return }
     // channelDept, so a department's destinations save to that department's
     // own rows instead of overwriting the org-level fallback.
     const res = await api.putOrgChannels(orgId, channels, channelDept || undefined)
-    if (!res) { toast.error('Event selection saved, but the delivery channels were not'); return }
+    if (!res) { toast.error('Could not save the delivery channels'); return }
     setSaved(true)
     toast.success(channelDept
       ? `Saved — destinations for ${orgDepts.find((d) => d.id === channelDept)?.name ?? 'this department'}`
@@ -272,7 +215,7 @@ export default function AlarmNotificationPage() {
         <span className="text-[10px] px-2.5 py-1 rounded-full font-bold mt-1" style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.12)' }}>ADMIN · ALL DEPARTMENTS</span>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 gap-5">
         {/* Alarm setting */}
         <div className="rounded-xl p-5 space-y-4" style={surface}>
           <div className="flex items-center gap-2">
@@ -280,30 +223,20 @@ export default function AlarmNotificationPage() {
             <h3 className="text-sm font-semibold text-white">Alarm Setting (high / low)</h3>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Target department</label>
-              <select value={deptScope} onChange={(e) => setDeptScope(e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-                <option value="all">All departments</option>
-                {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply to device</label>
-              <select value={scope} onChange={(e) => {
-                const val = e.target.value
-                setScope(val)
-                if (val !== 'all') {
-                  const dev = devices.find((d) => d.id === val)
-                  if (dev?.domain) setProduct(dev.domain)
-                }
-              }}
-                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-                <option value="all">All devices ({devices.length})</option>
-                {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
-              </select>
-            </div>
+          <div className="max-w-sm">
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply to device</label>
+            <select value={scope} onChange={(e) => {
+              const val = e.target.value
+              setScope(val)
+              if (val !== 'all') {
+                const dev = devices.find((d) => d.id === val)
+                if (dev?.domain) setProduct(dev.domain)
+              }
+            }}
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+              <option value="all">All devices ({devices.length})</option>
+              {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
+            </select>
           </div>
 
           {/* Domain-aware product profile */}
@@ -323,27 +256,8 @@ export default function AlarmNotificationPage() {
           <AlarmParamConfig domain={product} nodeId={scope !== 'all' ? scope : undefined} orgId={orgId} onApplyAll={applyRuleToOrg} />
         </div>
 
-        {/* Event selection & edit */}
-        <div className="rounded-xl p-5 space-y-3" style={surface}>
-          <h3 className="text-sm font-semibold text-white">Event Selection &amp; Edit</h3>
-          <p className="text-[11px] text-slate-500">Events that raise an alarm / appear in the viewer&apos;s event dropdown.</p>
-          <div className="space-y-1.5">
-            {eventProblems.map((ev) => {
-              const on = events.includes(ev.id)
-              return (
-                <button key={ev.id} onClick={() => toggleEvent(ev.id)}
-                  className="w-full flex items-center justify-between p-2.5 rounded-lg text-left transition-all"
-                  style={{ background: '#0a0e1a', border: `1px solid ${on ? '#6366f1' : '#1e2433'}` }}>
-                  <span className="text-sm text-slate-200">{ev.label}</span>
-                  {on ? <Check size={16} className="text-indigo-400" /> : <span className="text-xs text-slate-600">off</span>}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
         {/* Notification channels */}
-        <div className="rounded-xl p-5 space-y-3 lg:col-span-2" style={surface}>
+        <div className="rounded-xl p-5 space-y-3" style={surface}>
           <h3 className="text-sm font-semibold text-white">Notification Setting</h3>
           <p className="text-[11px] text-slate-500">Choose how alarms are delivered. Enable a channel and provide its target.</p>
 
@@ -403,12 +317,10 @@ export default function AlarmNotificationPage() {
         </div>
 
         {/* Enterprise Email Alarm Template & Custom SOP Configurator */}
-        <div className="lg:col-span-2">
-          <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
-        </div>
+        <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
 
         {/* Create Event in each department */}
-        <div className="rounded-xl p-5 space-y-3 lg:col-span-2" style={surface}>
+        <div className="rounded-xl p-5 space-y-3" style={surface}>
           <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ListChecks size={15} className="text-indigo-400" /> Create Event in each department</h3>
           <p className="text-[11px] text-slate-500">Per-department event-problem catalog — populates the viewer&apos;s event-log dropdown for users in that department.</p>
           <div className="flex flex-wrap items-center gap-2">
