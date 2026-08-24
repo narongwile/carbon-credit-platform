@@ -1057,6 +1057,32 @@ global.set('notifyUserActivated', async function(pool, orgId, user, deptNames){
   }
 });
 
+// Domain -> platform id, mirroring frontend-next/src/lib/entitlements.ts's
+// DOMAIN_TO_PLATFORM exactly. org_entitlements.platform stores the platform
+// id (e.g. 'eternityTransformers'), not the domain string alarm_rules/nodes
+// key on (e.g. 'transformer') — the two only look alike for bloodBox/automobile.
+const __DOMAIN_TO_PLATFORM={transformer:'eternityTransformers',carbonNode:'refrigerationDataLogger',bloodBox:'bloodBox',automobile:'automobile'};
+// Was the org actually SOLD this product? guard()'s 'admin' policy already
+// proves org membership + role, but never entitlement — an admin role passes
+// straight through guard()'s node-scoped product_access/department/site
+// checks too (see guard()'s 'if(claims.role!=='admin')' branch), so nothing
+// upstream of this stops an admin from writing (and apply-to-fleet-ing)
+// alarm thresholds for a domain their org never licensed. The org-scoped
+// default endpoints (orgRuleFunc/orgRuleGetFunc) are the ones actually
+// reachable with no per-device anchor at all — unlike the per-node rule
+// endpoints, whose domain always comes from an existing nodes row, not a
+// caller-supplied string — so that is where this gate is applied. Superadmin
+// bypasses: they are the one who GRANTS entitlements (entPutFunc, policy
+// 'super'), the same exemption guard() already gives them everywhere else.
+global.set('domainEntitled', async function(claims, orgId, domain){
+  if (claims && claims.role === 'superadmin') return true;
+  const platform = __DOMAIN_TO_PLATFORM[domain];
+  if (!platform) return true; // unrecognized domain string: not this gate's job to reject it
+  const pool = global.get('pool'); // org_entitlements is control-plane only, never per-tenant
+  const [r] = await pool.query("SELECT 1 FROM org_entitlements WHERE org_id=? AND platform=? LIMIT 1", [orgId, platform]);
+  return r.length > 0;
+});
+
 node.warn('ONEOPS Node-RED backend: pool + engine + auth guard ready');
 `
 
@@ -2240,6 +2266,7 @@ if(!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule require
 const orgRuleFunc = CORS + `const orgId=msg.req.params.orgId; const pool=global.get('resolvePool')(orgId); const {rule,updatedBy}=msg.payload||{};
 if(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule.domain required'};return msg;}
 (async()=>{
+  if(!(await global.get('domainEntitled')(msg.auth,orgId,rule.domain))){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is not licensed for '+rule.domain};node.send(msg);return;}
   const debounceJson = rule.debounceJson ? JSON.stringify(rule.debounceJson) : null;
   const ruleJson = JSON.stringify({...rule, debounceJson:undefined});
   // Persist the org+domain default first — this survives even when the org has no
@@ -2265,10 +2292,11 @@ if(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error
 // numbers again with no indication their real values were stored and live.
 // Returning null (not 404) for "never configured" so the caller can tell
 // "no override, showing defaults" from an error.
-const orgRuleGetFunc = CORS + `const orgId=msg.req.params.orgId; const pool=global.get('resolvePool')(orgId);
+const orgRuleGetFunc = CORS + `const orgId=msg.req.params.orgId; const pool=global.get('resolvePool')(orgId); const au=msg.auth||{};
 const domain=(msg.req.query&&msg.req.query.domain)||'';
 if(!domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'domain required'};return msg;}
 (async()=>{
+  if(!(await global.get('domainEntitled')(au,orgId,domain))){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is not licensed for '+domain};node.send(msg);return;}
   let r=[];
   try{ const[x]=await pool.query("SELECT rule_json,debounce_json,updated_by,updated_at FROM org_domain_rules WHERE org_id=? AND domain=?",[orgId,domain]); r=x; }
   catch(e){ if(String(e&&e.message||'').indexOf('org_domain_rules')<0) throw e; }
