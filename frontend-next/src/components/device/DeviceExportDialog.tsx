@@ -99,7 +99,13 @@ export default function DeviceExportDialog({
     const doc = new jsPDF()
     doc.setFontSize(16); doc.setTextColor(99, 102, 241)
     doc.text(`${orgName} — Device Export`, 14, 18)
-    doc.setFontSize(10); doc.setTextColor(90, 90, 90)
+    // slate-600, not the previous (90,90,90)/(140,140,140): both sit on this
+    // page's white background (there is no dark banner here, unlike the
+    // multi-domain report), and (140,140,140) in particular measures 3.36:1
+    // — under the 4.5:1 AA floor for normal text, genuinely hard to read.
+    // slate-600 is 7.58:1 and is what the multi-domain report (§iiotReportGenerator)
+    // now uses for the same role, so both PDFs read consistently.
+    doc.setFontSize(10); doc.setTextColor(71, 85, 105)
     doc.text(`Device: ${deviceName}`, 14, 27)
     doc.text(`Window: ${from} → ${to} (${DISPLAY_TZ_LABEL})`, 14, 33)
     doc.text(`Readings: ${(rows ?? []).length}`, 14, 39)
@@ -112,7 +118,7 @@ export default function DeviceExportDialog({
         headStyles: { fillColor: [99, 102, 241] },
       })
     } else {
-      doc.setTextColor(140, 140, 140)
+      doc.setTextColor(71, 85, 105)
       doc.text('No readings in this window.', 14, 50)
     }
     return doc.output('blob')

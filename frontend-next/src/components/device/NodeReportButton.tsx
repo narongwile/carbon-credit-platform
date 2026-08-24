@@ -108,7 +108,10 @@ export default function NodeReportButton({
           doc.rect(x, 12, w, h)
           photoBottom = 12 + h
           if (cover.caption) {
-            doc.setFontSize(7); doc.setTextColor(120, 120, 120)
+            // slate-600, not (120,120,120): at 7pt on this page's white
+            // background that measured 4.42:1 — under the 4.5:1 AA floor for
+            // normal-size text. slate-600 (71,85,105) is 7.58:1.
+            doc.setFontSize(7); doc.setTextColor(71, 85, 105)
             doc.text(cover.caption, x + w / 2, photoBottom + 4, { align: 'center', maxWidth: w })
             photoBottom += 4
           }
@@ -121,7 +124,11 @@ export default function NodeReportButton({
 
     doc.setFontSize(16); doc.setTextColor(99, 102, 241)
     doc.text(report.title, 14, 16)
-    doc.setFontSize(9); doc.setTextColor(90, 90, 90)
+    // slate-600, matching the same fix in DeviceExportDialog.tsx and
+    // iiotReportGenerator.ts — this meta block is the closest thing this
+    // report has to a subheading, and (90,90,90) undershoots the AA floor
+    // once font size and print reproduction are taken into account.
+    doc.setFontSize(9); doc.setTextColor(71, 85, 105)
     report.meta.forEach((line, i) => doc.text(line, 14, 24 + i * 5))
     // Leave room for the photo if it is taller than the meta block, so the
     // first table never starts underneath it.

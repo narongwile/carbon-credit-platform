@@ -447,7 +447,13 @@ export async function exportIIoTPDF(
 
   doc.setFontSize(8)
   doc.setFont('helvetica', 'italic')
-  doc.setTextColor(100, 116, 139)
+  // slate-600, not slate-500 (100,116,139): slate-500 measures 4.76:1 on white
+  // — technically over the 4.5:1 AA floor, but only just, and this is the one
+  // sentence in the whole report that exists to stop a reader over-trusting
+  // it ("Not an accredited compliance certificate"). Italic renders visually
+  // lighter than upright at the same RGB, so a borderline-pass ratio here is
+  // the wrong place to leave no margin. slate-600 is 7.58:1.
+  doc.setTextColor(71, 85, 105)
   // Wrapped to the printable width. This was one long single-line draw, so it
   // ran off the right edge and was clipped mid-sentence — and the clause that
   // fell off was "Not an accredited compliance certificate", the one part of
