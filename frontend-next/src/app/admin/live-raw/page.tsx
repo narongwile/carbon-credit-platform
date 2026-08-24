@@ -1,10 +1,23 @@
 'use client'
 
 // ---------------------------------------------------------------------------
-// Live Raw Telemetry — shows EVERY key/value an online device publishes, live.
-// The domain dashboards render curated fields (temp, hydrogen, …); this page is
-// the go-live verification surface: whatever an ESP32 puts in its `values`
-// object shows up here verbatim, no allow-list.
+// Live Raw Telemetry — every key/value an online device publishes, no
+// allow-list. The domain dashboards render curated fields (temp, hydrogen,
+// …); this page is the go-live verification surface for whatever an ESP32
+// actually puts in its `values` object.
+//
+// That is only exactly true for a PENDING device. worker/main.go and the
+// Node-RED normalize step both rewrite raw wire keys to canonical param keys
+// (Tamb -> ambientTemp, H2 -> hydrogen, ...) BEFORE anything is stored, and
+// the raw key is never persisted for an APPROVED device — /api/fleet/:id/
+// latest can only ever return what's in `readings`, which is post-alias.
+// touchPending() is the one path that still writes the pre-alias payload
+// (device_presence.last_sample, before a device has an org and is auto-
+// registered as pending) — so this page shows raw keys for a pending row and
+// canonical keys for an active one, the same sensor value under a different
+// name depending on approval state. The alias panel below exists because of
+// exactly that: it's the only way left to answer "which of my ESP's own
+// field names is THIS row" once a device is approved.
 //
 // Two data sources merged, so it works even before the WS cert is trusted:
 //   • HTTP baseline — polls /api/fleet (device list) + /api/fleet/:id/latest
@@ -12,11 +25,11 @@
 //   • WS overlay — subscribeTelemetry() pushes real-time frames (frame.values)
 //     the moment the browser can reach wss:///ws/telemetry.
 // ---------------------------------------------------------------------------
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { subscribeTelemetry, subscribeConnection } from '@/lib/telemetryBus'
-import { Radio, RefreshCw, Wifi, WifiOff, Database } from 'lucide-react'
+import { Radio, RefreshCw, Wifi, WifiOff, Database, BookOpen, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import { fmtHM } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -40,6 +53,37 @@ export default function LiveRawTelemetryPage() {
   const [lastPoll, setLastPoll] = useState<string>('—')
   const rowsRef = useRef(rows)
   rowsRef.current = rows
+
+  // Raw wire key -> canonical param key, fetched once from the same table the
+  // ingest pipeline normalizes with — see the header comment above for why
+  // this page needs it at all.
+  const [aliases, setAliases] = useState<Record<string, string> | null>(null)
+  const [showAliases, setShowAliases] = useState(false)
+  const [aliasSearch, setAliasSearch] = useState('')
+  useEffect(() => {
+    if (!live) return
+    let cancelled = false
+    api.telemetryAliases().then((r) => { if (!cancelled && r) setAliases(r) })
+    return () => { cancelled = true }
+  }, [live])
+
+  // Grouped the useful direction round: canonical key -> every raw spelling
+  // that maps to it, since a firmware dev has the raw key in hand and wants
+  // to find the canonical one it becomes, not the other way around.
+  const aliasesByCanonical = useMemo(() => {
+    if (!aliases) return []
+    const grouped = new Map<string, string[]>()
+    for (const [raw, canonical] of Object.entries(aliases)) {
+      const list = grouped.get(canonical) ?? []
+      list.push(raw)
+      grouped.set(canonical, list)
+    }
+    const q = aliasSearch.trim().toLowerCase()
+    return Array.from(grouped.entries())
+      .map(([canonical, raws]) => ({ canonical, raws: raws.sort() }))
+      .filter(({ canonical, raws }) => !q || canonical.toLowerCase().includes(q) || raws.some((r) => r.toLowerCase().includes(q)))
+      .sort((a, b) => a.canonical.localeCompare(b.canonical))
+  }, [aliases, aliasSearch])
 
   // HTTP baseline: device list + every stored value per device.
   const poll = useCallback(async () => {
@@ -147,8 +191,64 @@ export default function LiveRawTelemetryPage() {
           <button onClick={poll} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-slate-300 hover:text-white" style={inset}>
             <RefreshCw size={12} /> Refresh
           </button>
+          <button onClick={() => setShowAliases((v) => !v)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-slate-300 hover:text-white" style={inset}
+            title="Which raw ESP32 field name became which key you see below">
+            <BookOpen size={12} /> Wire Key Reference {showAliases ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
         </div>
       </div>
+
+      {showAliases && (
+        <div className="rounded-xl p-4" style={surface}>
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Wire Key Reference</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Canonical key shown below (in a device card, SENSOR READINGS, or an alarm) — and every raw ESP32 field
+                name the ingest pipeline (worker + Node-RED) rewrites to it before storage. A device row below shows the
+                raw key only while it is still <span className="text-amber-400">PENDING</span>; once approved, the same
+                sensor value is stored (and shown) under the canonical key instead.
+              </p>
+            </div>
+            <div className="relative w-56 shrink-0">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                placeholder="Search either column..."
+                value={aliasSearch}
+                onChange={(e) => setAliasSearch(e.target.value)}
+                className="w-full pl-7 pr-2.5 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                style={inset}
+              />
+            </div>
+          </div>
+          {aliases === null ? (
+            <p className="text-xs text-slate-600 py-2">Loading…</p>
+          ) : aliasesByCanonical.length === 0 ? (
+            <p className="text-xs text-slate-600 py-2">No matches.</p>
+          ) : (
+            <div className="max-h-80 overflow-y-auto rounded-lg" style={inset}>
+              <table className="w-full text-xs">
+                <thead className="sticky top-0" style={{ background: '#0a0e1a' }}>
+                  <tr>
+                    <th className="text-left py-2 px-3 text-slate-500 font-medium w-1/3">Canonical key</th>
+                    <th className="text-left py-2 px-3 text-slate-500 font-medium">Raw ESP32 field names</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {aliasesByCanonical.map(({ canonical, raws }) => (
+                    <tr key={canonical} className="border-t" style={{ borderColor: '#1e2433' }}>
+                      <td className="py-2 px-3 font-mono text-indigo-300 align-top">{canonical}</td>
+                      <td className="py-2 px-3 font-mono text-slate-300 align-top">{raws.join(', ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {!live ? (
         <div className="rounded-xl p-8 text-center" style={surface}>

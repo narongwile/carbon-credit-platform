@@ -1681,9 +1681,32 @@ const __RISK_MAP = {
   RHbox: { cat: 'Enclosure', critRisk: 'Critical cabinet humidity (>80%)', warnRisk: 'Control box humidity elevated' },
   externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },
   online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },
+  // tempHigh/tempLow are canonical keys shared by BOTH carbonNode (fridge) and
+  // bloodBox (blood cold-chain) — same collision as frontend-next/src/lib/
+  // alarmParams.ts's ALARM_RISK_INSIGHTS (see that file's comment for the
+  // full rationale). Domain-qualified keys below let __riskFor() resolve the
+  // right one; these bare entries are a neutral, domain-generic fallback for
+  // a THIRD domain that reuses the name with no risk text of its own.
+  tempHigh: { cat: 'Temperature', critRisk: 'Reading above the configured critical limit', warnRisk: 'Reading above the configured warning limit' },
+  tempLow: { cat: 'Temperature', critRisk: 'Reading below the configured critical limit', warnRisk: 'Reading below the configured warning limit' },
+  'carbonNode:tempHigh': { cat: 'Refrigeration Thermal', critRisk: 'Internal temp critical — loss of refrigerated preservation (>10°C)', warnRisk: 'Internal temp high — check door seal/evaporator fan (>8°C)' },
+  'carbonNode:tempLow': { cat: 'Refrigeration Thermal', critRisk: 'Accidental freezing risk — ice formation on evaporator (<0°C)', warnRisk: 'Internal temp low — check thermostat/defrost cycle (<2°C)' },
+  // EMERGENCY-worded, not just HIGH like carbonNode: this is a product-safety
+  // excursion on stored blood units, not equipment wear.
+  'bloodBox:tempHigh': { cat: 'Cold-Chain Excursion', critRisk: 'Blood product cold-chain excursion — isolate unit(s) and follow your blood bank\\'s SOP (>8°C)', warnRisk: 'Blood product temperature approaching the excursion limit (>6°C)' },
+  'bloodBox:tempLow': { cat: 'Cold-Chain Excursion', critRisk: 'Blood product freezing risk — isolate unit(s) and follow your blood bank\\'s SOP (<1°C)', warnRisk: 'Blood product temperature approaching the freeze limit (<2°C)' },
+  door: { cat: 'Enclosure & Access', critRisk: 'Door open critical — prolonged warm air ingress and compressor overload (>15 min)', warnRisk: 'Door open — verify seal/latch (>5 min)' },
+  current: { cat: 'Compressor Electrical', critRisk: 'Compressor overcurrent — check condenser/refrigerant charge (>10A)', warnRisk: 'Compressor draw elevated — check condenser (>5A)' },
 };
 
-const __info = __RISK_MAP[e.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };
+// domain disambiguates keys two domains both use for physically different
+// things (tempHigh/tempLow) — checked first, ahead of the bare-key entry, so
+// a domain-qualified entry always wins over the generic fallback. Falls back
+// to the generic "Parameter limit breached" only for a key __RISK_MAP has no
+// entry for at all (bare or scoped).
+const __riskFor = (key, domain) => (domain && __RISK_MAP[domain + ':' + key]) || __RISK_MAP[key] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };
+
+const __info = __riskFor(e.paramKey, e.domain);
 const __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;
 const __catText = __info.cat;
 const topSeverity = alarms.some(a => a.severity === 'CRITICAL') ? 'CRITICAL' : 'WARNING';
@@ -1696,7 +1719,7 @@ let text = '\\n' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? 'Multiple
 text += '⚡️ Device: ' + e.nodeId + '\\n\\n';
 
 alarms.forEach(a => {
-  const info = __RISK_MAP[a.paramKey] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };
+  const info = __riskFor(a.paramKey, a.domain);
   const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
   const isOffline = a.kind === 'offline';
   const valLine = isOffline ? 'No telemetry received' : (a.value + (a.unit||''));
@@ -1719,10 +1742,10 @@ const __linkFor = (role) => {
 // LINE Flex bubble
 const __flex = (link) => ({ type:'flex', altText: subject, contents: { type:'bubble',
   header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[
-    { type:'text', text: topSeverity + ' · ' + (isMulti ? 'Multiple Alarms' : (__RISK_MAP[e.paramKey]?.cat || 'Telemetry')), color:'#FFFFFF', size:'xs', weight:'bold' },
+    { type:'text', text: topSeverity + ' · ' + (isMulti ? 'Multiple Alarms' : __riskFor(e.paramKey, e.domain).cat), color:'#FFFFFF', size:'xs', weight:'bold' },
     { type:'text', text: isMulti ? alarms.length + ' Active Alarms' : String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },
   body: { type:'box', layout:'vertical', spacing:'md', contents: alarms.map(a => {
-    const info = __RISK_MAP[a.paramKey] || { cat: 'Telemetry', critRisk: 'Breach', warnRisk: 'Warning' };
+    const info = __riskFor(a.paramKey, a.domain);
     const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
     return { type:'box', layout:'vertical', spacing:'sm', contents:[
       { type:'text', text: a.paramLabel||'Alarm', weight:'bold', size:'sm' },
@@ -1738,7 +1761,7 @@ const __flex = (link) => ({ type:'flex', altText: subject, contents: { type:'bub
 const __tgText = '<b>' + __sevEmoji + ' [' + __esc(topSeverity) + '] ' + (isMulti ? alarms.length + ' Alarms' : __esc(e.paramLabel || 'Alarm')) + '</b>\\n'
   + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n\\n'
   + alarms.map(a => {
-      const info = __RISK_MAP[a.paramKey] || { warnRisk: 'Warning' };
+      const info = __riskFor(a.paramKey, a.domain);
       const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
       return '🏷 <b>' + __esc(a.paramLabel || 'Alarm') + '</b> (' + __esc(a.severity) + ')\\n'
       + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')\\n'
@@ -1751,7 +1774,7 @@ const __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: '
 // Google Chat
 const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', card: {
   header: { title: (topSeverity==='CRITICAL'?'🔴 ':'🟠 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },
-  sections: [{ widgets: alarms.map(a => ({ decoratedText: { topLabel: a.paramLabel||'Alarm', text: String(a.value||'Offline') + ' · ' + (__RISK_MAP[a.paramKey]?.warnRisk||'Warning') } })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])
+  sections: [{ widgets: alarms.map(a => ({ decoratedText: { topLabel: a.paramLabel||'Alarm', text: String(a.value||'Offline') + ' · ' + __riskFor(a.paramKey, a.domain).warnRisk } })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])
   }] } }] });
 
 (async () => {
@@ -1783,7 +1806,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       org_id: e.orgId,
       org_name: orgName,
       severity: topSeverity,
-      category: isMulti ? 'Multiple Alarms' : (__RISK_MAP[e.paramKey]?.cat || 'Telemetry'),
+      category: isMulti ? 'Multiple Alarms' : __riskFor(e.paramKey, e.domain).cat,
       param_label: isMulti ? 'Multiple Alarms' : e.paramLabel,
       sevEmoji: __sevEmoji,
     };
@@ -1805,7 +1828,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       + '<div style=\"margin-bottom: 16px; color: #94a3b8; font-size: 14px;\">Device: <strong style=\"color:#fff; font-family:monospace;\">' + __esc(e.nodeId) + '</strong></div>'
       
       + alarms.map(a => {
-          const info = __RISK_MAP[a.paramKey] || { warnRisk: 'Warning' };
+          const info = __riskFor(a.paramKey, a.domain);
           const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
           const aColor = a.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';
           return '<div style=\"margin-bottom: 16px; padding: 12px; background-color: #111827; border-left: 4px solid '+aColor+'; border-radius: 4px;\">'
@@ -1901,19 +1924,24 @@ return null;`
 
 
 
-const normalizeFunc = `
-// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);
-// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress);
-// Out4 = edge alarms (→ edge_alarm_log: P/alarm/{sid} with edge:true).
-// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |
-//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.
-// dga_h2_ppm is what firmware in the field actually publishes; hydrogen_ppm is
-// accepted too so either spelling maps to the canonical 'hydrogen' param.
+// Raw device wire key -> canonical param key. Single source of truth for
+// normalizeFunc's own MAP below AND for GET /api/telemetry/aliases (see
+// telemetryAliasesFunc) — both are generated FROM this object via
+// JSON.stringify rather than hand-copied, so they cannot drift from each
+// other the way normalizeFunc's MAP has already drifted from the deployed
+// ConfigMap (a real, repeated incident this repo has hit more than once:
+// the generator changes, nobody re-runs infra/scripts/sync-nodered-flow.sh,
+// and the aliases silently aren't live). It is still a SEPARATE copy from
+// worker/main.go's paramMap (Go can't import this file) — that one is
+// still hand-synced; see paramMap's own comment there.
+//
+// dga_h2_ppm is what firmware in the field actually publishes; hydrogen_ppm
+// is accepted too so either spelling maps to the canonical 'hydrogen' param.
 // Oiltemp/H2/OilMoisture/Tamb are the real ETERNITY transformer's actual wire
-// spellings (confirmed against a live MQTT payload) — kept in sync with
-// paramMap in worker/main.go. Tbox/RHamb/RHbox are deliberately NOT mapped:
-// no existing canonical param or defensible threshold exists for them yet.
-const MAP = { oil_temp_c:'oilTemp', oil_temp:'oilTemp', oiltemp:'oilTemp', Oiltemp:'oilTemp', ambient_temp_c:'ambientTemp', ambient_temp:'ambientTemp', Tamb:'ambientTemp',
+// spellings (confirmed against a live MQTT payload). Tbox/RHamb/RHbox are
+// deliberately NOT mapped: no existing canonical param or defensible
+// threshold exists for them yet.
+const TELEMETRY_ALIAS_MAP = { oil_temp_c:'oilTemp', oil_temp:'oilTemp', oiltemp:'oilTemp', Oiltemp:'oilTemp', ambient_temp_c:'ambientTemp', ambient_temp:'ambientTemp', Tamb:'ambientTemp',
   winding_temp_c:'windingTemp',
   dga_h2_ppm:'hydrogen', hydrogen_ppm:'hydrogen', H2:'hydrogen',
   moisture_ppm:'moisture', oil_moisture:'moisture', oil_moisture_ppm:'moisture', OilMoisture:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
@@ -1932,6 +1960,17 @@ const MAP = { oil_temp_c:'oilTemp', oil_temp:'oilTemp', oiltemp:'oilTemp', Oilte
   I3pavg:'CurrentAVG', P3p:'ActivepowerTotal', VA3p:'ApparentpowerTotal',
   VAR3p:'ReactivepowerTotal', PF3p:'PFTotal',
   V3pab:'VoltAB', V3pbc:'VoltBC', V3pca:'VoltCA', kWh3p:'kWh' };
+
+const normalizeFunc = `
+// Out1 = readings (→ ingest); Out2 = presence (→ device_presence);
+// Out3 = device logs (→ device_logs: P/diag/log + P/ota/progress);
+// Out4 = edge alarms (→ edge_alarm_log: P/alarm/{sid} with edge:true).
+// Accepts: {nodeId,values,ts} | {device_id,channel,value,ts} (spec §6) |
+//          status {state} & heartbeat {rssi/uptime/heap} | legacy topic tail.
+// MAP is generated from TELEMETRY_ALIAS_MAP in the generator source — see
+// that constant's comment for the full rationale and where else it's used;
+// this deployed copy is JSON, not the hand-commented literal, on purpose.
+const MAP = ${JSON.stringify(TELEMETRY_ALIAS_MAP)};
 const p = msg.payload;
 const topo = (msg.topic||'').split('/');
 const fromTopic = (n) => topo.length>=n ? topo[topo.length-n] : undefined;
@@ -1972,6 +2011,16 @@ for (const k of Object.keys(raw)) { const v = raw[k]; const q = rawQ[k]||'good';
 // broadcaster can fan a frame out only to that org's authenticated sockets.
 return [{ payload: { nodeId, values, qual, ts, orgId: p&&p.orgId, departmentId: p&&p.departmentId } }, null, null, null];
 `
+
+// GET /api/telemetry/aliases — the raw wire key -> canonical param key table,
+// for a firmware developer looking at admin/live-raw: that page shows canonical
+// keys once a device is approved (readings.param_key is written post-alias,
+// see normalizeFunc/worker's canonicalParam — the raw key is never persisted),
+// so without this there was no way to tell which live-raw row an ESP's own
+// field name maps to, short of reading this generator's source. Static data,
+// baked in at generation time from the same TELEMETRY_ALIAS_MAP normalizeFunc
+// uses — see that constant's comment.
+const telemetryAliasesFunc = CORS + `msg.headers=__CORS; msg.payload=${JSON.stringify(TELEMETRY_ALIAS_MAP)}; return msg;`
 
 // Presence upsert: heartbeat/status keep device_presence fresh (last_seen, online).
 // Also detects transport switches (wifi↔4g↔lora) and logs them to transport_events.
@@ -6477,6 +6526,9 @@ const flow = [
   // Generic fleet read API (all products): list + latest readings
   ...endpoint('fleetlatest', 'get', '/api/fleet/:id/latest', fleetLatestFunc, 'node'),
   ...endpoint('fleetlist', 'get', '/api/fleet', fleetListFunc),
+  // Raw wire key -> canonical param key reference table (admin/live-raw's alias
+  // panel). Static, no per-org data — 'auth' (any signed-in user) like fleetlist.
+  ...endpoint('telemetryaliases', 'get', '/api/telemetry/aliases', telemetryAliasesFunc),
 
   // Scheduled-report CRUD (cron runs them; the scheduler lives in this flow)
   ...endpoint('rptlist', 'get', '/api/reports/schedules', rptListFunc),

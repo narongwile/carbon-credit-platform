@@ -542,6 +542,11 @@ export const api = {
     req<FleetNode[]>(`/api/fleet?orgId=${encodeURIComponent(orgId)}${domain ? `&domain=${encodeURIComponent(domain)}` : ''}`),
   latest: (nodeId: string) =>
     req<NodeLatest>(`/api/fleet/${nodeId}/latest`),
+  // Raw wire key -> canonical param key, straight from the same table the
+  // ingest pipeline normalizes with (backend/node-red's TELEMETRY_ALIAS_MAP) —
+  // not a hand-copied constant here, so it can't drift from what the pipeline
+  // actually does. See admin/live-raw's alias panel.
+  telemetryAliases: () => req<Record<string, string>>('/api/telemetry/aliases'),
 
   // Downlink (backend → device). config publishes retained; body empty = sync
   // the saved alarm rule down to the device.

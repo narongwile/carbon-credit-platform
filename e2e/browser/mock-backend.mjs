@@ -154,6 +154,16 @@ const server = http.createServer(async (req, res) => {
       lastReadingAt: new Date(Date.now() - 4000).toISOString(),
     });
   }
+  // Mirrors backend/node-red/generate-nodered-backend.mjs's TELEMETRY_ALIAS_MAP
+  // (subset — enough to exercise the live-raw alias panel's grouping/search).
+  if (req.method === 'GET' && url.pathname === '/api/telemetry/aliases') {
+    return send(res, 200, {
+      oil_temp_c: 'oilTemp', oil_temp: 'oilTemp', oiltemp: 'oilTemp', Oiltemp: 'oilTemp',
+      ambient_temp_c: 'ambientTemp', ambient_temp: 'ambientTemp', Tamb: 'ambientTemp',
+      dga_h2_ppm: 'hydrogen', hydrogen_ppm: 'hydrogen', H2: 'hydrogen',
+      moisture_ppm: 'moisture', oil_moisture: 'moisture', oil_moisture_ppm: 'moisture', OilMoisture: 'moisture',
+    });
+  }
   if (req.method === 'GET' && url.pathname.match(/^\/api\/orgs\/[^/]+\/sites$/)) {
     return send(res, 200, { sites: state.sites, floors: [] });
   }

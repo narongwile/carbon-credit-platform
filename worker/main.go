@@ -1414,7 +1414,7 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 				}
 				d := delta * float64(rateWin) / float64(elapsed)
 				if d >= p.Rate.Warn {
-					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, "WARNING", "rate", val, p.Rate.Warn)
+					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, "WARNING", "rate", val, p.Rate.Warn, rule.Domain)
 				}
 				valCopy := val
 				ps.PrevValue = &valCopy
@@ -1459,7 +1459,7 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 					if lvl == "CRITICAL" {
 						thresh = p.Critical
 					}
-					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, lvl, "threshold", val, thresh)
+					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, lvl, "threshold", val, thresh, rule.Domain)
 					ps.LastRaisedAt = ts
 				}
 				ps.ActiveLevel = lvl
@@ -1473,7 +1473,7 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 	}
 }
 
-func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64) {
+func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64, domain string) {
 	// Deterministic id (matches Node-RED) → INSERT IGNORE is idempotent.
 	id := fmt.Sprintf("ev-%s-%s-%d-%s", t.NodeID, p.Key, ts.UnixMilli(), kind)
 
@@ -1493,7 +1493,12 @@ func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t Tele
 		log.Printf("Failed to insert alarm event: %v", err)
 	}
 
-	// Publish WebSocket Enrichment Event
+	// Publish WebSocket Enrichment Event. domain lets notifyFunc (Node-RED)
+	// pick a domain-specific risk description — carbonNode and bloodBox both
+	// use the canonical param keys tempHigh/tempLow/door/current, so without
+	// it an alarm email/LINE message for either would have to pick one
+	// domain's wording for both, or (as it was before this field existed)
+	// fall back to a generic "Parameter limit breached" for both, silently.
 	ev := map[string]interface{}{
 		"id":           id,
 		"nodeId":       t.NodeID,
@@ -1507,6 +1512,7 @@ func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t Tele
 		"threshold":    thresh,
 		"unit":         p.Unit,
 		"ts":           ts.UnixMilli(),
+		"domain":       domain,
 	}
 
 	evBytes, _ := json.Marshal(ev)

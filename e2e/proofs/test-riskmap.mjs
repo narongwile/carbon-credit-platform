@@ -16,9 +16,9 @@ const globals = {
   notifyConfig: async () => ({}),
 };
 
-async function call(paramKey, severity) {
+async function call(paramKey, severity, domain) {
   sentSubject = null; sentText = null;
-  const msg = { payload: { nodeId: 'TR-1', orgId: 'org-1', departmentId: null, paramKey, paramLabel: paramKey === 'VoltAN' ? 'Phase A-N Voltage — Over-voltage' : paramKey, severity, kind: 'threshold', value: 255, threshold: 253, unit: 'V', time: new Date().toISOString() } };
+  const msg = { payload: { nodeId: 'TR-1', orgId: 'org-1', departmentId: null, domain, paramKey, paramLabel: paramKey === 'VoltAN' ? 'Phase A-N Voltage — Over-voltage' : paramKey, severity, kind: 'threshold', value: 255, threshold: 253, unit: 'V', time: new Date().toISOString() } };
   const node = { send: () => {}, warn: () => {}, error: (e) => console.log('  [node.error]', e) };
   const env = { get: () => '' };
   const global = { get: (k) => globals[k] };
@@ -66,6 +66,33 @@ t('externalFault CRITICAL names the shutdown risk',
 await call('someTrulyUnknownKey', 'WARNING');
 t('a genuinely unknown key still falls back gracefully (no throw, no blank)',
   sentSubject && sentSubject.includes('Warning threshold reached'), `got: ${sentSubject}`);
+
+// tempHigh/tempLow are canonical keys shared by carbonNode (fridge) and
+// bloodBox (blood cold-chain) — same collision as frontend-next's
+// ALARM_RISK_INSIGHTS (getAlarmInsight, see e2e/proofs/
+// test-alarm-insight-domain-scoping.mjs). Without e.domain reaching this
+// notify handler, a bloodBox cold-chain excursion email would render
+// whichever domain's wording __RISK_MAP happened to have — refrigerator
+// troubleshooting text on a blood-safety alert, or the other way round.
+await call('tempHigh', 'CRITICAL', 'carbonNode');
+const carbonSubject = sentSubject;
+t('carbonNode tempHigh CRITICAL resolves fridge-specific text, not the generic fallback',
+  carbonSubject && !carbonSubject.includes('Parameter limit breached'), `got: ${carbonSubject}`);
+t('carbonNode tempHigh text is about a fridge, not blood',
+  carbonSubject && /evaporator|preservation/i.test(carbonSubject) && !/blood/i.test(carbonSubject), `got: ${carbonSubject}`);
+
+await call('tempHigh', 'CRITICAL', 'bloodBox');
+const bloodSubject = sentSubject;
+t('bloodBox tempHigh CRITICAL resolves blood-specific text, not the generic fallback',
+  bloodSubject && !bloodSubject.includes('Parameter limit breached'), `got: ${bloodSubject}`);
+t('bloodBox tempHigh text is about blood, not a fridge',
+  bloodSubject && /blood/i.test(bloodSubject) && !/evaporator|condenser/i.test(bloodSubject), `got: ${bloodSubject}`);
+t('carbonNode and bloodBox get DIFFERENT text for the same key', carbonSubject !== bloodSubject,
+  `carbonNode: ${carbonSubject}\n  bloodBox:   ${bloodSubject}`);
+
+await call('tempHigh', 'CRITICAL', 'someThirdDomainWithNoEntry');
+t('a domain with no specific tempHigh entry gets the neutral generic fallback, not carbonNode/bloodBox text',
+  sentSubject && sentSubject.startsWith('Temperature |') && !/blood|evaporator|condenser/i.test(sentSubject), `got: ${sentSubject}`);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

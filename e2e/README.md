@@ -69,12 +69,18 @@ node test-pdf-readability.mjs        # downloads the real report PDF and asserts
 node test-reports-copy.mjs           # the reports page advertises only analyses the engine can
                                      #   actually back — no Duval triangle, no thermal aging factor,
                                      #   no IEEE 519/C57.104/60076/21 CFR conformance badges
+node test-telemetry-aliases-panel.mjs # admin/live-raw's "Wire Key Reference" panel actually shows the
+                                     #   raw ESP32 field name -> canonical param key table (from GET
+                                     #   /api/telemetry/aliases), grouped by canonical key and searchable
+                                     #   — the only way left to answer that question once a device is
+                                     #   approved, since the raw key is never persisted past that point
 ```
 
 Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
 `test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs`,
 `test-pdf-readability.mjs`, `test-transformer-detail-crash.mjs`,
-`test-param-label-bands.mjs`, `test-alarm-scope-filter.mjs` and
+`test-param-label-bands.mjs`, `test-alarm-scope-filter.mjs`,
+`test-telemetry-aliases-panel.mjs` and
 `test-iiot-ux-upgrades.mjs` actually exit
 non-zero on failure** — the rest
 count nothing and always exit 0. This paragraph used to claim they were all
@@ -111,7 +117,13 @@ node e2e/proofs/test-emailguard.mjs        # extracts the REAL generated email-t
                                             #   recipient guard (self or same-org only) — regenerate the flow first
                                             #   if backend/node-red/generate-nodered-backend.mjs changed
 node e2e/proofs/test-riskmap.mjs           # extracts the REAL generated notify handler, proves alarm keys resolve
-                                            #   real risk text instead of the generic fallback
+                                            #   real risk text instead of the generic fallback, and that carbonNode
+                                            #   vs bloodBox get DIFFERENT text for the tempHigh/tempLow keys they
+                                            #   both use (domain now flows worker emitAlarm -> notifyFunc)
+node e2e/proofs/test-alarm-insight-domain-scoping.mjs  # the frontend-next equivalent: getAlarmInsight() +
+                                            #   ALARM_RISK_INSIGHTS resolve tempHigh/tempLow per-domain instead of
+                                            #   whichever domain's text was registered under the bare key winning
+                                            #   for both (NodeEventLog.tsx, both admin and customer device pages)
 node e2e/proofs/test-report-honesty.mjs    # greps the IIoT report generator + both reports pages (comments
                                             #   stripped first) for every fabricated constant/fallback this session
                                             #   found and removed — fails if any of them come back
