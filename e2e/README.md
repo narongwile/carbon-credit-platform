@@ -74,13 +74,18 @@ node test-telemetry-aliases-panel.mjs # admin/live-raw's "Wire Key Reference" pa
                                      #   /api/telemetry/aliases), grouped by canonical key and searchable
                                      #   — the only way left to answer that question once a device is
                                      #   approved, since the raw key is never persisted past that point
+node test-display-params-people.mjs  # DisplayParamPicker's "Who sees this" can target specific people
+                                     #   (migrate-v52), not just a department — the real PUT body names
+                                     #   them (userIds), a pending user and an admin (whose own view
+                                     #   always bypasses per-person scoping) are both excluded from the
+                                     #   picker, and choosing "specific people" hides the department select
 ```
 
 Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
 `test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs`,
 `test-pdf-readability.mjs`, `test-transformer-detail-crash.mjs`,
 `test-param-label-bands.mjs`, `test-alarm-scope-filter.mjs`,
-`test-telemetry-aliases-panel.mjs` and
+`test-telemetry-aliases-panel.mjs`, `test-display-params-people.mjs` and
 `test-iiot-ux-upgrades.mjs` actually exit
 non-zero on failure** — the rest
 count nothing and always exit 0. This paragraph used to claim they were all

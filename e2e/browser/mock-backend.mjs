@@ -10,6 +10,15 @@ const state = {
   // and 'extraSensor' are the reverse (sent, not in spec) and must stay plain.
   displayParams: { 'org-1::transformer': { keys: ['oilTemp', 'hydrogen', 'moisture', 'winding'], layout: {} } },
   paramLabels: { 'org-1::transformer': { oilTemp: 'Oil Temp (custom)' } },
+  // For DisplayParamPicker's "Limit to specific people" — a pending user is
+  // included on purpose so the picker's active-only filter has something
+  // real to exclude.
+  users: [
+    { id: 'u-admin', org_id: 'org-1', name: 'Org Admin', role: 'admin', status: 'active' },
+    { id: 'u-viewer-a', org_id: 'org-1', name: 'Viewer A', role: 'viewer', status: 'active' },
+    { id: 'u-viewer-b', org_id: 'org-1', name: 'Viewer B', role: 'viewer', status: 'active' },
+    { id: 'u-viewer-pending', org_id: 'org-1', name: 'Viewer Pending', role: 'viewer', status: 'pending' },
+  ],
   // Deliberately DIFFERENT from the frontend's hardcoded fallback default, so
   // a passing test proves the value came from THIS fetch, not just the
   // page's built-in fallback happening to render.
@@ -197,6 +206,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname.match(/^\/api\/orgs\/[^/]+\/entitlements$/)) return send(res, 200, ['eternityTransformers', 'refrigerationDataLogger', 'bloodBox']);
   if (req.method === 'GET' && url.pathname.match(/^\/api\/orgs\/[^/]+\/transformer-models$/)) return send(res, 200, []);
 
+  if (req.method === 'GET' && url.pathname.match(/^\/api\/orgs\/[^/]+\/users$/)) return send(res, 200, state.users);
+
   if (url.pathname.match(/^\/api\/orgs\/([^/]+)\/display-params$/)) {
     const orgId = url.pathname.split('/')[3];
     const domain = url.searchParams.get('domain') || body.domain;
@@ -206,8 +217,8 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { domain, nodeId: url.searchParams.get('nodeId') || null, scope: cur ? 'org' : 'none', paramKeys: cur?.keys ?? [], layout: cur?.layout ?? {} });
     }
     if (req.method === 'PUT') {
-      state.displayParams[key] = { keys: body.paramKeys || [], layout: body.layout || {} };
-      return send(res, 200, { ok: true, count: (body.paramKeys || []).length, devices: (body.nodeIds || []).length });
+      state.displayParams[key] = { keys: body.paramKeys || [], layout: body.layout || {}, userIds: body.userIds || [], departmentId: body.departmentId ?? null };
+      return send(res, 200, { ok: true, count: (body.paramKeys || []).length, devices: (body.nodeIds || []).length, userIds: body.userIds || [] });
     }
   }
   if (url.pathname.match(/^\/api\/orgs\/([^/]+)\/param-labels$/)) {

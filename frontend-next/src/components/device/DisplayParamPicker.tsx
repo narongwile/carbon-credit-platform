@@ -42,8 +42,15 @@ import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useParamLabels, schemaLabel } from '@/lib/useParamLabels'
 import type { SensorDomain } from '@/types/fleet'
 import type { DisplayParamScope, ParamLayout } from '@/lib/api'
-import { X, SlidersHorizontal, Save, LayoutGrid, Rows3 } from 'lucide-react'
+import { X, SlidersHorizontal, Save, LayoutGrid, Rows3, UserCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
+
+interface OrgUser {
+  id: string
+  name: string
+  role: string
+  status?: string
+}
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -87,6 +94,15 @@ export default function DisplayParamPicker({
   // '' = everyone in the organization (the row departments inherit).
   const [deptId, setDeptId] = useState('')
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
+  // WHO sees this save. 'department' is the original single-select (a plain
+  // department, or '' for everyone). 'people' (migrate-v52) names specific
+  // individuals instead — cuts across departments rather than narrowing one,
+  // for the "this one engineer, not their whole team" case a department of
+  // one would otherwise be needed for. Mutually exclusive with department per
+  // save, mirroring how 'devices' vs 'org' already work for Apply To below.
+  const [whoMode, setWhoMode] = useState<'department' | 'people'>('department')
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
+  const [orgUsers, setOrgUsers] = useState<OrgUser[]>([])
   const [busy, setBusy] = useState(false)
   // The org's devices of this product — the candidates a selection can be
   // applied to. Same roster every other admin screen reads.
@@ -98,12 +114,36 @@ export default function DisplayParamPicker({
   // Opened FROM one device, so that device is the default target — Save still
   // means "this device" until the admin widens it deliberately.
   useEffect(() => { setTargets([nodeId]); setScopeMode('devices') }, [nodeId])
+  // "Who sees this" resets to department mode with nobody picked — a stale
+  // selection of specific people from a previously-edited device must not
+  // silently carry over and become who THIS save targets.
+  useEffect(() => { setWhoMode('department'); setSelectedUserIds([]) }, [nodeId])
 
   useEffect(() => {
     if (!isLive()) return
     let cancelled = false
     api.departments(orgId).then((rows) => {
       if (!cancelled && rows) setDepartments(rows as { id: string; name: string }[])
+    })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  useEffect(() => {
+    if (!isLive()) return
+    let cancelled = false
+    api.users(orgId).then((rows) => {
+      if (cancelled || !rows) return
+      setOrgUsers((rows as OrgUser[]).filter((u) =>
+        // A pending or disabled account cannot sign in to see anything —
+        // offering it here would let an admin build a "who sees this" list
+        // around someone who cannot currently see the dashboard at all.
+        (u.status ?? 'active') === 'active'
+        // An admin/superadmin's OWN dashboard always resolves the org-wide
+        // default (dpGetFunc exempts them from department AND per-person
+        // scoping, the same way it always has for department scoping) — so
+        // naming one here would silently do nothing: the row gets written,
+        // but never read back for them. Not offered, to avoid that dead end.
+        && u.role !== 'admin' && u.role !== 'superadmin'))
     })
     return () => { cancelled = true }
   }, [orgId])
@@ -151,9 +191,12 @@ export default function DisplayParamPicker({
 
   const deviceWord = domain === 'transformer' ? 'transformer' : 'device of this product'
   const deptName = deptId ? (departments.find((d) => d.id === deptId)?.name ?? 'that department') : ''
+  const peopleNames = selectedUserIds.map((id) => orgUsers.find((u) => u.id === id)?.name ?? id)
   // Exactly what Save writes — spelled out rather than left to be inferred
   // from a checkbox, because the two scopes differ by the entire fleet.
-  const suffix = deptName ? ` — ${deptName} only` : ''
+  const suffix = whoMode === 'people' && selectedUserIds.length > 0
+    ? ` — ${peopleNames.length === 1 ? peopleNames[0] : `${peopleNames.length} people`} only`
+    : deptName ? ` — ${deptName} only` : ''
   const target = scopeMode === 'org'
     ? `every ${deviceWord} in this organization${suffix}`
     : targets.length === 0
@@ -185,7 +228,14 @@ export default function DisplayParamPicker({
       api.setDisplayParams(orgId, {
         domain,
         ...(scopeMode === 'org' ? { nodeId: null } : { nodeIds: targets }),
-        departmentId: deptId || null, paramKeys: selected, layout: layoutOut,
+        // "Specific people" is what "who sees this" means for this save when
+        // it's active with a non-empty selection — departmentId is not sent
+        // at all in that case, matching what the backend treats as
+        // authoritative (see setDisplayParams' own comment).
+        ...(whoMode === 'people' && selectedUserIds.length > 0
+          ? { userIds: selectedUserIds }
+          : { departmentId: deptId || null }),
+        paramKeys: selected, layout: layoutOut,
       }),
       Object.keys(changed).length
         ? api.setParamLabels(orgId, { domain, ...(scopeMode === 'org' ? { nodeId: null } : { nodeIds: targets }), labels: changed })
@@ -225,14 +275,67 @@ export default function DisplayParamPicker({
         </div>
 
         <div className="px-5 pt-4 space-y-2">
-          <label className="block">
+          <div>
             <span className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Who sees this</span>
-            <select value={deptId} onChange={(e) => setDeptId(e.target.value)}
-              className="w-full text-xs rounded-lg px-3 py-2 text-white outline-none" style={inset}>
-              <option value="">Everyone in this organization</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}
-            </select>
-          </label>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <button type="button" onClick={() => setWhoMode('department')}
+                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors"
+                style={whoMode === 'department'
+                  ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#fff' }
+                  : { ...inset, color: '#94a3b8' }}>
+                Department
+              </button>
+              <button type="button" onClick={() => setWhoMode('people')}
+                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors flex items-center gap-1"
+                style={whoMode === 'people'
+                  ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#fff' }
+                  : { ...inset, color: '#94a3b8' }}>
+                <UserCheck size={11} /> Limit to specific people{selectedUserIds.length > 0 ? ` (${selectedUserIds.length})` : ''}
+              </button>
+            </div>
+            {whoMode === 'department' ? (
+              <select value={deptId} onChange={(e) => setDeptId(e.target.value)}
+                className="w-full text-xs rounded-lg px-3 py-2 text-white outline-none" style={inset}>
+                <option value="">Everyone in this organization</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>Only {d.name}</option>)}
+              </select>
+            ) : (
+              // Same visual pattern as the device multi-picker below, applied
+              // to people instead — an admin who wants exactly one engineer
+              // (not their whole department) to see a diagnostic-only list had
+              // no way to say so short of creating a department of one.
+              <div className="rounded-lg p-2 max-h-[168px] overflow-y-auto space-y-1" style={inset}>
+                <div className="flex items-center gap-2 px-1 pb-1">
+                  <button type="button" onClick={() => setSelectedUserIds(orgUsers.map((u) => u.id))}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300">Select all {orgUsers.length}</button>
+                  <button type="button" onClick={() => setSelectedUserIds([])}
+                    className="text-[10px] text-slate-500 hover:text-white">Clear</button>
+                  <span className="ml-auto text-[10px] text-slate-600">{selectedUserIds.length} selected</span>
+                </div>
+                {orgUsers.length === 0 && (
+                  <p className="text-[11px] text-slate-600 px-1 py-2">No other active users in this organization yet.</p>
+                )}
+                {orgUsers.map((u) => {
+                  const on = selectedUserIds.includes(u.id)
+                  return (
+                    <button key={u.id} type="button"
+                      onClick={() => setSelectedUserIds((s) => (s.includes(u.id) ? s.filter((x) => x !== u.id) : [...s, u.id]))}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left"
+                      style={on ? { background: 'rgba(99,102,241,0.15)', border: '1px solid #6366f1' } : { border: '1px solid transparent' }}>
+                      <span className="w-3 h-3 rounded flex-shrink-0 flex items-center justify-center text-[8px] text-white"
+                        style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>{on ? '✓' : ''}</span>
+                      <span className="text-[11px] text-white truncate flex-1 min-w-0">{u.name}</span>
+                      <span className="text-[9px] text-slate-500 capitalize flex-shrink-0">{u.role}</span>
+                    </button>
+                  )
+                })}
+                <p className="text-[10px] text-slate-600 px-1 pt-1">
+                  Each person gets their own copy of this list — naming someone here does not change what
+                  anyone else on their team sees, and does not touch their department&apos;s own list.
+                </p>
+              </div>
+            )}
+          </div>
           <p className="text-[11px] text-slate-500">
             {uniqueAvailable.length} parameter{uniqueAvailable.length === 1 ? '' : 's'} reported by this device.
             {selected.length === 0 && ' Nothing selected — every parameter is shown.'}
@@ -366,7 +469,7 @@ export default function DisplayParamPicker({
             Saving affects: <span className="font-semibold">{target}</span>
           </p>
           <div className="flex gap-3">
-            <button onClick={save} disabled={busy || (scopeMode === 'devices' && targets.length === 0)}
+            <button onClick={save} disabled={busy || (scopeMode === 'devices' && targets.length === 0) || (whoMode === 'people' && selectedUserIds.length === 0)}
               className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium text-white disabled:opacity-50" style={gradient}>
               <Save size={15} /> {busy ? 'Saving…' : 'Save'}
             </button>

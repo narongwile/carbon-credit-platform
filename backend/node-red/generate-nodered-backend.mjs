@@ -3947,15 +3947,84 @@ const asked=q.departmentId===undefined?null:String(q.departmentId||'');
     depts=own.length?own:[null];
   }
   const keySet=[]; const seen={}; let scope='none'; const layout={};
-  // 'layout' (migrate-v37) needs its own try: a control-DB org whose tenant
-  // migration ran v26/v28 but not yet v37 must still get a paramKeys answer —
-  // just without per-key layout — rather than the whole endpoint 503ing on a
-  // column that is genuinely optional to this response.
-  let hasLayout=true;
+  // 'layout' (migrate-v37) and 'user_id' (migrate-v52) are each optional
+  // columns an org's tenant DB may not have migrated yet — probed once and
+  // remembered, same reasoning for both: a control-DB org missing one must
+  // still get a paramKeys answer from every OTHER tier, not a 503 over a
+  // column this response does not strictly need. hasUserCol also controls
+  // whether "AND user_id IS NULL" is appended to a query at all — appending
+  // it unconditionally would 500 every lookup on an org that has not run
+  // migrate-v52, since the column would not exist to filter on.
+  let hasLayout=true, hasUserCol=true;
+  // Every SELECT in this handler goes through here so the two probes stay
+  // consistent across the user-tier check and the department loop below —
+  // discovering "no layout column" while resolving the user tier must not
+  // make the department loop re-discover it the hard way a second time.
+  const q1=async(where,args)=>{
+    for(;;){
+      const userClause=hasUserCol?" AND user_id IS NULL":"";
+      const col=hasLayout?"param_key,layout":"param_key";
+      try{
+        const[r]=await pool.query("SELECT "+col+" FROM display_params WHERE org_id=? AND domain=? AND "+where+userClause+" ORDER BY position, param_key",[orgId,domain].concat(args));
+        return r;
+      }catch(e2){
+        const em2=String(e2&&e2.message||'');
+        if(hasLayout && em2.indexOf('layout')>=0){ hasLayout=false; continue; }
+        if(hasUserCol && em2.indexOf('user_id')>=0){ hasUserCol=false; continue; }
+        throw e2;
+      }
+    }
+  };
+  // Same as q1 but for the user-tier check itself, which filters BY user_id
+  // rather than excluding it — a distinct query shape, so it takes the
+  // WHERE clause pre-built rather than appending the exclusion q1 always adds.
+  const q2=async(where,args)=>{
+    for(;;){
+      const col=hasLayout?"param_key,layout":"param_key";
+      try{
+        const[r]=await pool.query("SELECT "+col+" FROM display_params WHERE org_id=? AND domain=? AND "+where+" ORDER BY position, param_key",[orgId,domain].concat(args));
+        return r;
+      }catch(e2){
+        const em2=String(e2&&e2.message||'');
+        if(hasLayout && em2.indexOf('layout')>=0){ hasLayout=false; continue; }
+        if(em2.indexOf('user_id')>=0) return []; // migrate-v52 not applied — no per-user rows possible
+        throw e2;
+      }
+    }
+  };
   try{
+    // Per-person override (v52), checked once before the department loop —
+    // it is the most specific scope there is, narrower than any department
+    // since it names an individual rather than a team, and is meant to cut
+    // ACROSS departments rather than narrow one (see migrate-v52.sql). Admins
+    // are exempt for their OWN view here for the same reason they are exempt
+    // from department scoping just below: this endpoint answers "what does
+    // MY dashboard show", and an admin's own view has never been department-
+    // or person-restricted — only what the picker asks it to preview is.
+    if(au.role!=='admin' && au.role!=='superadmin' && au.userId){
+      const utries=[];
+      if(nodeId) utries.push(['node+user',"node_id=? AND user_id=?",[nodeId,au.userId]]);
+                 utries.push(['org+user',"node_id IS NULL AND user_id=?",[au.userId]]);
+      for(const[label,where,args] of utries){
+        const r=await q2(where,args);
+        if(r.length){
+          for(const x of r){ if(!seen[x.param_key]){ seen[x.param_key]=1; keySet.push(x.param_key); layout[x.param_key]=x.layout||'card'; } }
+          if(scope==='none'||scope===label) scope=label; else scope='mixed';
+          break;
+        }
+      }
+    }
     // Per department, the most specific configured set wins; nothing configured
     // at any level for that department means it inherits the org-wide row, and
     // if that is absent too the department simply contributes nothing.
+    //
+    // Every tier here goes through q1, which appends "AND user_id IS NULL"
+    // (when the column exists) — without it, a row the user-tier check above
+    // already resolves more specifically (department_id IS NULL, user_id SET)
+    // would ALSO satisfy "org" here, since these tries have no way to exclude
+    // a non-null user_id on their own. Left unfiltered, a person's own
+    // personal override would leak into every OTHER member of their
+    // department's "org default" view too.
     for(const d of depts){
       const tries=[];
       if(nodeId&&d) tries.push(['node+dept',"node_id=? AND department_id=?",[nodeId,d]]);
@@ -3963,15 +4032,7 @@ const asked=q.departmentId===undefined?null:String(q.departmentId||'');
       if(d)         tries.push(['org+dept',"node_id IS NULL AND department_id=?",[d]]);
                     tries.push(['org',"node_id IS NULL AND department_id IS NULL",[]]);
       for(const[label,where,args] of tries){
-        const col=hasLayout?"param_key,layout":"param_key";
-        let r;
-        try{
-          [r]=await pool.query("SELECT "+col+" FROM display_params WHERE org_id=? AND domain=? AND "+where+" ORDER BY position, param_key",[orgId,domain].concat(args));
-        }catch(e2){
-          if(String(e2&&e2.message||'').indexOf('layout')<0) throw e2;
-          hasLayout=false;
-          [r]=await pool.query("SELECT param_key FROM display_params WHERE org_id=? AND domain=? AND "+where+" ORDER BY position, param_key",[orgId,domain].concat(args));
-        }
+        const r=await q1(where,args);
         if(r.length){
           // Union across the caller's departments, most-permissive — the same
           // rule product access uses for a user who belongs to more than one.
@@ -3981,7 +4042,11 @@ const asked=q.departmentId===undefined?null:String(q.departmentId||'');
         }
       }
     }
-  }catch(e){ if(String(e&&e.message||'').indexOf('display_params')<0 && String(e&&e.message||'').indexOf('department_id')<0) throw e; node.warn('display_params department scope missing (migrate-v26/v28 not applied yet)'); }
+  }catch(e){
+    const em=String(e&&e.message||'');
+    if(em.indexOf('display_params')<0 && em.indexOf('department_id')<0 && em.indexOf('user_id')<0) throw e;
+    node.warn('display_params scope column missing (migrate-v26/v28/v52 not fully applied yet)');
+  }
   msg.headers=__CORS; msg.payload={ domain, nodeId, departmentId: asked, scope, paramKeys: keySet, layout }; node.send(msg);
 })()` + bbErr
 
@@ -4086,6 +4151,11 @@ const nodeIds = Array.isArray(b.nodeIds)
   : (b.nodeId ? [String(b.nodeId)] : [null]);
 // null/absent = the org-wide set every department inherits.
 const deptId=b.departmentId?String(b.departmentId):null;
+// "Limit to specific people" (migrate-v52) — a set of individual user ids,
+// mutually exclusive with deptId for this save: naming people is meant to
+// cut ACROSS departments, not narrow one, so a non-empty userIds is what
+// "who sees this" actually means for this write and deptId is ignored.
+const userIds=Array.isArray(b.userIds)?b.userIds.map(String).filter(Boolean):[];
 const keys=Array.isArray(b.paramKeys)?b.paramKeys.map(String).filter(Boolean):[];
 // Per-key card-vs-list choice (migrate-v37). Any key with no entry — every
 // caller before this existed, and any key the admin never touched in the
@@ -4104,40 +4174,98 @@ if(!domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'domain req
     const chk=await global.get('ownOrg')(au,pool,"SELECT org_id FROM nodes WHERE id=?",[nid]);
     if(!chk.ok){msg.headers=__CORS;msg.statusCode=chk.code;msg.payload={error:chk.error+' ('+nid+')'};node.send(msg);return;}
   }
-  if(deptId){
+  if(userIds.length){
+    // Same reason as the department check below: an id from another tenant
+    // would otherwise let an admin write a policy naming someone outside
+    // their organization. Every target validated before any write, same as
+    // the node check above.
+    const cpool=global.get('pool');
+    for(const uid of userIds){
+      const[u]=await cpool.query("SELECT id FROM users WHERE id=? AND org_id=?",[uid,orgId]);
+      if(!u.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'user not found in this organization ('+uid+')'};node.send(msg);return;}
+    }
+  } else if(deptId){
     // Same reason: a department id from another tenant would otherwise let an
     // admin write a policy into an org that is not theirs.
     const cpool=global.get('pool');
     const[d]=await cpool.query("SELECT id FROM departments WHERE id=? AND org_id=?",[deptId,orgId]);
     if(!d.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'department not found in this organization'};node.send(msg);return;}
   }
+  // "Who sees this" targets for this save: either the SET of specific people
+  // (department_id stays NULL for each — see userIds' comment above), or the
+  // single department/org-wide row exactly as before v52.
+  const whoTargets=userIds.length ? userIds.map((uid)=>({deptId:null,userId:uid})) : [{deptId,userId:null}];
   try{
     for(const nodeId of nodeIds){
+      for(const who of whoTargets){
       // Replace exactly ONE scope per target. Saving the Maintenance set must
       // not wipe the org-wide set every other department inherits, and vice
-      // versa — and applying to four devices must not touch the other forty.
-      const where=(nodeId?"node_id=?":"node_id IS NULL")+" AND "+(deptId?"department_id=?":"department_id IS NULL");
-      const args=[orgId,domain]; if(nodeId) args.push(nodeId); if(deptId) args.push(deptId);
-      await pool.query("DELETE FROM display_params WHERE org_id=? AND domain=? AND "+where,args);
+      // versa — applying to four devices must not touch the other forty, and
+      // (v52) naming three specific people must not touch each other's rows.
+      const userCond=who.userId?"user_id=?":"user_id IS NULL";
+      const where=(nodeId?"node_id=?":"node_id IS NULL")
+        +" AND "+(who.deptId?"department_id=?":"department_id IS NULL")
+        +" AND "+userCond;
+      const args=[orgId,domain]; if(nodeId) args.push(nodeId); if(who.deptId) args.push(who.deptId); if(who.userId) args.push(who.userId);
+      try{
+        await pool.query("DELETE FROM display_params WHERE org_id=? AND domain=? AND "+where,args);
+      }catch(e1){
+        const em1=String(e1&&e1.message||'');
+        // A specific-people target has nothing to fall back to — the column
+        // naming who this row belongs to is exactly what is missing.
+        if(em1.indexOf('user_id')<0 || who.userId) throw e1;
+        // migrate-v52 not applied and this is a department/org-wide target
+        // (who.userId is null): drop the "AND user_id IS NULL" clause the
+        // column cannot support yet and delete on node/department alone —
+        // there is nothing scoped to a specific person to accidentally catch,
+        // since no such row could exist without the column in the first place.
+        const where2=(nodeId?"node_id=?":"node_id IS NULL")+" AND "+(who.deptId?"department_id=?":"department_id IS NULL");
+        await pool.query("DELETE FROM display_params WHERE org_id=? AND domain=? AND "+where2,[orgId,domain].concat(nodeId?[nodeId]:[]).concat(who.deptId?[who.deptId]:[]));
+      }
       let i=0;
       for(const k of keys){
+        const pos=i++;
+        let inserted=false;
+        // Tier 1: full row, including user_id (migrate-v52) and layout (v37).
         try{
-          await pool.query("INSERT IGNORE INTO display_params (org_id,domain,node_id,department_id,param_key,position,layout) VALUES (?,?,?,?,?,?,?)",[orgId,domain,nodeId,deptId,k,i++,layoutOf(k)]);
+          await pool.query("INSERT IGNORE INTO display_params (org_id,domain,node_id,department_id,user_id,param_key,position,layout) VALUES (?,?,?,?,?,?,?,?)",[orgId,domain,nodeId,who.deptId,who.userId,k,pos,layoutOf(k)]);
+          inserted=true;
         }catch(e2){
-          // layout column not migrated yet (v37) — write the row anyway, minus
-          // the layout choice, rather than failing the whole save over a column
-          // the admin's picker won't even offer until the migration runs.
-          if(String(e2&&e2.message||'').indexOf('layout')<0) throw e2;
-          await pool.query("INSERT IGNORE INTO display_params (org_id,domain,node_id,department_id,param_key,position) VALUES (?,?,?,?,?,?)",[orgId,domain,nodeId,deptId,k,i-1]);
+          const em2=String(e2&&e2.message||'');
+          if(em2.indexOf('layout')<0 && em2.indexOf('user_id')<0) throw e2;
+          // A specific-people save cannot degrade past this tier — there is
+          // nothing else to scope it to, so migrate-v52 is genuinely required.
+          if(em2.indexOf('user_id')>=0 && who.userId) throw e2;
         }
+        // Tier 2: no user_id column — fine here, since who.userId is null
+        // whenever this tier is reached (department/org-wide save).
+        if(!inserted){
+          try{
+            await pool.query("INSERT IGNORE INTO display_params (org_id,domain,node_id,department_id,param_key,position,layout) VALUES (?,?,?,?,?,?,?)",[orgId,domain,nodeId,who.deptId,k,pos,layoutOf(k)]);
+            inserted=true;
+          }catch(e3){
+            if(String(e3&&e3.message||'').indexOf('layout')<0) throw e3;
+          }
+        }
+        // Tier 3: neither user_id nor layout exists yet (pre-v37 org).
+        if(!inserted){
+          await pool.query("INSERT IGNORE INTO display_params (org_id,domain,node_id,department_id,param_key,position) VALUES (?,?,?,?,?,?)",[orgId,domain,nodeId,who.deptId,k,pos]);
+        }
+      }
       }
     }
   }catch(e){
-    if(String(e&&e.message||'').indexOf('display_params')<0 && String(e&&e.message||'').indexOf('department_id')<0) throw e;
-    msg.headers=__CORS; msg.statusCode=503; msg.payload={error:'department-scoped parameter display needs migrate-v26 and v28 — run the migrations first'}; node.send(msg); return;
+    const em=String(e&&e.message||'');
+    if(em.indexOf('display_params')<0 && em.indexOf('department_id')<0 && em.indexOf('user_id')<0) throw e;
+    const needsV52=em.indexOf('user_id')>=0;
+    msg.headers=__CORS; msg.statusCode=503;
+    msg.payload={error: needsV52
+      ? 'limiting to specific people needs migrate-v52 — run the migration first'
+      : 'department-scoped parameter display needs migrate-v26 and v28 — run the migrations first'};
+    node.send(msg); return;
   }
   // Clearing the list restores "show everything" rather than hiding the page.
-  msg.headers=__CORS; msg.payload={ok:true, domain, nodeIds, departmentId:deptId, count:keys.length, devices:nodeIds.length}; node.send(msg);
+  msg.headers=__CORS; msg.payload={ok:true, domain, nodeIds, departmentId:deptId, userIds, count:keys.length, devices:nodeIds.length}; node.send(msg);
 })()` + bbErr
 
 

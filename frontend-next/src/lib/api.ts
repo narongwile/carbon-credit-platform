@@ -255,8 +255,13 @@ async function req<T>(path: string, init?: RequestInit): Promise<T | null> {
   }
 }
 
-/** Which scope answered a display-params lookup; 'mixed' = a multi-department union. */
-export type DisplayParamScope = 'none' | 'org' | 'org+dept' | 'node' | 'node+dept' | 'mixed'
+/**
+ * Which scope answered a display-params lookup; 'mixed' = a multi-department
+ * union. 'org+user'/'node+user' (migrate-v52) is a personal override, always
+ * resolved ahead of any department tier — see DisplayParamPicker's "Limit to
+ * specific people".
+ */
+export type DisplayParamScope = 'none' | 'org' | 'org+dept' | 'node' | 'node+dept' | 'org+user' | 'node+user' | 'mixed'
 
 /**
  * How a shown parameter renders (migrate-v37). 'card' is the full sensor
@@ -449,8 +454,15 @@ export const api = {
    * MQTT payloads, so "these four, which are the same model" is the useful
    * scope. `nodeId` (one device) and neither key (the org-wide default) both
    * still work.
+   *
+   * `userIds` (migrate-v52) is "who sees this" answered by naming specific
+   * people instead of a department — mutually exclusive with `departmentId`
+   * for this save: a non-empty `userIds` is what "who sees this" means,
+   * `departmentId` is ignored server-side when it's given. Like `nodeIds`,
+   * each named person gets their own copy of the list, independent of the
+   * others and of whatever their department's own list says.
    */
-  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; nodeIds?: string[]; departmentId?: string | null; paramKeys: string[]; layout?: Record<string, ParamLayout> }) =>
+  setDisplayParams: (orgId: string, body: { domain: string; nodeId?: string | null; nodeIds?: string[]; departmentId?: string | null; userIds?: string[]; paramKeys: string[]; layout?: Record<string, ParamLayout> }) =>
     req<{ ok: boolean; count: number; devices?: number }>(`/api/orgs/${orgId}/display-params`, { method: 'PUT', body: JSON.stringify(body) }),
   /**
    * Admin-editable display names for MQTT parameter keys (migrate-v34).
