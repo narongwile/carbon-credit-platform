@@ -13,3 +13,10 @@ tsconfig.tsbuildinfo
 # when the agent finishes with no changes. Never project content.
 .claude/worktrees/
 
+# agent-message-board's runtime mailbox — real inter-agent conversation
+# content, not project source. README.md points AGENT_BOARD_DB outside the
+# repo by default; this is a second layer so a config that forgets to (or a
+# stray `git add -A`) does not commit private message history.
+tools/agent-message-board/data/
+
+
