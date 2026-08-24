@@ -1913,10 +1913,10 @@ const normalizeFunc = `
 // spellings (confirmed against a live MQTT payload) — kept in sync with
 // paramMap in worker/main.go. Tbox/RHamb/RHbox are deliberately NOT mapped:
 // no existing canonical param or defensible threshold exists for them yet.
-const MAP = { oil_temp_c:'oilTemp', Oiltemp:'oilTemp', ambient_temp_c:'ambientTemp', Tamb:'ambientTemp',
+const MAP = { oil_temp_c:'oilTemp', oil_temp:'oilTemp', oiltemp:'oilTemp', Oiltemp:'oilTemp', ambient_temp_c:'ambientTemp', ambient_temp:'ambientTemp', Tamb:'ambientTemp',
   winding_temp_c:'windingTemp',
   dga_h2_ppm:'hydrogen', hydrogen_ppm:'hydrogen', H2:'hydrogen',
-  moisture_ppm:'moisture', OilMoisture:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
+  moisture_ppm:'moisture', oil_moisture:'moisture', oil_moisture_ppm:'moisture', OilMoisture:'moisture', oil_level_pct:'oilLevel', load_pct:'load', door_state:'door',
   electrical_current_a:'current', current_a:'current',
   rh_pct:'rh', batt_pct:'battery', impact_g:'impact', baro_alt_m:'baroAlt',
   // Power meter model B (short names) -> model A (long names), so one alarm
