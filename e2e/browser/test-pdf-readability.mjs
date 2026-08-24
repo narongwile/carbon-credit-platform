@@ -66,6 +66,15 @@ t('no slate-100 (white-on-white) fill colour is set anywhere',
 const slate800 = rgOps.filter((c) => near(c, 0.118, 0.161, 0.231));
 t('the dark section-heading colour IS used', slate800.length >= 1, `${slate800.length} occurrence(s)`);
 
+// --- the footer disclaimer's own colour: slate-500 measured 4.76:1 on white,
+// technically over the 4.5:1 AA floor but with no margin for italic text —
+// darkened to slate-600 (7.58:1). slate-500 must be gone; slate-600 present.
+const slate500 = rgOps.filter((c) => near(c, 0.392, 0.455, 0.545));
+t('no slate-500 (100,116,139) fill colour is set anywhere — the borderline-AA footer grey',
+  slate500.length === 0, `${slate500.length} occurrence(s)`);
+const slate600 = rgOps.filter((c) => near(c, 0.278, 0.333, 0.412));
+t('the slate-600 (71,85,105) secondary-text colour IS used', slate600.length >= 1, `${slate600.length} occurrence(s)`);
+
 // --- non-vacuity: the headings must actually be in the document ----------
 // Without this the two assertions above would pass on an empty PDF.
 const headings = ['Executive Fleet KPIs', 'Asset Health', 'Alarm Incident Log'];
