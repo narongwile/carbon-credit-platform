@@ -1052,20 +1052,36 @@ function EventCatalog({ orgId, departments }: { orgId: string; departments: Depa
   const list = catalog[selectedDept] ?? []
   const update = (next: EventProblem[]) => setCatalog((c) => ({ ...c, [selectedDept]: next }))
 
-  const add = () => {
+  const add = async () => {
     if (!draft.trim()) return
-    const id = `ev-${selectedDept}-${Date.now()}`, label = draft.trim()
-    update([...list, { id, label, departmentId: selectedDept }])
+    const label = draft.trim()
+    if (isLive()) {
+      const r = await api.saveEventProblem({ orgId, departmentId: selectedDept, label })
+      if (!r?.id) { toast.error('Could not add the event'); return }
+      update([...list, { id: r.id, label, departmentId: selectedDept }])
+    } else {
+      update([...list, { id: `ev-${selectedDept}-${Date.now()}`, label, departmentId: selectedDept }])
+    }
     setDraft(''); toast.success('Event added')
-    if (isLive()) api.saveEventProblem({ id, orgId, departmentId: selectedDept, label })
   }
-  const remove = (id: string) => { update(list.filter((e) => e.id !== id)); toast.success('Event removed'); if (isLive()) api.deleteEventProblem(id) }
+  const remove = async (id: string) => {
+    const prev = list
+    update(list.filter((e) => e.id !== id))
+    if (isLive()) {
+      const r = await api.deleteEventProblem(id)
+      if (!r) { update(prev); toast.error('Could not remove the event'); return }
+    }
+    toast.success('Event removed')
+  }
   const startEdit = (e: EventProblem) => { setEditingId(e.id); setEditingLabel(e.label) }
-  const saveEdit = () => {
-    if (!editingLabel.trim()) return
+  const saveEdit = async () => {
+    if (!editingLabel.trim() || !editingId) return
     const label = editingLabel.trim()
+    if (isLive()) {
+      const r = await api.saveEventProblem({ id: editingId, orgId, departmentId: selectedDept, label })
+      if (!r?.id) { toast.error('Could not update the event'); return }
+    }
     update(list.map((e) => (e.id === editingId ? { ...e, label } : e)))
-    if (isLive() && editingId) api.saveEventProblem({ id: editingId, orgId, departmentId: selectedDept, label })
     setEditingId(null); setEditingLabel(''); toast.success('Event updated')
   }
 

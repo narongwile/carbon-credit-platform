@@ -8,17 +8,16 @@ import { Save, Upload, Trash2, Building2, MapPin, Camera, Paperclip, Settings2 }
 import toast from 'react-hot-toast'
 import { api, isLive, apiImageUrl } from '@/lib/api'
 import { getSession } from '@/lib/auth'
-import { defaultNodeRule } from '@/lib/alarmParams'
+import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import KindCatalogEditor from '@/components/device/KindCatalogEditor'
 import { useKindCatalog } from '@/lib/useKindCatalog'
 import type { KindScope } from '@/lib/api'
+import type { NodeAlarmRule } from '@/server/alarmEngine'
 
 const LocationPicker = dynamic(() => import('@/components/map/LocationPicker'), { ssr: false })
 
 export default function SettingsPage() {
-  const { selectedOrgId, getTransformersByOrg, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo, setOrgName } = useAppStore()
-  const transformers = getTransformersByOrg(selectedOrgId)
-  const [selectedId, setSelectedId] = useState(transformers[0]?.id || '')
+  const { selectedOrgId, realtimeEnabled, toggleRealtime, orgLogos, setOrgLogo, setOrgName } = useAppStore()
   const logoRef = useRef<HTMLInputElement>(null)
   const orgName = organizations.find((o) => o.id === selectedOrgId)?.name ?? 'Organization'
   // Photo/document type catalogs (migrate-v40) — org-wide configuration, so
@@ -92,18 +91,6 @@ export default function SettingsPage() {
     }
     toast.success('Organization name updated')
   }
-  const [thresholds, setThresholds] = useState({
-    oilTempWarn: 80,
-    oilTempCrit: 95,
-    hydrogenWarn: 150,
-    hydrogenCrit: 300,
-    moistureWarn: 25,
-    moistureCrit: 35,
-    oilLevelWarn: 70,
-    oilLevelCrit: 60,
-    loadWarn: 80,
-    loadCrit: 95,
-  })
   const [emailAlerts, setEmailAlerts] = useState(true)
   const [autoAck, setAutoAck] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -126,27 +113,6 @@ export default function SettingsPage() {
     })
   }, [selectedOrgId])
 
-  // Convert the flat threshold form into a real NodeAlarmRule the alarm engine
-  // consumes (params[]), starting from the transformer schema defaults so the
-  // rule stays complete (windingTemp/direction/unit/rate) and only the edited
-  // warn/critical are overridden. Without this the org save would overwrite every
-  // node's rule_json with a params-less shape and silence the engine.
-  const buildTransformerRule = () => {
-    const rule = defaultNodeRule('transformer')
-    const overrides: Record<string, { warn: number; critical: number }> = {
-      oilTemp: { warn: thresholds.oilTempWarn, critical: thresholds.oilTempCrit },
-      hydrogen: { warn: thresholds.hydrogenWarn, critical: thresholds.hydrogenCrit },
-      moisture: { warn: thresholds.moistureWarn, critical: thresholds.moistureCrit },
-      oilLevel: { warn: thresholds.oilLevelWarn, critical: thresholds.oilLevelCrit },
-      load: { warn: thresholds.loadWarn, critical: thresholds.loadCrit },
-    }
-    return {
-      ...rule,
-      params: rule.params.map((p) => (overrides[p.key] ? { ...p, ...overrides[p.key] } : p)),
-      autoAck,
-    }
-  }
-
   // Each write is independent and its result is checked. Before, the factory pin
   // was saved LAST and behind two calls that throw, so a failing alarm-rule write
   // silently discarded the coordinate and reported an unrelated error — and the
@@ -159,13 +125,22 @@ export default function SettingsPage() {
       if (orgLat != null && orgLng != null) {
         if (!(await api.updateOrgLocation(selectedOrgId, orgLat, orgLng))) failed.push('factory location')
       }
-      if (!(await api.updateOrgRule(selectedOrgId, buildTransformerRule()))) failed.push('alarm thresholds')
       if (!(await api.putMyConfig(user.id, { emailAlerts }))) failed.push('preferences')
     }
     if (failed.length) { toast.error('Could not save: ' + failed.join(', ')); return }
     setSaved(true)
     toast.success('Settings saved')
     setTimeout(() => setSaved(false), 2000)
+  }
+
+  // Org-wide alarm baseline, applied across every transformer in this org —
+  // same endpoint and pattern as admin/notifications' Alarm & Notify editor.
+  const applyOrgRule = async (rule: NodeAlarmRule) => {
+    if (isLive()) {
+      const r = await api.putOrgRule(selectedOrgId, { rule })
+      if (!r) { toast.error('Could not save the alarm thresholds'); return }
+    }
+    toast.success('Alarm thresholds saved for all transformers')
   }
 
   const inputStyle = {
@@ -317,57 +292,12 @@ export default function SettingsPage() {
 
       <div className="grid grid-cols-3 gap-6">
         <div className="col-span-2 space-y-4">
-          {/* Transformer selector */}
-          <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-            <h3 className="text-sm font-semibold text-white mb-3">Select Transformer</h3>
-            <select
-              value={selectedId}
-              onChange={(e) => setSelectedId(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
-              style={inputStyle}
-            >
-              {transformers.map((t) => (
-                <option key={t.id} value={t.id}>{t.name} — {t.location}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Thresholds */}
+          {/* Org-wide alarm baseline — same editor as admin/notifications' Alarm
+              & Notify tab, so both pages read/write the one saved rule instead
+              of this page silently maintaining its own disconnected copy. */}
           <div className="rounded-xl p-5" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
             <h3 className="text-sm font-semibold text-white mb-4">Alarm Thresholds</h3>
-            <div className="space-y-4">
-              {[
-                { label: 'Oil Temperature', warnKey: 'oilTempWarn', critKey: 'oilTempCrit', unit: '°C' },
-                { label: 'Hydrogen H2', warnKey: 'hydrogenWarn', critKey: 'hydrogenCrit', unit: 'ppm' },
-                { label: 'Moisture', warnKey: 'moistureWarn', critKey: 'moistureCrit', unit: 'ppm' },
-                { label: 'Oil Level (min)', warnKey: 'oilLevelWarn', critKey: 'oilLevelCrit', unit: '%' },
-                { label: 'Load', warnKey: 'loadWarn', critKey: 'loadCrit', unit: '%' },
-              ].map((item) => (
-                <div key={item.label} className="grid grid-cols-3 gap-4 items-center">
-                  <div className="text-sm text-slate-300">{item.label}</div>
-                  <div>
-                    <label className="block text-[10px] text-amber-400 mb-1">Warning ({item.unit})</label>
-                    <input
-                      type="number"
-                      value={thresholds[item.warnKey as keyof typeof thresholds]}
-                      onChange={(e) => setThresholds((p) => ({ ...p, [item.warnKey]: +e.target.value }))}
-                      className="w-full px-3 py-1.5 rounded-lg text-sm outline-none focus:ring-1 focus:ring-amber-500"
-                      style={inputStyle}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] text-red-400 mb-1">Critical ({item.unit})</label>
-                    <input
-                      type="number"
-                      value={thresholds[item.critKey as keyof typeof thresholds]}
-                      onChange={(e) => setThresholds((p) => ({ ...p, [item.critKey]: +e.target.value }))}
-                      className="w-full px-3 py-1.5 rounded-lg text-sm outline-none focus:ring-1 focus:ring-red-500"
-                      style={inputStyle}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <AlarmParamConfig domain="transformer" orgId={selectedOrgId} onApplyAll={applyOrgRule} />
           </div>
 
           <button
@@ -376,7 +306,7 @@ export default function SettingsPage() {
             style={{ background: saved ? 'rgba(74,222,128,0.2)' : 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: saved ? '#4ade80' : 'white' }}
           >
             <Save size={16} />
-            {saved ? 'Saved!' : 'Save Thresholds'}
+            {saved ? 'Saved!' : 'Save Preferences'}
           </button>
         </div>
 
@@ -417,28 +347,6 @@ export default function SettingsPage() {
                     <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${autoAck ? 'translate-x-5' : 'translate-x-0.5'}`} />
                   </div>
                 </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-xl p-4" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-            <h3 className="text-sm font-semibold text-white mb-3">Data Retention</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Raw sensor data</span>
-                <span className="text-white">90 days</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Aggregated data</span>
-                <span className="text-white">5 years</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Alarm history</span>
-                <span className="text-white">Unlimited</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Reports</span>
-                <span className="text-white">2 years</span>
               </div>
             </div>
           </div>
