@@ -1870,7 +1870,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
           const tok = at > 0 ? raw.slice(0, at) : raw;
           const to  = at > 0 ? raw.slice(at + 1) : '';
           if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});
-          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
+          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
         } else if (c.channel === 'telegram') {
           const raw = String(c.target || nc.telegramChatId || '').trim();
           const at = raw.lastIndexOf('@');
@@ -1920,7 +1920,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             const tok = at > 0 ? rawLine.slice(0, at) : (nc.lineToken || '');
             const to  = at > 0 ? rawLine.slice(at + 1) : rawLine;
             if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});
-            else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
+            else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
           } catch(err) { node.error('notify:user-line '+err.message); }
         }
         const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
@@ -6256,7 +6256,7 @@ const __TXT='ONEOPS test notification. If you received this, the channel is conf
       r = await fetch('https://notify-api.line.me/api/notify', {
         method: 'POST',
         headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ message: ' ' + __TXT })
+        body: 'message=' + encodeURIComponent(' ' + __TXT)
       });
     }
     const resData = await r.json().catch(()=>({}));

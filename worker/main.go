@@ -991,9 +991,8 @@ func updatePresence(t TelemetryPayload) {
 	}
 	// Was this device previously marked offline? Read before the upsert so the
 	// recovery can be logged — otherwise a device coming back produced no entry
-	// at all on the connectivity timeline, only the silent end of an outage.
-	wasOffline := false
-	wasOnline := false
+	var wasOffline bool
+	var wasOnline bool
 	var downFor time.Duration
 	var prev sql.NullInt64
 	var lastSeen sql.NullTime
@@ -1002,6 +1001,7 @@ func updatePresence(t TelemetryPayload) {
 	var uptimeRegressions sql.NullInt64
 	var uptimeWindowStart sql.NullTime
 	var identityConflictAt sql.NullTime
+
 	if err := controlDB.QueryRow(
 		"SELECT online, last_seen, last_reading_at, last_uptime, uptime_regressions, uptime_window_start, identity_conflict_at "+
 			"FROM device_presence WHERE node_id = ?", t.NodeID,
@@ -1010,6 +1010,16 @@ func updatePresence(t TelemetryPayload) {
 		wasOnline = prev.Valid && prev.Int64 == 1
 		if online == 1 && wasOffline && lastSeen.Valid {
 			downFor = time.Since(lastSeen.Time).Round(time.Second)
+		}
+	} else if strings.Contains(err.Error(), "last_uptime") {
+		if errLegacy := controlDB.QueryRow(
+			"SELECT online, last_seen, last_reading_at FROM device_presence WHERE node_id = ?", t.NodeID,
+		).Scan(&prev, &lastSeen, &lastReadingAt); errLegacy == nil {
+			wasOffline = prev.Valid && prev.Int64 == 0
+			wasOnline = prev.Valid && prev.Int64 == 1
+			if online == 1 && wasOffline && lastSeen.Valid {
+				downFor = time.Since(lastSeen.Time).Round(time.Second)
+			}
 		}
 	}
 
@@ -1102,8 +1112,21 @@ func updatePresence(t TelemetryPayload) {
 			"uptime_window_start=COALESCE(VALUES(uptime_window_start),uptime_window_start), "+
 			"identity_conflict_at=COALESCE(identity_conflict_at,VALUES(identity_conflict_at))",
 		t.NodeID, online, rssi, batt, fw, uptimeOut, regressionsOut, windowStartOut, conflictOut); err != nil {
-		log.Printf("Presence update failed for %s: %v", t.NodeID, err)
-		return
+		if strings.Contains(err.Error(), "last_uptime") {
+			// Fallback for databases where migrate-v51 has not been applied yet
+			if _, fErr := controlDB.Exec(
+				"INSERT INTO device_presence (node_id, online, last_seen, rssi, batt, fw) "+
+					"VALUES (?, ?, NOW(3), ?, ?, ?) "+
+					"ON DUPLICATE KEY UPDATE online=VALUES(online), last_seen=VALUES(last_seen), "+
+					"rssi=COALESCE(VALUES(rssi),rssi), batt=COALESCE(VALUES(batt),batt), fw=COALESCE(VALUES(fw),fw)",
+				t.NodeID, online, rssi, batt, fw); fErr != nil {
+				log.Printf("Presence update failed for %s: %v", t.NodeID, fErr)
+				return
+			}
+		} else {
+			log.Printf("Presence update failed for %s: %v", t.NodeID, err)
+			return
+		}
 	}
 	// online == 1 matters as much as wasOffline. A device that is already marked
 	// offline still delivers its retained/late LWT ("state":"offline"), and
