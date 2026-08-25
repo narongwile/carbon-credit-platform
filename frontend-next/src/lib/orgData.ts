@@ -70,7 +70,7 @@ export const managedDevices: ManagedDevice[] = [
 export const defaultNotificationChannels: NotificationChannelConfig[] = [
   { id: 'email', name: 'Email', enabled: true, target: 'ops@customer.com', minSeverity: 'WARNING' },
   { id: 'line', name: 'LINE', enabled: true, target: 'LINE Notify token ••••', minSeverity: 'WARNING' },
-  { id: 'telegram', name: 'Telegram', enabled: false, target: '@ops_bot', minSeverity: 'WARNING' },
+  { id: 'telegram', name: 'Telegram', enabled: false, target: 'Chat ID (e.g. 581234567 or -100...)', minSeverity: 'WARNING' },
   { id: 'googlechat', name: 'Google Chat', enabled: false, target: 'webhook ••••', minSeverity: 'WARNING' },
 ]
 

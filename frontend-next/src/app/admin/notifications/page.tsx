@@ -276,9 +276,19 @@ export default function AlarmNotificationPage() {
                     </button>
                   </div>
                   <input value={ch.target} onChange={(e) => setTarget(ch.id, e.target.value)} disabled={!ch.enabled}
-                    placeholder={`${ch.name} target…`}
+                    placeholder={
+                      ch.id === 'telegram' ? 'Numeric Chat ID (e.g. 581234567 or Group -100...)' :
+                      ch.id === 'email' ? 'ops@company.com' :
+                      ch.id === 'line' ? 'User ID or Token@UserID' :
+                      `${ch.name} target…`
+                    }
                     className={clsx('w-full rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
                     style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
+                  {ch.id === 'telegram' && (
+                    <p className="text-[10px] text-slate-500 mt-1">
+                      💡 ใส่เลข <code>Chat ID</code> หรือ <code>Group ID (-100...)</code> ไม่ใช่ @botname
+                    </p>
+                  )}
                   {/* Real severity routing: notify() skips a CRITICAL-only
                       channel for a WARNING alarm. Replaces the fake
                       "Severity Routing" panel that used to sit in the alarm
