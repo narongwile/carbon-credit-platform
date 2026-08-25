@@ -168,6 +168,46 @@ func main() {
 			(userBState.Params["oilTemp\x1fhigh"] == nil || userBState.Params["oilTemp\x1fhigh"].ActiveLevel == ""),
 		fmt.Sprintf("shared=%q userA=%q", sharedState.Params["oilTemp\x1fhigh"].ActiveLevel, userAState.Params["oilTemp\x1fhigh"].ActiveLevel))
 
+	// oilTemp above is ONE representative parameter, used to keep frames 1-2
+	// focused on the ownership-isolation property. evaluateParams itself is
+	// generic over whatever RuleParam entries a rule contains — it is not
+	// hardcoded to any one key — so it does not need a special case per
+	// parameter; what needs proving is that a DIFFERENT, trickier parameter
+	// shape (two bands sharing one wire key) also survives being placed in a
+	// personal rule, and does not cross-contaminate with a second parameter
+	// in that SAME user's own rule. VoltAN over/under-voltage — the exact
+	// dual-band case go-alarm-state-proof.go already proves for the SHARED
+	// path — is added to user A's personal rule alongside their existing
+	// oilTemp entry for exactly that reason.
+	userARule = append(userARule,
+		RuleParam{Key: "VoltAN", Label: "Phase A-N Voltage — Over-voltage", Warn: 241.5, Critical: 253, Direction: "high"},
+		RuleParam{Key: "VoltAN", Label: "Phase A-N Voltage — Under-voltage", Warn: 218.5, Critical: 207, Direction: "low"},
+	)
+	frame3 := map[string]float64{"oilTemp": 88, "VoltAN": 255} // still the same over-temp oilTemp reading, plus a genuine over-voltage
+	events = nil
+	evaluateParams("shared", sharedState, sharedRule, frame3, dwellMin, emit) // sharedRule/userBRule never mention VoltAN — absence there is itself part of the proof
+	evaluateParams("userA", userAState, userARule, frame3, dwellMin, emit)
+	evaluateParams("userB", userBState, userBRule, frame3, dwellMin, emit)
+
+	fmt.Printf("frame 3 (oilTemp=88, VoltAN=255 — user A's rule now has TWO different parameters): %d event(s): %v\n", len(events), events)
+
+	check("user A's VoltAN over-voltage band raised CRITICAL (255 is past their 253)",
+		userAState.Params["VoltAN\x1fhigh"] != nil && userAState.Params["VoltAN\x1fhigh"].ActiveLevel == "CRITICAL",
+		fmt.Sprintf("entry=%v", userAState.Params["VoltAN\x1fhigh"]))
+
+	check("user A's VoltAN under-voltage band (same key, opposite direction) stayed clear — not merged with the over-voltage band",
+		userAState.Params["VoltAN\x1flow"] == nil || userAState.Params["VoltAN\x1flow"].ActiveLevel == "",
+		fmt.Sprintf("entry=%v", userAState.Params["VoltAN\x1flow"]))
+
+	check("user A's oilTemp state is untouched by adding a second parameter to their own rule",
+		userAState.Params["oilTemp\x1fhigh"].ActiveLevel == "CRITICAL" && userAState.Params["oilTemp\x1fhigh"].RunCount == 3,
+		fmt.Sprintf("ActiveLevel=%q RunCount=%d (want CRITICAL, 3 — three frames in, held steady)",
+			userAState.Params["oilTemp\x1fhigh"].ActiveLevel, userAState.Params["oilTemp\x1fhigh"].RunCount))
+
+	check("VoltAN never appeared in the shared state or user B's state — a parameter only in ONE user's personal rule stays scoped to them",
+		sharedState.Params["VoltAN\x1fhigh"] == nil && userBState.Params["VoltAN\x1fhigh"] == nil,
+		fmt.Sprintf("shared entry=%v userB entry=%v", sharedState.Params["VoltAN\x1fhigh"], userBState.Params["VoltAN\x1fhigh"]))
+
 	fmt.Println(fail == 0)
 	if fail > 0 {
 		fmt.Printf("\n%d passed, %d failed — a personal rule's state leaked into (or was clobbered by) the shared state or another user's personal state.\n", pass, fail)
