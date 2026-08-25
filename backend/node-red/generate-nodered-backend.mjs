@@ -1924,6 +1924,127 @@ return null;`
 
 
 
+// --- Personal alarm delivery (migrate-v53's user_node_rules, worker/main.go's
+// evaluatePersonalAlarms) --------------------------------------------------
+// Separate topic/batch/notify trio from the org-wide alarms above, on
+// purpose: a personal breach must never appear in the org/department storm
+// digest (that would leak one user's private threshold to everyone watching
+// the device) and never gets an alarm_events row (that is the shared,
+// admin-visible timeline). This delivers to exactly the one user who set the
+// rule, through the SAME Delivery Channels toggle (alertChannels[nodeId])
+// MyAlertSettings Section 1 already writes — no separate consent step.
+//
+// Deliberately its own compact template rather than reusing notifyFunc's
+// rich org-branded email/card builders (custom SOP footer, risk-category
+// map, per-org email template from platform_settings): those exist for the
+// org's OFFICIAL incident alert, sent under the org's own branding — a
+// personal threshold is the individual's own private early-warning ping,
+// unknown to the org, and has no reason to borrow that branding. Matches
+// this file's own convention of small per-function-string duplication
+// (putRuleFunc/orgRuleFunc's upsert, stormBatchFunc's own batch shape) over
+// a shared abstraction spanning two standalone Node-RED function nodes.
+const personalStormBatchFunc = `
+const e = msg.payload;
+if (!e || !e.paramKey || !e.severity || !e.personalUserId) return null;
+
+const batchKey = 'alarm_batch_personal_' + e.nodeId + '_' + e.personalUserId;
+const timerKey = 'alarm_timer_personal_' + e.nodeId + '_' + e.personalUserId;
+
+let batch = global.get(batchKey) || [];
+batch.push(e);
+global.set(batchKey, batch);
+
+if (!global.get(timerKey)) {
+  const t = setTimeout(() => {
+    const finalBatch = global.get(batchKey) || [];
+    global.set(batchKey, []);
+    global.set(timerKey, null);
+    if (finalBatch.length > 0) {
+      node.send({ payload: finalBatch });
+    }
+  }, 10000);
+  global.set(timerKey, t);
+}
+return null;
+`
+
+const notifyPersonalFunc = `
+const alarms = Array.isArray(msg.payload) ? msg.payload : [msg.payload];
+if (!alarms || !alarms.length) return null;
+const e = alarms[0];
+if (!e.severity || !e.paramKey || !e.personalUserId) return null;
+
+const controlPool = global.get('pool');
+const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok';
+const formatTime = (ts) => { try{ return new Date(ts).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){ return String(ts); } };
+const __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+const topSeverity = alarms.some(a => a.severity === 'CRITICAL') ? 'CRITICAL' : 'WARNING';
+const __sevEmoji = topSeverity === 'CRITICAL' ? '🔴' : '🟡';
+const isMulti = alarms.length > 1;
+const subject = 'ONEOPS ' + __sevEmoji + ' [Your Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' thresholds on ' + e.nodeId : (e.paramLabel || 'Alert')) + ' — ' + e.nodeId;
+
+const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(new RegExp('/+$'),'');
+
+let text = __sevEmoji + ' [' + topSeverity + '] Your personal alert — ' + (isMulti ? alarms.length + ' of your thresholds' : (e.paramLabel || 'Alert')) + '\\n';
+text += '⚡️ Device: ' + e.nodeId + '\\n';
+text += 'This is YOUR OWN personal threshold, set on this device\\'s dashboard — it does not change the device\\'s official alarm state that others see.\\n\\n';
+alarms.forEach(a => {
+  const isOffline = a.kind === 'offline';
+  const valLine = isOffline ? 'No telemetry received' : (a.value + (a.unit||''));
+  const limLine = isOffline ? '—' : (a.threshold + (a.unit||''));
+  text += '🏷 ' + (a.paramLabel || 'Alert') + ' (' + a.severity + ')\\n';
+  text += '📊 Value: ' + valLine + ' (Your limit: ' + limLine + ')\\n';
+  text += '🕒 ' + formatTime(a.ts) + '\\n\\n';
+});
+const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSeverity) + ']</b>\\n'
+  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n\\n'
+  + alarms.map(a => '🏷 <b>' + __esc(a.paramLabel || 'Alert') + '</b> (' + __esc(a.severity) + ')\\n'
+      + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Your limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')').join('\\n\\n');
+
+(async () => {
+  try {
+    const [urows] = await controlPool.query("SELECT u.id,u.email,u.role,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.id=?", [e.personalUserId]);
+    if (!urows.length) return;
+    const u = urows[0];
+    let pf = {};
+    try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { return; }
+    // Re-checked at delivery time, not just at rule-save time: the user may
+    // have turned this channel off since the personal rule was created.
+    const sel = (pf.alertChannels || {})[e.nodeId];
+    if (!sel) return;
+
+    const viewer = u.role === 'viewer' || u.role === 'customer';
+    const link = (!__base || __base === '*') ? '' : (__base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId));
+    const linkLine = link ? '\\n🔗 ' + link : '';
+
+    if (sel.email && u.email) {
+      try {
+        const mc = await global.get('mailConfig')();
+        if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject, text: text + linkLine });
+      } catch(err) { node.error('notifyPersonal:email ' + err.message); }
+    }
+    if (sel.telegram && pf.telegramChatId) {
+      try {
+        const nc = await global.get('notifyConfig')();
+        if (nc.telegramToken) await fetch('https://api.telegram.org/bot'+nc.telegramToken+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ chat_id: pf.telegramChatId, text: tgText + (link ? '\\n<a href=\\"'+link+'\\">Open device</a>' : ''), parse_mode: 'HTML' })});
+      } catch(err) { node.error('notifyPersonal:telegram ' + err.message); }
+    }
+    if (sel.line && pf.lineUserId) {
+      try {
+        const nc = await global.get('notifyConfig')();
+        if (nc.lineToken) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+nc.lineToken,'Content-Type':'application/json'},body:JSON.stringify({to:pf.lineUserId,messages:[{type:'text',text:subject+'\\n\\n'+text+linkLine}]})});
+      } catch(err) { node.error('notifyPersonal:line ' + err.message); }
+    }
+    if (sel.googlechat && pf.googleChatWebhook) {
+      try {
+        await fetch(pf.googleChatWebhook,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ text: subject + '\\n' + text + linkLine })});
+      } catch(err) { node.error('notifyPersonal:googlechat ' + err.message); }
+    }
+  } catch(err) { node.error('notifyPersonal: ' + err.message); }
+})();
+return null;`
+
 // Raw device wire key -> canonical param key. Single source of truth for
 // normalizeFunc's own MAP below AND for GET /api/telemetry/aliases (see
 // telemetryAliasesFunc) — both are generated FROM this object via
@@ -2356,6 +2477,79 @@ if(!domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'domain req
   const deb=parse(row.debounce_json);
   if(deb) rule.debounceJson=deb;
   msg.headers=__CORS; msg.payload={rule,updatedBy:row.updated_by,updatedAt:row.updated_at}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+// Admin bulk-apply of the SHARED device rule (alarm_rules), scoped to one
+// department (or a chosen user's own department) — a separate route from
+// orgRuleFunc rather than an optional param on it, so "this never touches
+// org_domain_rules" (the org-wide default orgRuleFunc always upserts first)
+// is true by construction instead of depending on every future caller
+// getting a branch right.
+//
+// users lives in the CONTROL pool always (auth/orgs/users/departments never
+// move with TENANT_DB_MODE — see the control-plane handler list in initFunc),
+// so resolving a userId's department is a control-pool lookup even though
+// the nodes/alarm_rules it then loops are tenant-pool data.
+const orgRuleDepartmentFunc = CORS + `const orgId=msg.req.params.orgId; const pool=global.get('resolvePool')(orgId); const controlPool=global.get('pool');
+const {rule,departmentId,userId,updatedBy}=msg.payload||{};
+if(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule.domain required'};return msg;}
+if(!departmentId&&!userId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'departmentId or userId required'};return msg;}
+(async()=>{
+  if(!(await global.get('domainEntitled')(msg.auth,orgId,rule.domain))){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is not licensed for '+rule.domain};node.send(msg);return;}
+  let deptId=departmentId;
+  if(!deptId&&userId){
+    const[ur]=await controlPool.query('SELECT department_id FROM users WHERE id=? AND org_id=?',[userId,orgId]);
+    if(!ur.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'user not found in this organization'};node.send(msg);return;}
+    deptId=ur[0].department_id;
+    if(!deptId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'this user has no department — nothing to scope the rule to'};node.send(msg);return;}
+  }
+  const debounceJson = rule.debounceJson ? JSON.stringify(rule.debounceJson) : null;
+  const ruleJson = JSON.stringify({...rule, debounceJson:undefined});
+  const [nodes]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=? AND department_id=?',[orgId,rule.domain,deptId]);
+  let applied=0;
+  for(const n of nodes){
+    await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),debounce_json=VALUES(debounce_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[n.id,orgId,rule.domain,ruleJson,debounceJson,updatedBy||null]);
+    applied++;
+  }
+  msg.headers=__CORS; msg.payload={applied,saved:true,departmentId:deptId}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+// --- Personal (per-user, per-node) alarm thresholds (migrate-v53) -----------
+// Independent of alarm_rules: this is "notify ME when MY threshold is
+// crossed", never the shared org-visible WARNING/CRITICAL state everyone
+// (including admins) sees on this device. Policy 'node' — the same
+// view-access gate getRuleFunc/chartsGetFunc use, deliberately NOT
+// 'node:manage' — every role that can see this device may set their own
+// personal alert, not just an admin.
+const USER_NODE_RULES_DDL = "CREATE TABLE IF NOT EXISTS user_node_rules (user_id VARCHAR(64) NOT NULL, node_id VARCHAR(64) NOT NULL, org_id VARCHAR(64) NOT NULL, domain VARCHAR(32) NOT NULL, rule_json JSON NOT NULL, updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), PRIMARY KEY (user_id, node_id), INDEX idx_user_node_rules_node (node_id))";
+
+const getPersonalRuleFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||'';
+(async()=>{
+  const pool=await global.get('poolForNode')(id, msg.auth);
+  let r=[];
+  try{ [r]=await pool.query('SELECT rule_json FROM user_node_rules WHERE node_id=? AND user_id=?',[id,uid]); }
+  catch(e){ if(String(e&&e.message||'').indexOf('user_node_rules')<0) throw e; }
+  if(!r.length){ msg.headers=__CORS; msg.payload={rule:null}; node.send(msg); return; }
+  const rule=typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json;
+  msg.headers=__CORS; msg.payload={rule}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+// org_id/domain resolved from a direct nodes query (control pool), not
+// trusted from the request body — same reasoning as putRuleFunc: this must
+// reflect the device's real CURRENT org, not whatever the caller's client
+// state happened to think it was.
+const putPersonalRuleFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||''; const {rule}=msg.payload||{};
+if(!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule required'};return msg;}
+if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authentication required'};return msg;}
+(async()=>{
+  const[__n]=await global.get('pool').query('SELECT org_id,domain FROM nodes WHERE id=?',[id]);
+  if(!__n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found'};node.send(msg);return;}
+  const org=__n[0].org_id; const domain=__n[0].domain;
+  const pool=global.get('resolvePool')(org);
+  await pool.query(${JSON.stringify(USER_NODE_RULES_DDL)});
+  const ruleJson=JSON.stringify(rule);
+  await pool.query('INSERT INTO user_node_rules (user_id,node_id,org_id,domain,rule_json) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain)',[uid,id,org,domain,ruleJson]);
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 // --- Custom multi-parameter trend charts (migrate-v47) ----------------------
@@ -6505,6 +6699,13 @@ const flow = [
   { id: 'mqttalarms', type: 'mqtt in', z: 'be', name: 'internal/alarms/live/#', topic: 'internal/alarms/live/#', qos: '0', datatype: 'json', broker: 'mqttbroker', x: 130, y: 180, wires: [['stormbatch', 'wsbroadcast']] },
   fn('stormbatch', 'storm digest (10s window)', stormBatchFunc, 560, 200, [['notify']], 1),
   fn('notify', 'notify (Email/LINE/Telegram/GChat · per-tenant)', notifyFunc, 820, 200, [[]], 1, { libs: NOTIFY_LIBS }),
+  // Personal (per-user) alarm delivery — separate topic/batch/notify from the
+  // org-wide trio above, so a personal breach never mixes into the
+  // org/department storm digest or broadcast. See worker/main.go's
+  // evaluatePersonalAlarms (publisher) and notifyPersonalFunc's own comment.
+  { id: 'mqttpersonalalarms', type: 'mqtt in', z: 'be', name: 'internal/alarms/personal/#', topic: 'internal/alarms/personal/#', qos: '0', datatype: 'json', broker: 'mqttbroker', x: 130, y: 240, wires: [['personalstormbatch']] },
+  fn('personalstormbatch', 'personal storm digest (10s window)', personalStormBatchFunc, 560, 260, [['notifypersonal']], 1),
+  fn('notifypersonal', 'notify personal (single user, own channels only)', notifyPersonalFunc, 820, 260, [[]], 1, { libs: NOTIFY_LIBS }),
   // WebSocket bridge → frontend useMqttTelemetry (NEXT_PUBLIC_WS_URL)
   fn('wsbroadcast', 'ws broadcast (per-org fan-out)', wsBroadcastFunc, 820, 280, [['wsout']], 1),
   { id: 'wsout', type: 'websocket out', z: 'be', name: 'telemetry ws', server: 'wslistener', client: '', x: 1030, y: 280, wires: [] },
@@ -6585,6 +6786,14 @@ const flow = [
   ...endpoint('orgrule', 'put', '/api/orgs/:orgId/rule', orgRuleFunc, 'admin'),
   // Read back what the PUT above stored, so the editor shows the live values.
   ...endpoint('orgruleget', 'get', '/api/orgs/:orgId/rule', orgRuleGetFunc, 'admin'),
+  // Bulk-apply to one department's (or one user's own department's) devices
+  // only — never touches org_domain_rules, unlike orgrule above.
+  ...endpoint('orgruledept', 'put', '/api/orgs/:orgId/rule/department', orgRuleDepartmentFunc, 'admin'),
+  // Personal (per-user) thresholds — independent of the shared rule above.
+  // 'node', not 'node:manage': every role with view access to this device
+  // may read/write their OWN personal alert, not just an admin.
+  ...endpoint('personalruleget', 'get', '/api/nodes/:id/personal-rule', getPersonalRuleFunc, 'node'),
+  ...endpoint('personalruleput', 'put', '/api/nodes/:id/personal-rule', putPersonalRuleFunc, 'node'),
   // Admin-configurable multi-parameter trend charts (migrate-v47). Any signed-in
   // viewer with access to the device may read the charts an admin configured;
   // only 'node:manage' may create/edit/delete them.

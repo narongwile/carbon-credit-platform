@@ -40,6 +40,15 @@ const state = {
   // node-scoped alarm_rules row and chart_definitions rows would have.
   charts: {},
   rules: {},
+  // Personal (per-user) alarm thresholds — separate bucket from `rules`
+  // above on purpose, same as the real user_node_rules table is a separate
+  // table from alarm_rules: a save here must never touch `rules`, and vice
+  // versa. Keyed by nodeId only (not nodeId+userId) since this mock does not
+  // model multiple concurrent sessions — real per-user isolation is proven
+  // server-side by e2e/proofs/go-personal-alarm-state-proof.go instead; this
+  // mock only needs to prove the FRONTEND wires to the right endpoint and
+  // never cross-writes `rules`.
+  personalRules: {},
 };
 
 // Synthetic reading history so a multi-param custom chart has real series to
@@ -286,6 +295,20 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'PUT') {
       state.rules[nodeId] = body.rule;
+      return send(res, 200, { ok: true });
+    }
+  }
+
+  // Personal (per-user) alarm rule — independent of /rule above. GET returns
+  // {rule:null} (200) rather than 404 when unset, matching orgRuleGetFunc's
+  // "never configured" convention the real endpoint follows.
+  if (url.pathname.match(/^\/api\/nodes\/[^/]+\/personal-rule$/)) {
+    const nodeId = url.pathname.split('/')[3];
+    if (req.method === 'GET') {
+      return send(res, 200, { rule: state.personalRules[nodeId] ?? null });
+    }
+    if (req.method === 'PUT') {
+      state.personalRules[nodeId] = body.rule;
       return send(res, 200, { ok: true });
     }
   }

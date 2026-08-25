@@ -370,11 +370,26 @@ export default function AlarmParamConfig({
   nodeId,
   orgId = 'org-1',
   onApplyAll,
+  applyAllLabel,
+  mode = 'device',
 }: {
   domain?: SensorDomain
   nodeId?: string
   orgId?: string
   onApplyAll?: (rule: NodeAlarmRule) => void
+  /** Overrides the onApplyAll button's text — e.g. a caller that scopes the bulk-apply to one department/user, so the button never says "All Devices" for a narrower action. */
+  applyAllLabel?: string
+  /**
+   * 'device' (default): the shared, org-visible rule everyone sees for this
+   * node — reads/writes alarm_rules via getRule/putRule + the shared
+   * useAlarmDB store.
+   * 'personal': the CALLER's own independent overlay ("notify me when MY
+   * threshold is crossed") — reads/writes user_node_rules via
+   * getMyNodeRule/putMyNodeRule, never touches alarm_rules or useAlarmDB, so
+   * it can never clobber (or be clobbered by) the shared device rule's
+   * cached view for this same node.
+   */
+  mode?: 'device' | 'personal'
 }) {
   const live = useIsLive()
   const schema = getAlarmSchema(domain)
@@ -675,18 +690,32 @@ export default function AlarmParamConfig({
     if (saved.healthIndexWarn !== undefined) setHealthIdx(saved.healthIndexWarn)
   }
 
-  // Load per-node saved rule
+  // Load per-node saved rule (device mode: the shared useAlarmDB store)
   useEffect(() => {
-    if (!nodeId || !hasHydrated) return
+    if (mode !== 'device' || !nodeId || !hasHydrated) return
     const saved = useAlarmDB.getState().rules[nodeId]
     if (saved) applyRule(saved)
-  }, [nodeId, hasHydrated])
+  }, [mode, nodeId, hasHydrated])
+
+  // Load this user's own personal rule for this node (personal mode) — a
+  // separate fetch, deliberately never touching useAlarmDB, so a personal
+  // edit can never overwrite (or be overwritten by) the shared device rule's
+  // cached view for the same nodeId.
+  useEffect(() => {
+    if (mode !== 'personal' || !nodeId || !isLive()) return
+    let cancelled = false
+    api.getMyNodeRule(nodeId).then((r) => {
+      if (cancelled || !r?.rule) return
+      applyRule(r.rule)
+    })
+    return () => { cancelled = true }
+  }, [mode, nodeId])
 
   // Load org-level saved rule
   const [orgRuleState, setOrgRuleState] = useState<'idle' | 'loading' | 'custom' | 'default'>('idle')
   const [orgRuleMeta, setOrgRuleMeta] = useState<{ updatedBy?: string | null; updatedAt?: string | null } | null>(null)
   useEffect(() => {
-    if (nodeId || !orgId || !domain) return
+    if (mode !== 'device' || nodeId || !orgId || !domain) return
     let cancelled = false
     setOrgRuleState('loading')
     api.getOrgRule(orgId, domain).then((r) => {
@@ -700,7 +729,7 @@ export default function AlarmParamConfig({
       }
     })
     return () => { cancelled = true }
-  }, [nodeId, orgId, domain])
+  }, [mode, nodeId, orgId, domain])
 
   // -------------------------------------------------------------------------
   // Filtering & Category Tabs
@@ -815,13 +844,20 @@ export default function AlarmParamConfig({
     }
     const rule = buildRule()
     if (!rule) return
-    if (nodeId) {
-      setRule(nodeId, rule, orgId)
+    if (!nodeId) return
+    if (mode === 'personal') {
       if (isLive()) {
-        await api.putRule(nodeId, { orgId, rule })
+        const r = await api.putMyNodeRule(nodeId, { rule })
+        if (!r) { toast.error('Could not save your personal alarm thresholds'); return }
       }
-      toast.success('Alarm rules saved for this device')
+      toast.success('Your personal alarm thresholds are saved')
+      return
     }
+    setRule(nodeId, rule, orgId)
+    if (isLive()) {
+      await api.putRule(nodeId, { orgId, rule })
+    }
+    toast.success('Alarm rules saved for this device')
   }
 
   const applyAll = () => {
@@ -1440,7 +1476,7 @@ export default function AlarmParamConfig({
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white shadow-md hover:brightness-110 transition-all"
             style={gradient}
           >
-            <Save size={15} /> Save Device Alarm Rules
+            <Save size={15} /> {mode === 'personal' ? 'Save My Personal Alarm Thresholds' : 'Save Device Alarm Rules'}
           </button>
         )}
         {onApplyAll && (
@@ -1449,7 +1485,7 @@ export default function AlarmParamConfig({
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold text-white shadow-md hover:brightness-110 transition-all"
             style={gradient}
           >
-            <Save size={15} /> Apply Baseline to All {schema?.label ?? domain} Devices
+            <Save size={15} /> {applyAllLabel ?? `Apply Baseline to All ${schema?.label ?? domain} Devices`}
           </button>
         )}
       </div>

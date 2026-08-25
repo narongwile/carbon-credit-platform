@@ -360,6 +360,19 @@ export const api = {
     req<{ rule: NodeAlarmRule | null; updatedBy?: string | null; updatedAt?: string | null }>(
       `/api/orgs/${orgId}/rule?domain=${encodeURIComponent(domain)}`),
 
+  /**
+   * Personal (per-user, per-node) alarm thresholds — independent of the
+   * shared rule above. Notifies only the signed-in caller, through their own
+   * Delivery Channels; never alters what alarm_rules/getRule show everyone
+   * else. Any role with view access to the device may read/write their own.
+   */
+  getMyNodeRule: (nodeId: string) => req<{ rule: NodeAlarmRule | null }>(`/api/nodes/${nodeId}/personal-rule`),
+  putMyNodeRule: (nodeId: string, body: { rule: NodeAlarmRule }) =>
+    req<{ ok: boolean }>(`/api/nodes/${nodeId}/personal-rule`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Admin bulk-apply of the shared device rule, scoped to one department (or a user's own department) — never touches org_domain_rules. */
+  putOrgRuleDepartment: (orgId: string, body: { rule: NodeAlarmRule; departmentId?: string; userId?: string; updatedBy?: string }) =>
+    req<{ applied: number; departmentId?: string }>(`/api/orgs/${orgId}/rule/department`, { method: 'PUT', body: JSON.stringify(body) }),
+
   /** Admin-configurable multi-parameter trend charts for one device (migrate-v47). */
   listCharts: (nodeId: string) => req<ChartDefinition[]>(`/api/nodes/${nodeId}/charts`),
   createChart: (nodeId: string, body: { title: string; paramKeys: string[] }) =>

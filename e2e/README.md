@@ -79,13 +79,32 @@ node test-display-params-people.mjs  # DisplayParamPicker's "Who sees this" can 
                                      #   them (userIds), a pending user and an admin (whose own view
                                      #   always bypasses per-person scoping) are both excluded from the
                                      #   picker, and choosing "specific people" hides the department select
+node test-personal-alarm-rule.mjs   # personal (per-user) alarm thresholds on the transformer dashboard:
+                                     #   a customer/viewer sees and can save their OWN threshold section
+                                     #   (not admin-gated like the shared device rule below it), it
+                                     #   round-trips through GET/PUT /api/nodes/:id/personal-rule and
+                                     #   never touches /api/nodes/:id/rule (the shared rule), and an admin
+                                     #   sees both sections on the same device — EXITS NON-ZERO ON FAILURE
+node test-bulk-apply-smoke.mjs      # admin/notifications' new "Apply baseline to" scope picker
+                                     #   (whole org / one department / one user) renders, switches the
+                                     #   Apply-button wording correctly, and introduces no NEW page error
+                                     #   beyond the page's known pre-existing hydration warning (see below)
+                                     #   — EXITS NON-ZERO ON FAILURE
 ```
+
+**Known pre-existing issue, not introduced by the personal-alarm-thresholds
+work**: `admin/notifications` throws a React "Text content does not match
+server-rendered HTML" hydration warning on every load, confirmed present
+both with and without that change (checked by stashing it and rerunning
+`test-bulk-apply-smoke.mjs`'s error count). Not investigated or fixed here —
+out of scope for that feature — but real, and worth a follow-up.
 
 Each script prints `PASS`/`FAIL` lines, but **only `test-studio-features.mjs`,
 `test-reports-copy.mjs`, `test-alarm-discovery-ui.mjs`,
 `test-pdf-readability.mjs`, `test-transformer-detail-crash.mjs`,
 `test-param-label-bands.mjs`, `test-alarm-scope-filter.mjs`,
-`test-telemetry-aliases-panel.mjs`, `test-display-params-people.mjs` and
+`test-telemetry-aliases-panel.mjs`, `test-display-params-people.mjs`,
+`test-personal-alarm-rule.mjs`, `test-bulk-apply-smoke.mjs` and
 `test-iiot-ux-upgrades.mjs` actually exit
 non-zero on failure** — the rest
 count nothing and always exit 0. This paragraph used to claim they were all
@@ -140,6 +159,12 @@ go run e2e/proofs/go-alarm-state-proof.go  # the exact state machine from worker
                                             #   extracted verbatim: proves two alarm bands sharing one telemetry
                                             #   key (e.g. over/under-voltage on the same phase) track independent
                                             #   state instead of one clobbering the other into a duplicate-alarm loop
+go run e2e/proofs/go-personal-alarm-state-proof.go  # the shared evaluateParams helper both evaluateAlarms (org
+                                            #   rule) and evaluatePersonalAlarms (each user's own rule) call:
+                                            #   proves a personal threshold's dwell/hysteresis state never leaks
+                                            #   into, or is clobbered by, the shared org-visible state or another
+                                            #   user's own personal state, even when evaluated back-to-back
+                                            #   against the identical telemetry frame
 node e2e/proofs/test-edge-alarm-surfaces.mjs     # a firmware-raised alarm (the Alarm List's External Fault/
                                             #   Event) reaches alarm_events and the notifier instead of
                                             #   dead-ending in edge_alarm_log, and does not re-notify while

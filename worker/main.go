@@ -267,6 +267,13 @@ var (
 	alarmStateCache sync.Map // string (nodeId) -> *AlarmNodeState
 	orgExistsCache  sync.Map // string (orgId) -> orgExistEntry
 
+	// Personal (per-user, per-node) alarm thresholds — independent of the
+	// shared rule/state above. Keyed separately (node vs userId+"\x1f"+node)
+	// so a personal breach can never read or clobber the shared org state,
+	// and vice versa.
+	personalRulesCache      sync.Map // string (nodeId) -> PersonalRulesCacheEntry
+	personalAlarmStateCache sync.Map // string (userId+"\x1f"+nodeId) -> *AlarmNodeState
+
 	// Regex for DB name sanitization
 	nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 )
@@ -314,6 +321,20 @@ var lastReadingRetryAt atomic.Int64
 
 type RuleCacheEntry struct {
 	Rule      AlarmRule
+	ExpiresAt time.Time
+}
+
+// PersonalRule is one user's own threshold set for one node — "notify me
+// when MY reading crosses MY limit," never the shared alarm_rules row
+// everyone (including admins) sees for this device.
+type PersonalRule struct {
+	UserID   string
+	Domain   string
+	RuleJSON string
+}
+
+type PersonalRulesCacheEntry struct {
+	Rules     []PersonalRule
 	ExpiresAt time.Time
 }
 
@@ -1216,6 +1237,41 @@ func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
 	return r, true
 }
 
+// getPersonalRules returns every user's personal rule for this node — opt-in
+// and normally empty, so the common case costs one cache lookup returning a
+// nil slice, not a query. Mirrors getAlarmRule's cache shape exactly.
+func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
+	if cached, ok := personalRulesCache.Load(nodeID); ok {
+		entry := cached.(PersonalRulesCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.Rules
+		}
+	}
+
+	rows, err := tenantDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
+	if err != nil {
+		// Table not created yet on this DB (fresh tenant, migration pending) —
+		// same "no personal rules" outcome as none existing, not an error.
+		return nil
+	}
+	defer rows.Close()
+
+	var out []PersonalRule
+	for rows.Next() {
+		var pr PersonalRule
+		if err := rows.Scan(&pr.UserID, &pr.Domain, &pr.RuleJSON); err != nil {
+			continue
+		}
+		out = append(out, pr)
+	}
+
+	personalRulesCache.Store(nodeID, PersonalRulesCacheEntry{
+		Rules:     out,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	})
+	return out
+}
+
 // rateWindow reads the time base a rate-of-rise alarm declares in its own unit
 // string ('ppm/day' for DGA gassing, '°C/h' for thermal). Returns 0 when the
 // unit carries no interpretable denominator, in which case the caller SKIPS the
@@ -1335,24 +1391,13 @@ func cleared(v, l, h float64, dir string) bool {
 	return v > l+h
 }
 
-func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, rule AlarmRule) {
-	var ruleDef RuleDefinition
-	if err := json.Unmarshal([]byte(rule.RuleJSON), &ruleDef); err != nil {
-		log.Printf("Failed to unmarshal rule JSON for node %s: %v", t.NodeID, err)
-		return
-	}
-
-	// Parse debounce_json if available
-	debounceMap := make(map[string]ParamDebounce)
-	if rule.DebounceJSON.Valid && len(rule.DebounceJSON.String) > 0 {
-		_ = json.Unmarshal([]byte(rule.DebounceJSON.String), &debounceMap)
-	}
-
-	stateVal, _ := alarmStateCache.LoadOrStore(t.NodeID, &AlarmNodeState{
-		Params: make(map[string]*AlarmParamState),
-	})
-	ns := stateVal.(*AlarmNodeState)
-
+// evaluateParams runs the dwell/hysteresis/rate state machine for one rule's
+// params against ns, calling emit for each threshold or rate breach that
+// clears dwell/cooldown. Shared by the org-wide rule (evaluateAlarms) and
+// each user's personal rule (evaluatePersonalAlarms) — same state machine,
+// applied to a caller-supplied (and differently-keyed) *AlarmNodeState, so
+// the two can never read or clobber each other's state.
+func evaluateParams(ns *AlarmNodeState, ruleDef RuleDefinition, debounceMap map[string]ParamDebounce, t TelemetryPayload, ts time.Time, emit func(p RuleParam, sev, kind string, val, thresh float64)) {
 	ns.Mu.Lock()
 	defer ns.Mu.Unlock()
 
@@ -1414,7 +1459,7 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 				}
 				d := delta * float64(rateWin) / float64(elapsed)
 				if d >= p.Rate.Warn {
-					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, "WARNING", "rate", val, p.Rate.Warn, rule.Domain)
+					emit(p, "WARNING", "rate", val, p.Rate.Warn)
 				}
 				valCopy := val
 				ps.PrevValue = &valCopy
@@ -1459,7 +1504,7 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 					if lvl == "CRITICAL" {
 						thresh = p.Critical
 					}
-					emitAlarm(tenantDB, client, orgID, depID, t, ts, p, lvl, "threshold", val, thresh, rule.Domain)
+					emit(p, lvl, "threshold", val, thresh)
 					ps.LastRaisedAt = ts
 				}
 				ps.ActiveLevel = lvl
@@ -1470,6 +1515,57 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 		} else if lvl == "" {
 			ps.RunCount = 0
 		}
+	}
+}
+
+func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, rule AlarmRule) {
+	var ruleDef RuleDefinition
+	if err := json.Unmarshal([]byte(rule.RuleJSON), &ruleDef); err != nil {
+		log.Printf("Failed to unmarshal rule JSON for node %s: %v", t.NodeID, err)
+		return
+	}
+
+	// Parse debounce_json if available
+	debounceMap := make(map[string]ParamDebounce)
+	if rule.DebounceJSON.Valid && len(rule.DebounceJSON.String) > 0 {
+		_ = json.Unmarshal([]byte(rule.DebounceJSON.String), &debounceMap)
+	}
+
+	stateVal, _ := alarmStateCache.LoadOrStore(t.NodeID, &AlarmNodeState{
+		Params: make(map[string]*AlarmParamState),
+	})
+	ns := stateVal.(*AlarmNodeState)
+
+	evaluateParams(ns, ruleDef, debounceMap, t, ts, func(p RuleParam, sev, kind string, val, thresh float64) {
+		emitAlarm(tenantDB, client, orgID, depID, t, ts, p, sev, kind, val, thresh, rule.Domain)
+	})
+}
+
+// evaluatePersonalAlarms runs every user's own personal rule for this node
+// against the same telemetry frame the shared rule just saw — independently:
+// no alarm_events row, no shared-state interaction, delivered on a separate
+// MQTT topic Node-RED's notify path never mixes into the org/department
+// broadcast. Opt-in and normally a no-op (getPersonalRules returns nil for
+// the common case of zero personal rules on this node).
+func evaluatePersonalAlarms(client mqtt.Client, orgID string, t TelemetryPayload, ts time.Time, rules []PersonalRule) {
+	for _, pr := range rules {
+		var ruleDef RuleDefinition
+		if err := json.Unmarshal([]byte(pr.RuleJSON), &ruleDef); err != nil {
+			log.Printf("Failed to unmarshal personal rule JSON for node %s user %s: %v", t.NodeID, pr.UserID, err)
+			continue
+		}
+
+		stateKey := pr.UserID + "\x1f" + t.NodeID
+		stateVal, _ := personalAlarmStateCache.LoadOrStore(stateKey, &AlarmNodeState{
+			Params: make(map[string]*AlarmParamState),
+		})
+		ns := stateVal.(*AlarmNodeState)
+
+		userID := pr.UserID
+		domain := pr.Domain
+		evaluateParams(ns, ruleDef, map[string]ParamDebounce{}, t, ts, func(p RuleParam, sev, kind string, val, thresh float64) {
+			emitPersonalAlarm(client, orgID, userID, t, ts, p, sev, kind, val, thresh, domain)
+		})
 	}
 }
 
@@ -1522,6 +1618,42 @@ func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t Tele
 		dispOrg = "default"
 	}
 	client.Publish(fmt.Sprintf("internal/alarms/live/%s/%s", dispOrg, t.NodeID), 0, false, evBytes)
+}
+
+// emitPersonalAlarm publishes ONE user's own breach — no alarm_events INSERT
+// (a personal threshold must never appear anywhere admins/everyone else
+// sees), and a topic distinct from internal/alarms/live so Node-RED's
+// org/department storm-batch and broadcast never mix a personal breach into
+// the shared alarm feed. personalUserId is who this is for; Node-RED's
+// notifyPersonal reads it, looks up that one user's own Delivery Channels
+// (user_prefs.alertChannels[nodeId] — the same toggle MyAlertSettings
+// Section 1 already writes), and sends only to them.
+func emitPersonalAlarm(client mqtt.Client, orgID, userID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64, domain string) {
+	id := fmt.Sprintf("pev-%s-%s-%s-%d-%s", userID, t.NodeID, p.Key, ts.UnixMilli(), kind)
+
+	ev := map[string]interface{}{
+		"id":             id,
+		"nodeId":         t.NodeID,
+		"orgId":          orgID,
+		"personalUserId": userID,
+		"paramKey":       p.Key,
+		"paramLabel":     p.Label,
+		"severity":       sev,
+		"kind":           kind,
+		"value":          val,
+		"threshold":      thresh,
+		"unit":           p.Unit,
+		"ts":             ts.UnixMilli(),
+		"domain":         domain,
+	}
+
+	evBytes, _ := json.Marshal(ev)
+
+	dispOrg := orgID
+	if dispOrg == "" {
+		dispOrg = "default"
+	}
+	client.Publish(fmt.Sprintf("internal/alarms/personal/%s/%s/%s", dispOrg, t.NodeID, userID), 0, false, evBytes)
 }
 
 func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
@@ -1764,6 +1896,13 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	rule, ok := getAlarmRule(tenantDB, t.NodeID)
 	if ok {
 		evaluateAlarms(tenantDB, client, orgID, depID, t, ts, rule)
+	}
+
+	// Independent of the shared rule above (and unconditional on `ok`): a
+	// personal threshold can exist whether or not this node has an org-wide
+	// rule configured at all.
+	if personalRules := getPersonalRules(tenantDB, t.NodeID); len(personalRules) > 0 {
+		evaluatePersonalAlarms(client, orgID, t, ts, personalRules)
 	}
 }
 

@@ -16,7 +16,7 @@ import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import type { SensorDomain } from '@/types/fleet'
 import {
   Bell, Save, Loader2, ToggleLeft, ToggleRight, AlertTriangle,
-  Sliders, ChevronDown, ChevronUp, Flame, Zap, Activity, ShieldAlert, WifiOff
+  Sliders, ChevronDown, ChevronUp
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -36,22 +36,6 @@ const CHANNELS: { id: ChannelId; name: string; prefsKey?: string }[] = [
 
 const DEFAULT_ENABLED: Record<ChannelId, boolean> = { email: true, telegram: false, line: false, googlechat: false }
 
-const ALERT_TOPICS = [
-  { id: 'topic_thermal', label: 'Thermal & Top Oil Alarms', desc: 'Top Oil Temp > 85°C / > 90°C (Insulation risk), Winding Temp', icon: Flame, color: 'text-amber-400' },
-  { id: 'topic_voltage', label: 'Voltage & Power Quality', desc: 'Over Voltage (+5%/+10%), Under Voltage (-5%/-10%), Voltage Unbalance (>2%/5%)', icon: Zap, color: 'text-yellow-400' },
-  { id: 'topic_current', label: 'Overload & Short Circuit', desc: 'Over Current (>100% capacity), Critical Short Circuit Risk (>115%)', icon: Activity, color: 'text-red-400' },
-  { id: 'topic_fault', label: 'External Fault & Grid Trips', desc: 'Transformer shutdown from animals, lightning, or external incidents', icon: ShieldAlert, color: 'text-purple-400' },
-  { id: 'topic_offline', label: 'Device Offline / Connectivity', desc: 'Alert when telemetry stream stops or sensor connection is lost', icon: WifiOff, color: 'text-slate-400' },
-]
-
-const DEFAULT_TOPICS: Record<string, boolean> = {
-  topic_thermal: true,
-  topic_voltage: true,
-  topic_current: true,
-  topic_fault: true,
-  topic_offline: true,
-}
-
 export default function MyAlertSettings({
   nodeId, domain = 'transformer', orgId, profileHref = '/admin/profile',
 }: { nodeId: string; domain?: SensorDomain; orgId?: string; profileHref?: string }) {
@@ -61,8 +45,8 @@ export default function MyAlertSettings({
 
   const [prefs, setPrefs] = useState<Record<string, unknown> | null>(null)
   const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>(DEFAULT_ENABLED)
-  const [subscribedTopics, setSubscribedTopics] = useState<Record<string, boolean>>(DEFAULT_TOPICS)
   const [showAdminThresholds, setShowAdminThresholds] = useState(false)
+  const [showPersonalThresholds, setShowPersonalThresholds] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
 
@@ -75,14 +59,6 @@ export default function MyAlertSettings({
       setPrefs(p)
       const perNodeChannels = (p.alertChannels ?? {}) as Record<string, Partial<Record<ChannelId, boolean>>>
       setEnabled({ ...DEFAULT_ENABLED, ...(perNodeChannels[nodeId] ?? {}) })
-
-      const perNodeTopics = (p.alertTopics ?? {}) as Record<string, Record<string, boolean>>
-      const nodeTopics = perNodeTopics[nodeId] ?? {}
-      const mergedTopics: Record<string, boolean> = { ...DEFAULT_TOPICS }
-      for (const k of Object.keys(nodeTopics)) {
-        if (typeof nodeTopics[k] === 'boolean') mergedTopics[k] = nodeTopics[k]
-      }
-      setSubscribedTopics(mergedTopics)
     })
     return () => { cancelled = true }
   }, [session?.id, nodeId])
@@ -93,8 +69,7 @@ export default function MyAlertSettings({
     try {
       const current = prefs ?? ((await api.getMyConfig(session.id))?.prefs ?? {}) as Record<string, unknown>
       const perNodeChannels = { ...((current.alertChannels ?? {}) as Record<string, unknown>), [nodeId]: enabled }
-      const perNodeTopics = { ...((current.alertTopics ?? {}) as Record<string, unknown>), [nodeId]: subscribedTopics }
-      const next = { ...current, alertChannels: perNodeChannels, alertTopics: perNodeTopics }
+      const next = { ...current, alertChannels: perNodeChannels }
       const res = await api.putMyConfig(session.id, next)
       if (!res) throw new Error('save failed')
       setPrefs(next)
@@ -105,7 +80,7 @@ export default function MyAlertSettings({
     } finally {
       setSaving(false)
     }
-  }, [session?.id, prefs, enabled, subscribedTopics, nodeId])
+  }, [session?.id, prefs, enabled, nodeId])
 
   const missing = CHANNELS.filter((c) => c.prefsKey && enabled[c.id] && !prefs?.[c.prefsKey])
 
@@ -118,7 +93,7 @@ export default function MyAlertSettings({
             My Alert Settings
           </h3>
           <p className="text-[11px] text-slate-400 mt-0.5">
-            Personal notification channels &amp; alert subscriptions for this device
+            Your own notification channels &amp; alarm thresholds for this device
           </p>
         </div>
         <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
@@ -156,39 +131,32 @@ export default function MyAlertSettings({
         </div>
       </div>
 
-      {/* Section 2: Subscribed Alarm Topics */}
-      <div className="space-y-2 pt-1">
-        <label className="block text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
-          2. Subscribed Alarm Categories (Industrial Alarm List)
-        </label>
-        <div className="space-y-1.5">
-          {ALERT_TOPICS.map((topic) => {
-            const Icon = topic.icon
-            const isSubbed = subscribedTopics[topic.id] !== false
-            return (
-              <div
-                key={topic.id}
-                onClick={() => setSubscribedTopics((s) => ({ ...s, [topic.id]: !isSubbed }))}
-                className="flex items-center justify-between p-2.5 rounded-lg cursor-pointer transition-all border hover:border-slate-700"
-                style={{ background: isSubbed ? 'rgba(99,102,241,0.06)' : '#0a0e1a', borderColor: isSubbed ? '#6366f140' : '#1e2433' }}
-              >
-                <div className="flex items-start gap-2.5 pr-2">
-                  <Icon size={14} className={topic.color + ' mt-0.5 shrink-0'} />
-                  <div>
-                    <div className="text-xs font-semibold text-slate-200">{topic.label}</div>
-                    <div className="text-[10px] text-slate-400 mt-0.5 leading-snug">{topic.desc}</div>
-                  </div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={isSubbed}
-                  onChange={() => {}}
-                  className="rounded border-slate-700 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                />
-              </div>
-            )
-          })}
-        </div>
+      {/* Section 2: My Personal Alarm Thresholds — independent of the shared
+          device rule (below, admin-only): this notifies only the signed-in
+          user, through the channels above, without changing what anyone
+          else sees for this device. */}
+      <div className="pt-1 space-y-2">
+        <button
+          type="button"
+          onClick={() => setShowPersonalThresholds(!showPersonalThresholds)}
+          className="w-full flex items-center justify-between p-2.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900/60 border border-slate-800 transition-all"
+        >
+          <span className="flex items-center gap-2">
+            <Sliders size={13} className="text-indigo-400" />
+            <span>2. My Personal Alarm Thresholds</span>
+          </span>
+          {showPersonalThresholds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {showPersonalThresholds && (
+          <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/80 animate-in fade-in duration-200 space-y-2">
+            <p className="text-[11px] text-slate-500">
+              Notify only you, through your Delivery Channels above, when a reading crosses YOUR chosen limits —
+              independent of the device&apos;s official thresholds everyone else sees.
+            </p>
+            <AlarmParamConfig domain={domain} nodeId={nodeId} orgId={orgId} mode="personal" />
+          </div>
+        )}
       </div>
 
       {missing.length > 0 && (

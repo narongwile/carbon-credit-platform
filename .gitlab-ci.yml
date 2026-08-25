@@ -116,6 +116,10 @@ test_worker_proofs:
     # The proofs are standalone stdlib-only mains and run from the root.
     - go run e2e/proofs/go-rate-of-rise-proof.go
     - go run e2e/proofs/go-alarm-state-proof.go
+    # Personal (per-user) alarm thresholds: independent dwell/hysteresis state
+    # per (user, node, param), never leaking into or clobbered by the shared
+    # org-wide state the admin/everyone sees.
+    - go run e2e/proofs/go-personal-alarm-state-proof.go
     - go run e2e/proofs/go-fieldnames-proof.go
     # Payload-vs-topic identity, and duplicate-device detection via uptime.
     - go run e2e/proofs/go-identity-proof.go
