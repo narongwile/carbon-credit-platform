@@ -667,8 +667,11 @@ export default function AlarmParamConfig({
     })
   }
 
+  const savedRule = useAlarmDB((s) => (nodeId ? s.rules[nodeId] : undefined))
+
   // Apply stored rule (from node or org)
   const applyRule = (saved: NodeAlarmRule) => {
+    const savedKeys = new Set((saved.params ?? []).map((p) => rowId(p)))
     const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }> = {}
     for (const p of saved.params ?? []) {
       nextVals[rowId(p)] = {
@@ -676,6 +679,18 @@ export default function AlarmParamConfig({
         critical: p.critical,
         rate: p.rate?.warn,
         enabled: (p as any).enabled !== false,
+      }
+    }
+    // Any parameter not present in the saved rule's params list is inactive (disabled)
+    for (const p of allParams) {
+      const rid = rowId(p)
+      if (!savedKeys.has(rid) && !nextVals[rid]) {
+        nextVals[rid] = {
+          warn: p.warn,
+          critical: p.critical,
+          rate: p.rate?.warn,
+          enabled: false,
+        }
       }
     }
     setVals((prev) => ({ ...prev, ...nextVals }))
@@ -690,12 +705,11 @@ export default function AlarmParamConfig({
     if (saved.healthIndexWarn !== undefined) setHealthIdx(saved.healthIndexWarn)
   }
 
-  // Load per-node saved rule (device mode: the shared useAlarmDB store)
+  // Load per-node saved rule (device mode: the shared useAlarmDB store, reactively synced)
   useEffect(() => {
     if (mode !== 'device' || !nodeId || !hasHydrated) return
-    const saved = useAlarmDB.getState().rules[nodeId]
-    if (saved) applyRule(saved)
-  }, [mode, nodeId, hasHydrated])
+    if (savedRule) applyRule(savedRule)
+  }, [mode, nodeId, hasHydrated, savedRule])
 
   // Load this user's own personal rule for this node (personal mode) — a
   // separate fetch, deliberately never touching useAlarmDB, so a personal
