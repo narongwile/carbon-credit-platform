@@ -6240,12 +6240,36 @@ const __TXT='ONEOPS test notification. If you received this, the channel is conf
     return __err(r.status >= 500 ? 502 : 400, errMsg);
   }
   if(ch==='line'){
-    if(!nc.lineToken) return __err(400,'LINE token not configured');
-    const r=await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+nc.lineToken,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+__TXT})}); return r.ok?__ok({ok:true}):__err(502,'LINE HTTP '+r.status);
+    if(!nc.lineToken) return __err(400,'LINE token not configured in system');
+    const raw = String(nc.lineToken || '').trim();
+    const at = raw.lastIndexOf('@');
+    const tok = at > 0 ? raw.slice(0, at) : raw;
+    const lineTo = at > 0 ? raw.slice(at + 1) : (to || '');
+    let r;
+    if (tok && lineTo && lineTo.startsWith('U')) {
+      r = await fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: lineTo, messages: [{ type: 'text', text: __TXT }] })
+      });
+    } else {
+      r = await fetch('https://notify-api.line.me/api/notify', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ message: ' ' + __TXT })
+      });
+    }
+    const resData = await r.json().catch(()=>({}));
+    if (r.ok) return __ok({ok:true});
+    return __err(r.status >= 500 ? 502 : 400, resData.message || ('LINE HTTP ' + r.status));
   }
   if(ch==='googlechat'){
-    if(!nc.googleChatWebhook) return __err(400,'Google Chat webhook not configured');
-    const r=await fetch(nc.googleChatWebhook,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:__TXT})}); return r.ok?__ok({ok:true}):__err(502,'Google Chat HTTP '+r.status);
+    const url = (to && to.startsWith('http')) ? to : nc.googleChatWebhook;
+    if(!url) return __err(400,'Google Chat webhook not configured in system');
+    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:__TXT})});
+    const resData = await r.json().catch(()=>({}));
+    if (r.ok) return __ok({ok:true});
+    return __err(r.status >= 500 ? 502 : 400, resData.error?.message || ('Google Chat HTTP ' + r.status));
   }
   return __err(400,'unknown channel');
 }catch(e){ __err(502,e.message); }})()` + bbErr
