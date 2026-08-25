@@ -369,9 +369,9 @@ export const api = {
   getMyNodeRule: (nodeId: string) => req<{ rule: NodeAlarmRule | null }>(`/api/nodes/${nodeId}/personal-rule`),
   putMyNodeRule: (nodeId: string, body: { rule: NodeAlarmRule }) =>
     req<{ ok: boolean }>(`/api/nodes/${nodeId}/personal-rule`, { method: 'PUT', body: JSON.stringify(body) }),
-  /** Admin bulk-apply of the shared device rule, scoped to one department (or a user's own department) — never touches org_domain_rules. */
-  putOrgRuleDepartment: (orgId: string, body: { rule: NodeAlarmRule; departmentId?: string; userId?: string; updatedBy?: string }) =>
-    req<{ applied: number; departmentId?: string }>(`/api/orgs/${orgId}/rule/department`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** Admin bulk-apply of the shared device rule, scoped to one or more departments (or users' departments) — never touches org_domain_rules. */
+  putOrgRuleDepartment: (orgId: string, body: { rule: NodeAlarmRule; departmentId?: string; departmentIds?: string[]; userId?: string; userIds?: string[]; updatedBy?: string }) =>
+    req<{ applied: number; departmentId?: string; departmentIds?: string[] }>(`/api/orgs/${orgId}/rule/department`, { method: 'PUT', body: JSON.stringify(body) }),
 
   /** Admin-configurable multi-parameter trend charts for one device (migrate-v47). */
   listCharts: (nodeId: string) => req<ChartDefinition[]>(`/api/nodes/${nodeId}/charts`),

@@ -2491,27 +2491,31 @@ if(!domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'domain req
 // so resolving a userId's department is a control-pool lookup even though
 // the nodes/alarm_rules it then loops are tenant-pool data.
 const orgRuleDepartmentFunc = CORS + `const orgId=msg.req.params.orgId; const pool=global.get('resolvePool')(orgId); const controlPool=global.get('pool');
-const {rule,departmentId,userId,updatedBy}=msg.payload||{};
+const {rule,departmentId,departmentIds,userId,userIds,updatedBy}=msg.payload||{};
 if(!rule||!rule.domain){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule.domain required'};return msg;}
-if(!departmentId&&!userId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'departmentId or userId required'};return msg;}
+const dIds = Array.isArray(departmentIds) ? departmentIds.filter(Boolean) : (departmentId ? [departmentId] : []);
+const uIds = Array.isArray(userIds) ? userIds.filter(Boolean) : (userId ? [userId] : []);
+if(!dIds.length && !uIds.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'departmentId(s) or userId(s) required'};return msg;}
 (async()=>{
   if(!(await global.get('domainEntitled')(msg.auth,orgId,rule.domain))){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'organization is not licensed for '+rule.domain};node.send(msg);return;}
-  let deptId=departmentId;
-  if(!deptId&&userId){
-    const[ur]=await controlPool.query('SELECT department_id FROM users WHERE id=? AND org_id=?',[userId,orgId]);
-    if(!ur.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'user not found in this organization'};node.send(msg);return;}
-    deptId=ur[0].department_id;
-    if(!deptId){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'this user has no department — nothing to scope the rule to'};node.send(msg);return;}
+  const targetDeptSet = new Set(dIds);
+  if(uIds.length){
+    const[ur]=await controlPool.query('SELECT DISTINCT department_id FROM users WHERE id IN (?) AND org_id=?',[uIds,orgId]);
+    for(const r of ur){ if(r.department_id) targetDeptSet.add(r.department_id); }
+  }
+  const finalDeptIds = Array.from(targetDeptSet);
+  if(!finalDeptIds.length){
+    msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'no valid departments found for the selected scope'};node.send(msg);return;
   }
   const debounceJson = rule.debounceJson ? JSON.stringify(rule.debounceJson) : null;
   const ruleJson = JSON.stringify({...rule, debounceJson:undefined});
-  const [nodes]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=? AND department_id=?',[orgId,rule.domain,deptId]);
+  const [nodes]=await pool.query('SELECT id FROM nodes WHERE org_id=? AND domain=? AND department_id IN (?)',[orgId,rule.domain,finalDeptIds]);
   let applied=0;
   for(const n of nodes){
     await pool.query('INSERT INTO alarm_rules (node_id,org_id,domain,rule_json,debounce_json,updated_by) VALUES (?,?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),debounce_json=VALUES(debounce_json),domain=VALUES(domain),updated_by=VALUES(updated_by)',[n.id,orgId,rule.domain,ruleJson,debounceJson,updatedBy||null]);
     applied++;
   }
-  msg.headers=__CORS; msg.payload={applied,saved:true,departmentId:deptId}; node.send(msg);
+  msg.headers=__CORS; msg.payload={applied,saved:true,departmentIds:finalDeptIds}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
 // --- Personal (per-user, per-node) alarm thresholds (migrate-v53) -----------

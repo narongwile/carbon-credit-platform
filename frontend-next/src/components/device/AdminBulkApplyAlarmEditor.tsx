@@ -14,13 +14,14 @@
 // api.putOrgRuleDepartment's own doc comment for why that split exists.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
 import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
+import { Check, Users, Building2, Globe, Search } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -48,74 +49,286 @@ export default function AdminBulkApplyAlarmEditor({
   }, [orgId])
 
   const [applyScope, setApplyScope] = useState<'org' | 'department' | 'user'>('org')
-  const [applyDeptId, setApplyDeptId] = useState('')
-  const [applyUserId, setApplyUserId] = useState('')
-  useEffect(() => { if (orgDepts.length && !orgDepts.some((d) => d.id === applyDeptId)) setApplyDeptId(orgDepts[0]?.id ?? '') }, [orgDepts, applyDeptId])
-  useEffect(() => { if (orgUsers.length && !orgUsers.some((u) => u.id === applyUserId)) setApplyUserId(orgUsers[0]?.id ?? '') }, [orgUsers, applyUserId])
+  const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([])
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
+  const [userSearch, setUserSearch] = useState('')
 
-  const applyAllLabel = applyScope === 'org'
-    ? `Apply Baseline to All ${DOMAIN_META[domain].platform} Devices (Org-Wide)`
-    : applyScope === 'department'
-      ? `Apply Baseline to ${orgDepts.find((d) => d.id === applyDeptId)?.name ?? 'Department'} Devices`
-      : `Apply Baseline to ${orgUsers.find((u) => u.id === applyUserId)?.name ?? 'User'}'s Department Devices`
+  // Seed default selections when lists load
+  useEffect(() => {
+    if (orgDepts.length && selectedDeptIds.length === 0) {
+      setSelectedDeptIds([orgDepts[0].id])
+    }
+  }, [orgDepts, selectedDeptIds.length])
 
-  // window.confirm before either branch: this overwrites, in bulk, whatever
-  // alarm rule those devices currently have, with no undo — the same
-  // confirm-before-bulk-destructive pattern admin/users and admin/pending
-  // already use.
+  useEffect(() => {
+    if (orgUsers.length && selectedUserIds.length === 0) {
+      setSelectedUserIds([orgUsers[0].id])
+    }
+  }, [orgUsers, selectedUserIds.length])
+
+  const toggleDept = (id: string) => {
+    setSelectedDeptIds((prev) =>
+      prev.includes(id) ? (prev.length > 1 ? prev.filter((d) => d !== id) : prev) : [...prev, id]
+    )
+  }
+
+  const selectAllDepts = () => setSelectedDeptIds(orgDepts.map((d) => d.id))
+  const clearDepts = () => { if (orgDepts.length) setSelectedDeptIds([orgDepts[0].id]) }
+
+  const toggleUser = (id: string) => {
+    setSelectedUserIds((prev) =>
+      prev.includes(id) ? (prev.length > 1 ? prev.filter((u) => u !== id) : prev) : [...prev, id]
+    )
+  }
+
+  const selectAllUsers = () => setSelectedUserIds(orgUsers.map((u) => u.id))
+  const clearUsers = () => { if (orgUsers.length) setSelectedUserIds([orgUsers[0].id]) }
+
+  // Target device resolution
+  const targetDeviceIds = useMemo(() => {
+    if (applyScope === 'org') {
+      return new Set(hosts.filter((h) => h.domain === domain).map((h) => h.id))
+    }
+    const targetDeptSet = new Set<string>()
+    if (applyScope === 'department') {
+      selectedDeptIds.forEach((d) => targetDeptSet.add(d))
+    } else if (applyScope === 'user') {
+      selectedUserIds.forEach((uId) => {
+        const u = orgUsers.find((x) => x.id === uId)
+        if (u?.departmentId) targetDeptSet.add(u.departmentId)
+      })
+    }
+    return new Set(
+      devices
+        .filter((d) => d.domain === domain && d.departmentIds?.some((deptId) => targetDeptSet.has(deptId)))
+        .map((d) => d.id)
+    )
+  }, [applyScope, domain, hosts, devices, selectedDeptIds, selectedUserIds, orgUsers])
+
+  const applyAllLabel = useMemo(() => {
+    const platform = DOMAIN_META[domain]?.platform ?? domain
+    const count = targetDeviceIds.size
+    if (applyScope === 'org') {
+      return `Apply Baseline to All ${platform} Devices (${count} Devices, Org-Wide)`
+    }
+    if (applyScope === 'department') {
+      const deptLabel = selectedDeptIds.length === 1
+        ? (orgDepts.find((d) => d.id === selectedDeptIds[0])?.name ?? '1 Department')
+        : `${selectedDeptIds.length} Departments`
+      return `Apply Baseline to ${deptLabel} (${count} ${platform} Devices)`
+    }
+    const userLabel = selectedUserIds.length === 1
+      ? (orgUsers.find((u) => u.id === selectedUserIds[0])?.name ?? '1 User')
+      : `${selectedUserIds.length} Users`
+    return `Apply Baseline to ${userLabel}'s Teams (${count} ${platform} Devices)`
+  }, [applyScope, domain, targetDeviceIds.size, selectedDeptIds, orgDepts, selectedUserIds, orgUsers])
+
+  // window.confirm before bulk write
   const applyRule = async (rule: NodeAlarmRule) => {
+    const platform = DOMAIN_META[domain]?.platform ?? domain
     if (applyScope === 'org') {
       const targets = hosts.filter((h) => h.domain === domain)
-      if (!window.confirm(`Apply these thresholds to all ${targets.length} ${DOMAIN_META[domain].platform} device(s) across your ENTIRE organization? This overwrites each device's current alarm rule and cannot be undone.`)) return
+      if (!window.confirm(`Apply these thresholds to all ${targets.length} ${platform} device(s) across your ENTIRE organization? This overwrites each device's current alarm rule and cannot be undone.`)) return
       targets.forEach((h) => setRuleDB(h.id, rule, orgId))
       if (isLive()) {
         const r = await api.putOrgRule(orgId, { rule })
         if (!r) { toast.error('Could not apply the rule across your organization'); return }
       }
-      toast.success(`Applied to ${targets.length} ${DOMAIN_META[domain].platform} node(s) across your org`)
+      toast.success(`Applied to ${targets.length} ${platform} node(s) across your org`)
       return
     }
 
-    const deptId = applyScope === 'department' ? applyDeptId : orgUsers.find((u) => u.id === applyUserId)?.departmentId
-    if (!deptId) { toast.error(applyScope === 'user' ? 'This user has no department to scope the rule to' : 'Pick a department first'); return }
-    const deptName = orgDepts.find((d) => d.id === deptId)?.name ?? deptId
-    const targetIds = new Set(devices.filter((d) => d.domain === domain && d.departmentIds?.includes(deptId)).map((d) => d.id))
-    if (!window.confirm(`Apply these thresholds to ${targetIds.size} ${DOMAIN_META[domain].platform} device(s) in ${deptName}? This overwrites each device's current alarm rule and cannot be undone.`)) return
-    hosts.filter((h) => h.domain === domain && targetIds.has(h.id)).forEach((h) => setRuleDB(h.id, rule, orgId))
-    if (!isLive()) { toast.success(`Applied to ${targetIds.size} device(s) in ${deptName} (demo — not persisted)`); return }
+    if (applyScope === 'department' && selectedDeptIds.length === 0) {
+      toast.error('Select at least one department')
+      return
+    }
+    if (applyScope === 'user' && selectedUserIds.length === 0) {
+      toast.error('Select at least one user')
+      return
+    }
+
+    const scopeDesc = applyScope === 'department'
+      ? `${selectedDeptIds.length} department(s)`
+      : `${selectedUserIds.length} user(s)`
+
+    if (!window.confirm(`Apply these thresholds to ${targetDeviceIds.size} ${platform} device(s) across ${scopeDesc}? This overwrites each device's current alarm rule and cannot be undone.`)) return
+
+    hosts.filter((h) => h.domain === domain && targetDeviceIds.has(h.id)).forEach((h) => setRuleDB(h.id, rule, orgId))
+
+    if (!isLive()) {
+      toast.success(`Applied to ${targetDeviceIds.size} device(s) across ${scopeDesc} (demo — not persisted)`)
+      return
+    }
+
     const r = await api.putOrgRuleDepartment(orgId, {
       rule,
-      departmentId: applyScope === 'department' ? applyDeptId : undefined,
-      userId: applyScope === 'user' ? applyUserId : undefined,
+      departmentIds: applyScope === 'department' ? selectedDeptIds : undefined,
+      userIds: applyScope === 'user' ? selectedUserIds : undefined,
     })
-    if (!r) { toast.error(`Could not apply the rule to ${deptName}`); return }
-    toast.success(`Applied to ${r.applied} ${DOMAIN_META[domain].platform} node(s) in ${deptName}`)
+    if (!r) { toast.error(`Could not apply the rule to ${scopeDesc}`); return }
+    toast.success(`Applied to ${r.applied} ${platform} node(s) across ${scopeDesc}`)
   }
 
+  const filteredUsers = useMemo(() => {
+    if (!userSearch.trim()) return orgUsers
+    const q = userSearch.toLowerCase()
+    return orgUsers.filter((u) => {
+      const deptName = orgDepts.find((d) => d.id === u.departmentId)?.name ?? ''
+      return u.name.toLowerCase().includes(q) || deptName.toLowerCase().includes(q)
+    })
+  }, [orgUsers, orgDepts, userSearch])
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-3.5">
       <div>
-        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply baseline to</label>
-        <div className="flex gap-2 mb-2">
-          {(['org', 'department', 'user'] as const).map((s) => (
-            <button key={s} onClick={() => setApplyScope(s)}
-              className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold transition-all', applyScope === s ? 'text-white' : 'text-slate-500')}
-              style={applyScope === s ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>
-              {s === 'org' ? 'Whole organization' : s === 'department' ? 'One department' : 'One user'}
+        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-medium">
+          Apply baseline to
+        </label>
+        <div className="flex gap-2 mb-2.5">
+          {[
+            { id: 'org', label: 'Whole organization', icon: Globe },
+            { id: 'department', label: 'Departments', icon: Building2 },
+            { id: 'user', label: 'Users', icon: Users },
+          ].map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setApplyScope(id as any)}
+              className={clsx(
+                'flex-1 py-2 px-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all',
+                applyScope === id ? 'text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
+              )}
+              style={applyScope === id ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1' } : inset}
+            >
+              <Icon size={13} className={applyScope === id ? 'text-indigo-400' : 'text-slate-500'} />
+              <span>{label}</span>
             </button>
           ))}
         </div>
+
+        {/* Multi-Department Picker */}
         {applyScope === 'department' && (
-          <select value={applyDeptId} onChange={(e) => setApplyDeptId(e.target.value)}
-            className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-            {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          <div className="p-3 rounded-xl border border-slate-800/90 space-y-2.5" style={{ background: '#0a0e1a' }}>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+                <Building2 size={12} className="text-indigo-400" />
+                Select Departments ({selectedDeptIds.length} of {orgDepts.length} selected · {targetDeviceIds.size} devices)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllDepts}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-600">·</span>
+                <button
+                  type="button"
+                  onClick={clearDepts}
+                  className="text-[10px] text-slate-400 hover:text-slate-300 underline"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {orgDepts.map((d) => {
+                const isSelected = selectedDeptIds.includes(d.id)
+                const deptDeviceCount = devices.filter((x) => x.domain === domain && x.departmentIds?.includes(d.id)).length
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => toggleDept(d.id)}
+                    className={clsx(
+                      'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border',
+                      isSelected
+                        ? 'bg-indigo-950/50 border-indigo-500/80 text-white shadow-sm'
+                        : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                    )}
+                  >
+                    <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center text-[9px] border', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
+                      {isSelected && <Check size={10} />}
+                    </div>
+                    <span>{d.name}</span>
+                    <span className="text-[10px] opacity-60">({deptDeviceCount})</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         )}
+
+        {/* Multi-User Picker */}
         {applyScope === 'user' && (
-          <select value={applyUserId} onChange={(e) => setApplyUserId(e.target.value)}
-            className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-            {orgUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
+          <div className="p-3 rounded-xl border border-slate-800/90 space-y-2.5" style={{ background: '#0a0e1a' }}>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
+                <Users size={12} className="text-indigo-400" />
+                Select Users ({selectedUserIds.length} of {orgUsers.length} selected · {targetDeviceIds.size} devices)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllUsers}
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium"
+                >
+                  Select All
+                </button>
+                <span className="text-slate-600">·</span>
+                <button
+                  type="button"
+                  onClick={clearUsers}
+                  className="text-[10px] text-slate-400 hover:text-slate-300 underline"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {/* Search Filter */}
+            {orgUsers.length > 4 && (
+              <div className="relative">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(e) => setUserSearch(e.target.value)}
+                  placeholder="Filter users or departments…"
+                  className="w-full pl-7 pr-3 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                  style={inset}
+                />
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1">
+              {filteredUsers.map((u) => {
+                const isSelected = selectedUserIds.includes(u.id)
+                const deptName = orgDepts.find((d) => d.id === u.departmentId)?.name
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => toggleUser(u.id)}
+                    className={clsx(
+                      'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border text-left',
+                      isSelected
+                        ? 'bg-indigo-950/50 border-indigo-500/80 text-white shadow-sm'
+                        : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                    )}
+                  >
+                    <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center text-[9px] border shrink-0', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
+                      {isSelected && <Check size={10} />}
+                    </div>
+                    <span>{u.name}</span>
+                    {deptName && <span className="text-[10px] text-indigo-300/70 bg-indigo-950/60 px-1 rounded">[{deptName}]</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         )}
       </div>
 
