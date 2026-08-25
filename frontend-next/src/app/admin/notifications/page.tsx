@@ -3,13 +3,11 @@
 import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
-import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
-import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import AdminBulkApplyAlarmEditor from '@/components/device/AdminBulkApplyAlarmEditor'
 import EmailTemplateConfigurator from '@/components/notifications/EmailTemplateConfigurator'
-import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive, useIsLive } from '@/lib/api'
-import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig, EventProblem } from '@/types/org'
 import { getSession } from '@/lib/auth'
@@ -33,12 +31,10 @@ export default function AlarmNotificationPage() {
   const { selectedOrgId, orgNames } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const orgName = orgNames[orgId] || 'ETERNITY'
-  // Real fleet — the "Apply to device" picker AND applyRuleToOrg's actual
-  // targets used to both come from the mock seed (managedDevicesFromFleet /
-  // getHostsByOrg) unconditionally, so "Applied to N node(s) across your
-  // org" silently wrote a rule onto demo devices instead of the real fleet.
+  // Real fleet — the "Apply to device" picker used to come from the mock seed
+  // (managedDevicesFromFleet) unconditionally, so switching devices showed
+  // demo entries instead of the real fleet.
   const { devices } = useManagedDevices(orgId)
-  const { hosts } = useFleetHosts(orgId)
 
   // Real entitlements — which product tabs to offer at all. licensedDomains()
   // only knows the 3 seed orgs (mockData.ts), so a real org either showed the
@@ -58,7 +54,6 @@ export default function AlarmNotificationPage() {
   }, [live, orgId])
   const [product, setProduct] = useState<SensorDomain>('transformer')
   useEffect(() => { if (orgDomains.length && !orgDomains.includes(product)) setProduct(orgDomains[0]) }, [orgDomains, product])
-  const setRuleDB = useAlarmDB((s) => s.setRule)
 
   // Real departments (matches Pending Devices' load() pattern), mock as the
   // demo/offline fallback.
@@ -70,73 +65,6 @@ export default function AlarmNotificationPage() {
     return () => { cancelled = true }
   }, [live, orgId])
 
-  // Who the "Apply Baseline" button below targets: the whole org (existing
-  // behavior), one department's devices, or one user's own department's
-  // devices. Department/user scope bulk-writes alarm_rules (the shared,
-  // real per-device threshold) for just that department — never touches
-  // org_domain_rules, unlike the org-wide branch, so it can never silently
-  // redefine what a brand-new device elsewhere in the org gets seeded with.
-  const [applyScope, setApplyScope] = useState<'org' | 'department' | 'user'>('org')
-  const [applyDeptId, setApplyDeptId] = useState('')
-  const [applyUserId, setApplyUserId] = useState('')
-  const [orgUsers, setOrgUsers] = useState<{ id: string; name: string; departmentId?: string }[]>([])
-  useEffect(() => {
-    if (!live) { setOrgUsers([]); return }
-    let cancelled = false
-    api.users(orgId).then((rows) => {
-      if (cancelled || !rows) return
-      setOrgUsers((rows as Array<{ id: string; name: string; department_id?: string }>)
-        .map((r) => ({ id: r.id, name: r.name, departmentId: r.department_id })))
-    })
-    return () => { cancelled = true }
-  }, [live, orgId])
-  useEffect(() => { if (orgDepts.length && !orgDepts.some((d) => d.id === applyDeptId)) setApplyDeptId(orgDepts[0]?.id ?? '') }, [orgDepts, applyDeptId])
-  useEffect(() => { if (orgUsers.length && !orgUsers.some((u) => u.id === applyUserId)) setApplyUserId(orgUsers[0]?.id ?? '') }, [orgUsers, applyUserId])
-
-  const applyAllLabel = applyScope === 'org'
-    ? `Apply Baseline to All ${DOMAIN_META[product].platform} Devices (Org-Wide)`
-    : applyScope === 'department'
-      ? `Apply Baseline to ${orgDepts.find((d) => d.id === applyDeptId)?.name ?? 'Department'} Devices`
-      : `Apply Baseline to ${orgUsers.find((u) => u.id === applyUserId)?.name ?? 'User'}'s Department Devices`
-
-  // The org-wide rule write was fire-and-forget (`void api.putOrgRule(...)`)
-  // with the success toast fired unconditionally on the next line, so a
-  // rejected save — a 403, a 500, the request never leaving the browser —
-  // still told the admin their thresholds were applied to every node in the
-  // organization. Await it and report what actually happened.
-  //
-  // window.confirm before either branch: this overwrites, in bulk, whatever
-  // alarm rule those devices currently have, with no undo — the same
-  // confirm-before-bulk-destructive pattern admin/users and admin/pending
-  // already use.
-  const applyRuleToOrg = async (rule: NodeAlarmRule) => {
-    if (applyScope === 'org') {
-      const targets = hosts.filter((h) => h.domain === product)
-      if (!window.confirm(`Apply these thresholds to all ${targets.length} ${DOMAIN_META[product].platform} device(s) across your ENTIRE organization? This overwrites each device's current alarm rule and cannot be undone.`)) return
-      targets.forEach((h) => setRuleDB(h.id, rule, orgId))
-      if (isLive()) {
-        const r = await api.putOrgRule(orgId, { rule })
-        if (!r) { toast.error('Could not apply the rule across your organization'); return }
-      }
-      toast.success(`Applied to ${targets.length} ${DOMAIN_META[product].platform} node(s) across your org`)
-      return
-    }
-
-    const deptId = applyScope === 'department' ? applyDeptId : orgUsers.find((u) => u.id === applyUserId)?.departmentId
-    if (!deptId) { toast.error(applyScope === 'user' ? 'This user has no department to scope the rule to' : 'Pick a department first'); return }
-    const deptName = orgDepts.find((d) => d.id === deptId)?.name ?? deptId
-    const targetIds = new Set(devices.filter((d) => d.domain === product && d.departmentIds?.includes(deptId)).map((d) => d.id))
-    if (!window.confirm(`Apply these thresholds to ${targetIds.size} ${DOMAIN_META[product].platform} device(s) in ${deptName}? This overwrites each device's current alarm rule and cannot be undone.`)) return
-    hosts.filter((h) => h.domain === product && targetIds.has(h.id)).forEach((h) => setRuleDB(h.id, rule, orgId))
-    if (!isLive()) { toast.success(`Applied to ${targetIds.size} device(s) in ${deptName} (demo — not persisted)`); return }
-    const r = await api.putOrgRuleDepartment(orgId, {
-      rule,
-      departmentId: applyScope === 'department' ? applyDeptId : undefined,
-      userId: applyScope === 'user' ? applyUserId : undefined,
-    })
-    if (!r) { toast.error(`Could not apply the rule to ${deptName}`); return }
-    toast.success(`Applied to ${r.applied} ${DOMAIN_META[product].platform} node(s) in ${deptName}`)
-  }
   const [scope, setScope] = useState<'all' | string>('all')
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [saved, setSaved] = useState(false)
@@ -307,36 +235,11 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          {/* Apply-baseline target: whole org, one department, or one user's
-              own department. Only affects the "Apply Baseline" button below
-              — per-device edits above always save to the single device
-              picked in "Apply to device". */}
-          <div>
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply baseline to</label>
-            <div className="flex gap-2 mb-2">
-              {(['org', 'department', 'user'] as const).map((s) => (
-                <button key={s} onClick={() => setApplyScope(s)}
-                  className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold transition-all', applyScope === s ? 'text-white' : 'text-slate-500')}
-                  style={applyScope === s ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' } : inset}>
-                  {s === 'org' ? 'Whole organization' : s === 'department' ? 'One department' : 'One user'}
-                </button>
-              ))}
-            </div>
-            {applyScope === 'department' && (
-              <select value={applyDeptId} onChange={(e) => setApplyDeptId(e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-                {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            )}
-            {applyScope === 'user' && (
-              <select value={applyUserId} onChange={(e) => setApplyUserId(e.target.value)}
-                className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-                {orgUsers.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-            )}
-          </div>
-
-          <AlarmParamConfig domain={product} nodeId={scope !== 'all' ? scope : undefined} orgId={orgId} onApplyAll={applyRuleToOrg} applyAllLabel={applyAllLabel} />
+          {/* Includes its own "Apply baseline to" scope picker (whole org /
+              one department / one user's own department) — per-device edits
+              above always save to the single device picked in "Apply to
+              device" regardless of that scope. */}
+          <AdminBulkApplyAlarmEditor domain={product} orgId={orgId} nodeId={scope !== 'all' ? scope : undefined} />
         </div>
 
         {/* Notification channels */}

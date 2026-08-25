@@ -13,6 +13,7 @@ import Link from 'next/link'
 import { api, apiEnabled, useIsLive } from '@/lib/api'
 import { useSession } from '@/lib/auth'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
+import AdminBulkApplyAlarmEditor from '@/components/device/AdminBulkApplyAlarmEditor'
 import type { SensorDomain } from '@/types/fleet'
 import {
   Bell, Save, Loader2, ToggleLeft, ToggleRight, AlertTriangle,
@@ -196,7 +197,11 @@ export default function MyAlertSettings({
 
           {showAdminThresholds && (
             <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/80 animate-in fade-in duration-200">
-              <AlarmParamConfig domain={domain} nodeId={nodeId} orgId={orgId} />
+              {/* Tuning THIS transformer's own numbers here is often where an
+                  admin actually looks at real data first — the bulk-apply
+                  scope picker lets them roll those numbers out to a
+                  department or the whole org without leaving this page. */}
+              <AdminBulkApplyAlarmEditor domain={domain} orgId={orgId} nodeId={nodeId} />
             </div>
           )}
         </div>
