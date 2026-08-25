@@ -604,15 +604,15 @@ export default function AlarmParamConfig({
    * gets SAVED and validated must not depend on which rows are on screen.
    */
   const scopedParams = useMemo(() => {
-    // A row survives if the device has reported it OR the saved rule already
-    // contains it — an alarm you have configured must stay visible (and
-    // disable-able) during an outage, or after a sensor fails and stops
-    // reporting the very parameter you were watching.
+    // When scoped to what THIS device actually reports (default "Reported by device" tab):
+    // Only parameters present in this device's live telemetry / lastSample (reportedKeys)
+    // or configured in its SENSOR READINGS (configuredDisplayKeys) are shown.
+    // Full catalog parameters are revealed when the operator switches to "Full catalog".
     if (scopeFilter === 'reported' && reportedKeys && reportedKeys.size > 0) {
-      return allParams.filter((p) => reportedKeys.has(p.key) || ruleKeys.has(p.key))
+      return allParams.filter((p) => reportedKeys.has(p.key) || configuredDisplayKeys.includes(p.key))
     }
     return allParams
-  }, [allParams, scopeFilter, reportedKeys, ruleKeys])
+  }, [allParams, scopeFilter, reportedKeys, configuredDisplayKeys])
 
   const readingCount = useMemo(() => scopedParams.filter((p) => p.paramType !== 'compound').length, [scopedParams])
   const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
