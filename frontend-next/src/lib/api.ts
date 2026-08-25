@@ -951,8 +951,22 @@ export const api = {
   }) =>
     req<{ ok: boolean }>(`/api/platform/settings`, { method: 'PUT', body: JSON.stringify(body) }),
   // channel: 'email' | 'telegram' | 'line' | 'googlechat'. `to` = email/chat id (optional for line/googlechat).
-  testPlatformChannel: (channel: string, to?: string) =>
-    req<{ ok: boolean; from?: string }>(`/api/platform/settings/test`, { method: 'POST', body: JSON.stringify({ channel, to }) }),
+  testPlatformChannel: async (channel: string, to?: string): Promise<{ ok: boolean; from?: string; error?: string }> => {
+    if (!isLive()) return { ok: false, error: 'Demo mode — live backend not connected' }
+    try {
+      const tok = getToken()
+      const r = await fetch(`${BASE}/api/platform/settings/test`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(tok ? { authorization: `Bearer ${tok}` } : {}) },
+        body: JSON.stringify({ channel, to }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) return { ok: false, error: data.error || `HTTP ${r.status}` }
+      return { ok: true, from: data.from }
+    } catch (e: any) {
+      return { ok: false, error: e.message || 'Network error' }
+    }
+  },
 
   // ---- MQTT connection info shown on admin/pending's "MQTT setup" card.
   // Separate from platformSettings above: readable by EVERY admin (policy

@@ -165,7 +165,7 @@ function NotificationSettings() {
     const r = await api.testPlatformChannel(channel, to)
     setBusy(null)
     if (r?.ok) toast.success(`Test sent to ${channel}`)
-    else toast.error(`${channel} test failed — save the token first & check it`)
+    else toast.error(r?.error || `${channel} test failed`)
   }
 
   const secretField = (label: string, val: string, onChange: (v: string) => void, isSet: boolean, placeholder: string) => (

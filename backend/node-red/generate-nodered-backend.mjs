@@ -1872,8 +1872,11 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
           if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});
           else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
         } else if (c.channel === 'telegram') {
-          const tg = nc.telegramToken; const chat = c.target || nc.telegramChatId;
-          if (tg && chat) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});
+          const raw = String(c.target || nc.telegramChatId || '').trim();
+          const at = raw.lastIndexOf('@');
+          const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));
+          const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);
+          if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});
         } else if (c.channel === 'googlechat') {
           const url = c.target || nc.googleChatWebhook;
           if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});
@@ -6225,8 +6228,16 @@ const __TXT='ONEOPS test notification. If you received this, the channel is conf
   }
   const nc=await global.get('notifyConfig')();
   if(ch==='telegram'){
-    if(!nc.telegramToken) return __err(400,'Telegram bot token not configured'); const chat=to||nc.telegramChatId; if(!chat) return __err(400,'chat id required');
-    const r=await fetch('https://api.telegram.org/bot'+nc.telegramToken+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text:__TXT})}); return r.ok?__ok({ok:true}):__err(502,'Telegram HTTP '+r.status);
+    if(!nc.telegramToken) return __err(400,'Telegram bot token not configured in system (enter Bot Token and click Save first)');
+    const chat=to||nc.telegramChatId;
+    if(!chat) return __err(400,'Chat ID is required (enter your numeric Chat ID from @userinfobot)');
+    const r=await fetch('https://api.telegram.org/bot'+nc.telegramToken+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text:__TXT})});
+    const tgRes = await r.json().catch(()=>({}));
+    if (r.ok) return __ok({ok:true});
+    let errMsg = tgRes.description || ('Telegram HTTP ' + r.status);
+    if (r.status === 403) errMsg = 'Telegram Forbidden: bot was blocked or not started — please open your bot in Telegram and press /start first';
+    if (r.status === 400 && String(chat).startsWith('@')) errMsg = 'Telegram Chat ID must be a numeric ID (e.g. 581234567 from @userinfobot), not @botname';
+    return __err(r.status >= 500 ? 502 : 400, errMsg);
   }
   if(ch==='line'){
     if(!nc.lineToken) return __err(400,'LINE token not configured');
