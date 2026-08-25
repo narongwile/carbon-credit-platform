@@ -210,8 +210,9 @@ function NotificationSettings() {
 
           {/* LINE */}
           <div className="rounded-lg p-3" style={inset}>
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200 mb-2"><MessageSquare size={12} className="text-green-400" /> LINE Notify</div>
-            {secretField('Access Token', lineToken, setLineToken, flags.lineSet, 'LINE Notify token')}
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-200 mb-2"><MessageSquare size={12} className="text-green-400" /> LINE (Messaging API / Official Account)</div>
+            {secretField('Channel Access Token', lineToken, setLineToken, flags.lineSet, 'Channel access token (or Token@UserID)')}
+            <p className="text-[10px] text-slate-500 mt-1">📌 ใช้ Channel Access Token จาก LINE Developers Console (Messaging API)</p>
             <button onClick={() => test('line')} disabled={busy === 'line'} className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-slate-200 disabled:opacity-50" style={surface}><Send size={12} /> {busy === 'line' ? 'Testing…' : 'Send test'}</button>
           </div>
 
