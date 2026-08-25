@@ -1899,21 +1899,31 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(link) });
           } catch(err) { node.error('notify:user-email '+err.message); }
         }
-        if (sel.telegram && pf.telegramChatId) {
+        const rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();
+        if (sel.telegram && rawTg) {
           try {
-            const tg = nc.telegramToken;
-            if (tg) await fetch('https://api.telegram.org/bot'+tg+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(pf.telegramChatId, __linkFor(u.role)))});
+            const at = rawTg.lastIndexOf('@');
+            const tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
+            const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
+            if (tok && chat) {
+              await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor(u.role)))});
+            }
           } catch(err) { node.error('notify:user-telegram '+err.message); }
         }
-        if (sel.line && pf.lineUserId) {
+        const rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();
+        if (sel.line && rawLine) {
           try {
-            const tok = nc.lineToken;
-            if (tok && pf.lineUserId) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to:pf.lineUserId,messages:[__flex(__linkFor(u.role))]})});
+            const at = rawLine.lastIndexOf('@');
+            const tok = at > 0 ? rawLine.slice(0, at) : (nc.lineToken || '');
+            const to  = at > 0 ? rawLine.slice(at + 1) : rawLine;
+            if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});
+            else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({message:' '+text})});
           } catch(err) { node.error('notify:user-line '+err.message); }
         }
-        if (sel.googlechat && pf.googleChatWebhook) {
+        const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
+        if (sel.googlechat && rawGchat) {
           try {
-            await fetch(pf.googleChatWebhook,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});
+            await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});
           } catch(err) { node.error('notify:user-googlechat '+err.message); }
         }
       }
@@ -2024,21 +2034,34 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject, text: text + linkLine });
       } catch(err) { node.error('notifyPersonal:email ' + err.message); }
     }
-    if (sel.telegram && pf.telegramChatId) {
+    const rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();
+    if (sel.telegram && rawTg) {
       try {
         const nc = await global.get('notifyConfig')();
-        if (nc.telegramToken) await fetch('https://api.telegram.org/bot'+nc.telegramToken+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ chat_id: pf.telegramChatId, text: tgText + (link ? '\\n<a href=\\"'+link+'\\">Open device</a>' : ''), parse_mode: 'HTML' })});
+        const at = rawTg.lastIndexOf('@');
+        const tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
+        const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
+        if (tok && chat) {
+          await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ chat_id: chat, text: tgText + (link ? '\\n<a href=\\"'+link+'\\">Open device</a>' : ''), parse_mode: 'HTML' })});
+        }
       } catch(err) { node.error('notifyPersonal:telegram ' + err.message); }
     }
-    if (sel.line && pf.lineUserId) {
+    const rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();
+    if (sel.line && rawLine) {
       try {
         const nc = await global.get('notifyConfig')();
-        if (nc.lineToken) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+nc.lineToken,'Content-Type':'application/json'},body:JSON.stringify({to:pf.lineUserId,messages:[{type:'text',text:subject+'\\n\\n'+text+linkLine}]})});
+        const at = rawLine.lastIndexOf('@');
+        const tok = at > 0 ? rawLine.slice(0, at) : (nc.lineToken || '');
+        const to  = at > 0 ? rawLine.slice(at + 1) : rawLine;
+        if (tok && to) {
+          await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[{type:'text',text:subject+'\\n\\n'+text+linkLine}]})});
+        }
       } catch(err) { node.error('notifyPersonal:line ' + err.message); }
     }
-    if (sel.googlechat && pf.googleChatWebhook) {
+    const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
+    if (sel.googlechat && rawGchat) {
       try {
-        await fetch(pf.googleChatWebhook,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ text: subject + '\\n' + text + linkLine })});
+        await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ text: subject + '\\n' + text + linkLine })});
       } catch(err) { node.error('notifyPersonal:googlechat ' + err.message); }
     }
   } catch(err) { node.error('notifyPersonal: ' + err.message); }

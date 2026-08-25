@@ -97,20 +97,27 @@ export default function ProfilePanel({ portal }: { portal: string }) {
       {/* Notification channel APIs — all roles */}
       <div className="rounded-xl p-5 space-y-4" style={surface}>
         <h3 className="text-sm font-semibold text-white flex items-center gap-2"><BellRing size={15} className="text-indigo-400" /> Notification APIs</h3>
-        <p className="text-[11px] text-slate-500 -mt-2">Where your alarm notifications are delivered. Saved with your profile.</p>
+        <p className="text-[11px] text-slate-500 -mt-2">Where your alarm notifications are delivered. Saved with your user profile.</p>
         <div className="grid grid-cols-1 gap-3">
-          <Field label="Telegram Bot API" value={channels.telegramBotApi}
-            onChange={(v) => setChannels((c) => ({ ...c, telegramBotApi: v }))}
-            placeholder="123456:ABC-DEF… (bot token, or token@chat_id)" />
-          <Field label="LINE Messaging API" value={channels.lineMsgApi}
-            onChange={(v) => setChannels((c) => ({ ...c, lineMsgApi: v }))}
-            placeholder="Channel access token@userId (Messaging API push)" />
-          <Field label="Google Chat API" value={channels.googleChatApi}
-            onChange={(v) => setChannels((c) => ({ ...c, googleChatApi: v }))}
-            placeholder="https://chat.googleapis.com/v1/spaces/…/messages?key=…" />
+          <div>
+            <Field label="Telegram (Chat ID or Token@ChatID)" value={channels.telegramBotApi}
+              onChange={(v) => setChannels((c) => ({ ...c, telegramBotApi: v }))}
+              placeholder="e.g. 581234567 (Chat ID) or 123456:ABC-DEF…@581234567" />
+            <p className="text-[10px] text-slate-500 mt-1">📌 ต้องกด <code>/start</code> ในห้องแชทกับ Bot ใน Telegram ก่อน 1 ครั้ง และหา Chat ID ได้จาก <code>@userinfobot</code></p>
+          </div>
+          <div>
+            <Field label="LINE (User ID or ChannelToken@UserID)" value={channels.lineMsgApi}
+              onChange={(v) => setChannels((c) => ({ ...c, lineMsgApi: v }))}
+              placeholder="e.g. U1234567890abcdef… or ChannelAccessToken@U12345…" />
+          </div>
+          <div>
+            <Field label="Google Chat Webhook" value={channels.googleChatApi}
+              onChange={(v) => setChannels((c) => ({ ...c, googleChatApi: v }))}
+              placeholder="https://chat.googleapis.com/v1/spaces/…/messages?key=…" />
+          </div>
         </div>
         <button onClick={saveProfile} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white" style={savedProfile ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
-          <Save size={15} /> {savedProfile ? 'Saved!' : 'Save'}
+          <Save size={15} /> {savedProfile ? 'Saved!' : 'Save Notification Credentials'}
         </button>
       </div>
 
