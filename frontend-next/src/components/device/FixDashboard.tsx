@@ -248,7 +248,7 @@ function HealthGauge({ value }: { value: number }) {
   )
 }
 
-export default function FixDashboard({ device }: { device: ManagedDevice }) {
+export default function FixDashboard({ device, canManage }: { device: ManagedDevice; canManage?: boolean }) {
   const live = useIsLive()
   const [values, setValues] = useState<Record<string, number> | null>(null)
   const [openParam, setOpenParam] = useState<string | null>(null)
@@ -293,7 +293,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
   const [paramLayout, setParamLayout] = useState<Record<string, ParamLayout>>({})
   const [picking, setPicking] = useState(false)
   const role = useSessionRole()
-  const canConfigure = role === 'admin' || role === 'superadmin'
+  const canConfigure = canManage !== undefined ? canManage : (role === 'admin' || role === 'superadmin')
   useEffect(() => {
     if (!live || !device.domain) return
     let cancelled = false
@@ -555,6 +555,7 @@ export default function FixDashboard({ device }: { device: ManagedDevice }) {
           domain={device.domain}
           params={modalParams}
           initialKey={openParam}
+          canEditThresholds={canConfigure}
           onClose={() => setOpenParam(null)}
         />
       )}

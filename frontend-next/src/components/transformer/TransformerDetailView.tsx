@@ -1443,6 +1443,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           domain="transformer"
           params={modalParams}
           initialKey={openParam}
+          canEditThresholds={canConfigure}
           onClose={() => setOpenParam(null)}
         />
       )}

@@ -26,7 +26,7 @@ import type { NodeAlarmRule } from '@/server/alarmEngine'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts'
-import { X, Loader2, Save, Download, AlertTriangle, TrendingUp } from 'lucide-react'
+import { X, Loader2, Save, Download, AlertTriangle, TrendingUp, Shield } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -465,6 +465,14 @@ export default function ParamHistoryModal({
                   edit both from Alarm &amp; Notify Settings. Shown here read-only.
                 </p>
               )}
+
+              {!canEditThresholds && (
+                <p className="text-[11px] text-slate-400 mb-3 flex items-center gap-1.5 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800">
+                  <Shield size={13} className="text-indigo-400 shrink-0" />
+                  <span>Official device thresholds set by Administrator (Read-Only). You can customize your own personal alerts in <strong>My Alert Settings</strong>.</span>
+                </p>
+              )}
+
               <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <h3 className="text-xs font-semibold text-white flex items-center gap-1.5">
                   <TrendingUp size={13} className="text-indigo-400" /> Alarm &amp; notify thresholds
@@ -534,14 +542,21 @@ export default function ParamHistoryModal({
                   Enter both limits. The range this parameter has actually reported is shown above.
                 </p>
               )}
-              <button
-                onClick={saveThreshold}
-                disabled={!canEdit || invalid || blank || savingRule}
-                className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-                style={gradient}
-              >
-                {savingRule ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save thresholds
-              </button>
+              {canEditThresholds ? (
+                <button
+                  onClick={saveThreshold}
+                  disabled={!canEdit || invalid || blank || savingRule}
+                  className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50 transition-all"
+                  style={gradient}
+                >
+                  {savingRule ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save thresholds
+                </button>
+              ) : (
+                <div className="mt-3 py-2 px-3 rounded-lg text-xs text-slate-500 bg-slate-900/40 border border-slate-800/80 text-center flex items-center justify-center gap-1.5">
+                  <Shield size={13} className="text-slate-500" />
+                  <span>Read Only — Administrator access required to modify official device thresholds</span>
+                </div>
+              )}
               <p className="text-[10px] text-slate-600 mt-2">
                 Applies to this device. Notifications follow the same limits — the channels are chosen in My Alert Settings.
                 {!schemaParam && ' This parameter is not part of the product schema, so these limits exist only for this device.'}

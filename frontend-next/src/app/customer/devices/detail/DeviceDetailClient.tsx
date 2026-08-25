@@ -144,7 +144,7 @@ export default function DeviceDetailClient() {
       </div>
 
       {/* Dashboard (distinct per theme) */}
-      {view === 'fix' ? <FixDashboard device={device} /> : <FreestyleDashboard device={device} canManage={canManage} />}
+      {view === 'fix' ? <FixDashboard device={device} canManage={canManage} /> : <FreestyleDashboard device={device} canManage={canManage} />}
 
       {/* Maintenance documents — scoped to the viewer's department by the API. */}
       <NodeDocuments nodeId={id} orgId={orgId} deviceName={device.name} />
