@@ -84,5 +84,43 @@ console.log('\n####### Scenario B: admin sees BOTH sections on the same device #
   await browser.close();
 }
 
+console.log('\n####### Scenario C: no personal rule saved yet -> inherits the DEVICE\'S real shared rule, not generic catalog defaults #######');
+{
+  // A different node from Scenario A, so it has never had a personal rule
+  // saved — proving the fallback, not stale state from A. Seed ITS shared
+  // rule directly (the admin's real, already-configured device thresholds)
+  // with a value that is deliberately different from BOTH the raw catalog
+  // default (85/90 for oilTemp) and anything Scenario A touched.
+  const INHERIT_NODE = 'tr-critical';
+  await fetch(`http://localhost:4001/api/nodes/${INHERIT_NODE}/rule`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ rule: { domain: 'transformer', dwellMin: 3, hysteresis: 2, params: [
+      { key: 'oilTemp', label: 'Top Oil Temperature', unit: '°C', direction: 'high', warn: 77, critical: 82, enabled: true },
+    ] } }),
+  });
+
+  const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', headless: true });
+  const page = await browser.newPage({ viewport: { width: 1600, height: 1400 } });
+  page.on('pageerror', (e) => console.log(`  [pageerror] ${String(e).slice(0, 300)}`));
+  await page.goto('http://localhost:3901/', { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => {
+    localStorage.setItem('oneops_token', 'faketoken');
+    localStorage.setItem('eternity_user', JSON.stringify({ id: 'u2', username: 'customer', email: 'customer', role: 'customer', orgId: 'org-1', name: 'customer' }));
+  });
+  await page.goto(`http://localhost:3901/customer/transformers/detail?id=${INHERIT_NODE}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(2000);
+  await page.locator('button', { hasText: 'My Personal Alarm Thresholds' }).click();
+  await page.waitForTimeout(800);
+
+  const row = page.locator('tr, div').filter({ hasText: 'Top Oil Temperature' }).first();
+  const shown = await row.locator('input[type="number"]').first().inputValue().catch(() => null);
+  check(`with no personal rule saved, the editor shows the device's REAL admin-configured value (77), not the catalog default (85)`, shown === '77');
+
+  const bodyText = await page.textContent('body');
+  check('a banner explains these are inherited, not yet the user\'s own', bodyText.includes("haven't set your own values yet") && bodyText.includes('current official thresholds'));
+
+  await browser.close();
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

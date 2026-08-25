@@ -701,12 +701,29 @@ export default function AlarmParamConfig({
   // separate fetch, deliberately never touching useAlarmDB, so a personal
   // edit can never overwrite (or be overwritten by) the shared device rule's
   // cached view for the same nodeId.
+  //
+  // A user who has never saved a personal rule yet started from the raw
+  // catalog defaults (85/90 for oilTemp, etc.) — numbers that have nothing
+  // to do with what the admin actually configured for THIS device, if
+  // anything. Falling back to the device's real current rule (a plain read,
+  // via the same GET /nodes/:id/rule the admin's own accordion uses) instead
+  // means "start from what's really enforced right now, then adjust to
+  // taste" — read-only until they actually press Save, at which point it
+  // becomes their own independent row exactly as before.
+  const [personalSource, setPersonalSource] = useState<'idle' | 'loading' | 'own' | 'inherited' | 'default'>('idle')
   useEffect(() => {
-    if (mode !== 'personal' || !nodeId || !isLive()) return
+    if (mode !== 'personal' || !nodeId) return
+    if (!isLive()) { setPersonalSource('default'); return }
     let cancelled = false
+    setPersonalSource('loading')
     api.getMyNodeRule(nodeId).then((r) => {
-      if (cancelled || !r?.rule) return
-      applyRule(r.rule)
+      if (cancelled) return
+      if (r?.rule) { applyRule(r.rule); setPersonalSource('own'); return }
+      api.getRule(nodeId).then((shared) => {
+        if (cancelled) return
+        if (shared) { applyRule(shared); setPersonalSource('inherited'); return }
+        setPersonalSource('default')
+      })
     })
     return () => { cancelled = true }
   }, [mode, nodeId])
@@ -1465,6 +1482,20 @@ export default function AlarmParamConfig({
             : orgRuleState === 'custom'
               ? `Showing saved baseline for ${schema?.label ?? domain}${orgRuleMeta?.updatedBy ? ` — last changed by ${orgRuleMeta.updatedBy}` : ''}.`
               : 'No custom baseline saved yet — showing built-in industrial recommendations.'}
+        </p>
+      )}
+
+      {/* Status info for a personal editor: where these starting numbers came
+          from, since there are now three possible sources. */}
+      {mode === 'personal' && personalSource !== 'idle' && (
+        <p className="text-[11px] text-slate-500">
+          {personalSource === 'loading'
+            ? 'Loading your personal thresholds…'
+            : personalSource === 'own'
+              ? 'Showing YOUR saved personal thresholds.'
+              : personalSource === 'inherited'
+                ? "You haven't set your own values yet — showing this device's current official thresholds as a starting point. Save to make these your own personal alert, independent of the official rule."
+                : "You haven't set your own values yet, and this device has no official thresholds configured either — showing built-in industrial recommendations as a starting point."}
         </p>
       )}
 
