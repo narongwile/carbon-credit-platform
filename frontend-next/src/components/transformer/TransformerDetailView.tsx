@@ -985,16 +985,16 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }
 
   // Everything reported by this device is switchable inside the history modal, visualizer studio,
-  // and custom chart builder — including DGA (hydrogen, moisture) and raw extras (Tbox, RHamb, RHbox),
-  // regardless of whether an individual sensor card is currently hidden from the compact SENSOR READINGS.
+  // and custom chart builder — but for Customer/Viewer (!canConfigure), it strictly scopes
+  // to the configured SENSOR READINGS cards so hidden/restricted parameters are not exposed.
   const modalParams: ModalParam[] = useMemo(() => {
     const paramMap = new Map<string, ModalParam>()
-    // 1. Add all cards currently rendered
+    // 1. Add all cards currently configured & permitted to be displayed
     for (const c of cards) {
       paramMap.set(c.key, { key: c.key, label: c.label, unit: c.reading.unit || undefined })
     }
-    // 2. Add all parameters this device has reported in live values
-    if (values) {
+    // 2. Only for Admin (canConfigure), also add other reported parameters for studio/custom configuration
+    if (canConfigure && values) {
       for (const k of Object.keys(values)) {
         if (!paramMap.has(k)) {
           const p = schemaByKey[k]
@@ -1015,7 +1015,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       }
     }
     return Array.from(paramMap.values())
-  }, [cards, values, schemaByKey, paramLabel])
+  }, [cards, values, schemaByKey, paramLabel, canConfigure])
 
   // The picker offers only parameters THIS device actually reports (device-driven self-discovery).
   // If in demo mode or reporting nothing yet, falls back to canonical schema parameters.

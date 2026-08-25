@@ -112,8 +112,8 @@ export default function ParamHistoryModal({
   const known = params.some((p) => p.key === paramKey)
   const param = known ? params.find((p) => p.key === paramKey) : paramKey ? { key: paramKey, label: paramKey } : params[0]
   const switchable = useMemo(
-    () => (known || !paramKey ? params : [...params, { key: paramKey, label: paramKey }]),
-    [params, paramKey, known],
+    () => (known || !paramKey ? params : (canEditThresholds ? [...params, { key: paramKey, label: paramKey }] : params)),
+    [params, paramKey, known, canEditThresholds],
   )
   // A key can carry two schema entries too (e.g. VoltAN over/under-voltage),
   // not just two entries in a saved device rule — .find() below only ever
