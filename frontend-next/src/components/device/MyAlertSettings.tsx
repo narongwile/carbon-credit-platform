@@ -132,6 +132,26 @@ export default function MyAlertSettings({
         </div>
       </div>
 
+      {missing.length > 0 && (
+        <p className="text-[11px] text-amber-400 flex items-start gap-1.5 bg-amber-950/20 p-2.5 rounded-lg border border-amber-800/40">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span>
+            {missing.map((m) => m.name).join(', ')} {missing.length === 1 ? 'has' : 'have'} no credential saved in your account.{' '}
+            <Link href={profileHref} className="underline font-medium hover:text-amber-300">Set up credentials in your Profile</Link>.
+          </span>
+        </p>
+      )}
+
+      <button
+        onClick={save}
+        disabled={saving || !live}
+        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 transition-all shadow-md"
+        style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}
+      >
+        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+        {saved ? 'Settings Saved!' : saving ? 'Saving…' : 'Save My Alert Preferences'}
+      </button>
+
       {/* Section 2: My Personal Alarm Thresholds — independent of the shared
           device rule (below, admin-only): this notifies only the signed-in
           user, through the channels above, without changing what anyone
@@ -159,26 +179,6 @@ export default function MyAlertSettings({
           </div>
         )}
       </div>
-
-      {missing.length > 0 && (
-        <p className="text-[11px] text-amber-400 flex items-start gap-1.5 bg-amber-950/20 p-2.5 rounded-lg border border-amber-800/40">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>
-            {missing.map((m) => m.name).join(', ')} {missing.length === 1 ? 'has' : 'have'} no credential saved in your account.{' '}
-            <Link href={profileHref} className="underline font-medium hover:text-amber-300">Set up credentials in your Profile</Link>.
-          </span>
-        </p>
-      )}
-
-      <button
-        onClick={save}
-        disabled={saving || !live}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 transition-all shadow-md"
-        style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}
-      >
-        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-        {saved ? 'Settings Saved!' : saving ? 'Saving…' : 'Save My Alert Preferences'}
-      </button>
 
       {/* Admin Advanced Device Threshold Configuration Accordion */}
       {isAdmin && (
