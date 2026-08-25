@@ -170,9 +170,12 @@ function NotificationSettings() {
 
   const secretField = (label: string, val: string, onChange: (v: string) => void, isSet: boolean, placeholder: string) => (
     <div>
-      <label className="block text-[11px] text-slate-500 mb-1 uppercase tracking-wider flex items-center gap-1"><Lock size={10} /> {label}</label>
-      <input type="password" value={val} onChange={(e) => onChange(e.target.value)} placeholder={isSet ? '•••••••• (configured — blank to keep)' : placeholder}
-        className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-1 focus:ring-indigo-500" style={inset} />
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[11px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Lock size={10} /> {label}</label>
+        {isSet && <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">✓ Saved &amp; Encrypted</span>}
+      </div>
+      <input type="password" value={val} onChange={(e) => onChange(e.target.value)} placeholder={isSet ? '•••••••••••••••• (Encrypted in database — blank to keep)' : placeholder}
+        className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500" style={inset} />
     </div>
   )
 
@@ -196,9 +199,10 @@ function NotificationSettings() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {secretField('Bot Token', telegramToken, setTelegramToken, flags.telegramSet, '123456:ABC-DEF…')}
               <div>
-                <label className="block text-[11px] text-slate-500 mb-1 uppercase tracking-wider">Default Chat ID</label>
-                <input value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} placeholder="-1001234567890"
+                <label className="block text-[11px] text-slate-500 mb-1 uppercase tracking-wider">Default Chat ID (Numeric)</label>
+                <input value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} placeholder="e.g. 581234567 or -1001234567890"
                   className="w-full rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-1 focus:ring-indigo-500" style={surface} />
+                <p className="text-[10px] text-slate-500 mt-1">📌 ต้องเป็นตัวเลข Chat ID (ไม่ใช่ @botname) — หาได้จาก <code>@userinfobot</code></p>
               </div>
             </div>
             <button onClick={() => test('telegram', telegramChatId.trim() || undefined)} disabled={busy === 'telegram'} className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-slate-200 disabled:opacity-50" style={surface}><Send size={12} /> {busy === 'telegram' ? 'Testing…' : 'Send test'}</button>
