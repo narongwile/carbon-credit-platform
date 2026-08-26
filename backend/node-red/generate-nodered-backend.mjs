@@ -1788,9 +1788,10 @@ const __flex = (link) => ({ type:'flex', altText: subject, contents: { type:'bub
     const info = __riskFor(a.paramKey, a.domain);
     const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
     return { type:'box', layout:'vertical', spacing:'sm', contents:[
-      { type:'text', text: a.paramLabel||'Alarm', weight:'bold', size:'sm' },
+      { type:'text', text: (a.paramLabel||'Alarm') + ' (' + a.severity + ')', weight:'bold', size:'sm' },
       { type:'text', text: 'Value: ' + (a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))), size:'xs', color:'#64748B' },
-      { type:'text', text: 'Risk: ' + risk, size:'xs', color:'#EF4444', wrap:true }
+      { type:'text', text: 'Risk: ' + risk, size:'xs', color:'#EF4444', wrap:true },
+      { type:'text', text: '🕒 ' + formatTime(a.ts || a.time || e.time), size:'xxs', color:'#94A3B8' }
     ]};
   })},
   footer: link ? { type:'box', layout:'vertical', contents:[
@@ -1805,7 +1806,8 @@ const __tgText = '<b>' + __sevEmoji + ' [' + __esc(topSeverity) + '] ' + (isMult
       const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;
       return '🏷 <b>' + __esc(a.paramLabel || 'Alarm') + '</b> (' + __esc(a.severity) + ')\\n'
       + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')\\n'
-      + '💡 <i>' + __esc(risk) + '</i>';
+      + '💡 <i>' + __esc(risk) + '</i>\\n'
+      + '🕒 <b>Time:</b> ' + formatTime(a.ts || a.time || e.time);
     }).join('\\n\\n');
 
 const __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',
@@ -1814,7 +1816,13 @@ const __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: '
 // Google Chat
 const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', card: {
   header: { title: (topSeverity==='CRITICAL'?'🔴 ':'🟠 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },
-  sections: [{ widgets: alarms.map(a => ({ decoratedText: { topLabel: a.paramLabel||'Alarm', text: String(a.value||'Offline') + ' · ' + __riskFor(a.paramKey, a.domain).warnRisk } })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])
+  sections: [{ widgets: alarms.map(a => ({
+    decoratedText: {
+      topLabel: (a.paramLabel || 'Alarm') + ' (' + a.severity + ')',
+      text: (a.kind==='offline' ? 'Offline' : (a.value + (a.unit||''))) + ' · ' + __riskFor(a.paramKey, a.domain).warnRisk,
+      bottomLabel: '🕒 ' + formatTime(a.ts || a.time || e.time)
+    }
+  })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])
   }] } }] });
 
 (async () => {
@@ -1875,6 +1883,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             + '<div style=\"font-weight: bold; color: #fff; margin-bottom: 4px;\">' + __esc(a.paramLabel || 'Alarm') + ' <span style=\"color:'+aColor+'; font-size:11px;\">['+a.severity+']</span></div>'
             + '<div style=\"color: #cbd5e1; font-size: 13px; margin-bottom: 4px;\">Value: <strong style=\"color:'+aColor+';\">' + __esc(a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))) + '</strong> (Limit: ' + __esc(a.kind==='offline'?'—':(a.threshold+(a.unit||''))) + ')</div>'
             + '<div style=\"color: #f59e0b; font-size: 12px;\">💡 ' + __esc(risk) + '</div>'
+            + '<div style=\"color: #94a3b8; font-size: 11px; margin-top: 4px;\">🕒 ' + __esc(formatTime(a.ts || a.time || e.time)) + '</div>'
             + '</div>';
         }).join('')
       
@@ -2078,7 +2087,8 @@ alarms.forEach(a => {
 const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSeverity) + ']</b>\\n'
   + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n\\n'
   + alarms.map(a => '🏷 <b>' + __esc(a.paramLabel || 'Alert') + '</b> (' + __esc(a.severity) + ')\\n'
-      + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Your limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')').join('\\n\\n');
+      + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Your limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')\\n'
+      + '🕒 <b>Time:</b> ' + formatTime(a.ts || a.time || e.time)).join('\\n\\n');
 
 (async () => {
   try {
@@ -2164,8 +2174,9 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
               sections: [{
                 widgets: alarms.map(a => ({
                   decoratedText: {
-                    topLabel: a.paramLabel || 'Alert',
-                    text: 'Value: ' + (a.kind === 'offline' ? 'Offline' : (a.value + (a.unit || ''))) + ' · Limit: ' + (a.kind === 'offline' ? '—' : (a.threshold + (a.unit || '')))
+                    topLabel: (a.paramLabel || 'Alert') + ' (' + a.severity + ')',
+                    text: 'Value: ' + (a.kind === 'offline' ? 'Offline' : (a.value + (a.unit || ''))) + ' · Limit: ' + (a.kind === 'offline' ? '—' : (a.threshold + (a.unit || ''))),
+                    bottomLabel: '🕒 ' + formatTime(a.ts || a.time || e.time)
                   }
                 })).concat(link ? [{
                   buttonList: {
