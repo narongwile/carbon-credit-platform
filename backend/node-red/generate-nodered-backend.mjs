@@ -1732,11 +1732,51 @@ alarms.forEach(a => {
 
 const subject = 'ONEOPS ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms on ' + e.nodeId : (e.paramLabel || 'Alarm'));
 
-const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(new RegExp('/+$'),'');
+const __buildBaseUrl = (orgId) => {
+  let sub = String(orgId || '').trim();
+  if (sub.toLowerCase().startsWith('org-')) {
+    sub = sub.slice(4);
+  }
+  if (!sub || sub === '1') sub = 'eternity';
+  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || '';
+  if (customBase && customBase !== '*') {
+    try {
+      const u = new URL(customBase);
+      const hostParts = u.hostname.split('.');
+      if (hostParts.length >= 4 && !hostParts[0].includes('localhost') && !/^\d+$/.test(hostParts[0])) {
+        if (hostParts[0] !== sub) {
+          hostParts[0] = sub;
+          u.hostname = hostParts.join('.');
+        }
+      } else if (!u.hostname.startsWith(sub + '.')) {
+        u.hostname = sub + '.' + u.hostname;
+      }
+      return u.origin.replace(new RegExp('/+$'), '');
+    } catch(_) {
+      return customBase.replace(new RegExp('/+$'), '');
+    }
+  }
+  return 'http://' + sub + '.iiotplatform.27.254.143.144.nip.io:30080';
+};
+
 const __linkFor = (role) => {
-  if (!__base || __base === '*') return '';
+  const base = __buildBaseUrl(e.orgId);
+  if (!base) return '';
   const viewer = role === 'viewer' || role === 'customer';
-  return __base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId);
+  const dom = e.domain || 'transformer';
+  let path = '';
+  if (dom === 'transformer') {
+    path = viewer ? '/customer/transformers/detail/' : '/admin/transformers/detail/';
+  } else if (dom === 'carbonNode') {
+    path = viewer ? '/customer/carbon/detail/' : '/admin/carbon/detail/';
+  } else if (dom === 'bloodBox') {
+    path = viewer ? '/customer/bloodbox/detail/' : '/admin/bloodbox/detail/';
+  } else if (dom === 'automobile') {
+    path = viewer ? '/customer/automobile/detail/' : '/admin/automobile/detail/';
+  } else {
+    path = viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/';
+  }
+  return base + path + '?id=' + encodeURIComponent(e.nodeId);
 };
 
 // LINE Flex bubble
@@ -1997,7 +2037,32 @@ const __sevEmoji = topSeverity === 'CRITICAL' ? '🔴' : '🟡';
 const isMulti = alarms.length > 1;
 const subject = 'ONEOPS ' + __sevEmoji + ' [Your Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' thresholds on ' + e.nodeId : (e.paramLabel || 'Alert')) + ' — ' + e.nodeId;
 
-const __base = (env.get('APP_BASE_URL') || env.get('CORS_ORIGIN') || '').replace(new RegExp('/+$'),'');
+const __buildPersonalBaseUrl = (orgId) => {
+  let sub = String(orgId || '').trim();
+  if (sub.toLowerCase().startsWith('org-')) {
+    sub = sub.slice(4);
+  }
+  if (!sub || sub === '1') sub = 'eternity';
+  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || '';
+  if (customBase && customBase !== '*') {
+    try {
+      const u = new URL(customBase);
+      const hostParts = u.hostname.split('.');
+      if (hostParts.length >= 4 && !hostParts[0].includes('localhost') && !/^\d+$/.test(hostParts[0])) {
+        if (hostParts[0] !== sub) {
+          hostParts[0] = sub;
+          u.hostname = hostParts.join('.');
+        }
+      } else if (!u.hostname.startsWith(sub + '.')) {
+        u.hostname = sub + '.' + u.hostname;
+      }
+      return u.origin.replace(new RegExp('/+$'), '');
+    } catch(_) {
+      return customBase.replace(new RegExp('/+$'), '');
+    }
+  }
+  return 'http://' + sub + '.iiotplatform.27.254.143.144.nip.io:30080';
+};
 
 let text = __sevEmoji + ' [' + topSeverity + '] Your personal alert — ' + (isMulti ? alarms.length + ' of your thresholds' : (e.paramLabel || 'Alert')) + '\\n';
 text += '⚡️ Device: ' + e.nodeId + '\\n';
@@ -2028,7 +2093,21 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     if (!sel) return;
 
     const viewer = u.role === 'viewer' || u.role === 'customer';
-    const link = (!__base || __base === '*') ? '' : (__base + (viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/') + '?id=' + encodeURIComponent(e.nodeId));
+    const dom = e.domain || 'transformer';
+    let path = '';
+    if (dom === 'transformer') {
+      path = viewer ? '/customer/transformers/detail/' : '/admin/transformers/detail/';
+    } else if (dom === 'carbonNode') {
+      path = viewer ? '/customer/carbon/detail/' : '/admin/carbon/detail/';
+    } else if (dom === 'bloodBox') {
+      path = viewer ? '/customer/bloodbox/detail/' : '/admin/bloodbox/detail/';
+    } else if (dom === 'automobile') {
+      path = viewer ? '/customer/automobile/detail/' : '/admin/automobile/detail/';
+    } else {
+      path = viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/';
+    }
+    const base = __buildPersonalBaseUrl(e.orgId);
+    const link = base ? (base + path + '?id=' + encodeURIComponent(e.nodeId)) : '';
     const linkLine = link ? '\\n🔗 ' + link : '';
 
     if (sel.email && u.email) {
