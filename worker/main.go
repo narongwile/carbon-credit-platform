@@ -1255,7 +1255,7 @@ func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
 
 	rulesCache.Store(nodeID, RuleCacheEntry{
 		Rule:      r,
-		ExpiresAt: time.Now().Add(5 * time.Minute),
+		ExpiresAt: time.Now().Add(30 * time.Second),
 	})
 	return r, true
 }
@@ -1290,7 +1290,7 @@ func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
 
 	personalRulesCache.Store(nodeID, PersonalRulesCacheEntry{
 		Rules:     out,
-		ExpiresAt: time.Now().Add(5 * time.Minute),
+		ExpiresAt: time.Now().Add(30 * time.Second),
 	})
 	return out
 }
