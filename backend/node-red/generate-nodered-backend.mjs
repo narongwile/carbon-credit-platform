@@ -2045,7 +2045,16 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         const tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
         const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
         if (tok && chat) {
-          await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ chat_id: chat, text: tgText + (link ? '\\n<a href=\\"'+link+'\\">Open device</a>' : ''), parse_mode: 'HTML' })});
+          await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{
+            method:'POST',
+            headers:{'content-type':'application/json'},
+            body:JSON.stringify({
+              chat_id: chat,
+              text: tgText,
+              parse_mode: 'HTML',
+              reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined
+            })
+          });
         }
       } catch(err) { node.error('notifyPersonal:telegram ' + err.message); }
     }
@@ -2064,7 +2073,34 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
     if (sel.googlechat && rawGchat) {
       try {
-        await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ text: subject + '\\n' + text + linkLine })});
+        const personalGchat = {
+          text: subject,
+          cardsV2: [{
+            cardId: 'oneops-personal-alarm',
+            card: {
+              header: {
+                title: __sevEmoji + ' [Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' Thresholds' : String(e.paramLabel || 'Alert')),
+                subtitle: String(e.nodeId)
+              },
+              sections: [{
+                widgets: alarms.map(a => ({
+                  decoratedText: {
+                    topLabel: a.paramLabel || 'Alert',
+                    text: 'Value: ' + (a.kind === 'offline' ? 'Offline' : (a.value + (a.unit || ''))) + ' · Limit: ' + (a.kind === 'offline' ? '—' : (a.threshold + (a.unit || '')))
+                  }
+                })).concat(link ? [{
+                  buttonList: {
+                    buttons: [{
+                      text: 'Open device',
+                      onClick: { openLink: { url: link } }
+                    }]
+                  }
+                }] : [])
+              }]
+            }
+          }]
+        };
+        await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(personalGchat)});
       } catch(err) { node.error('notifyPersonal:googlechat ' + err.message); }
     }
   } catch(err) { node.error('notifyPersonal: ' + err.message); }
