@@ -27,8 +27,8 @@ async function call(paramKey, severity, domain) {
   // wrap: replace 'const text =' assembly point is internal; easiest is to eval and inspect via a
   // sentinel — append a return of text/subject for this test.
   const wrapped = body.replace(
-    "const subject = 'ONEOPS '",
-    "global.get('__capture')(text, __catText, __riskText); const subject = 'ONEOPS '"
+    "const subject = ",
+    "global.get('__capture')(text, __catText, __riskText); const subject = "
   );
   globals.__capture = (text, cat, risk) => { sentText = text; sentSubject = cat + ' | ' + risk; };
   const fn = new Function('msg', 'node', 'env', 'global', wrapped);

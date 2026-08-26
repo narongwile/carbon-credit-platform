@@ -1730,7 +1730,7 @@ alarms.forEach(a => {
   text += '🕒 ' + formatTime(a.ts || a.time) + '\\n\\n';
 });
 
-const subject = 'ONEOPS ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms on ' + e.nodeId : (e.paramLabel || 'Alarm'));
+const subject = String(e.nodeId) + ' ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms' : (e.paramLabel || 'Alarm'));
 
 const __buildBaseUrl = (orgId) => {
   let sub = String(orgId || '').trim();
@@ -1815,7 +1815,7 @@ const __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: '
 
 // Google Chat
 const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', card: {
-  header: { title: (topSeverity==='CRITICAL'?'🔴 ':'🟠 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },
+  header: { title: String(e.nodeId) + ' ' + (topSeverity==='CRITICAL'?'🔴 ':'🟡 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },
   sections: [{ widgets: alarms.map(a => ({
     decoratedText: {
       topLabel: (a.paramLabel || 'Alarm') + ' (' + a.severity + ')',
@@ -2044,7 +2044,7 @@ const __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replac
 const topSeverity = alarms.some(a => a.severity === 'CRITICAL') ? 'CRITICAL' : 'WARNING';
 const __sevEmoji = topSeverity === 'CRITICAL' ? '🔴' : '🟡';
 const isMulti = alarms.length > 1;
-const subject = 'ONEOPS ' + __sevEmoji + ' [Your Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' thresholds on ' + e.nodeId : (e.paramLabel || 'Alert')) + ' — ' + e.nodeId;
+const subject = String(e.nodeId) + ' ' + __sevEmoji + ' [Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' thresholds' : (e.paramLabel || 'Alert'));
 
 const __buildPersonalBaseUrl = (orgId) => {
   let sub = String(orgId || '').trim();
@@ -2168,7 +2168,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
             cardId: 'oneops-personal-alarm',
             card: {
               header: {
-                title: __sevEmoji + ' [Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' Thresholds' : String(e.paramLabel || 'Alert')),
+                title: String(e.nodeId) + ' ' + __sevEmoji + ' [Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' Thresholds' : String(e.paramLabel || 'Alert')),
                 subtitle: String(e.nodeId)
               },
               sections: [{
