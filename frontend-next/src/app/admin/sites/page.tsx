@@ -8,7 +8,7 @@ import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain, type SensorHost, type SiteOperations } from '@/types/fleet'
-import { Building2, Zap, Thermometer, Droplet, MapPin, Leaf, AlertTriangle, Activity, HeartPulse, Car } from 'lucide-react'
+import { Building2, Zap, Thermometer, Droplet, MapPin, Leaf, AlertTriangle, Activity, HeartPulse, Car, ArrowUpRight } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -22,23 +22,59 @@ const domainIcon: Record<SensorDomain, React.ElementType> = {
 
 const ALL_DOMAINS: SensorDomain[] = ['transformer', 'carbonNode', 'bloodBox', 'automobile']
 
+function monitorRoute(domain: SensorDomain, id: string): string {
+  if (domain === 'transformer') return `/admin/transformers/detail?id=${encodeURIComponent(id)}`
+  if (domain === 'automobile') return `/admin/automobile?id=${encodeURIComponent(id)}`
+  return `/admin/nodes/detail?id=${encodeURIComponent(id)}`
+}
+
+function domainListRoute(domain: SensorDomain): string {
+  if (domain === 'transformer') return '/admin/transformers'
+  if (domain === 'automobile') return '/admin/automobile'
+  return '/admin/nodes'
+}
+
 interface SiteRow { id: string; name: string; address: string }
 
 function statusColor(s: string) {
   return s === 'NORMAL' ? '#4ade80' : s === 'WARNING' ? '#fbbf24' : s === 'CRITICAL' ? '#ef4444' : '#6b7280'
 }
 
-function Kpi({ icon, label, value, sub, accent }: { icon: React.ReactNode; label: string; value: string; sub: string; accent: string }) {
-  return (
-    <div className="rounded-xl p-4 flex-1 min-w-[150px]" style={inset}>
-      <div className="flex items-center gap-2 mb-2">
-        <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accent}1f`, color: accent }}>{icon}</span>
-        <span className="text-[11px] text-slate-500 uppercase tracking-wider">{label}</span>
+function Kpi({
+  icon,
+  label,
+  value,
+  sub,
+  accent,
+  href,
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string
+  sub: string
+  accent: string
+  href?: string
+}) {
+  const content = (
+    <div
+      className={`rounded-xl p-4 flex-1 min-w-[150px] transition-all border border-transparent ${
+        href ? 'hover:border-indigo-500/40 hover:bg-slate-900/80 cursor-pointer group' : ''
+      }`}
+      style={inset}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${accent}1f`, color: accent }}>{icon}</span>
+          <span className="text-[11px] text-slate-500 uppercase tracking-wider group-hover:text-slate-300 transition-colors">{label}</span>
+        </div>
+        {href && <ArrowUpRight size={13} className="text-slate-500 group-hover:text-indigo-400 opacity-60 group-hover:opacity-100 transition-all" />}
       </div>
-      <div className="text-2xl font-bold text-white tabular-nums">{value}</div>
+      <div className="text-2xl font-bold text-white tabular-nums group-hover:text-indigo-100 transition-colors">{value}</div>
       <div className="text-[11px] text-slate-500 mt-0.5">{sub}</div>
     </div>
   )
+  if (href) return <Link href={href} className="flex-1 min-w-[150px] flex">{content}</Link>
+  return content
 }
 
 function HostChip({ host }: { host: SensorHost }) {
@@ -49,20 +85,30 @@ function HostChip({ host }: { host: SensorHost }) {
     : host.domain === 'carbonNode' ? `${host.targetMinC}–${host.targetMaxC}°C · ${host.creditsIssued} credits`
     : host.domain === 'automobile' ? `Fatigue ${host.fatigueScore}% · ${host.speedKmh} km/h`
     : `set ${host.setLowC}–${host.setHighC}°C · ${host.floor}`
+  const targetHref = monitorRoute(host.domain, host.id)
+
   return (
-    <div className="flex items-center gap-2.5 p-3 rounded-lg" style={inset}>
-      <span className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: `${meta.accent}1f`, color: meta.accent }}>
+    <Link
+      href={targetHref}
+      className="group flex items-center gap-2.5 p-3 rounded-lg border border-transparent hover:border-indigo-500/40 hover:bg-slate-900/90 transition-all cursor-pointer shadow-sm"
+      style={inset}
+      title={`Open ${host.name} digital twin dashboard (${meta.platform})`}
+    >
+      <span className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform" style={{ background: `${meta.accent}1f`, color: meta.accent }}>
         <Icon size={15} />
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white truncate">{host.name}</span>
-          <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor(host.status) }} />
+          <span className="text-sm font-medium text-white group-hover:text-indigo-200 transition-colors truncate">{host.name}</span>
+          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: statusColor(host.status) }} />
         </div>
-        <div className="text-[11px] text-slate-500 truncate">{detail}</div>
+        <div className="text-[11px] text-slate-500 truncate group-hover:text-slate-400 transition-colors">{detail}</div>
       </div>
-      <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ color: meta.accent, background: `${meta.accent}14` }}>{meta.platform}</span>
-    </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ color: meta.accent, background: `${meta.accent}14` }}>{meta.platform}</span>
+        <ArrowUpRight size={13} className="text-slate-500 group-hover:text-indigo-400 opacity-60 group-hover:opacity-100 transition-all" />
+      </div>
+    </Link>
   )
 }
 
@@ -204,15 +250,43 @@ export default function SitesPage() {
             {/* Unified per-site KPI (v_site_operations) — only for licensed domains */}
             <div className="flex flex-wrap gap-3">
               {domains.includes('transformer') && (
-                <Kpi icon={<Activity size={14} />} accent="#6366f1" label="Transformers" value={`${ops.transformer.count}`} sub={`avg health ${ops.transformer.avgHealth} · ${ops.transformer.openAlarms} alarms`} />
+                <Kpi
+                  icon={<Activity size={14} />}
+                  accent="#6366f1"
+                  label="Transformers"
+                  value={`${ops.transformer.count}`}
+                  sub={`avg health ${ops.transformer.avgHealth} · ${ops.transformer.openAlarms} alarms`}
+                  href="/admin/transformers"
+                />
               )}
               {domains.includes('carbonNode') && (
-                <Kpi icon={<Leaf size={14} />} accent="#22c55e" label="Refrigeration" value={`${ops.carbonNode.count}`} sub={`${ops.carbonNode.co2eSavedKg.toLocaleString()} kg CO₂e · ${ops.carbonNode.creditsIssued} credits`} />
+                <Kpi
+                  icon={<Leaf size={14} />}
+                  accent="#22c55e"
+                  label="Refrigeration"
+                  value={`${ops.carbonNode.count}`}
+                  sub={`${ops.carbonNode.co2eSavedKg.toLocaleString()} kg CO₂e · ${ops.carbonNode.creditsIssued} credits`}
+                  href="/admin/nodes"
+                />
               )}
               {domains.includes('bloodBox') && (
-                <Kpi icon={<HeartPulse size={14} />} accent="#ef4444" label="BloodBOX" value={`${ops.bloodBox.count}`} sub={`${ops.bloodBox.excursions} excursions · ${ops.bloodBox.inTransit} in transit`} />
+                <Kpi
+                  icon={<HeartPulse size={14} />}
+                  accent="#ef4444"
+                  label="BloodBOX"
+                  value={`${ops.bloodBox.count}`}
+                  sub={`${ops.bloodBox.excursions} excursions · ${ops.bloodBox.inTransit} in transit`}
+                  href="/admin/nodes"
+                />
               )}
-              <Kpi icon={<AlertTriangle size={14} />} accent="#fbbf24" label="Open Alarms" value={`${ops.transformer.openAlarms + ops.bloodBox.excursions}`} sub="across all domains" />
+              <Kpi
+                icon={<AlertTriangle size={14} />}
+                accent="#fbbf24"
+                label="Open Alarms"
+                value={`${ops.transformer.openAlarms + ops.bloodBox.excursions}`}
+                sub="across all domains (view notifications)"
+                href="/admin/notifications"
+              />
             </div>
 
             {/* Hosts grouped by domain — only for licensed domains */}
@@ -228,7 +302,19 @@ export default function SitesPage() {
                 )
                 return (
                   <div key={d} className="space-y-2">
-                    <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: meta.accent }}>{meta.label}s ({list.length})</div>
+                    <div className="flex items-center justify-between pb-0.5">
+                      <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: meta.accent }}>
+                        {meta.label}s ({list.length})
+                      </span>
+                      <Link
+                        href={domainListRoute(d)}
+                        className="text-[11px] hover:underline flex items-center gap-0.5 text-slate-400 hover:text-slate-200 transition-colors"
+                        title={`Go to all ${meta.label}s fleet dashboard`}
+                      >
+                        <span>Fleet</span>
+                        <ArrowUpRight size={11} />
+                      </Link>
+                    </div>
                     {list.map((h) => <HostChip key={h.id} host={h} />)}
                   </div>
                 )
