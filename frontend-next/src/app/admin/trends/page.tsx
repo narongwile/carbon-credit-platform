@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
@@ -104,7 +104,6 @@ function TrendsLegend({
 }
 
 function TrendsPageContent() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const urlSiteId = searchParams.get('siteId')
   const urlDomain = searchParams.get('domain') as SensorDomain | null
@@ -202,6 +201,33 @@ function TrendsPageContent() {
       return candidates.slice(0, 3).map((d) => d.id)
     })
   }, [candidates])
+
+  // Keep the URL in sync with the current comparison, not just read it once
+  // on load — otherwise "deep-linking" only works for the state the page
+  // happened to open with, and there's nothing to copy/bookmark/share once
+  // the user actually picks devices or changes the filters.
+  //
+  // next/navigation's router.replace() silently drops the query string here
+  // (confirmed by intercepting history.replaceState in a real browser: it
+  // fires exactly once, with the path and NO search params) — this app
+  // builds with output:'export'/trailingSlash:true (next.config.js), a
+  // combination App Router's client-side query-string navigation does not
+  // handle reliably. The raw History API is also the more honest tool for
+  // this anyway: nothing needs to re-render off the URL after mount (every
+  // value driving the page is already React state), this is purely
+  // "keep the address bar shareable," so it bypasses Next's router instead
+  // of fighting it.
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (siteFilter !== 'all') params.set('siteId', siteFilter)
+    params.set('domain', domain)
+    if (paramKey) params.set('param', paramKey)
+    if (picked.length) params.set('devices', picked.join(','))
+    params.set('range', rangeId)
+    const qs = params.toString()
+    const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname
+    window.history.replaceState(null, '', url)
+  }, [siteFilter, domain, paramKey, picked, rangeId])
 
   const toggle = (id: string) =>
     setPicked((cur) => (cur.includes(id)

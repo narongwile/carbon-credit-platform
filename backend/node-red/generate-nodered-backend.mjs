@@ -1738,7 +1738,15 @@ const __buildBaseUrl = (orgId) => {
     sub = sub.slice(4);
   }
   if (!sub || sub === '1') sub = 'eternity';
-  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || '';
+  // APP_BASE_URL is optional by design — node-red.yaml's own comment says so
+  // explicitly ("notify falls back to CORS_ORIGIN when this is unset"), and
+  // the pre-existing __base variable this replaced always included CORS_ORIGIN
+  // in the chain. Dropping it here doesn't break the CURRENT deployment (both
+  // vars happen to be set to the same value in node-red.yaml), but silently
+  // turns every alarm link into the hardcoded-IP last resort below the moment
+  // APP_BASE_URL/FRONTEND_URL is ever unset without CORS_ORIGIN also missing —
+  // exactly the safety net that comment says exists.
+  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || env.get('CORS_ORIGIN') || '';
   if (customBase && customBase !== '*') {
     try {
       const u = new URL(customBase);
@@ -2080,7 +2088,15 @@ const __buildPersonalBaseUrl = (orgId) => {
     sub = sub.slice(4);
   }
   if (!sub || sub === '1') sub = 'eternity';
-  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || '';
+  // APP_BASE_URL is optional by design — node-red.yaml's own comment says so
+  // explicitly ("notify falls back to CORS_ORIGIN when this is unset"), and
+  // the pre-existing __base variable this replaced always included CORS_ORIGIN
+  // in the chain. Dropping it here doesn't break the CURRENT deployment (both
+  // vars happen to be set to the same value in node-red.yaml), but silently
+  // turns every alarm link into the hardcoded-IP last resort below the moment
+  // APP_BASE_URL/FRONTEND_URL is ever unset without CORS_ORIGIN also missing —
+  // exactly the safety net that comment says exists.
+  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || env.get('CORS_ORIGIN') || '';
   if (customBase && customBase !== '*') {
     try {
       const u = new URL(customBase);
