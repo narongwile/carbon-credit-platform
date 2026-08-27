@@ -38,11 +38,13 @@ import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
-  BarChart2, FileText, GripVertical, X, TrendingUp,
+  BarChart2, FileText, GripVertical, X, TrendingUp, ShieldCheck,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
+import DgaDuvalTriangle from '@/components/transformer/DgaDuvalTriangle'
+import InsulationAgingRul from '@/components/transformer/InsulationAgingRul'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
 
@@ -773,7 +775,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // another org's device needs THAT org's toggle, not their own selected one.
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
   const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
-  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs'>('overview')
+  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
   // card = a full SensorCard (icon, number, sparkline); list = a dense row
   // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
   // device's twenty-odd secondary values do not each cost a full card's worth
@@ -1121,6 +1123,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             { id: 'overview', label: 'Overview', icon: <Activity size={13} /> },
             { id: 'visuals', label: '3D & Assets', icon: <Camera size={13} /> },
             { id: 'charts', label: 'Charts', icon: <BarChart2 size={13} /> },
+            { id: 'diagnostics', label: 'PdM', icon: <ShieldCheck size={13} /> },
             { id: 'logs', label: 'Logs & Docs', icon: <FileText size={13} /> },
           ].map((tab) => (
             <button
@@ -1337,6 +1340,25 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               availableParams={modalParams}
               canConfigure={canConfigure}
             />
+          </div>
+
+          {/* Diagnostics Section (Visible on Desktop OR when mobileTab === 'diagnostics') */}
+          <div className={mobileTab === 'diagnostics' ? 'block' : 'hidden lg:block'}>
+            <div className="rounded-xl p-4 mt-4 lg:mt-0 lg:mb-4 lg:mx-0" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+              <div className="flex flex-col 2xl:flex-row gap-8">
+                <div className="flex-1 min-w-[320px]">
+                  <DgaDuvalTriangle ch4={45} c2h4={35} c2h2={3} />
+                </div>
+                <div className="hidden 2xl:block w-px bg-[#1e2433]" />
+                <div className="flex-1 min-w-[320px]">
+                  <InsulationAgingRul 
+                    hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 60) + 15} 
+                    hoursInService={52000} 
+                    oilTemp={transformer.sensors?.oilTemperature?.value ?? 60} 
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 

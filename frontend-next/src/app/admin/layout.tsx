@@ -16,7 +16,8 @@ import {
   Boxes, LayoutDashboard, Map, TrendingUp, Bell, Calendar,
   FileBarChart, Settings, LogOut, ChevronRight, AlertTriangle, Thermometer,
   Users, HardDrive, BellRing, UserCircle, Building2, Cpu, LayoutGrid,
-  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package, Server, Car
+  Search, Database, ShieldCheck, Droplet, PlugZap, Radio, Package, Server, Car,
+  Leaf, ClipboardList,
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -59,9 +60,11 @@ const NAV: NavItem[] = [
   { href: '/admin/sql', label: 'SQL Console', icon: Database, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/quality', label: 'Data Quality', icon: ShieldCheck, requires: { feature: 'Historical Analytics' } },
   { href: '/admin/reports', label: 'Reports', icon: FileBarChart },
+  { href: '/admin/carbon', label: 'Carbon & ESG', icon: Leaf },
 
   { href: '/admin/users', label: 'User Management', icon: Users, section: 'Administration' },
   { href: '/admin/notifications', label: 'Alarm & Notify', icon: BellRing },
+  { href: '/admin/audit', label: 'Audit Trail & 4-Eyes', icon: ClipboardList },
   { href: '/admin/profile', label: 'Profile', icon: UserCircle },
   { href: '/admin/settings', label: 'Settings', icon: Settings },
 ]

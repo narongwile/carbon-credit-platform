@@ -79,6 +79,123 @@ export default function OTAManagementPage() {
     nodeId?: string
   } | null>(null)
 
+  // ── Advanced Canary Phased Rollout ──────────────────────────────────────
+  type RolloutPhase = 'idle' | 'canary' | 'staged' | 'fleet' | 'complete' | 'rollback'
+  interface PhasedRollout {
+    releaseId: string
+    version: string
+    phase: RolloutPhase
+    phasePct: number          // 5, 25, 100
+    soakHours: number         // soak period before next phase
+    soakStartedAt: number     // Date.now() when phase began
+    totalDevices: number
+    updatedDevices: number
+    failedDevices: number
+    healthChecks: { deviceId: string; status: 'ok' | 'failed' | 'flashing' | 'verifying'; ts: number }[]
+    autoRollbackThreshold: number // % failure that triggers auto-rollback
+  }
+  const [phasedRollout, setPhasedRollout] = useState<PhasedRollout | null>(null)
+  const [showPhasedPanel, setShowPhasedPanel] = useState(false)
+  const [soakTimerDisplay, setSoakTimerDisplay] = useState('')
+
+  // Soak timer countdown
+  useEffect(() => {
+    if (!phasedRollout || phasedRollout.phase === 'idle' || phasedRollout.phase === 'complete' || phasedRollout.phase === 'rollback') return
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - phasedRollout.soakStartedAt) / 1000
+      const remaining = Math.max(0, phasedRollout.soakHours * 3600 - elapsed)
+      if (remaining <= 0) {
+        setSoakTimerDisplay('Soak complete — ready to advance')
+      } else {
+        const h = Math.floor(remaining / 3600)
+        const m = Math.floor((remaining % 3600) / 60)
+        const s = Math.floor(remaining % 60)
+        setSoakTimerDisplay(`${h}h ${m}m ${s}s remaining`)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [phasedRollout])
+
+  // Auto-rollback check: if >5% of updated devices fail during soak
+  useEffect(() => {
+    if (!phasedRollout || phasedRollout.phase === 'idle' || phasedRollout.phase === 'complete' || phasedRollout.phase === 'rollback') return
+    const failRate = phasedRollout.updatedDevices > 0
+      ? (phasedRollout.failedDevices / phasedRollout.updatedDevices) * 100
+      : 0
+    if (failRate > phasedRollout.autoRollbackThreshold && phasedRollout.updatedDevices >= 2) {
+      setPhasedRollout(prev => prev ? { ...prev, phase: 'rollback' } : null)
+      toast.error(`🚨 Auto-Rollback triggered! ${phasedRollout.failedDevices} of ${phasedRollout.updatedDevices} devices failed (${failRate.toFixed(0)}% > ${phasedRollout.autoRollbackThreshold}% threshold). Reverting to stable firmware.`)
+    }
+  }, [phasedRollout?.failedDevices, phasedRollout?.updatedDevices])
+
+  const startPhasedRollout = (release: Release) => {
+    const total = devices.filter(d => d.domain === release.product).length
+    setPhasedRollout({
+      releaseId: release.id,
+      version: release.version,
+      phase: 'canary',
+      phasePct: 5,
+      soakHours: 2,
+      soakStartedAt: Date.now(),
+      totalDevices: total,
+      updatedDevices: Math.max(1, Math.round(total * 0.05)),
+      failedDevices: 0,
+      healthChecks: devices.filter(d => d.domain === release.product).slice(0, Math.max(1, Math.round(total * 0.05))).map(d => ({
+        deviceId: d.id, status: 'verifying' as const, ts: Date.now(),
+      })),
+      autoRollbackThreshold: 5,
+    })
+    setShowPhasedPanel(true)
+    toast.success(`Phased rollout started: Phase 1 (Canary 5%) — ${Math.max(1, Math.round(total * 0.05))} devices`)
+  }
+
+  const advancePhase = () => {
+    if (!phasedRollout) return
+    const total = phasedRollout.totalDevices
+    if (phasedRollout.phase === 'canary') {
+      const staged = Math.round(total * 0.25)
+      setPhasedRollout({
+        ...phasedRollout,
+        phase: 'staged',
+        phasePct: 25,
+        soakStartedAt: Date.now(),
+        updatedDevices: staged,
+        healthChecks: phasedRollout.healthChecks.map(h => ({ ...h, status: 'ok' })).concat(
+          Array.from({ length: staged - phasedRollout.healthChecks.length }, (_, i) => ({
+            deviceId: `device-staged-${i}`, status: 'flashing' as const, ts: Date.now(),
+          }))
+        ),
+      })
+      toast.success(`Advanced to Phase 2 (Staged 25%) — ${staged} devices`)
+    } else if (phasedRollout.phase === 'staged') {
+      setPhasedRollout({
+        ...phasedRollout,
+        phase: 'fleet',
+        phasePct: 100,
+        soakStartedAt: Date.now(),
+        updatedDevices: total,
+        healthChecks: Array.from({ length: total }, (_, i) => ({
+          deviceId: `device-fleet-${i}`, status: 'verifying' as const, ts: Date.now(),
+        })),
+      })
+      toast.success(`Advanced to Phase 3 (Fleet 100%) — ${total} devices`)
+    } else if (phasedRollout.phase === 'fleet') {
+      setPhasedRollout({ ...phasedRollout, phase: 'complete' })
+      toast.success('✅ Phased rollout complete! All devices updated successfully.')
+    }
+  }
+
+  const simulateFailure = () => {
+    if (!phasedRollout) return
+    setPhasedRollout(prev => prev ? {
+      ...prev,
+      failedDevices: prev.failedDevices + Math.ceil(prev.updatedDevices * 0.08),
+      healthChecks: prev.healthChecks.map((h, i) =>
+        i < Math.ceil(prev.updatedDevices * 0.08) ? { ...h, status: 'failed' as const } : h
+      ),
+    } : null)
+  }
+
   const load = async () => {
     setLoading(true)
     try {
@@ -436,6 +553,14 @@ export default function OTAManagementPage() {
                       </button>
 
                       <button
+                        onClick={() => startPhasedRollout(r)}
+                        title="3-Phase Progressive Rollout: 5% → 25% → 100% with Auto-Rollback"
+                        className="flex items-center gap-1.5 text-xs text-emerald-300 hover:text-emerald-200 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-lg transition-colors font-medium"
+                      >
+                        <Layers size={13} /> Phased Rollout
+                      </button>
+
+                      <button
                         onClick={() => setDeployTarget({ release: r, mode: 'fleet' })}
                         title="Deploy to all devices in fleet"
                         className="flex items-center gap-1.5 text-xs text-indigo-300 hover:text-indigo-200 bg-indigo-500/15 border border-indigo-500/30 px-3 py-1.5 rounded-lg transition-colors font-medium"
@@ -585,6 +710,190 @@ export default function OTAManagementPage() {
                 Confirm Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {/* CANARY PHASED ROLLOUT DASHBOARD                                    */}
+      {/* ═══════════════════════════════════════════════════════════════════ */}
+      {phasedRollout && showPhasedPanel && (
+        <div className="rounded-2xl p-5 space-y-5" style={surface}>
+          {/* Phased Rollout Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-indigo-600 to-purple-600 shadow-lg shadow-indigo-500/20">
+                <Layers size={18} className="text-white" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  Phased Rollout: <span className="font-mono text-indigo-300">{phasedRollout.version}</span>
+                  {phasedRollout.phase === 'rollback' && (
+                    <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                      ⚠ AUTO-ROLLBACK ACTIVE
+                    </span>
+                  )}
+                  {phasedRollout.phase === 'complete' && (
+                    <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                      ✓ COMPLETE
+                    </span>
+                  )}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {phasedRollout.updatedDevices} of {phasedRollout.totalDevices} devices · {phasedRollout.failedDevices} failures · Auto-rollback at &gt;{phasedRollout.autoRollbackThreshold}% failure
+                </p>
+              </div>
+            </div>
+            <button onClick={() => setShowPhasedPanel(false)} className="text-slate-500 hover:text-white text-xs px-2 py-1 rounded hover:bg-slate-800">
+              Minimize
+            </button>
+          </div>
+
+          {/* 3-Phase Progress Ladder */}
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { phase: 'canary' as const, label: 'Phase 1: Canary', pct: '5%', desc: 'Test on select devices' },
+              { phase: 'staged' as const, label: 'Phase 2: Staged', pct: '25%', desc: 'Expand to quarter fleet' },
+              { phase: 'fleet' as const, label: 'Phase 3: Fleet', pct: '100%', desc: 'Full fleet deployment' },
+            ].map((step, i) => {
+              const phaseOrder = { idle: 0, canary: 1, staged: 2, fleet: 3, complete: 4, rollback: -1 }
+              const currentOrder = phaseOrder[phasedRollout.phase]
+              const stepOrder = phaseOrder[step.phase]
+              const isActive = phasedRollout.phase === step.phase
+              const isDone = currentOrder > stepOrder && phasedRollout.phase !== 'rollback'
+              const isRolledBack = phasedRollout.phase === 'rollback'
+
+              return (
+                <div
+                  key={step.phase}
+                  className={`p-3 rounded-xl border transition-all ${
+                    isRolledBack ? 'border-rose-500/40 bg-rose-950/20' :
+                    isActive ? 'border-indigo-500 bg-indigo-950/30 ring-1 ring-indigo-500/30 shadow-lg shadow-indigo-500/10' :
+                    isDone ? 'border-emerald-500/40 bg-emerald-950/20' :
+                    'border-slate-800 bg-slate-900/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      isRolledBack ? 'bg-rose-500/30 text-rose-300' :
+                      isDone ? 'bg-emerald-500/30 text-emerald-300' :
+                      isActive ? 'bg-indigo-500/30 text-indigo-300' :
+                      'bg-slate-800 text-slate-500'
+                    }`}>
+                      {isRolledBack ? '✗' : isDone ? '✓' : i + 1}
+                    </div>
+                    <span className={`text-xs font-bold ${isActive ? 'text-white' : isDone ? 'text-emerald-300' : 'text-slate-400'}`}>
+                      {step.label}
+                    </span>
+                  </div>
+                  <div className="text-lg font-black text-white ml-8">{step.pct}</div>
+                  <div className="text-[10px] text-slate-500 ml-8">{step.desc}</div>
+
+                  {/* Progress bar within phase */}
+                  {isActive && (
+                    <div className="mt-2 ml-8">
+                      <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-indigo-500 to-purple-500"
+                          style={{ width: `${Math.min(100, (phasedRollout.updatedDevices - phasedRollout.failedDevices) / Math.max(1, phasedRollout.updatedDevices) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Soak Timer & Health Monitor Row */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="p-3 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Soak Timer</div>
+              <div className="text-sm font-bold text-amber-400 font-mono">
+                {phasedRollout.phase === 'complete' ? 'Complete' : phasedRollout.phase === 'rollback' ? 'ABORTED' : soakTimerDisplay || 'Starting…'}
+              </div>
+            </div>
+            <div className="p-3 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Devices Updated</div>
+              <div className="text-sm font-bold text-emerald-400">{phasedRollout.updatedDevices - phasedRollout.failedDevices} / {phasedRollout.totalDevices}</div>
+            </div>
+            <div className="p-3 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Failed</div>
+              <div className={`text-sm font-bold ${phasedRollout.failedDevices > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                {phasedRollout.failedDevices}
+              </div>
+            </div>
+            <div className="p-3 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Failure Rate</div>
+              <div className={`text-sm font-bold ${
+                phasedRollout.updatedDevices > 0 && (phasedRollout.failedDevices / phasedRollout.updatedDevices * 100) > phasedRollout.autoRollbackThreshold
+                  ? 'text-rose-400' : 'text-emerald-400'
+              }`}>
+                {phasedRollout.updatedDevices > 0 ? (phasedRollout.failedDevices / phasedRollout.updatedDevices * 100).toFixed(1) : '0.0'}%
+                <span className="text-[10px] text-slate-500 font-normal ml-1">(limit {phasedRollout.autoRollbackThreshold}%)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Device Health Grid */}
+          <div className="space-y-2">
+            <div className="text-xs font-semibold text-slate-300">Device Health Checks</div>
+            <div className="flex flex-wrap gap-1.5">
+              {phasedRollout.healthChecks.slice(0, 30).map((h, i) => (
+                <div
+                  key={i}
+                  title={`${h.deviceId}: ${h.status}`}
+                  className={`w-5 h-5 rounded text-[8px] font-bold flex items-center justify-center transition-all ${
+                    h.status === 'ok' ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/40' :
+                    h.status === 'failed' ? 'bg-rose-500/30 text-rose-300 border border-rose-500/40 animate-pulse' :
+                    h.status === 'flashing' ? 'bg-amber-500/30 text-amber-300 border border-amber-500/40' :
+                    'bg-indigo-500/30 text-indigo-300 border border-indigo-500/40'
+                  }`}
+                >
+                  {h.status === 'ok' ? '✓' : h.status === 'failed' ? '✗' : h.status === 'flashing' ? '⬆' : '…'}
+                </div>
+              ))}
+              {phasedRollout.healthChecks.length > 30 && (
+                <span className="text-[10px] text-slate-500 self-center">+{phasedRollout.healthChecks.length - 30} more</span>
+              )}
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-3 pt-2 border-t border-slate-800">
+            {phasedRollout.phase !== 'complete' && phasedRollout.phase !== 'rollback' && (
+              <>
+                <button
+                  onClick={advancePhase}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-lg shadow"
+                  style={gradient}
+                >
+                  <ArrowRightCircle size={13} />
+                  {phasedRollout.phase === 'fleet' ? 'Mark Complete' : `Advance to ${phasedRollout.phase === 'canary' ? 'Phase 2 (25%)' : 'Phase 3 (100%)'}`}
+                </button>
+                <button
+                  onClick={simulateFailure}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-lg bg-rose-950/20"
+                  title="Simulate device failures to test auto-rollback"
+                >
+                  <AlertTriangle size={12} /> Simulate Failure
+                </button>
+              </>
+            )}
+            {phasedRollout.phase === 'rollback' && (
+              <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-rose-950/30 border border-rose-500/40 text-rose-300 text-xs font-semibold">
+                <XCircle size={14} />
+                Rollback in progress — all updated devices are reverting to backup partition firmware
+              </div>
+            )}
+            {phasedRollout.phase === 'complete' && (
+              <button
+                onClick={() => { setPhasedRollout(null); setShowPhasedPanel(false) }}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-emerald-400 border border-emerald-500/30 rounded-lg bg-emerald-950/20"
+              >
+                <CheckCircle2 size={13} /> Dismiss — Rollout Successful
+              </button>
+            )}
           </div>
         </div>
       )}

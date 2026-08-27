@@ -21,7 +21,7 @@ import { downloadCSV } from '@/lib/exportFile'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Brush, AreaChart, Area,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Brush, AreaChart, Area, ComposedChart
 } from 'recharts'
 import {
   Loader2, Download, Check, Layers, LayoutGrid, Rows, TrendingUp, Activity, Sparkles, AlertTriangle, Calendar, RefreshCw, Eye, EyeOff, Building2, X,
@@ -48,7 +48,7 @@ const MAX_DEVICES = 8
 const MAX_POINTS = 300
 
 interface Row { param_key: string; value: number; taken_at: string; n?: number }
-interface Loaded { id: string; name: string; rows: Row[] }
+interface Loaded { id: string; name: string; rows: Row[]; secRows?: Row[] }
 
 const toUTC = (ms: number) => new Date(ms).toISOString()
 
@@ -126,6 +126,11 @@ function TrendsPageContent() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('combined')
   const [showThresholds, setShowThresholds] = useState(true)
   const [showBrush, setShowBrush] = useState(true)
+
+  const [dualAxis, setDualAxis] = useState(false)
+  const [secondaryParam, setSecondaryParam] = useState('')
+  const [showBaseline, setShowBaseline] = useState(false)
+  const [showSigmaBands, setSigmaBands] = useState(false)
 
   const [picked, setPicked] = useState<string[]>(() => {
     if (urlDevices) {
@@ -276,13 +281,21 @@ function TrendsPageContent() {
     const bucketSec = Math.max(60, Math.floor(((to - from) / 1000) / MAX_POINTS))
 
     Promise.all(picked.map((id) =>
-      api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, paramKey)
-        .then((rows) => ({ id, name: devices.find((d) => d.id === id)?.name ?? id, rows: (rows ?? []) as Row[] }))))
+      Promise.all([
+        api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, paramKey),
+        (dualAxis && secondaryParam) ? api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, secondaryParam) : Promise.resolve([])
+      ]).then(([rows, secRows]) => ({
+        id,
+        name: devices.find((d) => d.id === id)?.name ?? id,
+        rows: (rows ?? []) as Row[],
+        secRows: (secRows ?? []) as Row[]
+      }))
+    ))
       .then((res) => { if (!cancelled) { setLoaded(res); setWin({ from, to }) } })
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [live, picked, paramKey, minutes, devices, customRange])
+  }, [live, picked, paramKey, minutes, devices, customRange, dualAxis, secondaryParam])
 
   useEffect(() => { load() }, [load])
 
@@ -298,9 +311,53 @@ function TrendsPageContent() {
         slot[d.id] = Number(r.value)
         byTs.set(ts, slot)
       }
+      if (d.secRows) {
+        for (const r of d.secRows) {
+          const ts = new Date(r.taken_at).getTime()
+          if (Number.isNaN(ts)) continue
+          const slot = byTs.get(ts) ?? { ts, fullTime: fmtDateTime(ts), time: (win.to - win.from > 36 * 3600000) ? fmtDayMonth(ts) : fmtHM(ts) }
+          slot[`${d.id}_sec`] = Number(r.value)
+          byTs.set(ts, slot)
+        }
+      }
     }
     return Array.from(byTs.values()).sort((a, b) => a.ts - b.ts)
   }, [loaded, win])
+
+  const processedData = useMemo(() => {
+    let res = [...data]
+    if (!res.length) return res
+
+    const fleetMeans = res.map(row => {
+      let sum = 0, count = 0
+      picked.forEach(id => {
+        if (row[id] != null) { sum += row[id]; count++ }
+      })
+      return count > 0 ? sum / count : null
+    })
+
+    const validMeans = fleetMeans.filter(m => m !== null) as number[]
+
+    if (showBaseline && validMeans.length > 0) {
+      const n20 = Math.max(1, Math.floor(validMeans.length * 0.2))
+      const first20 = validMeans.slice(0, n20)
+      const baselineVal = first20.reduce((a, b) => a + b, 0) / first20.length
+      const upper = baselineVal * 1.05
+      const lower = baselineVal * 0.95
+      res = res.map(row => ({ ...row, _baseline: baselineVal, _baselineRange: [lower, upper] }))
+    }
+
+    if (showSigmaBands && validMeans.length > 0) {
+      const mu = validMeans.reduce((a, b) => a + b, 0) / validMeans.length
+      const variance = validMeans.reduce((a, b) => a + Math.pow(b - mu, 2), 0) / validMeans.length
+      const sigma = Math.sqrt(variance)
+      const upper = mu + 3 * sigma
+      const lower = mu - 3 * sigma
+      res = res.map(row => ({ ...row, _sigmaRange: [lower, upper], _mu: mu }))
+    }
+
+    return res
+  }, [data, picked, showBaseline, showSigmaBands])
 
   // Per-device statistics
   const stats = useMemo(() => (loaded ?? []).map((d) => {
@@ -462,6 +519,26 @@ function TrendsPageContent() {
               </button>
             </div>
           </div>
+
+          {/* Advanced Analytics Toolbar */}
+          <div className="flex items-center gap-1 p-0.5 rounded-lg border border-slate-800" style={inset}>
+            <button onClick={() => setDualAxis(!dualAxis)} className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium transition-colors ${dualAxis ? 'text-white bg-indigo-600' : 'text-slate-400 hover:text-slate-200'}`}>🔀 Dual-Axis</button>
+            <button onClick={() => setShowBaseline(!showBaseline)} className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium transition-colors ${showBaseline ? 'text-white bg-amber-600' : 'text-slate-400 hover:text-slate-200'}`}>🌟 Baseline</button>
+            <button onClick={() => setSigmaBands(!showSigmaBands)} className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium transition-colors ${showSigmaBands ? 'text-white bg-red-600' : 'text-slate-400 hover:text-slate-200'}`}>📊 ±3σ</button>
+          </div>
+
+          {/* Secondary Param Select (If Dual Axis) */}
+          {dualAxis && (
+            <select
+              value={secondaryParam}
+              onChange={(e) => setSecondaryParam(e.target.value)}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white outline-none focus:ring-1 focus:ring-indigo-500 border border-indigo-500/30"
+              style={inset}
+            >
+              <option value="">-- Secondary --</option>
+              {schema.params.filter(p => p.key !== paramKey).map((p) => <option key={p.key} value={p.key}>{p.label}{p.unit && ` (${p.unit})`}</option>)}
+            </select>
+          )}
 
           {/* Layout Mode Switcher */}
           <div className="flex items-center gap-1 p-0.5 rounded-lg border border-slate-800" style={inset}>
@@ -666,7 +743,7 @@ function TrendsPageContent() {
           /* 1. Combined Overlay Chart */
           <div>
             <ResponsiveContainer width="100%" height={380}>
-              <LineChart data={data} margin={{ top: 10, right: 10, bottom: 5, left: -10 }}>
+              <ComposedChart data={processedData} margin={{ top: 10, right: 10, bottom: 5, left: -10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
                 <XAxis
                   dataKey="ts"
@@ -680,18 +757,39 @@ function TrendsPageContent() {
                   minTickGap={40}
                 />
                 <YAxis
+                  yAxisId="left"
                   tick={{ fill: '#64748b', fontSize: 10 }}
                   tickLine={false}
                   axisLine={{ stroke: '#1e2433' }}
                   domain={['auto', 'auto']}
                 />
+                {dualAxis && (
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fill: '#f97316', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#1e2433' }}
+                    domain={['auto', 'auto']}
+                  />
+                )}
                 <Tooltip
                   contentStyle={tooltipStyle}
                   labelStyle={{ color: '#94a3b8', fontWeight: 600 }}
                   labelFormatter={(v) => fmtDateTime(Number(v))}
                   itemSorter={(item) => (item.dataKey === focusId ? -1 : 0)}
-                  formatter={(v: number | string, name: string, item: { dataKey?: string | number }) =>
-                    hiddenIds.has(String(item?.dataKey)) ? [null, null] : [`${typeof v === 'number' ? v.toFixed(2) : v}${param?.unit ? ` ${param.unit}` : ''}`, name]}
+                  formatter={(v: number | string, name: string, item: { dataKey?: string | number }) => {
+                    const dk = String(item?.dataKey)
+                    if (dk.endsWith('_sec')) {
+                      const secP = schema.params.find(p => p.key === secondaryParam)
+                      return [`${typeof v === 'number' ? v.toFixed(2) : v}${secP?.unit ? ` ${secP.unit}` : ''}`, name]
+                    }
+                    if (dk === '_baseline' || dk === '_mu' || dk === '_sigmaRange' || dk === '_baselineRange') {
+                      if (Array.isArray(v)) return [`${v[0].toFixed(2)} - ${v[1].toFixed(2)}`, name]
+                      return [`${typeof v === 'number' ? v.toFixed(2) : v}`, name]
+                    }
+                    return hiddenIds.has(dk) ? [null, null] : [`${typeof v === 'number' ? v.toFixed(2) : v}${param?.unit ? ` ${param.unit}` : ''}`, name]
+                  }}
                 />
                 <Legend
                   content={(props) => (
@@ -712,10 +810,24 @@ function TrendsPageContent() {
                 {/* Alarm Thresholds */}
                 {showThresholds && param && (
                   <>
-                    <ReferenceLine y={param.warn} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Warn: ${param.warn}`, fill: '#f59e0b', fontSize: 10, position: 'insideBottomRight' }} />
-                    <ReferenceLine y={param.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Crit: ${param.critical}`, fill: '#ef4444', fontSize: 10, position: 'insideTopRight' }} />
+                    <ReferenceLine yAxisId="left" y={param.warn} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Warn: ${param.warn}`, fill: '#f59e0b', fontSize: 10, position: 'insideBottomRight' }} />
+                    <ReferenceLine yAxisId="left" y={param.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Crit: ${param.critical}`, fill: '#ef4444', fontSize: 10, position: 'insideTopRight' }} />
                   </>
                 )}
+
+                {/* Sigma Bands */}
+                {showSigmaBands && (
+                  <Area yAxisId="left" type="step" dataKey="_sigmaRange" stroke="none" fill="rgba(239,68,68,0.06)" name="±3σ Band" activeDot={false} />
+                )}
+
+                {/* Baseline */}
+                {showBaseline && (
+                  <>
+                    <Area yAxisId="left" type="step" dataKey="_baselineRange" stroke="none" fill="rgba(234,179,8,0.08)" name="Baseline ±5%" activeDot={false} />
+                    <Line yAxisId="left" type="step" dataKey="_baseline" stroke="#eab308" strokeDasharray="8 4" strokeWidth={2} dot={false} isAnimationActive={false} name="Baseline (First 20%)" activeDot={false} />
+                  </>
+                )}
+
                 {/* Device Lines */}
                 {picked
                   .map((id, i) => ({ id, color: LINE_COLORS[i % LINE_COLORS.length] }))
@@ -726,6 +838,7 @@ function TrendsPageContent() {
                     return (
                       <Line
                         key={id}
+                        yAxisId="left"
                         type="monotone"
                         dataKey={id}
                         name={devices.find((d) => d.id === id)?.name ?? id}
@@ -739,10 +852,35 @@ function TrendsPageContent() {
                       />
                     )
                   })}
+
+                {/* Secondary Device Lines */}
+                {dualAxis && secondaryParam && picked
+                  .map((id) => {
+                    const hidden = hiddenIds.has(id)
+                    const dimmed = !hidden && focusId !== null && focusId !== id
+                    return (
+                      <Line
+                        key={`${id}_sec`}
+                        yAxisId="right"
+                        type="monotone"
+                        dataKey={`${id}_sec`}
+                        name={`[Secondary] ${devices.find((d) => d.id === id)?.name ?? id}`}
+                        stroke="#f97316"
+                        strokeDasharray="4 4"
+                        strokeWidth={focusId === id ? 3 : 2}
+                        strokeOpacity={hidden ? 0 : dimmed ? 0.18 : 1}
+                        dot={false}
+                        activeDot={hidden ? false : { r: focusId === id ? 5 : 3 }}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                    )
+                  })}
+
                 {showBrush && (
                   <Brush dataKey="ts" height={28} stroke="#6366f1" fill="#0d1117" tickFormatter={() => ''} />
                 )}
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         ) : layoutMode === 'split' ? (

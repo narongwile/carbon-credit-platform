@@ -22,7 +22,7 @@ import { downloadCSV } from '@/lib/exportFile'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Brush, AreaChart, Area,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Brush, AreaChart, Area, ComposedChart,
 } from 'recharts'
 import {
   Loader2, Download, Check, Layers, LayoutGrid, Rows, TrendingUp, Activity, Sparkles, Calendar, RefreshCw
@@ -48,7 +48,7 @@ const MAX_DEVICES = 8
 const MAX_POINTS = 300
 
 interface Row { param_key: string; value: number; taken_at: string; n?: number }
-interface Loaded { id: string; name: string; rows: Row[] }
+interface Loaded { id: string; name: string; rows: Row[]; secRows?: Row[] }
 
 const toUTC = (ms: number) => new Date(ms).toISOString()
 
@@ -116,6 +116,10 @@ export default function CustomerTrendsPage() {
   const [showCustomPicker, setShowCustomPicker] = useState(false)
 
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('combined')
+  const [dualAxis, setDualAxis] = useState(false)
+  const [secondaryParam, setSecondaryParam] = useState('')
+  const [showBaseline, setShowBaseline] = useState(false)
+  const [showSigmaBands, setSigmaBands] = useState(false)
   const [showThresholds, setShowThresholds] = useState(true)
   const [showBrush, setShowBrush] = useState(true)
 
@@ -201,14 +205,19 @@ export default function CustomerTrendsPage() {
 
     const bucketSec = Math.max(60, Math.floor(((to - from) / 1000) / MAX_POINTS))
 
-    Promise.all(picked.map((id) =>
-      api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, paramKey)
-        .then((rows) => ({ id, name: devices.find((d) => d.id === id)?.name ?? id, rows: (rows ?? []) as Row[] }))))
+    Promise.all(picked.map(async (id) => {
+      const rows = await api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, paramKey)
+      let secRows: Row[] = []
+      if (dualAxis && secondaryParam) {
+        secRows = (await api.readingsWindow(id, toUTC(from), toUTC(to), bucketSec, secondaryParam)) ?? []
+      }
+      return { id, name: devices.find((d) => d.id === id)?.name ?? id, rows: (rows ?? []) as Row[], secRows }
+    }))
       .then((res) => { if (!cancelled) { setLoaded(res); setWin({ from, to }) } })
       .finally(() => { if (!cancelled) setLoading(false) })
 
     return () => { cancelled = true }
-  }, [live, picked, paramKey, minutes, devices, customRange])
+  }, [live, picked, paramKey, minutes, devices, customRange, dualAxis, secondaryParam])
 
   useEffect(() => { load() }, [load])
 
@@ -224,9 +233,54 @@ export default function CustomerTrendsPage() {
         slot[d.id] = Number(r.value)
         byTs.set(ts, slot)
       }
+      if (d.secRows) {
+        for (const r of d.secRows) {
+          const ts = new Date(r.taken_at).getTime()
+          if (Number.isNaN(ts)) continue
+          const slot = byTs.get(ts) ?? { ts, fullTime: fmtDateTime(ts), time: (win.to - win.from > 36 * 3600000) ? fmtDayMonth(ts) : fmtHM(ts) }
+          slot[`sec_${d.id}`] = Number(r.value)
+          byTs.set(ts, slot)
+        }
+      }
     }
-    return Array.from(byTs.values()).sort((a, b) => a.ts - b.ts)
-  }, [loaded, win])
+    const sortedData = Array.from(byTs.values()).sort((a, b) => a.ts - b.ts)
+
+    if (showBaseline) {
+      picked.forEach(id => {
+        const validPoints = sortedData.filter(row => row[id] !== undefined)
+        const baselineEndIdx = Math.floor(validPoints.length * 0.2)
+        if (baselineEndIdx > 0) {
+          const baselineData = validPoints.slice(0, baselineEndIdx)
+          const avg = baselineData.reduce((acc, row) => acc + row[id], 0) / baselineData.length
+          sortedData.forEach(row => {
+            row[`baseline_${id}`] = avg
+            row[`baseline_upper_${id}`] = avg * 1.05
+            row[`baseline_lower_${id}`] = avg * 0.95
+          })
+        }
+      })
+    }
+
+    if (showSigmaBands) {
+      picked.forEach(id => {
+        const windowSize = 5;
+        for (let i = 0; i < sortedData.length; i++) {
+          const start = Math.max(0, i - windowSize + 1)
+          const slice = sortedData.slice(start, i + 1).map(r => r[id]).filter(v => v !== undefined)
+          if (slice.length > 0) {
+            const mean = slice.reduce((a, b) => a + b, 0) / slice.length
+            const variance = slice.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / slice.length
+            const sigma = Math.sqrt(variance)
+            sortedData[i][`mean_${id}`] = mean
+            sortedData[i][`upper_sigma_${id}`] = mean + 3 * sigma
+            sortedData[i][`lower_sigma_${id}`] = mean - 3 * sigma
+          }
+        }
+      })
+    }
+
+    return sortedData
+  }, [loaded, win, showBaseline, showSigmaBands, picked])
 
   // Per-device statistics
   const stats = useMemo(() => (loaded ?? []).map((d) => {
@@ -329,6 +383,17 @@ export default function CustomerTrendsPage() {
             >
               {schema.params.map((p) => <option key={p.key} value={p.key}>{p.label}{p.unit && ` (${p.unit})`}</option>)}
             </select>
+            {dualAxis && (
+              <select
+                value={secondaryParam}
+                onChange={(e) => setSecondaryParam(e.target.value)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white outline-none focus:ring-1 focus:ring-indigo-500 border-dashed border-indigo-500"
+                style={inset}
+              >
+                <option value="">-- Secondary Param --</option>
+                {schema.params.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+            )}
 
             {/* Quick Time Range Selector */}
             <div className="flex items-center gap-1 p-0.5 rounded-lg" style={inset}>
@@ -352,6 +417,34 @@ export default function CustomerTrendsPage() {
                 Custom
               </button>
             </div>
+          </div>
+
+          {/* Advanced Analytics */}
+          <div className="flex items-center gap-1 p-0.5 rounded-lg border border-slate-800" style={inset}>
+            <button
+              onClick={() => setDualAxis(!dualAxis)}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium transition-colors ${
+                dualAxis ? 'text-white bg-indigo-600' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              🔀 Dual-Axis
+            </button>
+            <button
+              onClick={() => setShowBaseline(!showBaseline)}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium transition-colors ${
+                showBaseline ? 'text-white bg-amber-600' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles size={13} /> Baseline
+            </button>
+            <button
+              onClick={() => setSigmaBands(!showSigmaBands)}
+              className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded font-medium transition-colors ${
+                showSigmaBands ? 'text-white bg-rose-600' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Activity size={13} /> ±3σ
+            </button>
           </div>
 
           {/* Layout Mode Switcher */}
@@ -536,7 +629,7 @@ export default function CustomerTrendsPage() {
           /* 1. Combined Overlay Chart */
           <div>
             <ResponsiveContainer width="100%" height={380}>
-              <LineChart data={data} margin={{ top: 10, right: 10, bottom: 5, left: -10 }}>
+              <ComposedChart data={data} margin={{ top: 10, right: 10, bottom: 5, left: -10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" vertical={false} />
                 <XAxis
                   dataKey="ts"
@@ -550,11 +643,22 @@ export default function CustomerTrendsPage() {
                   minTickGap={40}
                 />
                 <YAxis
+                  yAxisId="left"
                   tick={{ fill: '#64748b', fontSize: 10 }}
                   tickLine={false}
                   axisLine={{ stroke: '#1e2433' }}
                   domain={['auto', 'auto']}
                 />
+                {dualAxis && secondaryParam && (
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fill: '#64748b', fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={{ stroke: '#1e2433' }}
+                    domain={['auto', 'auto']}
+                  />
+                )}
                 <Tooltip
                   contentStyle={tooltipStyle}
                   labelStyle={{ color: '#94a3b8', fontWeight: 600 }}
@@ -594,8 +698,7 @@ export default function CustomerTrendsPage() {
                     const hidden = hiddenIds.has(id)
                     const dimmed = !hidden && focusId !== null && focusId !== id
                     return (
-                      <Line
-                        key={id}
+                      <Line yAxisId="left" key={id}
                         type="monotone"
                         dataKey={id}
                         name={devices.find((d) => d.id === id)?.name ?? id}
@@ -609,10 +712,101 @@ export default function CustomerTrendsPage() {
                       />
                     )
                   })}
+
+                {/* Secondary Lines */}
+                {dualAxis && secondaryParam && picked
+                  .map((id, i) => ({ id, color: LINE_COLORS[i % LINE_COLORS.length] }))
+                  .map(({ id, color }) => {
+                    const hidden = hiddenIds.has(id)
+                    const dimmed = !hidden && focusId !== null && focusId !== id
+                    return (
+                      <Line
+                        yAxisId="right"
+                        key={`sec_${id}`}
+                        type="monotone"
+                        dataKey={`sec_${id}`}
+                        name={`${devices.find((d) => d.id === id)?.name ?? id} (Secondary)`}
+                        stroke={color}
+                        strokeDasharray="3 3"
+                        strokeWidth={focusId === id ? 3 : 2}
+                        strokeOpacity={hidden ? 0 : dimmed ? 0.18 : 0.6}
+                        dot={false}
+                        activeDot={hidden ? false : { r: focusId === id ? 5 : 3 }}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                    )
+                  })}
+
+                {/* Golden Baseline Overlay */}
+                {showBaseline && picked.map((id) => {
+                  if (hiddenIds.has(id)) return null;
+                  return (
+                    <Line
+                      yAxisId="left"
+                      key={`base_${id}`}
+                      type="stepAfter"
+                      dataKey={`baseline_${id}`}
+                      stroke="#fbbf24"
+                      strokeDasharray="5 5"
+                      strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                      name="Golden Baseline"
+                    />
+                  )
+                })}
+                {showBaseline && picked.map((id) => {
+                  if (hiddenIds.has(id)) return null;
+                  return (
+                    <Area
+                      yAxisId="left"
+                      key={`base_band_${id}`}
+                      type="stepAfter"
+                      dataKey={`baseline_upper_${id}`}
+                      stroke="none"
+                      fill="#fbbf24"
+                      fillOpacity={0.1}
+                      isAnimationActive={false}
+                    />
+                  )
+                })}
+
+                {/* Statistical ±3σ Anomaly Bands */}
+                {showSigmaBands && picked.map((id) => {
+                  if (hiddenIds.has(id)) return null;
+                  return (
+                    <Area
+                      yAxisId="left"
+                      key={`sigma_upper_${id}`}
+                      type="monotone"
+                      dataKey={`upper_sigma_${id}`}
+                      stroke="#f43f5e"
+                      strokeDasharray="3 3"
+                      fill="none"
+                      isAnimationActive={false}
+                    />
+                  )
+                })}
+                {showSigmaBands && picked.map((id) => {
+                  if (hiddenIds.has(id)) return null;
+                  return (
+                    <Area
+                      yAxisId="left"
+                      key={`sigma_lower_${id}`}
+                      type="monotone"
+                      dataKey={`lower_sigma_${id}`}
+                      stroke="#f43f5e"
+                      strokeDasharray="3 3"
+                      fill="none"
+                      isAnimationActive={false}
+                    />
+                  )
+                })}
                 {showBrush && (
                   <Brush dataKey="ts" height={28} stroke="#6366f1" fill="#0d1117" tickFormatter={() => ''} />
                 )}
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
         ) : layoutMode === 'split' ? (
