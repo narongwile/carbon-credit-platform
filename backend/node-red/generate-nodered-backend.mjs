@@ -587,6 +587,8 @@ function evaluate(nodeId, rule, readings, debounceJson){
     const paramDb = db[p.key] || {};
     const dwellMin = paramDb.dwell_min ?? rule.dwellMin ?? 3;
     const cooldownS = paramDb.cooldown_s ?? 0;
+    // Last time THIS param actually raised, so cooldown can suppress a re-raise.
+    let lastRaisedTs = null;
     for(const r of readings){
       const v=r.values[p.key]; if(v===undefined||Number.isNaN(v))continue;
       if(rateWin){
@@ -604,7 +606,12 @@ function evaluate(nodeId, rule, readings, debounceJson){
         }
       }
       const lvl=breaches(v,p.critical,p.direction)?'CRITICAL':breaches(v,p.warn,p.direction)?'WARNING':null;
-      if(lvl){run++; if(run>=dwellMin&&lvl!==active){ if(active===null||(active==='WARNING'&&lvl==='CRITICAL')){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r));} active=lvl; } }
+      if(lvl){run++; if(run>=dwellMin&&lvl!==active){
+        // cooldown_s, same semantics as the Go worker's evaluateParams: a
+        // re-raise inside the window is suppressed, but the level still
+        // advances, so the state machine cannot get stuck one level behind.
+        const inCooldown = cooldownS>0 && lastRaisedTs!==null && (r.ts-lastRaisedTs) < cooldownS*1000;
+        if(!inCooldown && (active===null||(active==='WARNING'&&lvl==='CRITICAL'))){out.push(mk(nodeId,p,lvl,'threshold',v,lvl==='CRITICAL'?p.critical:p.warn,r)); lastRaisedTs=r.ts;} active=lvl; } }
       else if(active&&cleared(v,p.warn,p.direction,rule.hysteresis)){active=null;run=0;}
       else if(!lvl){run=0;}
     }
@@ -5404,7 +5411,7 @@ if(!ids){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'departmentIds
 // department allows); a user PRESENT is limited to exactly the listed devices.
 // The UI has to state that difference, so the shape must preserve it — hence a
 // map of only the users who actually have rows, never a padded one.
-const nodeVisGetFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const orgId=msg.req.params.orgId;
+const nodeVisGetFunc = CORS + `const orgId=msg.req.params.orgId;
 (async()=>{
   const opool=global.get('resolvePool')(orgId);
   const out={};
@@ -7115,7 +7122,7 @@ const nodesMoveFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||
 // it moved several thousand rows by accident. A dry run reports exactly what
 // it WOULD move, per table, which is also the answer to "is anything even
 // stranded?" — usually the first thing worth knowing.
-const nodesRepairFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const b=msg.payload||{};
+const nodesRepairFunc = CORS + `const au=msg.auth||{}; const b=msg.payload||{};
 (async()=>{
   const ids=Array.isArray(b.nodeIds)?b.nodeIds.filter(Boolean):[];
   if(!ids.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'nodeIds (non-empty array) is required'};node.send(msg);return;}

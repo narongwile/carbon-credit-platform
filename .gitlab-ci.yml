@@ -112,6 +112,13 @@ test_proofs_and_integrity:
     # never hears about a fault.
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
+    # Node-RED handler bodies are template STRINGS — eslint and tsc never see
+    # them, so they are the only code here with no static analysis at all. This
+    # parses every one and fails on unused variables, which is the fingerprint
+    # left behind when the statement that consumed them gets deleted (exactly
+    # how the org-level Telegram send was lost: `tok`/`chat` computed, the
+    # `await fetch` gone). Verified to fail on that specific regression.
+    - node backend/node-red/handler-deadcode.test.mjs
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"
