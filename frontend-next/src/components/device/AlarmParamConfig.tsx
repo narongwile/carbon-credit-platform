@@ -639,22 +639,40 @@ export default function AlarmParamConfig({
     // Only parameters present in telemetry/lastSample, configured sensor readings, or existing rules are shown.
     // Full catalog parameters are revealed when the operator switches to "Full catalog".
     if (scopeFilter === 'reported') {
+      if (mode === 'personal' && configuredDisplayKeys.length > 0) {
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
+      }
       const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
       if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
         return allParams.filter(
           (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
         )
       }
+      // Demo / fallback for single device when no live stream yet:
+      if (nodeId && domain === 'transformer') {
+        const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
+        return allParams.filter((p) => defaultTransformerKeys.includes(p.key))
+      }
     }
     return allParams
-  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys])
+  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
 
   const activeParamsCount = useMemo(() => {
+    if (mode === 'personal' && configuredDisplayKeys.length > 0) {
+      return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
+    }
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
-    return allParams.filter(
-      (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
-    ).length
-  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys])
+    if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
+      return allParams.filter(
+        (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
+      ).length
+    }
+    if (nodeId && domain === 'transformer') {
+      const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
+      return allParams.filter((p) => defaultTransformerKeys.includes(p.key)).length
+    }
+    return allParams.length
+  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
 
   const readingCount = useMemo(() => scopedParams.filter((p) => p.paramType !== 'compound').length, [scopedParams])
   const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
