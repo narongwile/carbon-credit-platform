@@ -33,7 +33,7 @@ export default function DynamicThermalRating({
   // ── 1. Auto Live Weather vs Manual Mode ─────────────────────────────────
   const [weatherMode, setWeatherMode] = useState<'auto' | 'manual'>('auto')
   const [weatherLoading, setWeatherLoading] = useState(false)
-  const [weatherSource, setWeatherSource] = useState<'open-meteo' | 'site-mast' | 'simulated'>('open-meteo')
+  const [weatherSource, setWeatherSource] = useState<'open-meteo' | 'simulated'>('open-meteo')
   const [solarIrradiance, setSolarIrradiance] = useState(680) // W/m2
 
   // Environmental Simulation Inputs
@@ -51,7 +51,15 @@ export default function DynamicThermalRating({
     setWeatherLoading(true)
     try {
       const res = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,relative_humidity_2m,direct_normal_irradiance`,
+        // wind_speed_unit=ms is REQUIRED, not a preference: Open-Meteo defaults
+        // wind_speed_10m to km/h, and every consumer below treats this value as
+        // m/s (the ~1.2%-per-m/s ampacity factor and the 0.8 °C-per-m/s hot-spot
+        // term). Without it a real 3.8 m/s breeze arrives as 13.7, inflating
+        // dynamic ampacity ~11% and subtracting 11 °C from hot-spot instead of
+        // 3 °C — both in the direction that makes the transformer look cooler
+        // and more capable than it is, which is the wrong way to be wrong about
+        // an overload limit.
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,relative_humidity_2m,direct_normal_irradiance&wind_speed_unit=ms`,
         { signal: AbortSignal.timeout(3000) }
       )
       if (!res.ok) throw new Error('Weather API unreachable')
@@ -65,13 +73,18 @@ export default function DynamicThermalRating({
         setWeatherSource('open-meteo')
       }
     } catch {
-      // Fallback: Localized meteorological sensor estimation
+      // The weather feed is unreachable, so these are MODELLED values, not a
+      // reading: a sine/cosine around a seasonal mean. They must be labelled as
+      // such. This branch used to set 'site-mast', which the banner rendered as
+      // "Ultrasonic Mast Sensor" — naming a physical instrument that does not
+      // exist, over a number that is a sine wave, on the panel an operator uses
+      // to decide how far to overload a transformer.
       const jitterTemp = Number((28.5 + (Math.sin(Date.now() / 60000) * 1.5)).toFixed(1))
       const jitterWind = Number((3.6 + (Math.cos(Date.now() / 45000) * 1.2)).toFixed(1))
       setAmbientTemp(jitterTemp)
       setWindSpeed(Math.max(0.5, jitterWind))
       setSolarIrradiance(640)
-      setWeatherSource('site-mast')
+      setWeatherSource('simulated')
     } finally {
       setWeatherLoading(false)
     }
@@ -278,18 +291,35 @@ export default function DynamicThermalRating({
 
       {/* Weather Station Banner (When Auto mode is active) */}
       {weatherMode === 'auto' && (
-        <div className="p-3 rounded-xl border border-emerald-500/20 bg-emerald-950/15 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+        <div
+          className="p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs"
+          style={weatherSource === 'open-meteo'
+            ? { borderColor: 'rgba(16,185,129,0.2)', background: 'rgba(2,44,34,0.15)' }
+            : { borderColor: 'rgba(249,115,22,0.25)', background: 'rgba(67,20,7,0.2)' }}
+        >
           <div className="flex items-center gap-2.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            <span
+              className={weatherSource === 'open-meteo' ? 'w-2 h-2 rounded-full bg-emerald-400 animate-ping' : 'w-2 h-2 rounded-full bg-amber-400'}
+            />
             <div className="space-y-0.5">
               <div className="font-semibold text-emerald-300 flex items-center gap-2">
-                <span>Microclimate Met Station Connected ({lat.toFixed(4)}°N, {lng.toFixed(4)}°E)</span>
-                <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-200 border border-emerald-700/40">
-                  {weatherSource === 'open-meteo' ? 'Open-Meteo High-Res' : 'Ultrasonic Mast Sensor'}
+                <span>
+                  {weatherSource === 'open-meteo' ? 'Microclimate Met Station Connected' : 'Weather Feed Unavailable'}
+                  {' '}({lat.toFixed(4)}°N, {lng.toFixed(4)}°E)
+                </span>
+                <span
+                  className="text-[9px] px-1.5 py-0.2 rounded border"
+                  style={weatherSource === 'open-meteo'
+                    ? { background: 'rgba(6,78,59,0.6)', color: '#a7f3d0', borderColor: 'rgba(4,120,87,0.4)' }
+                    : { background: 'rgba(69,26,3,0.6)', color: '#fed7aa', borderColor: 'rgba(154,52,18,0.5)' }}
+                >
+                  {weatherSource === 'open-meteo' ? 'Open-Meteo High-Res' : 'Simulated — not measured'}
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Feeding real-time ambient temperature, wind velocity, and direct solar irradiance into C57.115 differential equations
+                {weatherSource === 'open-meteo'
+                  ? 'Feeding real-time ambient temperature, wind velocity, and direct solar irradiance into C57.115 differential equations'
+                  : 'Modelled ambient/wind values around a seasonal mean — no live measurement. Treat the ratings below as indicative, and enter measured values in Manual mode before acting on them.'}
               </p>
             </div>
           </div>
