@@ -38,7 +38,7 @@ import {
   Thermometer, Droplets, Gauge, Activity, Zap, Wind,
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
-  BarChart2, FileText, GripVertical, X,
+  BarChart2, FileText, GripVertical, X, TrendingUp,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Link from 'next/link'
@@ -1092,6 +1092,14 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {/* Was a permanently spinning "Live" — it said nothing about the device. */}
             <DeviceLiveStatus nodeId={transformer.id} />
+            <Link
+              href={`/admin/trends?domain=transformer&devices=${encodeURIComponent(transformer.id)}${siteId ? `&siteId=${encodeURIComponent(siteId)}` : ''}`}
+              title="Compare this transformer's trends with other fleet devices"
+              className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1.5 rounded-lg text-[10px] sm:text-[11px] font-medium text-emerald-300 hover:text-white bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/30 transition-colors shadow-sm"
+            >
+              <TrendingUp size={12} className="text-emerald-400" />
+              <span className="hidden sm:inline">Compare Trends</span>
+            </Link>
             <NodeReportButton nodeId={transformer.id} deviceName={transformer.name} domain="transformer" />
             {/* No role gate: the backend's 'node' policy has already proved this
                 caller may read this device, so anyone who can see the page may

@@ -22,7 +22,9 @@ const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 // transformer keeps its dedicated rich twin; other domains use the shared
 // node twin — same split superadmin/monitoring/page.tsx's monitorRoute uses.
 function monitorRoute(domain: GeoNode['domain'], id: string): string {
-  return domain === 'transformer' ? `/admin/transformers/detail?id=${encodeURIComponent(id)}` : `/admin/nodes/detail?id=${encodeURIComponent(id)}`
+  if (domain === 'transformer') return `/admin/transformers/detail?id=${encodeURIComponent(id)}`
+  if (domain === 'automobile') return `/admin/automobile?id=${encodeURIComponent(id)}`
+  return `/admin/nodes/detail?id=${encodeURIComponent(id)}`
 }
 
 // Typed lat/lng, alongside the existing click-to-pin flow — usePlacementSession's
