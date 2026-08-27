@@ -96,6 +96,12 @@ test_proofs_and_integrity:
     # Fails if an auto-armed alarm ever again names a key the fleet does not
     # publish, or if a published parameter becomes unreachable by any rule.
     - node e2e/proofs/audit-catalog-vs-device.mjs
+    # The alarm editor's no-data fallback row set must name CATALOG keys
+    # ('oilTemp'), not the telemetry payload names realtime.ts maps them to
+    # ('oilTemperature'). It named the payload ones, so both temperature
+    # alarms silently dropped out of the editor on any device with no
+    # display-params and no telemetry yet.
+    - node e2e/proofs/test-default-transformer-keys.mjs
     # Alarm DELIVERY. Both of these existed in the repo but were never wired
     # into CI, and both caught real regressions only once someone ran them by
     # hand: notify-routing had 4 failing assertions (a dropped CORS_ORIGIN

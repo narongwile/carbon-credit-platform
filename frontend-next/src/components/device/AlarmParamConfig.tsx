@@ -316,6 +316,25 @@ export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]
   automobile: READING_PAYLOAD_CATALOG.automobile,
 }
 
+/**
+ * Fallback row set for a transformer with nothing to scope by yet — no
+ * display-params configured, no telemetry seen, no saved rule.
+ *
+ * These MUST be catalog keys (READING_PAYLOAD_CATALOG.transformer), not the
+ * telemetry payload names. The list this replaced was copied out of
+ * realtime.ts's SENSOR_KEYS ('oilTemperature', 'windingTemperature', 'load',
+ * …) — those are what the wire carries, and realtime.ts's own TX_KEY_MAP is
+ * the thing that renames 'oilTemp' → 'oilTemperature'. Filtering the alarm
+ * catalog by them silently matched only 'hydrogen', 'moisture' and
+ * 'oilLevel': both temperature alarms, the primary transformer alarms,
+ * dropped out of the editor with no error anywhere. Proven by grepping the
+ * catalog — `key: 'oilTemperature'` occurs zero times, `key: 'oilTemp'` once.
+ *
+ * 'load' has no alarm-catalog parameter at all (deliberately — see the
+ * COMPOUND_ALARM_CATALOG note above); loading is alarmed via CurrentAVG/I3p.
+ */
+const DEFAULT_TRANSFORMER_KEYS = ['oilTemp', 'windingTemp', 'hydrogen', 'moisture', 'oilLevel']
+
 /** Categorize any parameter key into one of the standard tabs */
 export function classifyParam(key: string, domain?: SensorDomain): ParamCategory {
   const k = key.toLowerCase()
@@ -645,8 +664,7 @@ export default function AlarmParamConfig({
         return allParams.filter((p) => activeKeys.has(p.key))
       }
       if (nodeId && domain === 'transformer') {
-        const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
-        return allParams.filter((p) => defaultTransformerKeys.includes(p.key))
+        return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
       }
     }
 
@@ -662,8 +680,7 @@ export default function AlarmParamConfig({
       }
       // Demo / fallback for single device when no live stream yet:
       if (nodeId && domain === 'transformer') {
-        const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
-        return allParams.filter((p) => defaultTransformerKeys.includes(p.key))
+        return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
       }
     }
     return allParams
@@ -679,8 +696,7 @@ export default function AlarmParamConfig({
         return allParams.filter((p) => activeKeys.has(p.key)).length
       }
       if (nodeId && domain === 'transformer') {
-        const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
-        return allParams.filter((p) => defaultTransformerKeys.includes(p.key)).length
+        return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
       }
     }
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
@@ -690,8 +706,7 @@ export default function AlarmParamConfig({
       ).length
     }
     if (nodeId && domain === 'transformer') {
-      const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
-      return allParams.filter((p) => defaultTransformerKeys.includes(p.key)).length
+      return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
     }
     return allParams.length
   }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
