@@ -1899,10 +1899,17 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
     if (pool && e.orgId) {
       try {
         const [r] = await pool.query(
-          "SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND user_id IN (SELECT user_id FROM user_departments WHERE department_id=?)) )",
+          "SELECT channel,target,min_severity,department_id,user_id FROM notification_channels WHERE org_id=? AND enabled=1 AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND user_id IN (SELECT user_id FROM user_departments WHERE department_id=?)) )",
           [e.orgId, e.departmentId || null, e.departmentId || null]
         );
-        channels = r;
+        // If a department has its own specific channel configured, it overrides the org-level fallback for that channel
+        const deptTypes = new Set(r.filter(c => c.department_id && (!c.user_id || c.user_id === '')).map(c => c.channel));
+        channels = r.filter(c => {
+          if (!c.department_id && (!c.user_id || c.user_id === '')) {
+            return !deptTypes.has(c.channel);
+          }
+          return true;
+        });
       } catch(err) {
         const [r] = await pool.query(
           "SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)",
