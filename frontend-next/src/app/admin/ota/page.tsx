@@ -160,7 +160,7 @@ export default function OTAManagementPage() {
         phasePct: 25,
         soakStartedAt: Date.now(),
         updatedDevices: staged,
-        healthChecks: phasedRollout.healthChecks.map(h => ({ ...h, status: 'ok' })).concat(
+        healthChecks: phasedRollout.healthChecks.map((h): PhasedRollout['healthChecks'][number] => ({ ...h, status: 'ok' })).concat(
           Array.from({ length: staged - phasedRollout.healthChecks.length }, (_, i) => ({
             deviceId: `device-staged-${i}`, status: 'flashing' as const, ts: Date.now(),
           }))

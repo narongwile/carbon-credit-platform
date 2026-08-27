@@ -282,7 +282,7 @@ export default function AuditPage() {
                         <span className="text-emerald-400 truncate w-24">{record.after}</span>
                       </div>
                       <div className="text-[11px] text-slate-300 italic mt-1.5 leading-tight">
-                        "{record.justification}"
+                        &ldquo;{record.justification}&rdquo;
                       </div>
                       {record.workOrderId && (
                         <div className="text-[10px] text-blue-400 mt-1 font-semibold flex items-center gap-1">
@@ -387,7 +387,7 @@ export default function AuditPage() {
                     </div>
                     <div className="flex-1">
                       <div className="text-[10px] text-slate-500 uppercase font-semibold mb-1 tracking-wider">Justification</div>
-                      <div className="text-xs text-slate-300 italic">"{task.justification}"</div>
+                      <div className="text-xs text-slate-300 italic">&ldquo;{task.justification}&rdquo;</div>
                       {task.workOrderId && <div className="text-[10px] text-blue-400 mt-1">{task.workOrderId}</div>}
                     </div>
                   </div>

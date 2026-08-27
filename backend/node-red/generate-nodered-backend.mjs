@@ -1961,6 +1961,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
           const at = raw.lastIndexOf('@');
           const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));
           const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);
+          if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});
         } else if (c.channel === 'googlechat') {
           const url = c.target || nc.googleChatWebhook;
           if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});

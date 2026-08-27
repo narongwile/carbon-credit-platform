@@ -521,7 +521,11 @@ export async function exportIIoTPDF(
   doc.text(doc.splitTextToSize(footer, pageWidth - 28), 14, y)
 
   // Cryptographic audit stamp across all pages
-  const totalPages = doc.internal.getNumberOfPages()
+  // getNumberOfPages() is on the jsPDF instance itself, not on doc.internal
+  // (confirmed in jspdf's own types/index.d.ts). doc.internal only exposes
+  // pageSize/events/scaleFactor et al, so the .internal form was a runtime
+  // TypeError waiting to happen the first time a report spanned >1 page.
+  const totalPages = doc.getNumberOfPages()
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i)
     doc.setFontSize(6.5)

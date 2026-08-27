@@ -96,6 +96,16 @@ test_proofs_and_integrity:
     # Fails if an auto-armed alarm ever again names a key the fleet does not
     # publish, or if a published parameter becomes unreachable by any rule.
     - node e2e/proofs/audit-catalog-vs-device.mjs
+    # Alarm DELIVERY. Both of these existed in the repo but were never wired
+    # into CI, and both caught real regressions only once someone ran them by
+    # hand: notify-routing had 4 failing assertions (a dropped CORS_ORIGIN
+    # fallback plus its own stale expected-link), and the org-channel loop had
+    # its Telegram `await fetch(...)` deleted outright — org-level Telegram
+    # alarms silently stopped sending, with no error anywhere. Delivery is the
+    # last mile of an alarm system; a silent failure here means an operator
+    # never hears about a fault.
+    - node backend/node-red/notify-routing.test.mjs
+    - node backend/node-red/notify-org-channels.test.mjs
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"

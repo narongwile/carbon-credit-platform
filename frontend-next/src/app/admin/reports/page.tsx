@@ -8,6 +8,7 @@ import { useManagedDevices } from '@/lib/useManagedDevices'
 import { getDepartmentsByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
 import { sites as defaultSites } from '@/lib/fleetData'
 import type { ReportSequence } from '@/types/org'
+import type { SensorDomain } from '@/types/fleet'
 import type { RecipientMode } from '@/lib/api'
 import {
   buildIIoTReportData,
@@ -95,7 +96,10 @@ interface EnterpriseReportProfile {
   icon: string
   description: string
   classification: 'INTERNAL USE ONLY' | 'CONFIDENTIAL' | 'RESTRICTED' | 'PUBLIC AUDIT'
-  domains: string[]
+  // SensorDomain, not string[]: these are matched against the real domains the
+  // org's devices report (ManagedDevice['domain']), so a typo'd domain here
+  // would silently make a profile permanently invisible instead of failing loudly.
+  domains: SensorDomain[]
   days: number
   aggregation: 'raw' | '15m' | '1h' | 'daily'
   sections: string[]
