@@ -4152,15 +4152,17 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
   const [due] = await pool.query("SELECT * FROM report_schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=NOW(3))");
   for (const s of due) {
     let nodeIds = [];
+    const domFilter = (s.domain && s.domain !== 'all') ? " AND domain=?" : "";
+    const domArg = (s.domain && s.domain !== 'all') ? [s.domain] : [];
     if (s.scope==='device' && s.scope_id) nodeIds = String(s.scope_id).split(',').map(x=>x.trim()).filter(Boolean);
     else if (s.scope==='site' && s.scope_id) {
-      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND site_id=?", [s.org_id, s.scope_id]);
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND site_id=?" + domFilter, [s.org_id, s.scope_id, ...domArg]);
       nodeIds = ns.map(n=>n.id);
     } else if (s.scope==='department' && s.scope_id) {
-      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND department_id=?", [s.org_id, s.scope_id]);
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND department_id=?" + domFilter, [s.org_id, s.scope_id, ...domArg]);
       nodeIds = ns.map(n=>n.id);
     } else {
-      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=?", [s.org_id]);
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=?" + domFilter, [s.org_id, ...domArg]);
       nodeIds = ns.map(n=>n.id);
     }
     // window_days decouples "how much data it covers" from "how often it
@@ -4169,7 +4171,7 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
     const days = (s.window_days && Number(s.window_days) > 0)
       ? Number(s.window_days)
       : (s.sequence==='weekly'?7 : s.sequence==='monthly'?30 : 1);
-    let csv = '# Organization: '+s.org_id+'\\n# Schedule: '+s.name+'\\n# Scope: '+s.scope+(s.scope_id?' ('+s.scope_id+')':'')+'\\n# Reporting Window: Last '+days+' Days\\n# Generated At: '+new Date().toISOString()+'\\n\\nnode_id,param_key,n,avg,min,max\\n';
+    let csv = '# Organization: '+s.org_id+'\\n# Schedule: '+s.name+'\\n# Product Domain: '+(s.domain||'all')+'\\n# Scope: '+s.scope+(s.scope_id?' ('+s.scope_id+')':'')+'\\n# Reporting Window: Last '+days+' Days\\n# Generated At: '+new Date().toISOString()+'\\n\\nnode_id,param_key,n,avg,min,max\\n';
     if (nodeIds.length) {
       const [rows] = await pool.query("SELECT node_id,param_key,COUNT(*) n,AVG(value) a,MIN(value) mn,MAX(value) mx FROM readings WHERE node_id IN (?) AND taken_at>(NOW(3)-INTERVAL ? DAY) GROUP BY node_id,param_key ORDER BY node_id,param_key", [nodeIds, days]);
       for (const r of rows) csv += r.node_id+','+r.param_key+','+r.n+','+Number(r.a).toFixed(2)+','+Number(r.mn).toFixed(2)+','+Number(r.mx).toFixed(2)+'\\n';
@@ -4274,9 +4276,10 @@ const rawScope = b.scopeId !== undefined && b.scopeId !== null && b.scopeId !== 
                : (b.scopeIds !== undefined && b.scopeIds !== null && b.scopeIds !== '' ? b.scopeIds
                : ((b.scope_id !== undefined && b.scope_id !== null && b.scope_id !== '') ? b.scope_id : null));
 const scopeId = Array.isArray(rawScope) ? rawScope.filter(Boolean).join(',') : (rawScope ? String(rawScope) : null);
+const domain = (b.domain && b.domain !== 'all') ? String(b.domain) : 'all';
 (async()=>{const id=b.id||'rpt-'+Date.now();
-  await pool.query("INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,channel,recipients,enabled,send_hour,send_minute,day_of_week,day_of_month,window_days,recipient_mode,recipient_dept_ids,recipient_user_ids,subject_template,body_template,next_run_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(3)) ON DUPLICATE KEY UPDATE name=VALUES(name),scope=VALUES(scope),scope_id=VALUES(scope_id),sequence=VALUES(sequence),format=VALUES(format),channel=VALUES(channel),recipients=VALUES(recipients),enabled=VALUES(enabled),send_hour=VALUES(send_hour),send_minute=VALUES(send_minute),day_of_week=VALUES(day_of_week),day_of_month=VALUES(day_of_month),window_days=VALUES(window_days),recipient_mode=VALUES(recipient_mode),recipient_dept_ids=VALUES(recipient_dept_ids),recipient_user_ids=VALUES(recipient_user_ids),subject_template=VALUES(subject_template),body_template=VALUES(body_template)",
-    [id,orgId,b.name,b.scope||'device',scopeId,b.sequence||'daily',b.format||'CSV',b.channel||'email',b.recipients||null,b.enabled===false?0:1,
+  await pool.query("INSERT INTO report_schedules (id,org_id,name,scope,scope_id,domain,sequence,format,channel,recipients,enabled,send_hour,send_minute,day_of_week,day_of_month,window_days,recipient_mode,recipient_dept_ids,recipient_user_ids,subject_template,body_template,next_run_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(3)) ON DUPLICATE KEY UPDATE name=VALUES(name),scope=VALUES(scope),scope_id=VALUES(scope_id),domain=VALUES(domain),sequence=VALUES(sequence),format=VALUES(format),channel=VALUES(channel),recipients=VALUES(recipients),enabled=VALUES(enabled),send_hour=VALUES(send_hour),send_minute=VALUES(send_minute),day_of_week=VALUES(day_of_week),day_of_month=VALUES(day_of_month),window_days=VALUES(window_days),recipient_mode=VALUES(recipient_mode),recipient_dept_ids=VALUES(recipient_dept_ids),recipient_user_ids=VALUES(recipient_user_ids),subject_template=VALUES(subject_template),body_template=VALUES(body_template)",
+    [id,orgId,b.name,b.scope||'device',scopeId,domain,b.sequence||'daily',b.format||'CSV',b.channel||'email',b.recipients||null,b.enabled===false?0:1,
      hour,minute,dow,dom,winRaw,mode,csvIds(b.recipientDeptIds),csvIds(b.recipientUserIds),
      // Empty string clears a template back to the built-in default; undefined
      // (key absent) would too, which is what an older client sends.
