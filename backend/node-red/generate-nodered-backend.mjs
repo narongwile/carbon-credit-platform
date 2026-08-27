@@ -6354,23 +6354,26 @@ const __TXT='ONEOPS test notification. If you received this, the channel is conf
   }
   const nc=await global.get('notifyConfig')();
   if(ch==='telegram'){
-    if(!nc.telegramToken) return __err(400,'Telegram bot token not configured in system (enter Bot Token and click Save first)');
-    const chat=to||nc.telegramChatId;
-    if(!chat) return __err(400,'Chat ID is required (enter your numeric Chat ID from @userinfobot)');
-    const r=await fetch('https://api.telegram.org/bot'+nc.telegramToken+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text:__TXT})});
+    const raw = String(to || nc.telegramChatId || '').trim();
+    const at = raw.lastIndexOf('@');
+    const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));
+    const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);
+    if(!tok) return __err(400,'Telegram bot token not configured in system (enter Bot Token in superadmin or specify Token@ChatID)');
+    if(!chat) return __err(400,'Chat ID is required (enter your numeric Chat ID or Group ID -100...)');
+    const r=await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({chat_id:chat,text:__TXT})});
     const tgRes = await r.json().catch(()=>({}));
     if (r.ok) return __ok({ok:true});
     let errMsg = tgRes.description || ('Telegram HTTP ' + r.status);
     if (r.status === 403) errMsg = 'Telegram Forbidden: bot was blocked or not started — please open your bot in Telegram and press /start first';
-    if (r.status === 400 && String(chat).startsWith('@')) errMsg = 'Telegram Chat ID must be a numeric ID (e.g. 581234567 from @userinfobot), not @botname';
+    if (r.status === 400 && String(chat).startsWith('@')) errMsg = 'Telegram Chat ID must be a numeric ID (e.g. 581234567 or -100...), not @botname';
     return __err(r.status >= 500 ? 502 : 400, errMsg);
   }
   if(ch==='line'){
-    if(!nc.lineToken) return __err(400,'LINE token not configured in system');
-    const raw = String(nc.lineToken || '').trim();
+    const raw = String(to || nc.lineToken || '').trim();
     const at = raw.lastIndexOf('@');
-    const tok = at > 0 ? raw.slice(0, at) : raw;
+    const tok = at > 0 ? raw.slice(0, at) : (nc.lineToken || '');
     const lineTo = at > 0 ? raw.slice(at + 1) : (to || '');
+    if(!tok) return __err(400,'LINE token not configured in system');
     let r;
     if (tok && lineTo && lineTo.startsWith('U')) {
       r = await fetch('https://api.line.me/v2/bot/message/push', {
@@ -7087,7 +7090,7 @@ const flow = [
   ...endpoint('dataquality', 'get', '/api/orgs/:orgId/data-quality', dataQualityFunc, 'admin'),
   ...endpoint('settingsget', 'get', '/api/platform/settings', settingsGetFunc, 'super'),
   ...endpoint('settingsput', 'put', '/api/platform/settings', settingsPutFunc, 'super'),
-  ...endpoint('settingstest', 'post', '/api/platform/settings/test', settingsTestFunc, 'super'),
+  ...endpoint('settingstest', 'post', '/api/platform/settings/test', settingsTestFunc, 'admin'),
   // 'admin', not 'super' — every org admin has to read this to program a
   // device; only a superadmin may write it. See mqttConnGetFunc's own comment
   // for why this cannot just be a field on /api/platform/settings.

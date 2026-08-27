@@ -1,17 +1,32 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
-import { defaultNotificationChannels, getDepartmentsByOrg, getEventProblemsByDept } from '@/lib/orgData'
+import { defaultNotificationChannels, getDepartmentsByOrg } from '@/lib/orgData'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
 import AdminBulkApplyAlarmEditor from '@/components/device/AdminBulkApplyAlarmEditor'
 import EmailTemplateConfigurator from '@/components/notifications/EmailTemplateConfigurator'
 import { api, isLive, useIsLive } from '@/lib/api'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
-import type { NotificationChannelConfig, EventProblem } from '@/types/org'
+import type { NotificationChannelConfig } from '@/types/org'
 import { getSession } from '@/lib/auth'
-import { Mail, MessageCircle, Send, MessagesSquare, ToggleLeft, ToggleRight, Save, BellRing, ListChecks, Plus, Trash2 } from 'lucide-react'
+import {
+  Mail,
+  MessageCircle,
+  Send,
+  MessagesSquare,
+  ToggleLeft,
+  ToggleRight,
+  Save,
+  BellRing,
+  ExternalLink,
+  Loader2,
+  ShieldCheck,
+  Building2,
+  CheckCircle2,
+} from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -26,22 +41,18 @@ const channelIcon = {
   googlechat: MessagesSquare,
 } as const
 
+type TabKey = 'alarms' | 'channels' | 'email'
+
 export default function AlarmNotificationPage() {
   const live = useIsLive()
   const { selectedOrgId, orgNames } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const orgName = orgNames[orgId] || 'ETERNITY'
-  // Real fleet — the "Apply to device" picker used to come from the mock seed
-  // (managedDevicesFromFleet) unconditionally, so switching devices showed
-  // demo entries instead of the real fleet.
   const { devices } = useManagedDevices(orgId)
 
-  // Real entitlements — which product tabs to offer at all. licensedDomains()
-  // only knows the 3 seed orgs (mockData.ts), so a real org either showed the
-  // wrong tabs or none. Demo mode keeps the mock list (dropped entirely at
-  // first — Demo showed all 3 tabs regardless of what mockData.ts licensed).
-  // Depends on `live` (reactive), not a one-time isLive() snapshot: toggling
-  // Live/Demo in place, without navigating away, must re-sync this.
+  const [activeTab, setActiveTab] = useState<TabKey>('alarms')
+
+  // Real entitlements — which product tabs to offer at all
   const [orgDomains, setOrgDomains] = useState<SensorDomain[]>(() => licensedDomains(orgId))
   useEffect(() => {
     if (!live) { setOrgDomains(licensedDomains(orgId)); return }
@@ -55,8 +66,7 @@ export default function AlarmNotificationPage() {
   const [product, setProduct] = useState<SensorDomain>('transformer')
   useEffect(() => { if (orgDomains.length && !orgDomains.includes(product)) setProduct(orgDomains[0]) }, [orgDomains, product])
 
-  // Real departments (matches Pending Devices' load() pattern), mock as the
-  // demo/offline fallback.
+  // Real departments
   const [orgDepts, setOrgDepts] = useState<{ id: string; name: string }[]>(() => getDepartmentsByOrg(orgId))
   useEffect(() => {
     if (!live) { setOrgDepts(getDepartmentsByOrg(orgId)); return }
@@ -68,19 +78,12 @@ export default function AlarmNotificationPage() {
   const [scope, setScope] = useState<'all' | string>('all')
   const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [saved, setSaved] = useState(false)
+  const [testingChannel, setTestingChannel] = useState<string | null>(null)
 
-  // Which channel set is being edited: '' = the ORG-level fallback, or a
-  // department id for that department's own destinations. notify() delivers an
-  // alarm to the org-level rows OR the rows of the department that OWNS the
-  // device (nodes.department_id) — so this selector is what finally makes the
-  // owning department decide where an alarm actually goes. The routing query
-  // has always supported it; nothing could create a department row until now.
+  // Which channel set is being edited: '' = the ORG-level fallback, or a department id
   const [channelDept, setChannelDept] = useState('')
   useEffect(() => {
     let cancelled = false
-    // Always reset to the defaults first: a department with no rows of its own
-    // must show an EMPTY set (it falls back to org-level at delivery time),
-    // not whichever set happened to be loaded before it was selected.
     setChannels(defaultNotificationChannels)
     api.orgChannels(orgId, channelDept || undefined).then((rows) => {
       if (!cancelled && rows && rows.length > 0) {
@@ -95,127 +98,144 @@ export default function AlarmNotificationPage() {
     return () => { cancelled = true }
   }, [orgId, channelDept])
 
-  // Create Event in each department (per-department eventProblem catalog).
-  // This used to be local React state only — Add/Remove never called
-  // api.saveEventProblem/deleteEventProblem (both already exist and are
-  // exactly what the Event Catalog tab on User Management uses for the same
-  // table), so every "Event added to department" toast was a lie: nothing
-  // survived a reload, and it duplicated a feature that already works.
-  const [deptId, setDeptId] = useState('')
-  useEffect(() => { if (orgDepts.length && !orgDepts.some((d) => d.id === deptId)) setDeptId(orgDepts[0]?.id ?? '') }, [orgDepts, deptId])
-  const [deptEvents, setDeptEvents] = useState<Record<string, EventProblem[]>>(
-    () => Object.fromEntries(getDepartmentsByOrg(orgId).map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])),
-  )
-  useEffect(() => {
-    if (!live) {
-      setDeptEvents(Object.fromEntries(getDepartmentsByOrg(orgId).map((d) => [d.id, getEventProblemsByDept(d.id).map((e) => ({ ...e }))])))
-      return
-    }
-    let cancelled = false
-    api.eventProblems(orgId).then((rows) => {
-      if (cancelled || !rows) return
-      const grouped: Record<string, EventProblem[]> = {}
-      for (const r of rows) {
-        // A NULL department_id means org-wide — it belongs to no single
-        // department's catalog, so it has no row to edit here.
-        if (!r.department_id) continue
-        ;(grouped[r.department_id] ??= []).push({ id: r.id, label: r.label, departmentId: r.department_id })
-      }
-      setDeptEvents(grouped)
-    })
-    return () => { cancelled = true }
-  }, [live, orgId])
-  const [newEvent, setNewEvent] = useState('')
-  const deptList = deptEvents[deptId] ?? []
-  const addDeptEvent = async () => {
-    if (!newEvent.trim() || !deptId) return
-    const label = newEvent.trim()
-    if (isLive()) {
-      const r = await api.saveEventProblem({ orgId, departmentId: deptId, label })
-      if (!r?.id) { toast.error('Could not add the event'); return }
-      setDeptEvents((c) => ({ ...c, [deptId]: [...(c[deptId] ?? []), { id: r.id, label, departmentId: deptId }] }))
-    } else {
-      setDeptEvents((c) => ({ ...c, [deptId]: [...(c[deptId] ?? []), { id: `ev-${deptId}-${Date.now()}`, label, departmentId: deptId }] }))
-    }
-    setNewEvent(''); toast.success('Event added to department')
-  }
-  // Removed optimistically and never verified: the row vanished from the list
-  // whether or not the DELETE succeeded, so a failed delete looked identical
-  // to a successful one until the next reload brought the event back.
-  const removeDeptEvent = async (id: string) => {
-    const prev = deptEvents[deptId] ?? []
-    setDeptEvents((c) => ({ ...c, [deptId]: prev.filter((e) => e.id !== id) }))
-    if (isLive()) {
-      const r = await api.deleteEventProblem(id)
-      if (!r) {
-        setDeptEvents((c) => ({ ...c, [deptId]: prev }))
-        toast.error('Could not remove the event')
-        return
-      }
-    }
-    toast.success('Event removed')
-  }
-
   const toggleChannel = (id: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
   const setTarget = (id: string, target: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, target } : x)))
-  // Real, and enforced by notify(): a CRITICAL-only channel is skipped for a
-  // WARNING alarm. The column was always stored and read but had no control,
-  // so every channel sat at WARNING while a separate fake panel claimed to
-  // offer severity routing.
   const setMinSeverity = (id: string, minSeverity: 'WARNING' | 'CRITICAL') =>
     setChannels((c) => c.map((x) => (x.id === id ? { ...x, minSeverity } : x)))
 
-  const save = async () => {
+  const saveChannels = async () => {
     const user = getSession()
     if (!user) { toast.error('Not signed in'); return }
     if (!isLive()) {
-      // Demo mode persists nothing. Say so rather than reporting a save that
-      // did not happen, or an error for a backend that was never meant to be
-      // there — both of which this page did before, depending on the call.
       setSaved(true); setTimeout(() => setSaved(false), 2000)
       toast.success('Notification preferences saved (demo — not persisted)')
       return
     }
-    // channelDept, so a department's destinations save to that department's
-    // own rows instead of overwriting the org-level fallback.
     const res = await api.putOrgChannels(orgId, channels, channelDept || undefined)
     if (!res) { toast.error('Could not save the delivery channels'); return }
     setSaved(true)
     toast.success(channelDept
       ? `Saved — destinations for ${orgDepts.find((d) => d.id === channelDept)?.name ?? 'this department'}`
-      : 'Notification preferences saved')
+      : 'Organization notification channels saved successfully')
     setTimeout(() => setSaved(false), 2000)
   }
 
+  const testChannel = async (id: string, target: string) => {
+    if (!target) {
+      toast.error('Please enter a target ID/URL first')
+      return
+    }
+    setTestingChannel(id)
+    try {
+      const res = await api.testPlatformChannel(id, target)
+      if (res.ok) {
+        toast.success(`Test notification sent to ${id.toUpperCase()} successfully!`)
+      } else {
+        toast.error(`Test failed: ${res.error || 'Verify channel configuration'}`)
+      }
+    } catch (e: any) {
+      toast.error(`Test failed: ${e.message || 'Network error'}`)
+    } finally {
+      setTestingChannel(null)
+    }
+  }
+
+  const activeChannelCount = channels.filter((c) => c.enabled).length
+
   return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-start justify-between gap-3">
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-white">Alarm &amp; Notification Management</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Advanced org-wide rules — applies across every department in your organization</p>
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            Alarm &amp; Notification Management
+          </h1>
+          <p className="text-sm text-slate-400 mt-0.5">
+            Configure threshold baselines, delivery channels, and SOP notification templates for {orgName}
+          </p>
         </div>
-        <span className="text-[10px] px-2.5 py-1 rounded-full font-bold mt-1" style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.12)' }}>ADMIN · ALL DEPARTMENTS</span>
+        <span className="self-start sm:self-auto text-[11px] px-3 py-1 rounded-full font-bold tracking-wide" style={{ color: '#a78bfa', background: 'rgba(167,139,250,0.12)', border: '1px solid rgba(167,139,250,0.25)' }}>
+          ADMIN · ORG &amp; DEPARTMENTS
+        </span>
       </div>
 
-      <div className="grid grid-cols-1 gap-5">
-        {/* Alarm setting */}
+      {/* Sub-Tab Navigation Bar */}
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('alarms')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0',
+            activeTab === 'alarms'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <BellRing size={14} className={activeTab === 'alarms' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>Alarm Rules &amp; Thresholds</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('channels')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0',
+            activeTab === 'channels'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <Send size={14} className={activeTab === 'channels' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>Delivery Channels</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+            {activeChannelCount} Active
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('email')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0',
+            activeTab === 'email'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <Mail size={14} className={activeTab === 'email' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>Email &amp; SOP Template</span>
+        </button>
+      </div>
+
+      {/* TAB 1: Alarm Rules & Thresholds */}
+      {activeTab === 'alarms' && (
         <div className="rounded-xl p-5 space-y-4" style={surface}>
-          <div className="flex items-center gap-2">
-            <BellRing size={15} className="text-indigo-400" />
-            <h3 className="text-sm font-semibold text-white">Alarm Setting (high / low)</h3>
+          <div className="flex items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+            <div className="flex items-center gap-2">
+              <BellRing size={16} className="text-indigo-400" />
+              <div>
+                <h3 className="text-sm font-semibold text-white">Alarm Setting &amp; Threshold Engine</h3>
+                <p className="text-[11px] text-slate-400">Tuning baseline limits and multi-level application across your fleet</p>
+              </div>
+            </div>
+            <span className="text-[11px] text-slate-400 bg-slate-800/60 px-2.5 py-1 rounded-lg border border-slate-700/60 flex items-center gap-1.5">
+              <Building2 size={12} className="text-indigo-400" />
+              {orgName}
+            </span>
           </div>
 
           <div className="max-w-sm">
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Apply to device</label>
-            <select value={scope} onChange={(e) => {
-              const val = e.target.value
-              setScope(val)
-              if (val !== 'all') {
-                const dev = devices.find((d) => d.id === val)
-                if (dev?.domain) setProduct(dev.domain)
-              }
-            }}
-              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Apply to device</label>
+            <select
+              value={scope}
+              onChange={(e) => {
+                const val = e.target.value
+                setScope(val)
+                if (val !== 'all') {
+                  const dev = devices.find((d) => d.id === val)
+                  if (dev?.domain) setProduct(dev.domain)
+                }
+              }}
+              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inset}
+            >
               <option value="all">All devices ({devices.length})</option>
               {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
             </select>
@@ -223,88 +243,150 @@ export default function AlarmNotificationPage() {
 
           {/* Domain-aware product profile */}
           <div>
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider">Product alarm profile</label>
+            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Product alarm profile</label>
             <div className="flex gap-2">
               {orgDomains.map((d) => (
-                <button key={d} onClick={() => setProduct(d)}
-                  className={clsx('flex-1 py-2 rounded-lg text-xs font-semibold transition-all', product === d ? 'text-white' : 'text-slate-500')}
-                  style={product === d ? { background: `${DOMAIN_META[d].accent}33`, border: `1px solid ${DOMAIN_META[d].accent}` } : inset}>
+                <button
+                  key={d}
+                  onClick={() => setProduct(d)}
+                  className={clsx('flex-1 py-2.5 rounded-lg text-xs font-semibold transition-all', product === d ? 'text-white' : 'text-slate-400')}
+                  style={product === d ? { background: `${DOMAIN_META[d].accent}33`, border: `1px solid ${DOMAIN_META[d].accent}` } : inset}
+                >
                   {DOMAIN_META[d].platform}
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Includes its own "Apply baseline to" scope picker (whole org /
-              one department / one user's own department) — per-device edits
-              above always save to the single device picked in "Apply to
-              device" regardless of that scope. */}
           <AdminBulkApplyAlarmEditor domain={product} orgId={orgId} nodeId={scope !== 'all' ? scope : undefined} />
         </div>
+      )}
 
-        {/* Notification channels */}
-        <div className="rounded-xl p-5 space-y-3" style={surface}>
-          <h3 className="text-sm font-semibold text-white">Notification Setting</h3>
-          <p className="text-[11px] text-slate-500">Choose how alarms are delivered. Enable a channel and provide its target.</p>
+      {/* TAB 2: Delivery Channels */}
+      {activeTab === 'channels' && (
+        <div className="rounded-xl p-5 space-y-4" style={surface}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+            <div>
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Send size={15} className="text-indigo-400" />
+                Notification Delivery Channels
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Dispatch official alarms to department or organization-wide webhooks, groups, and recipients.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] px-2.5 py-1 rounded-lg font-medium border" style={{ background: '#0a0e1a', borderColor: '#1e2433', color: '#94a3b8' }}>
+                Active: <strong className="text-white">{activeChannelCount}/4</strong>
+              </span>
+            </div>
+          </div>
 
-          <div>
-            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1.5">Destinations for</label>
-            <select value={channelDept} onChange={(e) => setChannelDept(e.target.value)}
-              className="w-full max-w-sm rounded-lg px-3 py-2 text-sm text-white outline-none" style={inset}>
+          {/* Destination Target Scope */}
+          <div className="p-3.5 rounded-xl border border-slate-800/90" style={{ background: '#0a0e1a' }}>
+            <label className="block text-[11px] text-slate-400 uppercase tracking-wider font-semibold mb-1.5">
+              Destinations For
+            </label>
+            <select
+              value={channelDept}
+              onChange={(e) => setChannelDept(e.target.value)}
+              className="w-full max-w-md rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
+              style={inset}
+            >
               <option value="">Whole organization (fallback for every alarm)</option>
               {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name} — devices this department owns</option>)}
             </select>
-            <p className="text-[11px] text-slate-600 mt-1.5">
+            <p className="text-[11px] text-slate-500 mt-1.5">
               {channelDept
-                ? 'An alarm on a device this department OWNS (its Owning department in Edit Device) is delivered here as well as to the organization-wide destinations below-none of them replace each other.'
-                : 'Used for every alarm, whichever department owns the device. Pick a department above to add destinations that only its own devices’ alarms reach.'}
+                ? 'Alarms on devices owned by this department will dispatch to these specific targets in addition to organization fallbacks.'
+                : 'Default fallback destinations used for all alarms across the entire organization unless overridden by a department.'}
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Channel Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {channels.map((ch) => {
               const Icon = channelIcon[ch.id]
+              const isBusy = testingChannel === ch.id
               return (
-                <div key={ch.id} className="p-4 rounded-xl" style={{ background: '#0a0e1a', border: `1px solid ${ch.enabled ? '#6366f1' : '#1e2433'}` }}>
-                  <div className="flex items-center justify-between mb-2.5">
+                <div
+                  key={ch.id}
+                  className="p-4 rounded-xl space-y-3 transition-all"
+                  style={{ background: '#0a0e1a', border: `1px solid ${ch.enabled ? '#6366f1' : '#1e2433'}` }}
+                >
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Icon size={15} className={ch.enabled ? 'text-indigo-400' : 'text-slate-500'} />
-                      <span className="text-sm font-medium text-white">{ch.name}</span>
+                      <div className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border', ch.enabled ? 'bg-indigo-950/60 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-500')}>
+                        <Icon size={16} />
+                      </div>
+                      <div>
+                        <span className="text-sm font-semibold text-white block leading-tight">{ch.name}</span>
+                        <span className="text-[10px] text-slate-400">{ch.enabled ? 'Enabled' : 'Disabled'}</span>
+                      </div>
                     </div>
-                    <button onClick={() => toggleChannel(ch.id)}>
-                      {ch.enabled ? <ToggleRight size={24} className="text-indigo-400" /> : <ToggleLeft size={24} className="text-slate-600" />}
+                    <button
+                      type="button"
+                      onClick={() => toggleChannel(ch.id)}
+                      className="transition-transform active:scale-95"
+                    >
+                      {ch.enabled ? <ToggleRight size={26} className="text-indigo-400" /> : <ToggleLeft size={26} className="text-slate-600" />}
                     </button>
                   </div>
-                  <input value={ch.target} onChange={(e) => setTarget(ch.id, e.target.value)} disabled={!ch.enabled}
-                    placeholder={
-                      ch.id === 'telegram' ? 'Numeric Chat ID (e.g. 581234567 or Group -100...)' :
-                      ch.id === 'email' ? 'ops@company.com' :
-                      ch.id === 'line' ? 'User ID or Token@UserID' :
-                      `${ch.name} target…`
-                    }
-                    className={clsx('w-full rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
-                    style={{ background: '#0d1117', border: '1px solid #1e2433' }} />
-                  {ch.id === 'telegram' && (
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      💡 ใส่เลข <code>Chat ID</code> หรือ <code>Group ID (-100...)</code> ไม่ใช่ @botname
-                    </p>
-                  )}
-                  {/* Real severity routing: notify() skips a CRITICAL-only
-                      channel for a WARNING alarm. Replaces the fake
-                      "Severity Routing" panel that used to sit in the alarm
-                      form and persisted nothing. */}
-                  <div className="flex items-center gap-2 mt-2">
-                    <span className="text-[10px] text-slate-500 uppercase tracking-wider">Send on</span>
-                    {(['WARNING', 'CRITICAL'] as const).map((sev) => (
-                      <button key={sev} onClick={() => setMinSeverity(ch.id, sev)} disabled={!ch.enabled}
-                        className={clsx('px-2 py-0.5 rounded-md text-[10px] font-semibold disabled:opacity-40',
-                          (ch.minSeverity ?? 'WARNING') === sev ? 'text-white' : 'text-slate-500')}
-                        style={(ch.minSeverity ?? 'WARNING') === sev
-                          ? { background: sev === 'CRITICAL' ? 'rgba(239,68,68,0.2)' : 'rgba(251,191,36,0.2)', border: `1px solid ${sev === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }
-                          : { background: '#0d1117', border: '1px solid #1e2433' }}>
-                        {sev === 'WARNING' ? 'Warning +' : 'Critical only'}
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={ch.target}
+                        onChange={(e) => setTarget(ch.id, e.target.value)}
+                        disabled={!ch.enabled}
+                        placeholder={
+                          ch.id === 'telegram' ? 'Numeric Chat ID (e.g. 581234567 or Group -100...)' :
+                          ch.id === 'email' ? 'ops@company.com' :
+                          ch.id === 'line' ? 'User ID or Token@UserID' :
+                          `${ch.name} Webhook URL…`
+                        }
+                        className={clsx('flex-1 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
+                        style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!ch.enabled || !ch.target.trim() || isBusy}
+                        onClick={() => testChannel(ch.id, ch.target)}
+                        className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:hover:bg-slate-800 flex items-center gap-1.5 border border-slate-700/80 shrink-0 transition-colors shadow-sm"
+                        title="Send test message to this destination"
+                      >
+                        {isBusy ? <Loader2 size={13} className="animate-spin text-indigo-400" /> : <Send size={13} className="text-indigo-400" />}
+                        <span>{isBusy ? 'Testing…' : 'Test'}</span>
                       </button>
-                    ))}
+                    </div>
+
+                    {ch.id === 'telegram' && (
+                      <p className="text-[10px] text-slate-500">
+                        💡 ใส่เลข <code>Chat ID</code> หรือ <code>Group ID (-100...)</code> ไม่ใช่ @botname
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Severity Routing */}
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Send Alert On</span>
+                    <div className="flex items-center gap-1.5">
+                      {(['WARNING', 'CRITICAL'] as const).map((sev) => (
+                        <button
+                          key={sev}
+                          type="button"
+                          onClick={() => setMinSeverity(ch.id, sev)}
+                          disabled={!ch.enabled}
+                          className={clsx('px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all disabled:opacity-40',
+                            (ch.minSeverity ?? 'WARNING') === sev ? 'text-white shadow-sm' : 'text-slate-400 hover:text-slate-300')}
+                          style={(ch.minSeverity ?? 'WARNING') === sev
+                            ? { background: sev === 'CRITICAL' ? 'rgba(239,68,68,0.25)' : 'rgba(251,191,36,0.25)', border: `1px solid ${sev === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }
+                            : { background: '#0d1117', border: '1px solid #1e2433' }}
+                        >
+                          {sev === 'WARNING' ? 'Warning +' : 'Critical only'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )
@@ -313,46 +395,47 @@ export default function AlarmNotificationPage() {
 
           {/* Dedicated card footer for Notification Channels */}
           <div className="pt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 mt-2">
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-400 flex items-center gap-1.5">
+              <CheckCircle2 size={13} className="text-emerald-400" />
               {channelDept
                 ? `Targets apply to devices owned by ${orgDepts.find((d) => d.id === channelDept)?.name ?? 'this department'}`
                 : 'Targets apply to whole organization (fallback for every device)'}
             </span>
             <button
-              onClick={save}
-              className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-sm"
+              onClick={saveChannels}
+              className="flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-md active:scale-95"
               style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid #4ade80' } : gradient}
             >
               <Save size={14} /> {saved ? 'Channels Saved!' : (channelDept ? 'Save Department Channels' : 'Save Notification Channels')}
             </button>
           </div>
         </div>
+      )}
 
-        {/* Enterprise Email Alarm Template & Custom SOP Configurator */}
-        <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
-
-        {/* Create Event in each department */}
-        <div className="rounded-xl p-5 space-y-3" style={surface}>
-          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ListChecks size={15} className="text-indigo-400" /> Create Event in each department</h3>
-          <p className="text-[11px] text-slate-500">Per-department event-problem catalog — populates the viewer&apos;s event-log dropdown for users in that department.</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={deptId} onChange={(e) => setDeptId(e.target.value)} className="rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500" style={inset}>
-              {orgDepts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            <input value={newEvent} onChange={(e) => setNewEvent(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addDeptEvent()} placeholder="New event problem…"
-              className="flex-1 min-w-[180px] rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500" style={inset} />
-            <button onClick={addDeptEvent} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium text-white" style={gradient}><Plus size={15} /> Add</button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {deptList.length ? deptList.map((e) => (
-              <span key={e.id} className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg text-slate-200" style={inset}>
-                {e.label}
-                <button onClick={() => removeDeptEvent(e.id)} className="text-slate-500 hover:text-red-400"><Trash2 size={12} /></button>
-              </span>
-            )) : <span className="text-xs text-slate-600">No events yet for this department.</span>}
-          </div>
+      {/* TAB 3: Email & SOP Template */}
+      {activeTab === 'email' && (
+        <div className="space-y-4">
+          <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
         </div>
+      )}
+
+      {/* Helpful shortcut footer to Event Catalog */}
+      <div className="rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border border-slate-800/60" style={inset}>
+        <div className="flex items-center gap-2.5">
+          <ShieldCheck size={16} className="text-indigo-400 shrink-0" />
+          <p className="text-xs text-slate-400">
+            Looking for <strong className="text-slate-200">Incident Problem Categories</strong>? Manage per-department problem tags centrally in the User Management portal.
+          </p>
+        </div>
+        <Link
+          href="/admin/users"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors shrink-0"
+        >
+          <span>Open Event Catalog</span>
+          <ExternalLink size={12} />
+        </Link>
       </div>
     </div>
   )
 }
+
