@@ -635,13 +635,25 @@ export default function AlarmParamConfig({
    * gets SAVED and validated must not depend on which rows are on screen.
    */
   const scopedParams = useMemo(() => {
+    // When in personal alarm mode: strictly scope to the parameters permitted for this user/department
+    if (mode === 'personal') {
+      if (configuredDisplayKeys.length > 0) {
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
+      }
+      const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
+      if (activeKeys.size > 0) {
+        return allParams.filter((p) => activeKeys.has(p.key))
+      }
+      if (nodeId && domain === 'transformer') {
+        const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
+        return allParams.filter((p) => defaultTransformerKeys.includes(p.key))
+      }
+    }
+
     // When scoped to what devices in scope actually report (default "Reported by device" / "Active in selection"):
     // Only parameters present in telemetry/lastSample, configured sensor readings, or existing rules are shown.
     // Full catalog parameters are revealed when the operator switches to "Full catalog".
     if (scopeFilter === 'reported') {
-      if (mode === 'personal' && configuredDisplayKeys.length > 0) {
-        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
-      }
       const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
       if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
         return allParams.filter(
@@ -658,8 +670,18 @@ export default function AlarmParamConfig({
   }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
 
   const activeParamsCount = useMemo(() => {
-    if (mode === 'personal' && configuredDisplayKeys.length > 0) {
-      return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
+    if (mode === 'personal') {
+      if (configuredDisplayKeys.length > 0) {
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
+      }
+      const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
+      if (activeKeys.size > 0) {
+        return allParams.filter((p) => activeKeys.has(p.key)).length
+      }
+      if (nodeId && domain === 'transformer') {
+        const defaultTransformerKeys = ['oilTemperature', 'windingTemperature', 'hydrogen', 'moisture', 'load', 'oilLevel']
+        return allParams.filter((p) => defaultTransformerKeys.includes(p.key)).length
+      }
     }
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
@@ -1175,23 +1197,25 @@ export default function AlarmParamConfig({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={resetToFactoryDefaults}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 border border-slate-800"
-            title="Reset all thresholds to factory baseline"
-          >
-            <RefreshCw size={11} /> Defaults
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowAddParam(!showAddParam)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-indigo-300 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800/80"
-          >
-            <Plus size={12} /> Add Custom Param
-          </button>
-        </div>
+        {mode !== 'personal' && (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={resetToFactoryDefaults}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 border border-slate-800"
+              title="Reset all thresholds to factory baseline"
+            >
+              <RefreshCw size={11} /> Defaults
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowAddParam(!showAddParam)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-indigo-300 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800/80"
+            >
+              <Plus size={12} /> Add Custom Param
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Add Custom Parameter Form Drawer */}
@@ -1363,36 +1387,38 @@ export default function AlarmParamConfig({
             })}
           </div>
 
-          {/* Scope Filter: Reported/Active in Selection vs Full Catalog */}
-          <div className="flex items-center gap-1 flex-shrink-0" data-scope-filter>
-            <button
-              type="button"
-              onClick={() => setScopeFilter('reported')}
-              title={
-                nodeId
-                  ? "Only parameters this device actually reports — plus any it already has an alarm on"
-                  : "Only parameters actively reported across the selected devices"
-              }
-              className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5 font-medium"
-              style={scopeFilter === 'reported'
-                ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1', color: '#fff' }
-                : { ...inset, color: '#94a3b8' }}
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
-              <span>{nodeId ? `This device's sensors (${activeParamsCount})` : `Active in selection (${activeParamsCount})`}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setScopeFilter('all')}
-              title="Every parameter this product supports — use to configure alarm baseline across the full catalog"
-              className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5 font-medium"
-              style={scopeFilter === 'all'
-                ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1', color: '#fff' }
-                : { ...inset, color: '#94a3b8' }}
-            >
-              <span>Full catalog ({allParams.length})</span>
-            </button>
-          </div>
+          {/* Scope Filter: Reported/Active in Selection vs Full Catalog (Admin only) */}
+          {mode !== 'personal' && (
+            <div className="flex items-center gap-1 flex-shrink-0" data-scope-filter>
+              <button
+                type="button"
+                onClick={() => setScopeFilter('reported')}
+                title={
+                  nodeId
+                    ? "Only parameters this device actually reports — plus any it already has an alarm on"
+                    : "Only parameters actively reported across the selected devices"
+                }
+                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5 font-medium"
+                style={scopeFilter === 'reported'
+                  ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1', color: '#fff' }
+                  : { ...inset, color: '#94a3b8' }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                <span>{nodeId ? `This device's sensors (${activeParamsCount})` : `Active in selection (${activeParamsCount})`}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setScopeFilter('all')}
+                title="Every parameter this product supports — use to configure alarm baseline across the full catalog"
+                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5 font-medium"
+                style={scopeFilter === 'all'
+                  ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1', color: '#fff' }
+                  : { ...inset, color: '#94a3b8' }}
+              >
+                <span>Full catalog ({allParams.length})</span>
+              </button>
+            </div>
+          )}
 
           {/* Instant Search Bar */}
           <div className="relative min-w-[200px] flex-shrink-0">
