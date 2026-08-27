@@ -10,7 +10,7 @@
 //   - RFC 4180 Structured CSV
 // ---------------------------------------------------------------------------
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useSessionOrgId } from '@/lib/auth'
 import { useAppStore } from '@/lib/store'
@@ -38,6 +38,11 @@ import {
   Layers,
   Clock,
   CheckCircle,
+  Eye,
+  Search,
+  Calendar,
+  X,
+  Filter,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -60,6 +65,37 @@ const AGGREGATION_RESOLUTIONS = [
   { id: 'daily', label: 'Daily Rollup' },
 ] as const
 
+const REPORT_SECTIONS = [
+  {
+    id: 'health',
+    name: 'Asset Health Index',
+    desc: 'Winding temp, top-oil, thermal stress & reliability score',
+    icon: '⚡',
+    badge: 'Operations',
+  },
+  {
+    id: 'energy',
+    name: 'Energy Usage & Carbon',
+    desc: 'Electricity consumption (kWh), power factor & Scope 2 GHG',
+    icon: '🌱',
+    badge: 'ESG Audit',
+  },
+  {
+    id: 'alarm',
+    name: 'Alarm Incident Log',
+    desc: 'Critical threshold breaches, active alarms & MTTR response',
+    icon: '🚨',
+    badge: 'Reliability',
+  },
+  {
+    id: 'executive',
+    name: 'Executive Summary',
+    desc: 'High-level KPI rollups, fleet availability & compliance rate',
+    icon: '📋',
+    badge: 'Executive',
+  },
+]
+
 export default function CustomerReportsPage() {
   const orgId = useSessionOrgId()
   const { orgNames } = useAppStore()
@@ -68,16 +104,39 @@ export default function CustomerReportsPage() {
   // Fleet scoped to this viewer's accessible products and departments
   const { devices } = useManagedDevices(orgId)
   const [days, setDays] = useState(30)
+  const [isCustomRange, setIsCustomRange] = useState(false)
+  const [customStartDate, setCustomStartDate] = useState(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 30)
+    return d.toISOString().slice(0, 10)
+  })
+  const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [selectedSections, setSelectedSections] = useState<string[]>(['health', 'energy', 'alarm', 'executive'])
   const [selectedFormats, setSelectedFormats] = useState<('PDF' | 'XLSX' | 'CSV')[]>(['PDF'])
   const [aggregationInterval, setAggregationInterval] = useState<'raw' | '15m' | '1h' | 'daily'>('15m')
   const [busy, setBusy] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string>('all')
+  const [previewModalOpen, setPreviewModalOpen] = useState(false)
+
+  // Search & Status filters for preview table
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'alarm' | 'offline'>('all')
+
+  const effectiveDays = useMemo(() => {
+    if (!isCustomRange) return days
+    const diff = Math.round((new Date(customEndDate).getTime() - new Date(customStartDate).getTime()) / 86400000)
+    return Math.max(1, diff)
+  }, [isCustomRange, days, customStartDate, customEndDate])
 
   const [reportData, setReportData] = useState<{
     metrics: IIoTMetricSummary
     summaries: DeviceTelemetrySummary[]
     alarms: AlarmLogItem[]
   } | null>(null)
+
+  const toggleSection = (id: string) => {
+    setSelectedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
 
   const toggleExportFormat = (fmt: 'PDF' | 'XLSX' | 'CSV') => {
     setSelectedFormats((prev) => {
@@ -92,14 +151,27 @@ export default function CustomerReportsPage() {
     })
   }
 
+  const filteredSummaries = useMemo(() => {
+    if (!reportData?.summaries) return []
+    return reportData.summaries.filter((dev) => {
+      const q = searchQuery.toLowerCase().trim()
+      const matchesSearch = !q ||
+        dev.deviceName.toLowerCase().includes(q) ||
+        dev.nodeId.toLowerCase().includes(q) ||
+        (dev.location || '').toLowerCase().includes(q)
+      const matchesStatus = statusFilter === 'all' || dev.status === statusFilter
+      return matchesSearch && matchesStatus
+    })
+  }, [reportData?.summaries, searchQuery, statusFilter])
+
   useEffect(() => {
     let cancelled = false
     buildIIoTReportData({
       orgId,
       orgName,
-      days,
+      days: effectiveDays,
       nodeId: selectedNodeId,
-      selectedTypes: ['health', 'energy', 'alarm', 'executive'],
+      selectedTypes: selectedSections,
       format: selectedFormats[0] || 'PDF',
       devices,
       classification: 'CONFIDENTIAL',
@@ -108,11 +180,15 @@ export default function CustomerReportsPage() {
       if (!cancelled) setReportData(res)
     })
     return () => { cancelled = true }
-  }, [orgId, orgName, days, selectedNodeId, selectedFormats, aggregationInterval, devices])
+  }, [orgId, orgName, effectiveDays, selectedNodeId, selectedSections, selectedFormats, aggregationInterval, devices])
 
   const generate = async () => {
     if (devices.length === 0) {
       toast.error('No devices available in your accessible fleet')
+      return
+    }
+    if (selectedSections.length === 0) {
+      toast.error('Select at least one report section')
       return
     }
     if (selectedFormats.length === 0) {
@@ -124,9 +200,9 @@ export default function CustomerReportsPage() {
       const baseOpts = {
         orgId,
         orgName,
-        days,
+        days: effectiveDays,
         nodeId: selectedNodeId,
-        selectedTypes: ['health', 'energy', 'alarm', 'executive'],
+        selectedTypes: selectedSections,
         devices,
         classification: 'CONFIDENTIAL',
         aggregationInterval: AGGREGATION_RESOLUTIONS.find((r) => r.id === aggregationInterval)?.label || '15-Minute Standard Rollup',
@@ -260,10 +336,13 @@ export default function CustomerReportsPage() {
               {RANGES.map((r) => (
                 <button
                   key={r.days}
-                  onClick={() => setDays(r.days)}
+                  onClick={() => {
+                    setIsCustomRange(false)
+                    setDays(r.days)
+                  }}
                   className={clsx(
                     'flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors',
-                    days === r.days
+                    !isCustomRange && days === r.days
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
                   )}
@@ -271,7 +350,44 @@ export default function CustomerReportsPage() {
                   {r.label}
                 </button>
               ))}
+              <button
+                type="button"
+                onClick={() => setIsCustomRange(true)}
+                className={clsx(
+                  'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1',
+                  isCustomRange
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                )}
+              >
+                <Calendar size={12} />
+                <span>Custom</span>
+              </button>
             </div>
+
+            {/* Custom Range Date Pickers */}
+            {isCustomRange && (
+              <div className="p-2.5 mt-2 rounded-lg border border-indigo-900/40 bg-[#0a0e1a] flex flex-wrap items-center gap-2.5 text-xs animate-in fade-in">
+                <span className="text-[11px] text-slate-400 font-semibold">From:</span>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="rounded px-2 py-1 text-xs text-white border border-slate-800 bg-[#0d1117] outline-none"
+                />
+                <span className="text-[11px] text-slate-400 font-semibold">To:</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="rounded px-2 py-1 text-xs text-white border border-slate-800 bg-[#0d1117] outline-none"
+                />
+                <span className="text-[11px] font-mono text-indigo-300">
+                  ({effectiveDays} Day{effectiveDays === 1 ? '' : 's'})
+                </span>
+              </div>
+            )}
+
             <div className="flex items-center gap-1.5 mt-2">
               <span className="text-[11px] text-slate-400 flex items-center gap-1">
                 <Clock size={11} className="text-indigo-400" /> Resolution:
@@ -292,6 +408,68 @@ export default function CustomerReportsPage() {
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        {/* Modular Report Sections */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+              Include Report Modules ({selectedSections.length} of {REPORT_SECTIONS.length})
+            </label>
+            <div className="flex gap-2 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setSelectedSections(REPORT_SECTIONS.map((s) => s.id))}
+                className="text-indigo-400 hover:text-indigo-300 font-semibold"
+              >
+                Select All
+              </button>
+              <span className="text-slate-600">·</span>
+              <button
+                type="button"
+                onClick={() => setSelectedSections([])}
+                className="text-slate-500 hover:text-slate-400 font-semibold"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {REPORT_SECTIONS.map((sec) => {
+              const on = selectedSections.includes(sec.id)
+              return (
+                <div
+                  key={sec.id}
+                  onClick={() => toggleSection(sec.id)}
+                  className={clsx(
+                    'flex items-start gap-2.5 p-2.5 rounded-lg cursor-pointer transition-all border text-xs',
+                    on
+                      ? 'bg-indigo-950/20 border-indigo-500/40 shadow-sm'
+                      : 'bg-[#0a0e1a] border-slate-800/80 hover:border-slate-700'
+                  )}
+                >
+                  <div className="text-lg shrink-0 mt-0.5">{sec.icon}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-white truncate">{sec.name}</span>
+                      <span className="text-[9px] px-1.5 py-0.2 rounded font-mono font-semibold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20">
+                        {sec.badge}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-0.5 leading-snug">{sec.desc}</p>
+                  </div>
+                  <div
+                    className={clsx(
+                      'w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 mt-1',
+                      on ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-700 bg-slate-900'
+                    )}
+                  >
+                    {on && <CheckCircle size={10} />}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -333,12 +511,21 @@ export default function CustomerReportsPage() {
           </div>
         </div>
 
-        {/* Action Button */}
-        <div className="pt-3 border-t border-slate-800">
+        {/* Action Buttons */}
+        <div className="pt-3 border-t border-slate-800 flex flex-col sm:flex-row items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setPreviewModalOpen(true)}
+            disabled={devices.length === 0}
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-3 rounded-lg text-xs font-bold text-indigo-300 hover:text-white bg-indigo-950/40 border border-indigo-700/40 hover:bg-indigo-900/60 transition-colors disabled:opacity-50"
+          >
+            <Eye size={15} />
+            <span>Preview Report</span>
+          </button>
           <button
             onClick={generate}
-            disabled={busy || devices.length === 0}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold text-white shadow-md disabled:opacity-50 transition-transform active:scale-95"
+            disabled={busy || devices.length === 0 || selectedSections.length === 0}
+            className="flex-1 w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold text-white shadow-md disabled:opacity-50 transition-transform active:scale-95"
             style={gradient}
           >
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
@@ -349,14 +536,41 @@ export default function CustomerReportsPage() {
 
       {/* On-Screen Telemetry Summary Table */}
       <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-        <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+        <div className="px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5" style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
           <div className="flex items-center gap-2">
             <Layers size={16} className="text-indigo-400" />
             <h3 className="text-sm font-bold text-white uppercase tracking-wider">Monitored Assets Preview</h3>
           </div>
-          <span className="text-xs text-slate-400 font-semibold">
-            {reportData?.summaries.length ?? 0} Assets Loaded
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Search Box */}
+            <div className="relative">
+              <Search size={12} className="absolute left-2.5 top-2 text-slate-500" />
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search asset or location..."
+                className="rounded-lg pl-7 pr-2.5 py-1 text-[11px] text-white placeholder-slate-500 bg-[#0d1117] border border-slate-800 outline-none focus:border-indigo-500 w-44"
+              />
+            </div>
+            {/* Status Filter */}
+            <div className="flex gap-1">
+              {(['all', 'alarm', 'online'] as const).map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStatusFilter(st)}
+                  className={clsx(
+                    'px-2 py-1 rounded text-[10px] font-semibold uppercase transition-colors',
+                    statusFilter === st
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                  )}
+                >
+                  {st === 'all' ? `All (${reportData?.summaries.length ?? 0})` : st === 'alarm' ? '🚨 Alarm' : '🟢 Online'}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         <table className="w-full text-xs" style={{ background: '#0d1117' }}>
@@ -368,49 +582,192 @@ export default function CustomerReportsPage() {
             </tr>
           </thead>
           <tbody>
-            {reportData?.summaries.map((dev) => {
-              const topParam = dev.parameters[0]
-              return (
-                <tr key={dev.nodeId} style={{ borderBottom: '1px solid #1e2433' }} className="hover:bg-white/[0.02] transition-colors">
-                  <td className="py-3.5 px-4 text-white font-bold">{dev.deviceName}</td>
-                  <td className="py-3.5 px-4 text-slate-400 capitalize">{dev.domain}</td>
-                  <td className="py-3.5 px-4 text-slate-300">{dev.location}</td>
-                  <td className="py-3.5 px-4">
-                    {/* An unscored device reads as unscored — a grey dash, not
-                        a red 0/100 that looks like a measured failure. */}
-                    <span
-                      className={clsx(
-                        'px-2 py-0.5 rounded font-mono font-bold text-[11px]',
-                        dev.healthScore === null ? 'text-slate-500 bg-slate-500/10'
-                          : dev.healthScore >= 80 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
-                      )}
-                    >
-                      {dev.healthScore === null ? '—' : `${dev.healthScore}/100`}
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <span
-                      className={clsx(
-                        'px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase',
-                        dev.status === 'online' ? 'text-emerald-400 bg-emerald-500/10' : dev.status === 'alarm' ? 'text-rose-400 bg-rose-500/10' : 'text-slate-400 bg-slate-800'
-                      )}
-                    >
-                      {dev.status}
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4 text-slate-300 font-mono">
-                    {topParam ? (
-                      <span>
-                        {topParam.label}: {topParam.min} ~ {topParam.max} {topParam.unit} (avg {topParam.avg})
+            {filteredSummaries.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-slate-500 italic">
+                  No monitored assets match &ldquo;{searchQuery || statusFilter}&rdquo;
+                </td>
+              </tr>
+            ) : (
+              filteredSummaries.map((dev) => {
+                const topParam = dev.parameters[0]
+                return (
+                  <tr key={dev.nodeId} style={{ borderBottom: '1px solid #1e2433' }} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="py-3.5 px-4 text-white font-bold">{dev.deviceName}</td>
+                    <td className="py-3.5 px-4 text-slate-400 capitalize">{dev.domain}</td>
+                    <td className="py-3.5 px-4 text-slate-300">{dev.location}</td>
+                    <td className="py-3.5 px-4">
+                      <span
+                        className={clsx(
+                          'px-2 py-0.5 rounded font-mono font-bold text-[11px]',
+                          dev.healthScore === null ? 'text-slate-500 bg-slate-500/10'
+                            : dev.healthScore >= 80 ? 'text-emerald-400 bg-emerald-500/10' : 'text-rose-400 bg-rose-500/10'
+                        )}
+                      >
+                        {dev.healthScore === null ? '—' : `${dev.healthScore}/100`}
                       </span>
-                    ) : '—'}
-                  </td>
-                </tr>
-              )
-            })}
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span
+                        className={clsx(
+                          'px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase',
+                          dev.status === 'online' ? 'text-emerald-400 bg-emerald-500/10' : dev.status === 'alarm' ? 'text-rose-400 bg-rose-500/10' : 'text-slate-400 bg-slate-800'
+                        )}
+                      >
+                        {dev.status}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-300 font-mono">
+                      {topParam ? (
+                        <span>
+                          {topParam.label}: {topParam.min} ~ {topParam.max} {topParam.unit} (avg {topParam.avg})
+                        </span>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                )
+              })
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* ========================================================================= */}
+      {/* DOCUMENT PREVIEW MODAL (PILLAR 1)                                         */}
+      {/* ========================================================================= */}
+      {previewModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
+          <div className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-800 bg-[#0a0e1a] flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <FileText size={18} className="text-indigo-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">
+                    Operations &amp; Compliance Audit Preview
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {orgName} · Period: Last {effectiveDays} Days · {devices.length} Monitored Assets
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
+                  <ShieldCheck size={12} className="text-emerald-400" />
+                  <span>SHA-256 Verified</span>
+                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30">
+                  CONFIDENTIAL
+                </span>
+                <button
+                  onClick={() => setPreviewModalOpen(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Body Preview */}
+            <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-[#080c16]">
+              {/* Document Header Card */}
+              <div className="p-5 rounded-xl border border-slate-800 bg-[#0d1117] flex items-center justify-between">
+                <div className="space-y-1">
+                  <div className="text-xs font-bold text-indigo-400 uppercase tracking-wider">CONFIDENTIAL · CUSTOMER AUDIT</div>
+                  <h2 className="text-lg font-black text-white">{orgName} Department Telemetry &amp; Compliance Report</h2>
+                  <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+                    <span>Generated: {new Date().toLocaleDateString('th-TH', { dateStyle: 'long' })}</span>
+                    <span>·</span>
+                    <span>Resolution: <strong className="text-white">{AGGREGATION_RESOLUTIONS.find(r => r.id === aggregationInterval)?.label}</strong></span>
+                    <span>·</span>
+                    <span className="text-emerald-400 font-mono">Immutable Integrity: SHA-256</span>
+                  </div>
+                </div>
+                <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-lg">
+                  {orgName.slice(0, 2).toUpperCase()}
+                </div>
+              </div>
+
+              {/* Executive Metrics Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400">Fleet Health Index</div>
+                  <div className="text-lg font-black text-white">{na(metrics?.healthIndexAvg)} / 100</div>
+                </div>
+                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400">Compliance Rate</div>
+                  <div className="text-lg font-black text-indigo-400">{na(metrics?.complianceRate)}%</div>
+                </div>
+                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400">Energy Consumption</div>
+                  <div className="text-lg font-black text-white">{na(metrics?.totalEnergyKWh)} kWh</div>
+                </div>
+                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400">Scope 2 Carbon</div>
+                  <div className="text-lg font-black text-emerald-400">{na(metrics?.carbonFootprintTCO2e)} tCO₂e</div>
+                </div>
+              </div>
+
+              {/* Monitored Assets Summary Table */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider">Scored Assets Telemetry Breakdown</h4>
+                <div className="rounded-lg border border-slate-800 overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-[#0a0e1a] text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="py-2 px-3 text-left">Asset</th>
+                        <th className="py-2 px-3 text-left">Domain</th>
+                        <th className="py-2 px-3 text-left">Health</th>
+                        <th className="py-2 px-3 text-left">Status</th>
+                        <th className="py-2 px-3 text-left">Key Telemetry</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 bg-[#0d1117]">
+                      {reportData?.summaries.map((s) => (
+                        <tr key={s.nodeId} className="hover:bg-white/[0.02]">
+                          <td className="py-2 px-3 font-semibold text-white">{s.deviceName}</td>
+                          <td className="py-2 px-3 text-slate-400 capitalize">{s.domain}</td>
+                          <td className="py-2 px-3 font-mono text-emerald-400">{s.healthScore ? `${s.healthScore}/100` : '—'}</td>
+                          <td className="py-2 px-3 capitalize">{s.status}</td>
+                          <td className="py-2 px-3 text-slate-300 font-mono">
+                            {s.parameters[0] ? `${s.parameters[0].label}: ${s.parameters[0].avg} ${s.parameters[0].unit}` : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-3.5 border-t border-slate-800 bg-[#0a0e1a] flex items-center justify-between">
+              <span className="text-[11px] text-slate-500 font-mono">
+                Cryptographic Signature: SHA-256 Authenticated
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPreviewModalOpen(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 border border-slate-800"
+                >
+                  Close Preview
+                </button>
+                <button
+                  onClick={() => {
+                    setPreviewModalOpen(false)
+                    generate()
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white shadow-md"
+                  style={gradient}
+                >
+                  <Download size={14} />
+                  <span>Download Now</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
