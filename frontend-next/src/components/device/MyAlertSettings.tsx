@@ -165,6 +165,9 @@ export default function MyAlertSettings({
           <span className="flex items-center gap-2">
             <Sliders size={13} className="text-indigo-400" />
             <span>2. My Personal Alarm Thresholds</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono">
+              Scoped to active sensors
+            </span>
           </span>
           {showPersonalThresholds ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
