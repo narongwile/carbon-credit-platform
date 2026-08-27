@@ -4125,15 +4125,23 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
   for (const s of due) {
     let nodeIds = [];
     if (s.scope==='device' && s.scope_id) nodeIds = [s.scope_id];
-    else { const args = (s.scope==='department' && s.scope_id) ? [s.org_id, s.scope_id] : [s.org_id];
-      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=?"+((s.scope==='department'&&s.scope_id)?" AND department_id=?":""), args); nodeIds = ns.map(n=>n.id); }
+    else if (s.scope==='site' && s.scope_id) {
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND site_id=?", [s.org_id, s.scope_id]);
+      nodeIds = ns.map(n=>n.id);
+    } else if (s.scope==='department' && s.scope_id) {
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND department_id=?", [s.org_id, s.scope_id]);
+      nodeIds = ns.map(n=>n.id);
+    } else {
+      const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=?", [s.org_id]);
+      nodeIds = ns.map(n=>n.id);
+    }
     // window_days decouples "how much data it covers" from "how often it
     // arrives" — a daily email summarising the trailing week is a normal ask
     // and could not be expressed before. NULL keeps the original derivation.
     const days = (s.window_days && Number(s.window_days) > 0)
       ? Number(s.window_days)
       : (s.sequence==='weekly'?7 : s.sequence==='monthly'?30 : 1);
-    let csv = 'node_id,param_key,n,avg,min,max\\n';
+    let csv = '# Organization: '+s.org_id+'\\n# Schedule: '+s.name+'\\n# Scope: '+s.scope+(s.scope_id?' ('+s.scope_id+')':'')+'\\n# Reporting Window: Last '+days+' Days\\n# Generated At: '+new Date().toISOString()+'\\n\\nnode_id,param_key,n,avg,min,max\\n';
     if (nodeIds.length) {
       const [rows] = await pool.query("SELECT node_id,param_key,COUNT(*) n,AVG(value) a,MIN(value) mn,MAX(value) mx FROM readings WHERE node_id IN (?) AND taken_at>(NOW(3)-INTERVAL ? DAY) GROUP BY node_id,param_key ORDER BY node_id,param_key", [nodeIds, days]);
       for (const r of rows) csv += r.node_id+','+r.param_key+','+r.n+','+Number(r.a).toFixed(2)+','+Number(r.mn).toFixed(2)+','+Number(r.mx).toFixed(2)+'\\n';
