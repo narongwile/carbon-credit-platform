@@ -229,6 +229,20 @@ export const READING_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]>
     { key: 'pressure', label: 'Tank Pressure', unit: 'kPa', direction: 'high', warn: 35, critical: 50, paramType: 'reading' },
     { key: 'partialDischarge', label: 'Partial Discharge (PD)', unit: 'pC', direction: 'high', warn: 200, critical: 500, paramType: 'reading' },
     { key: 'vibration', label: 'Vibration Velocity', unit: 'mm/s', direction: 'high', warn: 4.5, critical: 7.1, paramType: 'reading' },
+
+    // ⚡️ Surge Arrester & Lightning Protection (IEC 60099-5)
+    { key: 'surgeArresterCurrent', label: 'Surge Arrester Total Leakage Current', unit: 'μA', direction: 'high', warn: 500, critical: 1000, paramType: 'reading', riskInsight: 'MOV block degradation or moisture ingress per IEC 60099-5' },
+    { key: 'surgeArresterResistive', label: 'Surge Arrester 3rd Harmonic Resistive Current', unit: 'μA', direction: 'high', warn: 50, critical: 100, paramType: 'reading', riskInsight: 'Direct indicator of non-linear metal oxide varistor degradation' },
+    { key: 'surgeCounter', label: 'Lightning Surge Strike Count', unit: 'strikes', direction: 'high', warn: 15, critical: 30, paramType: 'reading', unrationalized: true },
+
+    // ⚙️ On-Load Tap Changer (OLTC) Diagnostics (IEEE C57.131)
+    { key: 'oltcTapPosition', label: 'OLTC Current Tap Position', unit: 'step', direction: 'high', warn: 30, critical: 33, paramType: 'reading', unrationalized: true },
+    { key: 'oltcMotorCurrent', label: 'OLTC Drive Motor Operating Current', unit: 'A', direction: 'high', warn: 4.5, critical: 6.0, paramType: 'reading', riskInsight: 'Mechanical jamming, gear resistance, or brake failure' },
+    { key: 'oltcOilTempDelta', label: 'OLTC Diverter vs Main Tank Temp Delta (ΔT)', unit: '°C', direction: 'high', warn: 4.0, critical: 8.0, paramType: 'reading', riskInsight: 'Severe contact coking or transition resistor overheating' },
+    { key: 'oltcOperationsCount', label: 'OLTC Cumulative Tap Operations', unit: 'cycles', direction: 'high', warn: 50000, critical: 100000, paramType: 'reading', unrationalized: true },
+
+    // 🐍 Optical Arc-Flash & Intrusion Protection
+    { key: 'arcFlashOptical', label: 'Optical Arc-Flash Sensor Intensity', unit: 'lux', direction: 'high', warn: 5000, critical: 10000, paramType: 'reading', riskInsight: 'Point or loop fiber sensor detecting switchgear / bushing arcing' },
   ],
   carbonNode: [
     { key: 'tempHigh', label: 'Chamber High Temperature', unit: '°C', direction: 'high', warn: 8, critical: 10, paramType: 'reading' },

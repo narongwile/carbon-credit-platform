@@ -51,6 +51,7 @@ import FleetRiskMatrix from '@/components/transformer/FleetRiskMatrix'
 import BushingHealthStudio from '@/components/transformer/BushingHealthStudio'
 import GenAiDiagnosticsCopilot from '@/components/transformer/GenAiDiagnosticsCopilot'
 import BessCoOptimization from '@/components/transformer/BessCoOptimization'
+import SubstationThreatsStudio from '@/components/transformer/SubstationThreatsStudio'
 import { generateOfficialEngineeringDossier } from '@/lib/officialDossierGenerator'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
@@ -753,7 +754,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }, [transformer?.sensors, nameplate, transformer?.voltage])
 
   const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bess' | 'bushing' | 'copilot' | 'lab' | 'fleet'>('dga')
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bess' | 'bushing' | 'threats' | 'copilot' | 'lab' | 'fleet'>('dga')
   const [dossierExporting, setDossierExporting] = useState(false)
 
   const handleExportOfficialDossier = async () => {
@@ -1455,6 +1456,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     { id: 'dtr' as const, label: '⚡ Dynamic Thermal (DTR)' },
                     { id: 'bess' as const, label: '🔋 BESS Co-Op' },
                     { id: 'bushing' as const, label: '🔌 Bushing (tan δ)' },
+                    { id: 'threats' as const, label: '🛡️ 5-Threats & OLTC' },
                     { id: 'copilot' as const, label: '🤖 GenAI Copilot' },
                     { id: 'lab' as const, label: '🧪 Hybrid Lab DGA' },
                     { id: 'fleet' as const, label: '🏢 Fleet Risk' },
@@ -1465,7 +1467,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       className={clsx(
                         'text-xs px-3 py-1.5 rounded-md font-semibold transition-all whitespace-nowrap',
                         pdmSubTab === sub.id
-                          ? 'bg-indigo-600 text-white shadow-              {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      )}
+                    >
+                      {sub.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
               {pdmSubTab === 'dga' && (
                 <div className="space-y-6">
                   <div className="flex flex-col 2xl:flex-row gap-8">
@@ -1579,7 +1591,19 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 />
               )}
 
-              {/* Sub-Tab 5: Industrial GenAI Diagnostics Copilot */}
+              {/* Sub-Tab 5: 5-Threats & OLTC Multi-Hazard Studio */}
+              {pdmSubTab === 'threats' && (
+                <SubstationThreatsStudio
+                  assetId={transformer.id}
+                  assetName={transformer.name}
+                  orgName={currentOrgName}
+                  voltageKv={liveTelemetry.voltageKv}
+                  mainOilTemp={liveTelemetry.oilTemp}
+                  bushingTanDelta={0.82}
+                />
+              )}
+
+              {/* Sub-Tab 6: Industrial GenAI Diagnostics Copilot */}
               {pdmSubTab === 'copilot' && (
                 <GenAiDiagnosticsCopilot
                   assetId={transformer.id}
