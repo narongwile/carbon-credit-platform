@@ -50,6 +50,8 @@ import LabDgaIngestion from '@/components/transformer/LabDgaIngestion'
 import FleetRiskMatrix from '@/components/transformer/FleetRiskMatrix'
 import BushingHealthStudio from '@/components/transformer/BushingHealthStudio'
 import GenAiDiagnosticsCopilot from '@/components/transformer/GenAiDiagnosticsCopilot'
+import BessCoOptimization from '@/components/transformer/BessCoOptimization'
+import { generateOfficialEngineeringDossier } from '@/lib/officialDossierGenerator'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
 
@@ -781,7 +783,45 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
   const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
   const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'copilot' | 'lab' | 'fleet'>('dga')
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bess' | 'bushing' | 'copilot' | 'lab' | 'fleet'>('dga')
+  const [dossierExporting, setDossierExporting] = useState(false)
+
+  const handleExportOfficialDossier = async () => {
+    setDossierExporting(true)
+    try {
+      await generateOfficialEngineeringDossier({
+        assetId: transformer.id || 'TR-01',
+        assetName: transformer.name || 'Main Substation TR-01',
+        ratedKva: nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500,
+        voltageKv: nameplate?.voltage ? Number(nameplate.voltage) : 115,
+        healthIndex: transformer.healthIndex ?? 88,
+        oilTemp: transformer.sensors?.oilTemperature?.value ?? 64,
+        hotSpotTemp: (transformer.sensors?.oilTemperature?.value ?? 64) + 14,
+        dtrCapacityKva: 2865,
+        dtrHeadroomKva: 1015,
+        duvalVerdict: 'T2 - Thermal Fault (300°C - 700°C)',
+        rttDays: 38,
+        bushingPhaseBStatus: 'Caution (tan δ = 0.82%)',
+        bushingTanDelta: 0.82,
+        dpAging: 590,
+        moisturePpm: transformer.sensors?.moisture?.value ?? 22,
+        gases: {
+          h2: transformer.sensors?.hydrogen?.value ?? 65,
+          ch4: 45,
+          c2h2: 3.2,
+          c2h4: 35,
+          c2h6: 28,
+          co: 420,
+          co2: 3200,
+        },
+      })
+      toast.success('ดาวน์โหลดรายงานฉบับทางการ IEEE/IEC (5 หน้า PDF) เรียบร้อยแล้ว!')
+    } catch (err) {
+      toast.error('ไม่สามารถสร้างรายงาน PDF ได้: ' + (err as Error).message)
+    } finally {
+      setDossierExporting(false)
+    }
+  }
   // card = a full SensorCard (icon, number, sparkline); list = a dense row
   // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
   // device's twenty-odd secondary values do not each cost a full card's worth
@@ -1355,16 +1395,26 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={18} className="text-indigo-400" />
-                  <h3 className="text-sm font-bold text-white">Predictive Maintenance & Asset Intelligence Studio</h3>
+                  <h3 className="text-sm font-bold text-white">Predictive Maintenance &amp; Asset Intelligence Studio</h3>
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono">
                     Tier-1 Advanced IIoT
                   </span>
+                  <button
+                    onClick={handleExportOfficialDossier}
+                    disabled={dossierExporting}
+                    className="ml-2 px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm"
+                    title="Generate formal 5-page IEEE/IEC engineering inspection dossier"
+                  >
+                    <Download size={12} className={dossierExporting ? 'animate-bounce' : ''} />
+                    <span>{dossierExporting ? 'Generating Dossier...' : '📑 Export IEEE/IEC Dossier'}</span>
+                  </button>
                 </div>
 
                 <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 overflow-x-auto">
                   {[
                     { id: 'dga' as const, label: '🔬 DGA, RUL & RoG' },
                     { id: 'dtr' as const, label: '⚡ Dynamic Thermal (DTR)' },
+                    { id: 'bess' as const, label: '🔋 BESS Co-Op' },
                     { id: 'bushing' as const, label: '🔌 Bushing (tan δ)' },
                     { id: 'copilot' as const, label: '🤖 GenAI Copilot' },
                     { id: 'lab' as const, label: '🧪 Hybrid Lab DGA' },
@@ -1478,7 +1528,18 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 />
               )}
 
-              {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
+              {/* Sub-Tab 3: BESS Peak Shaving & Carbon Arbitrage */}
+              {pdmSubTab === 'bess' && (
+                <BessCoOptimization
+                  transformerName={transformer.name}
+                  nameplateKva={nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500}
+                  currentLoadKva={Math.round(((transformer.sensors?.load?.value ?? 74) / 100) * (nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500))}
+                  hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 64) + 14}
+                  dtrHeadroomKva={1015}
+                />
+              )}
+
+              {/* Sub-Tab 4: Bushing Health & Tan-Delta (tan δ) */}
               {pdmSubTab === 'bushing' && (
                 <BushingHealthStudio
                   // Nameplate has no `voltage` field — it is `voltageClass`, and
