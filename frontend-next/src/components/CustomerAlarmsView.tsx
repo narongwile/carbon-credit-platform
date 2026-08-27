@@ -363,11 +363,14 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
       </div>
 
       <div className="space-y-2">
-        {!loaded ? <p className="text-sm text-slate-500 p-4">Loading alarms…</p> :
-         filtered.length === 0 ? (
-           <p className="text-sm text-slate-500 p-4">
-             {alarms.length === 0 ? 'No alarms on your devices.' : 'No alarms match these filters.'}
-           filtered.map((a) => {
+        {!loaded ? (
+          <p className="text-sm text-slate-500 p-4">Loading alarms…</p>
+        ) : filtered.length === 0 ? (
+          <p className="text-sm text-slate-500 p-4">
+            {alarms.length === 0 ? 'No alarms on your devices.' : 'No alarms match these filters.'}
+          </p>
+        ) : (
+          filtered.map((a) => {
             const crit = a.severity === 'CRITICAL'
             const color = crit ? '#ef4444' : '#fbbf24'
             const bg = crit ? 'rgba(239,68,68,0.08)' : 'rgba(251,191,36,0.06)'
@@ -481,7 +484,7 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
                 )}
               </div>
             )
-          })}
+          }))}
       </div>
     </div>
   )

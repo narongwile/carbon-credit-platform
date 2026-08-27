@@ -213,7 +213,7 @@ export const useAuditStore = create<AuditStore>()(
           const timestamp = new Date().toISOString()
 
           const approvalRecord: AuditRecord = {
-            id: \`AUD-\${Date.now()}\`,
+            id: `AUD-${Date.now()}`,
             timestamp,
             actor: { ...checker, role: 'Reviewer' },
             ipAddress: '127.0.0.1',
@@ -226,7 +226,7 @@ export const useAuditStore = create<AuditStore>()(
           }
 
           const executedRecord: AuditRecord = {
-            id: \`AUD-\${Date.now() + 1}\`,
+            id: `AUD-${Date.now() + 1}`,
             timestamp,
             actor: item.maker,
             ipAddress: '127.0.0.1',
@@ -259,7 +259,7 @@ export const useAuditStore = create<AuditStore>()(
           const timestamp = new Date().toISOString()
 
           const rejectionRecord: AuditRecord = {
-            id: \`AUD-\${Date.now()}\`,
+            id: `AUD-${Date.now()}`,
             timestamp,
             actor: { ...checker, role: 'Reviewer' },
             ipAddress: '127.0.0.1',

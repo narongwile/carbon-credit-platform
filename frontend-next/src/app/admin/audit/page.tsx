@@ -96,7 +96,7 @@ export default function AuditPage() {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.setAttribute('download', \`audit_export_\${new Date().toISOString().split('T')[0]}.csv\`)
+    link.setAttribute('download', `audit_export_${new Date().toISOString().split('T')[0]}.csv`)
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
@@ -482,7 +482,7 @@ export default function AuditPage() {
                     />
                     <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={16}>
                       {actionStats.map((entry, index) => (
-                        <Cell key={\`cell-\${index}\`} fill={chartColors[index % chartColors.length]} />
+                        <Cell key={`cell-${index}`} fill={chartColors[index % chartColors.length]} />
                       ))}
                     </Bar>
                   </BarChart>

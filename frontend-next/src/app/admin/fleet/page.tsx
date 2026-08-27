@@ -38,6 +38,8 @@ import PayloadCrossCheck from '@/components/device/PayloadCrossCheck'
 import { useParamLabels } from '@/lib/useParamLabels'
 import type { SensorDomain } from '@/types/fleet'
 import { fmtDateTime } from '@/lib/displayTime'
+import clsx from 'clsx'
+import FleetRiskMatrix from '@/components/transformer/FleetRiskMatrix'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -76,6 +78,7 @@ export default function FleetPage() {
   const { hosts, loaded: fleetLoaded } = useFleetHosts(orgId)
 
   const [activeId, setActiveId] = useState('')
+  const [fleetView, setFleetView] = useState<'connectivity' | 'risk'>('connectivity')
   useEffect(() => { if (hosts.length && !hosts.some((h) => h.id === activeId)) setActiveId(hosts[0]?.id ?? '') }, [hosts, activeId])
   const active = hosts.find((h) => h.id === activeId)
 
@@ -143,18 +146,45 @@ export default function FleetPage() {
 
   return (
     <div className="p-6 space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-white">Fleet — Devices &amp; Connectivity</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Live device presence, firmware OTA history and connectivity for every device in this organization</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-white">Fleet — Devices &amp; Asset Management</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Live device presence, firmware OTA history, and ISO 55000 CapEx Risk Planning</p>
+        </div>
+
+        <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 self-start sm:self-auto">
+          <button
+            onClick={() => setFleetView('connectivity')}
+            className={clsx(
+              'text-xs px-3 py-1.5 rounded-md font-semibold transition-all',
+              fleetView === 'connectivity' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            📡 Connectivity &amp; OTA
+          </button>
+          <button
+            onClick={() => setFleetView('risk')}
+            className={clsx(
+              'text-xs px-3 py-1.5 rounded-md font-semibold transition-all',
+              fleetView === 'risk' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            🏢 Fleet Risk Matrix (ISO 55000)
+          </button>
+        </div>
       </div>
 
-      {!live && (
-        <div className="rounded-xl p-3 text-xs text-amber-300" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
-          Demo mode shows sample devices — switch to Live for this organization&apos;s real fleet.
-        </div>
-      )}
+      {fleetView === 'risk' ? (
+        <FleetRiskMatrix />
+      ) : (
+        <>
+          {!live && (
+            <div className="rounded-xl p-3 text-xs text-amber-300" style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
+              Demo mode shows sample devices — switch to Live for this organization&apos;s real fleet.
+            </div>
+          )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         {/* Device list */}
         <div className="space-y-2">
           {!fleetLoaded ? (
@@ -329,6 +359,8 @@ export default function FleetPage() {
           </div>
         )}
       </div>
+    </>
+  )}
 
       <SensorDetailsModal
         isOpen={showDiag}
