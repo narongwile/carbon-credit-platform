@@ -48,6 +48,8 @@ import InsulationAgingRul from '@/components/transformer/InsulationAgingRul'
 import DynamicThermalRating from '@/components/transformer/DynamicThermalRating'
 import LabDgaIngestion from '@/components/transformer/LabDgaIngestion'
 import FleetRiskMatrix from '@/components/transformer/FleetRiskMatrix'
+import BushingHealthStudio from '@/components/transformer/BushingHealthStudio'
+import GenAiDiagnosticsCopilot from '@/components/transformer/GenAiDiagnosticsCopilot'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
 
@@ -779,7 +781,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
   const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
   const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'lab' | 'fleet'>('dga')
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'copilot' | 'lab' | 'fleet'>('dga')
   // card = a full SensorCard (icon, number, sparkline); list = a dense row
   // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
   // device's twenty-odd secondary values do not each cost a full card's worth
@@ -1363,6 +1365,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   {[
                     { id: 'dga' as const, label: '🔬 DGA, RUL & RoG' },
                     { id: 'dtr' as const, label: '⚡ Dynamic Thermal (DTR)' },
+                    { id: 'bushing' as const, label: '🔌 Bushing (tan δ)' },
+                    { id: 'copilot' as const, label: '🤖 GenAI Copilot' },
                     { id: 'lab' as const, label: '🧪 Hybrid Lab DGA' },
                     { id: 'fleet' as const, label: '🏢 Fleet Risk' },
                   ].map((sub) => (
@@ -1474,7 +1478,41 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 />
               )}
 
-              {/* Sub-Tab 3: Hybrid Lab DGA Ingestion */}
+              {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
+              {pdmSubTab === 'bushing' && (
+                <BushingHealthStudio
+                  voltageKv={nameplate?.voltage ? Number(nameplate.voltage) : 115}
+                  assetId={transformer.id}
+                  assetName={transformer.name}
+                />
+              )}
+
+              {/* Sub-Tab 4: Industrial GenAI Diagnostics Copilot */}
+              {pdmSubTab === 'copilot' && (
+                <GenAiDiagnosticsCopilot
+                  assetId={transformer.id}
+                  assetName={transformer.name}
+                  dgaGases={{
+                    h2: transformer.sensors?.hydrogen?.value ?? 65,
+                    ch4: 45,
+                    c2h2: 3.2,
+                    c2h4: 35,
+                    c2h6: 28,
+                    co: 420,
+                    co2: 3200,
+                  }}
+                  duvalVerdict="T2 - Thermal Fault (300°C - 700°C)"
+                  rttDays={38}
+                  oilTemp={transformer.sensors?.oilTemperature?.value ?? 64}
+                  hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 64) + 14}
+                  dtrHeadroomKva={1015}
+                  bushingStatus="Phase B Warning (tan δ: 0.82%)"
+                  dpAging={590}
+                  moisturePpm={transformer.sensors?.moisture?.value ?? 22}
+                />
+              )}
+
+              {/* Sub-Tab 5: Hybrid Lab DGA Ingestion */}
               {pdmSubTab === 'lab' && (
                 <LabDgaIngestion
                   onlineGases={{
