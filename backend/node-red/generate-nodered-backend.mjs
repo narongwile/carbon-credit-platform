@@ -4688,18 +4688,23 @@ const chGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgI
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 const dept=(msg.req.query&&msg.req.query.departmentId)||null;
 const uid=(msg.req.query&&msg.req.query.userId)||null;
+const fetchAll=(msg.req.query&&String(msg.req.query.all)==='true');
 (async()=>{
   let r = [];
   try {
-    r = uid
-      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND user_id=? ORDER BY channel",[orgId,uid]))[0]
-      : (dept
-          ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId,dept]))[0]
-          : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId]))[0]);
+    r = fetchAll
+      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? ORDER BY channel",[orgId]))[0]
+      : (uid
+          ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND user_id=? ORDER BY channel",[orgId,uid]))[0]
+          : (dept
+              ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId,dept]))[0]
+              : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId]))[0]));
   } catch(e) {
-    r = dept
-      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id=? ORDER BY channel",[orgId,dept]))[0]
-      : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id IS NULL ORDER BY channel",[orgId]))[0];
+    r = fetchAll
+      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? ORDER BY channel",[orgId]))[0]
+      : (dept
+          ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id=? ORDER BY channel",[orgId,dept]))[0]
+          : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id IS NULL ORDER BY channel",[orgId]))[0]);
   }
   msg.headers=__CORS; msg.payload=r; node.send(msg);
 })()` + bbErr

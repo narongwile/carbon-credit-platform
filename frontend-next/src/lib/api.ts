@@ -423,12 +423,13 @@ export const api = {
    * so a department set here is what makes nodes.department_id actually
    * change where an alarm is delivered.
    */
-  orgChannels: (orgId: string, departmentId?: string, userId?: string) => {
+  orgChannels: (orgId: string, departmentId?: string, userId?: string, all?: boolean) => {
     const params = new URLSearchParams()
     if (departmentId) params.set('departmentId', departmentId)
     if (userId) params.set('userId', userId)
+    if (all) params.set('all', 'true')
     const qs = params.toString()
-    return req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number }[]>(
+    return req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number; department_id?: string | null; user_id?: string | null }[]>(
       `/api/orgs/${orgId}/channels${qs ? `?${qs}` : ''}`
     )
   },

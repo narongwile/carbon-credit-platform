@@ -30,6 +30,11 @@ import {
   Globe,
   Check,
   Search,
+  Settings2,
+  X,
+  Copy,
+  Layers,
+  Sparkles,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -47,6 +52,16 @@ const channelIcon = {
 
 type TabKey = 'alarms' | 'channels' | 'email'
 type ScopeType = 'org' | 'department' | 'user'
+
+interface RawChannelRow {
+  id: number
+  channel: string
+  target: string | null
+  min_severity: string
+  enabled: number
+  department_id?: string | null
+  user_id?: string | null
+}
 
 export default function AlarmNotificationPage() {
   const live = useIsLive()
@@ -101,59 +116,30 @@ export default function AlarmNotificationPage() {
   }, [live, orgId])
 
   const [scope, setScope] = useState<'all' | string>('all')
-  const [channels, setChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
-  const [saved, setSaved] = useState(false)
+
+  // Global Org Fallback channels
+  const [orgChannels, setOrgChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
+  const [orgSaved, setOrgSaved] = useState(false)
   const [testingChannel, setTestingChannel] = useState<string | null>(null)
 
-  // Scope: 'Whole Organization' or 'Department' (multi) or 'User' (multi)
-  const [applyScope, setApplyScope] = useState<ScopeType>('org')
-  const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([])
-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
-  const [userSearch, setUserSearch] = useState('')
+  // All channel records across the whole org
+  const [allOrgChannels, setAllOrgChannels] = useState<RawChannelRow[]>([])
 
-  // Seed default selections when lists load
-  useEffect(() => {
-    if (orgDepts.length && selectedDeptIds.length === 0) {
-      setSelectedDeptIds([orgDepts[0].id])
-    }
-  }, [orgDepts, selectedDeptIds.length])
+  const reloadAllChannels = () => {
+    if (!live) return
+    api.orgChannels(orgId, undefined, undefined, true).then((rows) => {
+      if (rows) setAllOrgChannels(rows)
+    })
+  }
 
   useEffect(() => {
-    if (orgUsers.length && selectedUserIds.length === 0) {
-      setSelectedUserIds([orgUsers[0].id])
-    }
-  }, [orgUsers, selectedUserIds.length])
+    reloadAllChannels()
+  }, [live, orgId])
 
-  const toggleDept = (id: string) => {
-    setSelectedDeptIds((prev) =>
-      prev.includes(id) ? (prev.length > 1 ? prev.filter((d) => d !== id) : prev) : [...prev, id]
-    )
-  }
-  const selectAllDepts = () => setSelectedDeptIds(orgDepts.map((d) => d.id))
-  const clearDepts = () => { if (orgDepts.length) setSelectedDeptIds([orgDepts[0].id]) }
-
-  const toggleUser = (id: string) => {
-    setSelectedUserIds((prev) =>
-      prev.includes(id) ? (prev.length > 1 ? prev.filter((u) => u !== id) : prev) : [...prev, id]
-    )
-  }
-  const selectAllUsers = () => setSelectedUserIds(orgUsers.map((u) => u.id))
-  const clearUsers = () => { if (orgUsers.length) setSelectedUserIds([orgUsers[0].id]) }
-
-  const filteredUsers = useMemo(() => {
-    if (!userSearch.trim()) return orgUsers
-    const q = userSearch.toLowerCase()
-    return orgUsers.filter((u) => u.name.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q)))
-  }, [orgUsers, userSearch])
-
-  // Load channels when applyScope or the primary selected target changes
+  // Load Org-Wide Fallback channels
   useEffect(() => {
     let cancelled = false
-    setChannels(defaultNotificationChannels)
-    const targetDept = applyScope === 'department' ? (selectedDeptIds[0] || undefined) : undefined
-    const targetUser = applyScope === 'user' ? (selectedUserIds[0] || undefined) : undefined
-
-    api.orgChannels(orgId, targetDept, targetUser).then((rows) => {
+    api.orgChannels(orgId).then((rows) => {
       if (!cancelled && rows && rows.length > 0) {
         const mapped = defaultNotificationChannels.map((dc) => {
           const row = rows.find((r) => r.channel === dc.id)
@@ -167,111 +153,237 @@ export default function AlarmNotificationPage() {
           }
           return dc
         })
-        setChannels(mapped)
+        setOrgChannels(mapped)
       }
     })
     return () => { cancelled = true }
-  }, [orgId, applyScope, selectedDeptIds[0], selectedUserIds[0]])
+  }, [orgId])
 
-  const toggleChannel = (id: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, enabled: !x.enabled } : x)))
-  const setTarget = (id: string, target: string) => setChannels((c) => c.map((x) => (x.id === id ? { ...x, target } : x)))
-  const setMinSeverity = (id: string, minSeverity: 'WARNING' | 'CRITICAL') =>
-    setChannels((c) => c.map((x) => (x.id === id ? { ...x, minSeverity } : x)))
+  // Active Scope View: 'org' | 'department' | 'user'
+  const [deliveryScope, setDeliveryScope] = useState<ScopeType>('org')
+  const [userSearch, setUserSearch] = useState('')
+  const [deptSearch, setDeptSearch] = useState('')
 
-  // Formatting exact badges requested by user:
-  // EX[3/4 Channels Active (Telegram: ON, Google Chat: ON, Email: ON, LINE: OFF)]
-  const activeChannelCount = channels.filter((c) => c.enabled).length
-  const tgStatus = channels.find((c) => c.id === 'telegram')?.enabled ? 'ON' : 'OFF'
-  const gcStatus = channels.find((c) => c.id === 'googlechat')?.enabled ? 'ON' : 'OFF'
-  const emailStatus = channels.find((c) => c.id === 'email')?.enabled ? 'ON' : 'OFF'
-  const lineStatus = channels.find((c) => c.id === 'line')?.enabled ? 'ON' : 'OFF'
-  const channelsActiveBadge = `${activeChannelCount}/4 Channels Active (Telegram: ${tgStatus}, Google Chat: ${gcStatus}, Email: ${emailStatus}, LINE: ${lineStatus})`
+  // Modal Editing State (Direct single-entity inspection & configuration)
+  const [modalEntity, setModalEntity] = useState<{
+    type: 'department' | 'user'
+    id: string
+    name: string
+    subtitle?: string
+  } | null>(null)
+  const [modalChannels, setModalChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
+  const [modalSaving, setModalSaving] = useState(false)
+  const [modalSaved, setModalSaved] = useState(false)
+  const [modalTestingChannel, setModalTestingChannel] = useState<string | null>(null)
 
-  // Scope summary text
-  const scopeSummaryText = useMemo(() => {
-    if (applyScope === 'org') return 'Whole Organization'
-    if (applyScope === 'department') {
-      const count = selectedDeptIds.length
-      if (count === orgDepts.length && orgDepts.length > 0) return `All Departments (${count})`
-      if (count === 1) {
-        return `Department: ${orgDepts.find((d) => d.id === selectedDeptIds[0])?.name ?? '1 Dept'}`
+  // Bulk Apply / Clone Modal State
+  const [bulkModalOpen, setBulkModalOpen] = useState(false)
+  const [bulkType, setBulkType] = useState<'department' | 'user'>('department')
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([])
+  const [bulkSource, setBulkSource] = useState<'org' | string>('org')
+  const [bulkApplying, setBulkApplying] = useState(false)
+
+  const openConfigModal = async (type: 'department' | 'user', id: string, name: string, subtitle?: string) => {
+    setModalEntity({ type, id, name, subtitle })
+    setModalSaved(false)
+
+    // Check if we already have it in allOrgChannels
+    const matching = allOrgChannels.filter((c) =>
+      type === 'department' ? (c.department_id === id && (!c.user_id || c.user_id === '')) : (c.user_id === id)
+    )
+
+    if (matching.length > 0) {
+      setModalChannels(
+        defaultNotificationChannels.map((dc) => {
+          const row = matching.find((r) => r.channel === dc.id)
+          if (row) {
+            return {
+              ...dc,
+              enabled: !!row.enabled,
+              target: row.target || '',
+              minSeverity: (row.min_severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING') as 'WARNING' | 'CRITICAL',
+            }
+          }
+          return dc
+        })
+      )
+    } else {
+      // Fetch fresh
+      const rows = await api.orgChannels(orgId, type === 'department' ? id : undefined, type === 'user' ? id : undefined)
+      if (rows && rows.length > 0) {
+        setModalChannels(
+          defaultNotificationChannels.map((dc) => {
+            const row = rows.find((r) => r.channel === dc.id)
+            if (row) {
+              return {
+                ...dc,
+                enabled: !!row.enabled,
+                target: row.target || '',
+                minSeverity: (row.min_severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING') as 'WARNING' | 'CRITICAL',
+              }
+            }
+            return dc
+          })
+        )
+      } else {
+        setModalChannels(defaultNotificationChannels)
       }
-      return `${count} Departments`
     }
-    if (applyScope === 'user') {
-      const count = selectedUserIds.length
-      if (count === orgUsers.length && orgUsers.length > 0) return `All Users (${count})`
-      if (count === 1) {
-        return `User: ${orgUsers.find((u) => u.id === selectedUserIds[0])?.name ?? '1 User'}`
-      }
-      return `${count} Users`
-    }
-    return 'Whole Organization'
-  }, [applyScope, selectedDeptIds, selectedUserIds, orgDepts, orgUsers])
-
-  // Save Button dynamic text
-  const saveButtonLabel = useMemo(() => {
-    if (saved) return 'Channels Saved!'
-    if (applyScope === 'org') return 'Save to Whole Organization'
-    if (applyScope === 'department') {
-      return `Save to ${selectedDeptIds.length} Selected Department${selectedDeptIds.length > 1 ? 's' : ''}`
-    }
-    if (applyScope === 'user') {
-      return `Save to ${selectedUserIds.length} Selected User${selectedUserIds.length > 1 ? 's' : ''}`
-    }
-    return 'Save Notification Channels'
-  }, [saved, applyScope, selectedDeptIds.length, selectedUserIds.length])
-
-  const saveChannels = async () => {
-    const user = getSession()
-    if (!user) { toast.error('Not signed in'); return }
-    if (!isLive()) {
-      setSaved(true); setTimeout(() => setSaved(false), 2000)
-      toast.success(`Notification channels saved (demo — ${scopeSummaryText})`)
-      return
-    }
-
-    if (applyScope === 'org') {
-      const res = await api.putOrgChannels(orgId, channels)
-      if (!res) { toast.error('Could not save channels for organization'); return }
-    } else if (applyScope === 'department') {
-      if (selectedDeptIds.length === 0) {
-        toast.error('Please select at least one department')
-        return
-      }
-      await Promise.all(selectedDeptIds.map((dId) => api.putOrgChannels(orgId, channels, dId)))
-    } else if (applyScope === 'user') {
-      if (selectedUserIds.length === 0) {
-        toast.error('Please select at least one user')
-        return
-      }
-      await Promise.all(selectedUserIds.map((uId) => api.putOrgChannels(orgId, channels, undefined, uId)))
-    }
-
-    setSaved(true)
-    toast.success(`Channels saved successfully for ${scopeSummaryText}!`)
-    setTimeout(() => setSaved(false), 2000)
   }
 
-  const testChannel = async (id: string, target: string) => {
-    if (!target) {
-      toast.error('Please enter a target ID/URL first')
+  const copyOrgDefaultsIntoModal = () => {
+    setModalChannels(orgChannels.map((c) => ({ ...c })))
+    toast.success('Loaded values from Organization Fallback!')
+  }
+
+  const saveModalChannels = async () => {
+    if (!modalEntity) return
+    setModalSaving(true)
+    try {
+      const res = await api.putOrgChannels(
+        orgId,
+        modalChannels,
+        modalEntity.type === 'department' ? modalEntity.id : undefined,
+        modalEntity.type === 'user' ? modalEntity.id : undefined
+      )
+      if (!res) throw new Error('Could not save channels')
+      setModalSaved(true)
+      toast.success(`Channels saved for ${modalEntity.name}!`)
+      reloadAllChannels()
+      setTimeout(() => {
+        setModalSaved(false)
+        setModalEntity(null)
+      }, 1000)
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to save channels')
+    } finally {
+      setModalSaving(false)
+    }
+  }
+
+  // Quick test channel runner
+  const executeTest = async (channelId: string, target: string, setTesting: (id: string | null) => void) => {
+    if (!target.trim()) {
+      toast.error('Please enter a target Chat ID/URL/Email first')
       return
     }
-    setTestingChannel(id)
+    setTesting(channelId)
     try {
-      const res = await api.testPlatformChannel(id, target)
+      const res = await api.testPlatformChannel(channelId, target)
       if (res.ok) {
-        toast.success(`Test notification sent to ${id.toUpperCase()} successfully!`)
+        toast.success(`Test sent to ${channelId.toUpperCase()} successfully!`)
       } else {
-        toast.error(`Test failed: ${res.error || 'Verify channel configuration'}`)
+        toast.error(`Test failed: ${res.error || 'Check configuration'}`)
       }
     } catch (e: any) {
       toast.error(`Test failed: ${e.message || 'Network error'}`)
     } finally {
-      setTestingChannel(null)
+      setTesting(null)
     }
   }
+
+  // Save Org Fallback channels
+  const saveOrgChannels = async () => {
+    const user = getSession()
+    if (!user) { toast.error('Not signed in'); return }
+    if (!isLive()) {
+      setOrgSaved(true); setTimeout(() => setOrgSaved(false), 2000)
+      toast.success('Notification preferences saved (demo — not persisted)')
+      return
+    }
+    const res = await api.putOrgChannels(orgId, orgChannels)
+    if (!res) { toast.error('Could not save organization fallback channels'); return }
+    setOrgSaved(true)
+    toast.success('Organization-wide notification fallback saved successfully!')
+    reloadAllChannels()
+    setTimeout(() => setOrgSaved(false), 2000)
+  }
+
+  // Bulk Apply Logic
+  const handleBulkApply = async () => {
+    if (bulkSelectedIds.length === 0) {
+      toast.error('Please select at least one target')
+      return
+    }
+    setBulkApplying(true)
+    try {
+      // Find template channels
+      let template: NotificationChannelConfig[] = orgChannels
+      if (bulkSource !== 'org') {
+        const rows = allOrgChannels.filter((c) =>
+          bulkType === 'department'
+            ? (c.department_id === bulkSource && (!c.user_id || c.user_id === ''))
+            : (c.user_id === bulkSource)
+        )
+        if (rows.length > 0) {
+          template = defaultNotificationChannels.map((dc) => {
+            const r = rows.find((x) => x.channel === dc.id)
+            if (r) return { ...dc, enabled: !!r.enabled, target: r.target || '', minSeverity: (r.min_severity === 'CRITICAL' ? 'CRITICAL' : 'WARNING') as 'WARNING' | 'CRITICAL' }
+            return dc
+          })
+        }
+      }
+
+      // Concurrently apply to all selected targets
+      await Promise.all(
+        bulkSelectedIds.map((id) =>
+          api.putOrgChannels(
+            orgId,
+            template,
+            bulkType === 'department' ? id : undefined,
+            bulkType === 'user' ? id : undefined
+          )
+        )
+      )
+
+      toast.success(`Successfully applied channels to ${bulkSelectedIds.length} ${bulkType}s!`)
+      reloadAllChannels()
+      setBulkModalOpen(false)
+      setBulkSelectedIds([])
+    } catch (e: any) {
+      toast.error(e.message || 'Bulk apply encountered an error')
+    } finally {
+      setBulkApplying(false)
+    }
+  }
+
+  // Compute Active Channels Summary string requested by user:
+  // EX[3/4 Channels Active (Telegram: ON, Google Chat: ON, Email: ON, LINE: OFF)]
+  const activeOrgCount = orgChannels.filter((c) => c.enabled).length
+  const tgOrgStatus = orgChannels.find((c) => c.id === 'telegram')?.enabled ? 'ON' : 'OFF'
+  const gcOrgStatus = orgChannels.find((c) => c.id === 'googlechat')?.enabled ? 'ON' : 'OFF'
+  const emailOrgStatus = orgChannels.find((c) => c.id === 'email')?.enabled ? 'ON' : 'OFF'
+  const lineOrgStatus = orgChannels.find((c) => c.id === 'line')?.enabled ? 'ON' : 'OFF'
+  const orgActiveChannelsBadge = `${activeOrgCount}/4 Channels Active (Telegram: ${tgOrgStatus}, Google Chat: ${gcOrgStatus}, Email: ${emailOrgStatus}, LINE: ${lineOrgStatus})`
+
+  // Modal active channels summary
+  const activeModalCount = modalChannels.filter((c) => c.enabled).length
+  const tgModalStatus = modalChannels.find((c) => c.id === 'telegram')?.enabled ? 'ON' : 'OFF'
+  const gcModalStatus = modalChannels.find((c) => c.id === 'googlechat')?.enabled ? 'ON' : 'OFF'
+  const emailModalStatus = modalChannels.find((c) => c.id === 'email')?.enabled ? 'ON' : 'OFF'
+  const lineModalStatus = modalChannels.find((c) => c.id === 'line')?.enabled ? 'ON' : 'OFF'
+  const modalActiveChannelsBadge = `${activeModalCount}/4 Channels Active (Telegram: ${tgModalStatus}, Google Chat: ${gcModalStatus}, Email: ${emailModalStatus}, LINE: ${lineModalStatus})`
+
+  // Filtered lists
+  const filteredDepts = useMemo(() => {
+    if (!deptSearch.trim()) return orgDepts
+    return orgDepts.filter((d) => d.name.toLowerCase().includes(deptSearch.toLowerCase()))
+  }, [orgDepts, deptSearch])
+
+  const filteredUsers = useMemo(() => {
+    if (!userSearch.trim()) return orgUsers
+    const q = userSearch.toLowerCase()
+    return orgUsers.filter((u) => u.name.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q)))
+  }, [orgUsers, userSearch])
+
+  // Count configured entities
+  const configuredDeptIds = useMemo(() => {
+    return new Set(allOrgChannels.filter((c) => c.department_id && (!c.user_id || c.user_id === '') && c.enabled).map((c) => c.department_id as string))
+  }, [allOrgChannels])
+
+  const configuredUserIds = useMemo(() => {
+    return new Set(allOrgChannels.filter((c) => c.user_id && c.enabled).map((c) => c.user_id as string))
+  }, [allOrgChannels])
 
   return (
     <div className="p-6 space-y-6">
@@ -317,7 +429,7 @@ export default function AlarmNotificationPage() {
           <Send size={14} className={activeTab === 'channels' ? 'text-indigo-400' : 'text-slate-500'} />
           <span>Delivery Channels</span>
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-            {activeChannelCount}/4 Active
+            {activeOrgCount}/4 Active
           </span>
         </button>
 
@@ -403,278 +515,400 @@ export default function AlarmNotificationPage() {
 
       {/* TAB 2: Delivery Channels */}
       {activeTab === 'channels' && (
-        <div className="rounded-xl p-5 space-y-4" style={surface}>
-          {/* Header with explicit Badges */}
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+        <div className="rounded-xl p-5 space-y-5" style={surface}>
+          {/* Card Header with Scope Switcher & Exact Format Badge */}
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
             <div>
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                 <Send size={15} className="text-indigo-400" />
                 Notification Delivery Channels
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Dispatch official alarms to department or organization-wide webhooks, groups, and recipients.
+                Dispatch official alarms across organization fallbacks, specialized departments, or assigned individual users.
               </p>
             </div>
 
-            {/* Requested Badge: EX[3/4 Channels Active (Telegram: ON, Google Chat: ON, Email: ON, LINE: OFF)] + Scope Badge */}
             <div className="flex flex-wrap items-center gap-2">
+              {/* User requested exact badge format */}
               <div className="px-3 py-1.5 rounded-lg font-semibold bg-indigo-950/40 border border-indigo-500/40 text-indigo-300 text-xs shadow-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>{channelsActiveBadge}</span>
+                <span>{orgActiveChannelsBadge}</span>
               </div>
               <div className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800/80 border border-slate-700/80 text-slate-300 flex items-center gap-1.5 shadow-sm">
                 <span className="text-indigo-400 font-bold">Scope:</span>
-                <span>{scopeSummaryText}</span>
+                <span>
+                  {deliveryScope === 'org'
+                    ? 'Whole Organization'
+                    : deliveryScope === 'department'
+                    ? `Department (${orgDepts.length} total)`
+                    : `User (${orgUsers.length} total)`}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Upgraded Multi-Scope Selector (Org / Department / User) */}
-          <div className="p-4 rounded-xl border border-slate-800/90 space-y-3.5" style={{ background: '#0a0e1a' }}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/60 pb-3">
-              <div>
-                <span className="block text-xs font-semibold text-white uppercase tracking-wider">
-                  Target Delivery Scope
-                </span>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Choose whether these notification destinations apply org-wide, to specific departments, or to specific users.
+          {/* Scope Selector Segmented Control */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-2 rounded-xl border border-slate-800/80 bg-slate-950">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setDeliveryScope('org')}
+                className={clsx(
+                  'flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all',
+                  deliveryScope === 'org'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                )}
+              >
+                <Globe size={14} />
+                <span>Whole Organization (Fallback)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeliveryScope('department')}
+                className={clsx(
+                  'flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all',
+                  deliveryScope === 'department'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                )}
+              >
+                <Building2 size={14} />
+                <span>Departments ({orgDepts.length})</span>
+                {configuredDeptIds.size > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {configuredDeptIds.size} Custom
+                  </span>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDeliveryScope('user')}
+                className={clsx(
+                  'flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all',
+                  deliveryScope === 'user'
+                    ? 'bg-indigo-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                )}
+              >
+                <Users size={14} />
+                <span>Users ({orgUsers.length})</span>
+                {configuredUserIds.size > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    {configuredUserIds.size} Custom
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Bulk Clone Tool Trigger */}
+            {deliveryScope !== 'org' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBulkType(deliveryScope === 'department' ? 'department' : 'user')
+                  setBulkSelectedIds([])
+                  setBulkSource('org')
+                  setBulkModalOpen(true)
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-indigo-500/30 transition-colors shadow-sm"
+              >
+                <Layers size={13} />
+                <span>Bulk Copy Setup…</span>
+              </button>
+            )}
+          </div>
+
+          {/* VIEW 1: Whole Organization Scope */}
+          {deliveryScope === 'org' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-950/20 flex items-start gap-3">
+                <Sparkles size={16} className="text-indigo-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-indigo-200/90 leading-relaxed">
+                  These 4 channels serve as the <strong className="text-white">Organization Fallback</strong>. Any device alarm whose owning department does not have its own custom channels configured will automatically be delivered here.
                 </p>
               </div>
-              <div className="flex items-center gap-1.5 p-1 rounded-lg border border-slate-800 bg-slate-950">
+
+              {/* 4 Channel Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {orgChannels.map((ch) => {
+                  const Icon = channelIcon[ch.id]
+                  const isBusy = testingChannel === ch.id
+                  return (
+                    <div
+                      key={ch.id}
+                      className="p-4 rounded-xl space-y-3 transition-all"
+                      style={{ background: '#0a0e1a', border: `1px solid ${ch.enabled ? '#6366f1' : '#1e2433'}` }}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border', ch.enabled ? 'bg-indigo-950/60 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-500')}>
+                            <Icon size={16} />
+                          </div>
+                          <div>
+                            <span className="text-sm font-semibold text-white block leading-tight">{ch.name}</span>
+                            <span className="text-[10px] text-slate-400">{ch.enabled ? 'Enabled' : 'Disabled'}</span>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setOrgChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, enabled: !x.enabled } : x)))}
+                          className="transition-transform active:scale-95"
+                        >
+                          {ch.enabled ? <ToggleRight size={26} className="text-indigo-400" /> : <ToggleLeft size={26} className="text-slate-600" />}
+                        </button>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <input
+                            value={ch.target}
+                            onChange={(e) => setOrgChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, target: e.target.value } : x)))}
+                            disabled={!ch.enabled}
+                            placeholder={
+                              ch.id === 'telegram' ? 'Numeric Chat ID (e.g. 581234567 or Group -100...)' :
+                              ch.id === 'email' ? 'ops@company.com' :
+                              ch.id === 'line' ? 'User ID or Token@UserID' :
+                              `${ch.name} Webhook URL…`
+                            }
+                            className={clsx('flex-1 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
+                            style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+                          />
+                          <button
+                            type="button"
+                            disabled={!ch.enabled || !ch.target.trim() || isBusy}
+                            onClick={() => executeTest(ch.id, ch.target, setTestingChannel)}
+                            className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:hover:bg-slate-800 flex items-center gap-1.5 border border-slate-700/80 shrink-0 transition-colors shadow-sm"
+                            title="Send test message to this destination"
+                          >
+                            {isBusy ? <Loader2 size={13} className="animate-spin text-indigo-400" /> : <Send size={13} className="text-indigo-400" />}
+                            <span>{isBusy ? 'Testing…' : 'Test'}</span>
+                          </button>
+                        </div>
+
+                        {ch.id === 'telegram' && (
+                          <p className="text-[10px] text-slate-500">
+                            💡 ใส่เลข <code>Chat ID</code> หรือ <code>Group ID (-100...)</code> ไม่ใช่ @botname
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Severity Routing */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
+                        <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Send Alert On</span>
+                        <div className="flex items-center gap-1.5">
+                          {(['WARNING', 'CRITICAL'] as const).map((sev) => (
+                            <button
+                              key={sev}
+                              type="button"
+                              onClick={() => setOrgChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, minSeverity: sev } : x)))}
+                              disabled={!ch.enabled}
+                              className={clsx('px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all disabled:opacity-40',
+                                (ch.minSeverity ?? 'WARNING') === sev ? 'text-white shadow-sm' : 'text-slate-400 hover:text-slate-300')}
+                              style={(ch.minSeverity ?? 'WARNING') === sev
+                                ? { background: sev === 'CRITICAL' ? 'rgba(239,68,68,0.25)' : 'rgba(251,191,36,0.25)', border: `1px solid ${sev === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }
+                                : { background: '#0d1117', border: '1px solid #1e2433' }}
+                            >
+                              {sev === 'WARNING' ? 'Warning +' : 'Critical only'}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Dedicated Footer */}
+              <div className="pt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 mt-2">
+                <span className="text-xs text-slate-400 flex items-center gap-1.5">
+                  <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+                  <span>Target Scope: <strong className="text-slate-200">Whole Organization (Global Fallback)</strong></span>
+                </span>
                 <button
-                  type="button"
-                  onClick={() => setApplyScope('org')}
-                  className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
-                    applyScope === 'org' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white')}
+                  onClick={saveOrgChannels}
+                  className="flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-md active:scale-95"
+                  style={orgSaved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid #4ade80' } : gradient}
                 >
-                  <Globe size={13} />
-                  <span>Whole Organization</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setApplyScope('department')}
-                  className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
-                    applyScope === 'department' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white')}
-                >
-                  <Building2 size={13} />
-                  <span>Department ({selectedDeptIds.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setApplyScope('user')}
-                  className={clsx('flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
-                    applyScope === 'user' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white')}
-                >
-                  <Users size={13} />
-                  <span>User ({selectedUserIds.length})</span>
+                  <Save size={14} /> {orgSaved ? 'Channels Saved!' : 'Save to Whole Organization'}
                 </button>
               </div>
             </div>
+          )}
 
-            {/* Scope: Whole Organization Note */}
-            {applyScope === 'org' && (
-              <p className="text-xs text-slate-400">
-                🏢 <strong className="text-slate-300">Whole Organization Scope:</strong> These channels act as the default fallback destinations used for all alarms across every device in {orgName}.
-              </p>
-            )}
-
-            {/* Scope: Department (Multi-Select) */}
-            {applyScope === 'department' && (
-              <div className="space-y-2.5 pt-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-slate-400">
-                    Select department(s) to apply these channels to:
-                  </span>
-                  <div className="flex items-center gap-2 text-xs">
-                    <button type="button" onClick={selectAllDepts} className="text-indigo-400 hover:underline">Select All ({orgDepts.length})</button>
-                    <span className="text-slate-600">·</span>
-                    <button type="button" onClick={clearDepts} className="text-slate-400 hover:underline">Clear</button>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {orgDepts.map((d) => {
-                    const isChecked = selectedDeptIds.includes(d.id)
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => toggleDept(d.id)}
-                        className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
-                          isChecked
-                            ? 'bg-indigo-950/60 border-indigo-500/60 text-indigo-200 shadow-sm'
-                            : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700')}
-                      >
-                        <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center border',
-                          isChecked ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-600')}>
-                          {isChecked && <Check size={10} strokeWidth={3} />}
-                        </div>
-                        <span>{d.name}</span>
-                      </button>
-                    )
-                  })}
+          {/* VIEW 2: Departments Overview & Direct Modal Config */}
+          {deliveryScope === 'department' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <p className="text-xs text-slate-400">
+                  Each department can have its own dedicated Telegram Group, LINE Bot, or Email recipients.
+                </p>
+                <div className="relative w-full sm:w-64">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    value={deptSearch}
+                    onChange={(e) => setDeptSearch(e.target.value)}
+                    placeholder="Search department…"
+                    className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs text-white placeholder-slate-500 bg-slate-900 border border-slate-700/80 outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
                 </div>
               </div>
-            )}
 
-            {/* Scope: User (Multi-Select with Search) */}
-            {applyScope === 'user' && (
-              <div className="space-y-2.5 pt-1">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <span className="text-xs text-slate-400">
-                    Select user(s) to apply these channels to:
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                      <input
-                        value={userSearch}
-                        onChange={(e) => setUserSearch(e.target.value)}
-                        placeholder="Search user…"
-                        className="rounded-lg pl-7 pr-2.5 py-1 text-xs text-white placeholder-slate-500 bg-slate-900 border border-slate-700/80 outline-none focus:ring-1 focus:ring-indigo-500"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <button type="button" onClick={selectAllUsers} className="text-indigo-400 hover:underline">Select All ({orgUsers.length})</button>
-                      <span className="text-slate-600">·</span>
-                      <button type="button" onClick={clearUsers} className="text-slate-400 hover:underline">Clear</button>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2 max-h-40 overflow-y-auto pr-1">
-                  {filteredUsers.map((u) => {
-                    const isChecked = selectedUserIds.includes(u.id)
-                    return (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => toggleUser(u.id)}
-                        className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
-                          isChecked
-                            ? 'bg-indigo-950/60 border-indigo-500/60 text-indigo-200 shadow-sm'
-                            : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700')}
-                      >
-                        <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center border',
-                          isChecked ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-600')}>
-                          {isChecked && <Check size={10} strokeWidth={3} />}
-                        </div>
-                        <span className="font-semibold text-white">{u.name}</span>
-                        {u.email && <span className="text-[10px] text-slate-400">({u.email})</span>}
-                        {u.role && <span className="text-[9px] uppercase px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">{u.role}</span>}
-                      </button>
-                    )
-                  })}
-                  {filteredUsers.length === 0 && (
-                    <span className="text-xs text-slate-500 italic py-1">No users found matching search.</span>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+              {/* Department Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {filteredDepts.map((d) => {
+                  const customRows = allOrgChannels.filter((c) => c.department_id === d.id && (!c.user_id || c.user_id === ''))
+                  const enabledRows = customRows.filter((c) => c.enabled)
+                  const hasCustom = enabledRows.length > 0
 
-          {/* Channel Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {channels.map((ch) => {
-              const Icon = channelIcon[ch.id]
-              const isBusy = testingChannel === ch.id
-              return (
-                <div
-                  key={ch.id}
-                  className="p-4 rounded-xl space-y-3 transition-all"
-                  style={{ background: '#0a0e1a', border: `1px solid ${ch.enabled ? '#6366f1' : '#1e2433'}` }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className={clsx('w-8 h-8 rounded-lg flex items-center justify-center border', ch.enabled ? 'bg-indigo-950/60 border-indigo-500/50 text-indigo-400' : 'bg-slate-900 border-slate-800 text-slate-500')}>
-                        <Icon size={16} />
-                      </div>
-                      <div>
-                        <span className="text-sm font-semibold text-white block leading-tight">{ch.name}</span>
-                        <span className="text-[10px] text-slate-400">{ch.enabled ? 'Enabled' : 'Disabled'}</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleChannel(ch.id)}
-                      className="transition-transform active:scale-95"
+                  return (
+                    <div
+                      key={d.id}
+                      className="p-4 rounded-xl space-y-3 border transition-all"
+                      style={{ background: '#0a0e1a', borderColor: hasCustom ? '#3b82f6' : '#1e2433' }}
                     >
-                      {ch.enabled ? <ToggleRight size={26} className="text-indigo-400" /> : <ToggleLeft size={26} className="text-slate-600" />}
-                    </button>
-                  </div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-indigo-950/60 border border-indigo-500/40 text-indigo-400 shrink-0">
+                            <Building2 size={16} />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-semibold text-white leading-tight">{d.name}</h4>
+                            <span className="text-[10px] text-slate-500">ID: {d.id}</span>
+                          </div>
+                        </div>
 
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={ch.target}
-                        onChange={(e) => setTarget(ch.id, e.target.value)}
-                        disabled={!ch.enabled}
-                        placeholder={
-                          ch.id === 'telegram' ? 'Numeric Chat ID (e.g. 581234567 or Group -100...)' :
-                          ch.id === 'email' ? 'ops@company.com' :
-                          ch.id === 'line' ? 'User ID or Token@UserID' :
-                          `${ch.name} Webhook URL…`
-                        }
-                        className={clsx('flex-1 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
-                        style={{ background: '#0d1117', border: '1px solid #1e2433' }}
-                      />
-                      <button
-                        type="button"
-                        disabled={!ch.enabled || !ch.target.trim() || isBusy}
-                        onClick={() => testChannel(ch.id, ch.target)}
-                        className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 disabled:hover:bg-slate-800 flex items-center gap-1.5 border border-slate-700/80 shrink-0 transition-colors shadow-sm"
-                        title="Send test message to this destination"
-                      >
-                        {isBusy ? <Loader2 size={13} className="animate-spin text-indigo-400" /> : <Send size={13} className="text-indigo-400" />}
-                        <span>{isBusy ? 'Testing…' : 'Test'}</span>
-                      </button>
-                    </div>
-
-                    {ch.id === 'telegram' && (
-                      <p className="text-[10px] text-slate-500">
-                        💡 ใส่เลข <code>Chat ID</code> หรือ <code>Group ID (-100...)</code> ไม่ใช่ @botname
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Severity Routing */}
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-800/60">
-                    <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">Send Alert On</span>
-                    <div className="flex items-center gap-1.5">
-                      {(['WARNING', 'CRITICAL'] as const).map((sev) => (
                         <button
-                          key={sev}
                           type="button"
-                          onClick={() => setMinSeverity(ch.id, sev)}
-                          disabled={!ch.enabled}
-                          className={clsx('px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all disabled:opacity-40',
-                            (ch.minSeverity ?? 'WARNING') === sev ? 'text-white shadow-sm' : 'text-slate-400 hover:text-slate-300')}
-                          style={(ch.minSeverity ?? 'WARNING') === sev
-                            ? { background: sev === 'CRITICAL' ? 'rgba(239,68,68,0.25)' : 'rgba(251,191,36,0.25)', border: `1px solid ${sev === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }
-                            : { background: '#0d1117', border: '1px solid #1e2433' }}
+                          onClick={() => openConfigModal('department', d.id, d.name, `Department ID: ${d.id}`)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-colors shadow-sm shrink-0"
                         >
-                          {sev === 'WARNING' ? 'Warning +' : 'Critical only'}
+                          <Settings2 size={13} />
+                          <span>Configure</span>
                         </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                      </div>
 
-          {/* Dedicated card footer with dynamic Save button and Scope summary */}
-          <div className="pt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 mt-2">
-            <span className="text-xs text-slate-400 flex items-center gap-1.5">
-              <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
-              <span>Target Scope: <strong className="text-slate-200">{scopeSummaryText}</strong></span>
-            </span>
-            <button
-              onClick={saveChannels}
-              className="flex items-center gap-2 px-6 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-md active:scale-95"
-              style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid #4ade80' } : gradient}
-            >
-              <Save size={14} /> {saveButtonLabel}
-            </button>
-          </div>
+                      {/* Configured Status Badges */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-800/60">
+                        {hasCustom ? (
+                          enabledRows.map((r) => {
+                            const Icon = channelIcon[r.channel as keyof typeof channelIcon] || Send
+                            return (
+                              <span
+                                key={r.id}
+                                className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-950/40 border border-indigo-500/40 text-indigo-300 flex items-center gap-1"
+                              >
+                                <Icon size={10} />
+                                <span className="font-semibold uppercase">{r.channel}:</span>
+                                <span className="truncate max-w-[120px]">{r.target || 'Default'}</span>
+                                <span className="text-[8px] opacity-75">({r.min_severity})</span>
+                              </span>
+                            )
+                          })
+                        ) : (
+                          <span className="text-[11px] text-slate-500 italic flex items-center gap-1">
+                            <Globe size={11} className="text-slate-600" />
+                            Inheriting Organization Fallback Destinations
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* VIEW 3: Users Overview & Direct Modal Config */}
+          {deliveryScope === 'user' && (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <p className="text-xs text-slate-400">
+                  Assign official device alarms directly to individual user accounts without affecting their personal alert rules.
+                </p>
+                <div className="relative w-full sm:w-64">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    placeholder="Search user by name or email…"
+                    className="w-full rounded-lg pl-7 pr-2.5 py-1.5 text-xs text-white placeholder-slate-500 bg-slate-900 border border-slate-700/80 outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              {/* Users Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {filteredUsers.map((u) => {
+                  const customRows = allOrgChannels.filter((c) => c.user_id === u.id)
+                  const enabledRows = customRows.filter((c) => c.enabled)
+                  const hasCustom = enabledRows.length > 0
+                  const deptName = orgDepts.find((d) => d.id === u.departmentId)?.name || 'General'
+
+                  return (
+                    <div
+                      key={u.id}
+                      className="p-4 rounded-xl space-y-3 border transition-all"
+                      style={{ background: '#0a0e1a', borderColor: hasCustom ? '#8b5cf6' : '#1e2433' }}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-purple-950/60 border border-purple-500/40 text-purple-400 shrink-0">
+                            <Users size={16} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-semibold text-white leading-tight">{u.name}</h4>
+                              {u.role && (
+                                <span className="text-[9px] uppercase px-1.5 py-0.2 rounded font-bold bg-slate-800 text-slate-400">
+                                  {u.role}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400">{u.email || u.id} · {deptName}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => openConfigModal('user', u.id, u.name, `${u.email || u.id} (${deptName})`)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 transition-colors shadow-sm shrink-0"
+                        >
+                          <Settings2 size={13} />
+                          <span>Configure</span>
+                        </button>
+                      </div>
+
+                      {/* Configured Status Badges */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-800/60">
+                        {hasCustom ? (
+                          enabledRows.map((r) => {
+                            const Icon = channelIcon[r.channel as keyof typeof channelIcon] || Send
+                            return (
+                              <span
+                                key={r.id}
+                                className="text-[10px] px-2 py-0.5 rounded-md bg-purple-950/40 border border-purple-500/40 text-purple-300 flex items-center gap-1"
+                              >
+                                <Icon size={10} />
+                                <span className="font-semibold uppercase">{r.channel}:</span>
+                                <span className="truncate max-w-[120px]">{r.target || 'Configured'}</span>
+                              </span>
+                            )
+                          })
+                        ) : (
+                          <span className="text-[11px] text-slate-500 italic">
+                            No dedicated channels configured (receives alerts via department or org fallback)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -682,6 +916,274 @@ export default function AlarmNotificationPage() {
       {activeTab === 'email' && (
         <div className="space-y-4">
           <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
+        </div>
+      )}
+
+      {/* MODAL 1: Single Entity Configuration Modal (Best Practice) */}
+      {modalEntity && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-2xl rounded-2xl border border-slate-800 shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
+            style={{ background: '#0d1117' }}
+          >
+            {/* Modal Header */}
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800/80 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white">
+                    Configure Notification Channels
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                    {modalEntity.type}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Target: <strong className="text-white">{modalEntity.name}</strong> {modalEntity.subtitle && `(${modalEntity.subtitle})`}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setModalEntity(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Sub-Header Badges */}
+            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div className="flex items-center gap-2 text-xs font-semibold text-indigo-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{modalActiveChannelsBadge}</span>
+              </div>
+              <button
+                type="button"
+                onClick={copyOrgDefaultsIntoModal}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
+              >
+                <Copy size={12} />
+                <span>Copy from Org Fallback</span>
+              </button>
+            </div>
+
+            {/* Modal 4 Channel Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {modalChannels.map((ch) => {
+                const Icon = channelIcon[ch.id]
+                const isBusy = modalTestingChannel === ch.id
+                return (
+                  <div
+                    key={ch.id}
+                    className="p-3.5 rounded-xl space-y-2.5 transition-all"
+                    style={{ background: '#0a0e1a', border: `1px solid ${ch.enabled ? '#6366f1' : '#1e2433'}` }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Icon size={15} className={ch.enabled ? 'text-indigo-400' : 'text-slate-500'} />
+                        <span className="text-xs font-semibold text-white">{ch.name}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setModalChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, enabled: !x.enabled } : x)))}
+                      >
+                        {ch.enabled ? <ToggleRight size={22} className="text-indigo-400" /> : <ToggleLeft size={22} className="text-slate-600" />}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={ch.target}
+                        onChange={(e) => setModalChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, target: e.target.value } : x)))}
+                        disabled={!ch.enabled}
+                        placeholder={
+                          ch.id === 'telegram' ? 'Chat ID / Group -100...' :
+                          ch.id === 'email' ? 'team@company.com' :
+                          ch.id === 'line' ? 'User ID or Token@UserID' :
+                          'Webhook URL…'
+                        }
+                        className={clsx('flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
+                        style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+                      />
+                      <button
+                        type="button"
+                        disabled={!ch.enabled || !ch.target.trim() || isBusy}
+                        onClick={() => executeTest(ch.id, ch.target, setModalTestingChannel)}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 flex items-center gap-1 border border-slate-700 shrink-0"
+                      >
+                        {isBusy ? <Loader2 size={11} className="animate-spin text-indigo-400" /> : <Send size={11} className="text-indigo-400" />}
+                        <span>{isBusy ? 'Testing…' : 'Test'}</span>
+                      </button>
+                    </div>
+
+                    {/* Min Severity */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/60 text-[10px]">
+                      <span className="text-slate-400">Severity</span>
+                      <div className="flex items-center gap-1">
+                        {(['WARNING', 'CRITICAL'] as const).map((sev) => (
+                          <button
+                            key={sev}
+                            type="button"
+                            onClick={() => setModalChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, minSeverity: sev } : x)))}
+                            disabled={!ch.enabled}
+                            className={clsx('px-2 py-0.5 rounded text-[9px] font-semibold transition-all disabled:opacity-40',
+                              (ch.minSeverity ?? 'WARNING') === sev ? 'text-white' : 'text-slate-400')}
+                            style={(ch.minSeverity ?? 'WARNING') === sev
+                              ? { background: sev === 'CRITICAL' ? 'rgba(239,68,68,0.3)' : 'rgba(251,191,36,0.3)', border: `1px solid ${sev === 'CRITICAL' ? '#ef4444' : '#f59e0b'}` }
+                              : { background: '#0d1117', border: '1px solid #1e2433' }}
+                          >
+                            {sev === 'WARNING' ? 'Warning +' : 'Critical only'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => setModalEntity(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveModalChannels}
+                disabled={modalSaving}
+                className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-md active:scale-95 disabled:opacity-50"
+                style={modalSaved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid #4ade80' } : gradient}
+              >
+                {modalSaving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>{modalSaved ? 'Saved!' : `Save Channels for ${modalEntity.name}`}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: Bulk Copy / Apply Modal */}
+      {bulkModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-xl rounded-2xl border border-slate-800 shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            style={{ background: '#0d1117' }}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-800/80 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Layers size={16} className="text-indigo-400" />
+                  Bulk Copy Channel Configuration
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Clone a source channel setup to multiple selected {bulkType}s at once.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBulkModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Source Selector */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                1. Select Source Template
+              </label>
+              <select
+                value={bulkSource}
+                onChange={(e) => setBulkSource(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-xs text-white bg-slate-900 border border-slate-700 outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value="org">Organization Fallback Destinations</option>
+                {bulkType === 'department'
+                  ? orgDepts.map((d) => <option key={d.id} value={d.id}>Department: {d.name}</option>)
+                  : orgUsers.map((u) => <option key={u.id} value={u.id}>User: {u.name}</option>)}
+              </select>
+            </div>
+
+            {/* Target Multi-Selector */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-slate-300">
+                  2. Select Target {bulkType === 'department' ? 'Departments' : 'Users'} ({bulkSelectedIds.length} selected)
+                </label>
+                <div className="flex items-center gap-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setBulkSelectedIds((bulkType === 'department' ? orgDepts : orgUsers).map((x) => x.id))}
+                    className="text-indigo-400 hover:underline"
+                  >
+                    Select All
+                  </button>
+                  <span className="text-slate-600">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setBulkSelectedIds([])}
+                    className="text-slate-400 hover:underline"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto p-2 rounded-xl bg-slate-950 border border-slate-800">
+                {(bulkType === 'department' ? orgDepts : orgUsers).map((item) => {
+                  const isChecked = bulkSelectedIds.includes(item.id)
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() =>
+                        setBulkSelectedIds((prev) =>
+                          prev.includes(item.id) ? prev.filter((x) => x !== item.id) : [...prev, item.id]
+                        )
+                      }
+                      className={clsx(
+                        'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                        isChecked
+                          ? 'bg-indigo-950/60 border-indigo-500/60 text-indigo-200'
+                          : 'bg-slate-900 border-slate-800 text-slate-400'
+                      )}
+                    >
+                      <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center border', isChecked ? 'bg-indigo-600 border-indigo-500 text-white' : 'border-slate-600')}>
+                        {isChecked && <Check size={10} strokeWidth={3} />}
+                      </div>
+                      <span>{item.name}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Bulk Footer */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => setBulkModalOpen(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkApply}
+                disabled={bulkApplying || bulkSelectedIds.length === 0}
+                className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-md active:scale-95 disabled:opacity-50"
+                style={gradient}
+              >
+                {bulkApplying ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                <span>Apply to {bulkSelectedIds.length} {bulkType === 'department' ? 'Departments' : 'Users'}</span>
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -704,5 +1206,6 @@ export default function AlarmNotificationPage() {
     </div>
   )
 }
+
 
 
