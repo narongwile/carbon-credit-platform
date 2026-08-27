@@ -84,7 +84,7 @@ export default function GenAiDiagnosticsCopilot({
   const PRESET_QUERIES = [
     {
       id: 'rca',
-      title: '🔍 วิเคราะห์สาเหตุรากเหง้า (RCA)',
+      title: '🔍 วิเคราะห์ RootAnalysis (RCA)',
       prompt: 'ช่วยวิเคราะห์ Root Cause Analysis (RCA) ว่าทำไม C2H2 ถึงสะสม และเข้าข่ายความผิดปกติใดตามมาตรฐาน IEEE C57.104?',
     },
     {
@@ -125,7 +125,7 @@ export default function GenAiDiagnosticsCopilot({
       let actionSuggestion = undefined
 
       if (text.includes('RCA') || text.includes('สาเหตุ') || text.includes('C2H2')) {
-        reply = `### 🔍 ผลการวิเคราะห์สาเหตุรากเหง้า (Root Cause Analysis - RCA)\n**อ้างอิงมาตรฐาน IEEE C57.104-2019 & IEC 60599:**\n\n1. **กลไกการเกิดก๊าซ (Gas Generation Mechanism):**\n   - สัดส่วนก๊าซ Acetylene (C₂H₂ = ${dgaGases.c2h2} ppm) ร่วมกับ Ethylene (C₂H₄ = ${dgaGases.c2h4} ppm) ใน Duval Pentagon บ่งชี้ว่าเกิด **ความร้อนสูงเฉพาะจุด (Thermal Hot-Spot > 500°C)**\n   - สาเหตุที่เป็นไปได้สูง: หน้าสัมผัสของชุด Tap Changer (OLTC) หลวม หรือกระแสไหลวน (Circulating Currents) บริเวณแกนเหล็กขดลวด\n\n2. **ความเร่งด่วนและ Time-to-Trip:**\n   - เวกเตอร์ความเร็วในการสะสมก๊าซอยู่ที่ **+0.42 %/วัน** ซึ่งทำให้คาดการณ์ RTT อยู่ที่ **${rttDays} วัน** ก่อนที่สวิตช์ตรวจจับก๊าซจะตัดวงจร (Trip)\n\n3. **ข้อเสนอแนะทางวิศวกรรม:**\n   - สั่งเก็บตัวอย่างน้ำมันไซริงค์ซ้ำใน 7 วัน เพื่อสอบเทียบ Drift (ASTM D3612)\n   - เตรียมต่อเครื่องกรองและไล่ก๊าซน้ำมัน (Degassing Machine) ในแผนซ่อมบำรุงประจำเดือน`
+        reply = `### 🔍 ผลการวิเคราะห์ RootAnalysis (Root Cause Analysis - RCA)\n**อ้างอิงมาตรฐาน IEEE C57.104-2019 & IEC 60599:**\n\n1. **กลไกการเกิดก๊าซ (Gas Generation Mechanism):**\n   - สัดส่วนก๊าซ Acetylene (C₂H₂ = ${dgaGases.c2h2} ppm) ร่วมกับ Ethylene (C₂H₄ = ${dgaGases.c2h4} ppm) ใน Duval Pentagon บ่งชี้ว่าเกิด **ความร้อนสูงเฉพาะจุด (Thermal Hot-Spot > 500°C)**\n   - สาเหตุที่เป็นไปได้สูง: หน้าสัมผัสของชุด Tap Changer (OLTC) หลวม หรือกระแสไหลวน (Circulating Currents) บริเวณแกนเหล็กขดลวด\n\n2. **ความเร่งด่วนและ Time-to-Trip:**\n   - เวกเตอร์ความเร็วในการสะสมก๊าซอยู่ที่ **+0.42 %/วัน** ซึ่งทำให้คาดการณ์ RTT อยู่ที่ **${rttDays} วัน** ก่อนที่สวิตช์ตรวจจับก๊าซจะตัดวงจร (Trip)\n\n3. **ข้อเสนอแนะทางวิศวกรรม:**\n   - สั่งเก็บตัวอย่างน้ำมันไซริงค์ซ้ำใน 7 วัน เพื่อสอบเทียบ Drift (ASTM D3612)\n   - เตรียมต่อเครื่องกรองและไล่ก๊าซน้ำมัน (Degassing Machine) ในแผนซ่อมบำรุงประจำเดือน`
       } else if (text.includes('โหลด') || text.includes('DTR') || text.includes('overload')) {
         reply = `### ⚡ ผลการประเมินการจ่ายโหลดแบบไดนามิก (DTR Assessment)\n**อิงตามมาตรฐาน IEEE C57.115:**\n\n- **สถานะปัจจุบัน:** ขณะนี้หม้อแปลงมี Headroom ปลอดภัยเหลืออยู่ **+${dtrHeadroomKva.toLocaleString()} kVA**\n- **คำตอบ:** Headroom ที่คำนวณได้คือ **${dtrHeadroomKva.toLocaleString()} kVA** — ตัวเลขนี้มาจากแบบจำลอง DTR ไม่ใช่การอนุมัติให้จ่ายโหลดเพิ่ม กรุณายืนยันกับอุณหภูมิ Hot-Spot จริง (ปัจจุบัน ${hotSpotTemp}°C, ขีดจำกัด 120°C) และสภาพโหลดหน้างานก่อนตัดสินใจทุกครั้ง\n\n💰 **การวิเคราะห์ความคุ้มค่า (Economic Arbitrage):**\n- การรันโหลดเพิ่ม 300 kVA เป็นเวลา 4 ชั่วโมง จะสร้างมูลค่าพลังงานไฟฟ้าประมาณ **+$132 USD**\n- ในขณะที่ค่าเสื่อมราคาของฉนวนกระดาษ (Aging Loss) เพิ่มขึ้นเพียง **-$0.85 USD** เท่านั้น ถือว่าคุ้มค่าอย่างยิ่ง\n- **คำแนะนำ:** แนะนำให้เปิดระบบ **Auto-Dispatch ONAF-1 Pre-Cooling** ไว้ล่วงหน้า 30 นาที เพื่อหน่วงอุณหภูมิไม่ให้พุ่งเร็วเกินไปครับ`
       } else if (text.includes('Bushing') || text.includes('บุชชิ่ง') || text.includes('tan delta')) {

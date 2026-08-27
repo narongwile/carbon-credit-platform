@@ -1907,15 +1907,16 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         </div>
       )}
 
-      {/* Floating Action Button for Copilot */}
+      {/* Floating Action Button for Copilot (Responsive: Compact Icon on Mobile, Full Pill on Desktop) */}
       <button
         onClick={() => setShowCopilotDrawer(true)}
-        className="fixed bottom-6 right-6 z-40 px-4 py-3 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs shadow-2xl flex items-center gap-2 border border-indigo-400/40 hover:scale-105 transition-all"
+        className="fixed bottom-5 right-4 sm:bottom-6 sm:right-6 z-40 p-3 sm:px-4 sm:py-3 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs shadow-2xl flex items-center gap-2 border border-indigo-400/40 hover:scale-105 transition-all"
         title="Open Industrial GenAI Diagnostics Copilot"
+        aria-label="Open Industrial GenAI Diagnostics Copilot"
       >
-        <Bot size={18} className="animate-pulse" />
-        <span>Ask Industrial AI Copilot</span>
-        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+        <Bot size={19} className="animate-pulse flex-shrink-0" />
+        <span className="hidden sm:inline">Ask Industrial AI Copilot</span>
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping flex-shrink-0" />
       </button>
 
       {/* Site management + Alarm event log + transport/connectivity timeline (Mobile logs tab / Desktop bottom) */}

@@ -10,8 +10,8 @@ import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeSitePanel from '@/components/device/NodeSitePanel'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
-import MyAlertSettings from '@/components/device/MyAlertSettings'
-import { ArrowLeft } from 'lucide-react'
+import Link from 'next/link'
+import { ArrowLeft, ExternalLink } from 'lucide-react'
 
 // Admin / Super Admin digital-twin node detail. Reuses the FIX dashboard
 // (3D twin + sensor readings + gauge + asset info + trend) for any node.
@@ -60,6 +60,33 @@ export default function NodeTwinClient() {
           <NodeReportButton nodeId={device.id} deviceName={device.name} domain={device.domain} />
         </div>
       </div>
+
+      {/* When device is a transformer, offer 1-click access to the dedicated Advanced APM Studio */}
+      {device.domain === 'transformer' && (
+        <div className="p-3.5 rounded-xl bg-gradient-to-r from-indigo-950/40 via-purple-950/30 to-indigo-950/40 border border-indigo-500/40 flex items-center justify-between gap-3 flex-wrap shadow-lg">
+          <div className="flex items-center gap-2.5">
+            <span className="text-base">⚡</span>
+            <div>
+              <div className="text-xs font-bold text-white flex items-center gap-2">
+                <span>หน้าหม้อแปลงไฟฟ้าแบบละเอียดพิเศษ (Tier-1 Transformer APM Studio)</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono">
+                  DGA · DTR · Bushing · 5-Threats
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                เปิดดูสามเหลี่ยมดูวาล์ว, อัตราเร่งเสื่อมกระดาษ RUL, ความจุบุชชิ่ง tan δ, กับดักฟ้าผ่า และ GenAI Copilot
+              </p>
+            </div>
+          </div>
+          <Link
+            href={`/admin/transformers/detail?id=${encodeURIComponent(device.id)}`}
+            className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-md transition-all flex items-center gap-1.5 whitespace-nowrap hover:scale-105"
+          >
+            <span>เปิดหน้า Transformer APM Studio</span>
+            <ExternalLink size={13} />
+          </Link>
+        </div>
+      )}
 
       <FixDashboard device={device} />
 
