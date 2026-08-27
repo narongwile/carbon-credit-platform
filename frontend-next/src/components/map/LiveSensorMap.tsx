@@ -86,6 +86,61 @@ const row = (k: string, v: string | number | null | undefined, suffix = ''): str
     ? ''
     : `<div style="${ROW}"><span style="${ROW_K}">${esc(k)}</span><span style="${ROW_V}">${esc(v)}${esc(suffix)}</span></div>`
 
+/** Compute 2D Convex Hull of lat/lng coordinates (Monotone Chain algorithm). */
+function getConvexHull(points: [number, number][]): [number, number][] {
+  if (points.length <= 2) return points
+  const sorted = [...points].sort((a, b) => (a[0] === b[0] ? a[1] - b[1] : a[0] - b[0]))
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) =>
+    (a[1] - o[1]) * (b[0] - o[0]) - (a[0] - o[0]) * (b[1] - o[1])
+
+  const lower: [number, number][] = []
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+      lower.pop()
+    }
+    lower.push(p)
+  }
+
+  const upper: [number, number][] = []
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const p = sorted[i]
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+      upper.pop()
+    }
+    upper.push(p)
+  }
+
+  lower.pop()
+  upper.pop()
+  return lower.concat(upper)
+}
+
+/** Expand convex hull outward slightly to give perimeter clearance around sensor markers. */
+function expandHull(hull: [number, number][], paddingLat = 0.0014, paddingLng = 0.0018): [number, number][] {
+  if (hull.length < 3) return hull
+  const cLat = hull.reduce((s, p) => s + p[0], 0) / hull.length
+  const cLng = hull.reduce((s, p) => s + p[1], 0) / hull.length
+  return hull.map(([lat, lng]) => {
+    const dLat = lat - cLat
+    const dLng = lng - cLng
+    const dist = Math.hypot(dLat, dLng) || 1
+    return [lat + (dLat / dist) * paddingLat, lng + (dLng / dist) * paddingLng]
+  })
+}
+
+/** Generate an approximate circular geofence polygon for single/clustered points. */
+function circularPolygon(centerLat: number, centerLng: number, radius = 0.0022, segments = 18): [number, number][] {
+  const points: [number, number][] = []
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * 2 * Math.PI
+    points.push([
+      centerLat + radius * Math.cos(angle),
+      centerLng + radius * Math.sin(angle) * 1.18,
+    ])
+  }
+  return points
+}
+
 export default function LiveSensorMap({
   nodes,
   height = '70vh',
@@ -122,6 +177,7 @@ export default function LiveSensorMap({
   const userLocRef = useRef<{ lat: number; lng: number } | null>(null)
   const addressMapRef = useRef<Map<string, string>>(new Map())
   const fittedRef = useRef(false)
+  const sitePolygonRef = useRef<any>(null)
 
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
   const [siteFilter, setSiteFilter] = useState<string>(initialSiteId || 'all')
@@ -178,15 +234,72 @@ export default function LiveSensorMap({
     })
   }, [nodes, siteFilter, statusFilter, domainFilter])
 
-  // Fly/fit to site bounds when a site is scoped
+  // Draw/update site transparent polygonal boundary (Google Polygonal Map style) & auto-fly/fit
   useEffect(() => {
-    if (siteFilter === 'all') return
     const L = LRef.current
     const map = mapRef.current
     if (!L || !map) return
+
+    // Clean up previous boundary polygon if any
+    if (sitePolygonRef.current) {
+      try {
+        map.removeLayer(sitePolygonRef.current)
+      } catch {}
+      sitePolygonRef.current = null
+    }
+
+    if (siteFilter === 'all') return
+
     const matched = nodes.filter((n) => n.siteId === siteFilter && Number.isFinite(n.lat) && Number.isFinite(n.lng))
+    const siteMeta = defaultSites.find((s) => s.id === siteFilter)
+    const siteName = siteMeta?.name || siteFilter
+
+    let polygonCoords: [number, number][] = []
+
+    if (matched.length >= 3) {
+      const pts = matched.map((n) => [n.lat, n.lng] as [number, number])
+      const hull = getConvexHull(pts)
+      polygonCoords = expandHull(hull, 0.0014, 0.0018)
+    } else if (matched.length > 0) {
+      const centerLat = matched.reduce((acc, n) => acc + n.lat, 0) / matched.length
+      const centerLng = matched.reduce((acc, n) => acc + n.lng, 0) / matched.length
+      polygonCoords = circularPolygon(centerLat, centerLng, 0.0022, 18)
+    } else if (siteMeta?.lat && siteMeta?.lng) {
+      polygonCoords = circularPolygon(siteMeta.lat, siteMeta.lng, 0.0025, 18)
+    }
+
+    if (polygonCoords.length >= 3) {
+      const poly = L.polygon(polygonCoords, {
+        color: '#6366f1',
+        weight: 2,
+        dashArray: '6, 6',
+        fillColor: '#6366f1',
+        fillOpacity: 0.14, // Google Polygonal Map style transparent color fill
+        interactive: true,
+      }).addTo(map)
+
+      poly.bindTooltip(
+        `<div style="font-family:sans-serif; padding:3px 5px;">
+           <div style="font-weight:700; color:#f8fafc; font-size:11px; display:flex; align-items:center; gap:4px;">
+             <span>🏢</span> <span>${esc(siteName)}</span>
+           </div>
+           <div style="font-size:10px; color:#cbd5e1; margin-top:2px;">ขอบเขตบริเวณโรงงาน (Site Geofence Perimeter)</div>
+           <div style="font-size:10px; color:#a5b4fc; font-family:monospace; margin-top:3px; border-top:1px solid rgba(255,255,255,0.1); padding-top:2px;">
+             ${matched.length} devices active in site scope
+           </div>
+         </div>`,
+        { sticky: true, className: 'gsm-map-tooltip' }
+      )
+
+      // Ensure boundary polygon sits underneath marker circles
+      if (poly.bringToBack) {
+        poly.bringToBack()
+      }
+      sitePolygonRef.current = poly
+    }
+
+    // Auto-fly/fit bounds
     if (!matched.length) {
-      const siteMeta = defaultSites.find((s) => s.id === siteFilter)
       if (siteMeta?.lat && siteMeta?.lng) {
         map.flyTo([siteMeta.lat, siteMeta.lng], 15, { duration: 1 })
       }
@@ -576,6 +689,7 @@ export default function LiveSensorMap({
         mapRef.current = null
       }
       markersRef.current.clear()
+      sitePolygonRef.current = null
       fittedRef.current = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
