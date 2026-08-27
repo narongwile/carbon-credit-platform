@@ -98,6 +98,48 @@ export default function PendingDevicesPage() {
   // tenant switcher), so they always use `orgId`/`selectedOrgId` instead.
   const sessionOrgId = useSessionOrgId('')
   const cardOrgId = isSuper ? orgId : sessionOrgId
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const handleCopy = useCallback(async (key: string, text: string, successLabel?: string) => {
+    let ok = false
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      }
+    } catch {
+      ok = false
+    }
+
+    if (!ok && typeof document !== 'undefined') {
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-999999px'
+        textarea.style.top = '-999999px'
+        textarea.setAttribute('readonly', '')
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        ok = document.execCommand('copy')
+        document.body.removeChild(textarea)
+      } catch {
+        ok = false
+      }
+    }
+
+    if (ok) {
+      setCopiedKey(key)
+      toast.success(`${successLabel || key} copied`)
+      setTimeout(() => {
+        setCopiedKey((cur) => (cur === key ? null : cur))
+      }, 2000)
+    } else {
+      toast.error(`Could not copy ${successLabel || key}`)
+    }
+  }, [])
+
   const [rows, setRows] = useState<PendingNode[]>([])
   const [depts, setDepts] = useState<Dept[]>([])
   const [orgs, setOrgs] = useState<Org[]>([])
@@ -472,27 +514,63 @@ export default function PendingDevicesPage() {
           <div className="rounded-lg p-3 space-y-1.5" style={inset}>
             <div className="flex items-center justify-between">
               <div className="text-[10px] text-slate-600 uppercase tracking-wider">Broker connection</div>
-              {isSuper && (
-                <button onClick={() => setMqttEditorOpen(true)}
-                  className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={surface}>
-                  <Settings2 size={10} /> Edit
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const allInfo = [
+                      `Host: ${mqttConn.host}`,
+                      `Port: ${mqttConn.port}`,
+                      `Username: ${mqttConn.username}`,
+                      `Password: ${mqttConn.password}`,
+                      `MQTT Client ID: ${cardOrgId}`,
+                    ].join('\n')
+                    handleCopy('all-conn', allInfo, 'All connection parameters')
+                  }}
+                  className={`text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 transition-colors ${
+                    copiedKey === 'all-conn'
+                      ? 'text-emerald-400 bg-emerald-500/10'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                  style={surface}
+                  title="Copy all connection parameters"
+                >
+                  {copiedKey === 'all-conn' ? <Check size={10} /> : <Copy size={10} />}
+                  <span>{copiedKey === 'all-conn' ? 'Copied' : 'Copy All'}</span>
                 </button>
-              )}
+                {isSuper && (
+                  <button onClick={() => setMqttEditorOpen(true)}
+                    className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1 text-indigo-400 hover:text-indigo-300" style={surface}>
+                    <Settings2 size={10} /> Edit
+                  </button>
+                )}
+              </div>
             </div>
             {([
-              ['Host', mqttConn.host],
-              ['Port', `${mqttConn.port} (${mqttConn.tls ? 'TLS' : 'plain TCP, no TLS'})`],
-              ['Username', mqttConn.username],
-              ['Password', mqttConn.password],
-              ['MQTT Client ID', cardOrgId],
-            ] as const).map(([label, value]) => (
-              <div key={label} className="flex items-center gap-1.5 text-[11px]">
-                <span className="text-slate-500 w-28 flex-shrink-0">{label}</span>
-                <span className="font-mono text-slate-300 truncate">{value}</span>
-                <button onClick={() => { navigator.clipboard?.writeText(value); toast.success(`${label} copied`) }}
-                  title={`Copy ${label}`} className="text-slate-600 hover:text-white flex-shrink-0"><Copy size={10} /></button>
-              </div>
-            ))}
+              { label: 'Host', display: mqttConn.host, raw: mqttConn.host },
+              { label: 'Port', display: `${mqttConn.port} (${mqttConn.tls ? 'TLS' : 'plain TCP, no TLS'})`, raw: String(mqttConn.port) },
+              { label: 'Username', display: mqttConn.username, raw: mqttConn.username },
+              { label: 'Password', display: mqttConn.password, raw: mqttConn.password },
+              { label: 'MQTT Client ID', display: cardOrgId, raw: cardOrgId },
+            ]).map(({ label, display, raw }) => {
+              const isCopied = copiedKey === label
+              return (
+                <div key={label} className="flex items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500 w-28 flex-shrink-0">{label}</span>
+                  <span className="font-mono text-slate-300 truncate select-all">{display}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(label, raw, label)}
+                    title={`Copy ${label} (${raw})`}
+                    className={`p-1 rounded flex-shrink-0 transition-colors cursor-pointer ${
+                      isCopied ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                    }`}
+                  >
+                    {isCopied ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </div>
+              )
+            })}
             <p className="text-[10px] text-amber-500/90 pt-1">
               Client ID must be set to this exact value — a shared broker account tells organizations apart ONLY by
               client ID. Get it wrong and the device connects fine but every publish is silently dropped.
@@ -513,6 +591,8 @@ export default function PendingDevicesPage() {
                   return acc
                 }, {})
                 const example = JSON.stringify({ nodeId: '<your-device-id>', ts: Date.now(), values: exampleValues }, null, 2)
+                const isTopicCopied = copiedKey === `topic-${domain}`
+                const isJsonCopied = copiedKey === `json-${domain}`
                 return (
                   <div key={domain} className="rounded-lg p-3" style={inset}>
                     <div className="flex items-center justify-between gap-2 mb-2">
@@ -526,12 +606,16 @@ export default function PendingDevicesPage() {
                     </div>
                     <div className="flex items-center gap-1.5 mb-2">
                       <Hash size={10} className="text-slate-600 flex-shrink-0" />
-                      <span className="font-mono text-[11px] text-slate-300 truncate" title={topic}>{topic}</span>
+                      <span className="font-mono text-[11px] text-slate-300 truncate select-all" title={topic}>{topic}</span>
                       <button
-                        onClick={() => { navigator.clipboard?.writeText(topic); toast.success('Topic copied') }}
-                        title="Copy topic" className="text-slate-600 hover:text-white flex-shrink-0"
+                        type="button"
+                        onClick={() => handleCopy(`topic-${domain}`, topic, 'Topic')}
+                        title="Copy topic"
+                        className={`p-1 rounded flex-shrink-0 transition-colors cursor-pointer ${
+                          isTopicCopied ? 'text-emerald-400 bg-emerald-500/10' : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                        }`}
                       >
-                        <Copy size={11} />
+                        {isTopicCopied ? <Check size={12} /> : <Copy size={12} />}
                       </button>
                     </div>
                     {spec && spec.paramKeys.length > 0 ? (
@@ -544,12 +628,19 @@ export default function PendingDevicesPage() {
                           ))}
                         </div>
                         <div className="relative">
-                          <pre className="text-[10px] text-slate-400 rounded-md p-2 overflow-x-auto font-mono" style={surface}>{example}</pre>
+                          <pre className="text-[10px] text-slate-400 rounded-md p-2 overflow-x-auto font-mono select-all" style={surface}>{example}</pre>
                           <button
-                            onClick={() => { navigator.clipboard?.writeText(example); toast.success('Payload example copied') }}
-                            title="Copy JSON" className="absolute top-1.5 right-1.5 text-slate-600 hover:text-white"
+                            type="button"
+                            onClick={() => handleCopy(`json-${domain}`, example, 'Payload example')}
+                            title="Copy JSON"
+                            className={`absolute top-1.5 right-1.5 px-2 py-0.5 rounded flex items-center gap-1 text-[10px] transition-colors cursor-pointer ${
+                              isJsonCopied
+                                ? 'text-emerald-400 bg-emerald-500/15 border border-emerald-500/30'
+                                : 'text-slate-400 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-700'
+                            }`}
                           >
-                            <Copy size={11} />
+                            {isJsonCopied ? <Check size={11} /> : <Copy size={11} />}
+                            <span>{isJsonCopied ? 'Copied' : 'Copy'}</span>
                           </button>
                         </div>
                         {/* The example implies these rules but never states them,
@@ -611,7 +702,21 @@ export default function PendingDevicesPage() {
               <div key={n.id} className="p-4 rounded-xl" style={surface}>
                 <div className="flex flex-wrap items-center gap-3 mb-3">
                   <span className={`w-2 h-2 rounded-full ${n.online ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
-                  <span className="font-mono text-sm text-white">{n.id}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="font-mono text-sm text-white select-all">{n.id}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(`node-${n.id}`, n.id, 'Device ID')}
+                      title={`Copy Device ID (${n.id})`}
+                      className={`p-1 rounded flex items-center transition-colors cursor-pointer ${
+                        copiedKey === `node-${n.id}`
+                          ? 'text-emerald-400 bg-emerald-500/15'
+                          : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {copiedKey === `node-${n.id}` ? <Check size={11} /> : <Copy size={11} />}
+                    </button>
+                  </div>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-400 font-medium">PENDING</span>
                   {isSuper && (
                     isOrphan ? (
@@ -634,7 +739,19 @@ export default function PendingDevicesPage() {
                 {n.mqtt_prefix && (
                   <div className="flex items-center gap-1.5 mb-2 text-[11px]">
                     <Hash size={11} className="text-slate-600 flex-shrink-0" />
-                    <span className="font-mono text-slate-500 truncate" title={n.mqtt_prefix}>{n.mqtt_prefix}</span>
+                    <span className="font-mono text-slate-500 truncate select-all" title={n.mqtt_prefix}>{n.mqtt_prefix}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(`prefix-${n.id}`, n.mqtt_prefix!, 'MQTT Topic')}
+                      title="Copy MQTT Topic"
+                      className={`p-1 rounded flex items-center transition-colors cursor-pointer flex-shrink-0 ${
+                        copiedKey === `prefix-${n.id}`
+                          ? 'text-emerald-400 bg-emerald-500/15'
+                          : 'text-slate-500 hover:text-white hover:bg-slate-800'
+                      }`}
+                    >
+                      {copiedKey === `prefix-${n.id}` ? <Check size={11} /> : <Copy size={11} />}
+                    </button>
                   </div>
                 )}
 
