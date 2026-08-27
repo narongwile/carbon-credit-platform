@@ -1344,18 +1344,77 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
 
           {/* Diagnostics Section (Visible on Desktop OR when mobileTab === 'diagnostics') */}
           <div className={mobileTab === 'diagnostics' ? 'block' : 'hidden lg:block'}>
-            <div className="rounded-xl p-4 mt-4 lg:mt-0 lg:mb-4 lg:mx-0" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+            <div className="rounded-xl p-4 mt-4 lg:mt-0 lg:mb-4 lg:mx-0 space-y-6" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
               <div className="flex flex-col 2xl:flex-row gap-8">
                 <div className="flex-1 min-w-[320px]">
-                  <DgaDuvalTriangle ch4={45} c2h4={35} c2h2={3} />
+                  <DgaDuvalTriangle
+                    h2={transformer.sensors?.hydrogen?.value ?? 65}
+                    ch4={45}
+                    c2h4={35}
+                    c2h2={3.2}
+                    c2h6={28}
+                  />
                 </div>
                 <div className="hidden 2xl:block w-px bg-[#1e2433]" />
                 <div className="flex-1 min-w-[320px]">
                   <InsulationAgingRul 
                     hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 60) + 15} 
                     hoursInService={52000} 
-                    oilTemp={transformer.sensors?.oilTemperature?.value ?? 60} 
+                    oilTemp={transformer.sensors?.oilTemperature?.value ?? 60}
+                    moistureInOil={transformer.sensors?.moisture?.value ?? 22}
+                    assetId={transformer.id || 'TRF-01'}
                   />
+                </div>
+              </div>
+
+              {/* IEEE C57.104-2019 DGA Gas Generation Rate (RoG) Matrix */}
+              <div className="pt-4 border-t border-slate-800 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Activity size={15} className="text-emerald-400" />
+                    <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-500/40 font-bold uppercase tracking-wider">
+                    Overall: Condition 2 (Caution · RoG Monitored)
+                  </span>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
+                        <th className="py-2 px-2.5">Gas Species</th>
+                        <th className="py-2 px-2.5">Current (ppm)</th>
+                        <th className="py-2 px-2.5">24h Rate (Δppm/day)</th>
+                        <th className="py-2 px-2.5">7d Rate (Δppm/day)</th>
+                        <th className="py-2 px-2.5">90th %ile Limit</th>
+                        <th className="py-2 px-2.5">Condition Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {[
+                        { gas: 'Hydrogen (H2)', val: transformer.sensors?.hydrogen?.value ?? 65, rog24: '+2.1', rog7d: '+1.4', limit: '80 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                        { gas: 'Methane (CH4)', val: 45, rog24: '+3.5', rog7d: '+2.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                        { gas: 'Acetylene (C2H2)', val: 3.2, rog24: '+0.1', rog7d: '+0.05', limit: '2.0 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
+                        { gas: 'Ethylene (C2H4)', val: 35, rog24: '+4.2', rog7d: '+3.1', limit: '50 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
+                        { gas: 'Ethane (C2H6)', val: 28, rog24: '+1.0', rog7d: '+0.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                        { gas: 'Carbon Monoxide (CO)', val: 310, rog24: '+12.0', rog7d: '+8.5', limit: '900 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                      ].map((row) => (
+                        <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
+                          <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
+                          <td className="py-2 px-2.5 font-bold text-white">{row.val}</td>
+                          <td className="py-2 px-2.5 text-cyan-300">{row.rog24}</td>
+                          <td className="py-2 px-2.5 text-slate-300">{row.rog7d}</td>
+                          <td className="py-2 px-2.5 text-slate-400">{row.limit}</td>
+                          <td className="py-2 px-2.5">
+                            <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{ color: row.color, backgroundColor: `${row.color}15`, border: `1px solid ${row.color}30` }}>
+                              {row.cond}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
