@@ -310,6 +310,22 @@ export default function AlarmNotificationPage() {
               )
             })}
           </div>
+
+          {/* Dedicated card footer for Notification Channels */}
+          <div className="pt-3 flex flex-wrap items-center justify-between gap-3 border-t border-slate-800/80 mt-2">
+            <span className="text-xs text-slate-400">
+              {channelDept
+                ? `Targets apply to devices owned by ${orgDepts.find((d) => d.id === channelDept)?.name ?? 'this department'}`
+                : 'Targets apply to whole organization (fallback for every device)'}
+            </span>
+            <button
+              onClick={save}
+              className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold text-white transition-all shadow-sm"
+              style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80', border: '1px solid #4ade80' } : gradient}
+            >
+              <Save size={14} /> {saved ? 'Channels Saved!' : (channelDept ? 'Save Department Channels' : 'Save Notification Channels')}
+            </button>
+          </div>
         </div>
 
         {/* Enterprise Email Alarm Template & Custom SOP Configurator */}
@@ -337,10 +353,6 @@ export default function AlarmNotificationPage() {
           </div>
         </div>
       </div>
-
-      <button onClick={save} className="flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-medium text-white" style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
-        <Save size={16} /> {saved ? 'Saved!' : 'Save Settings'}
-      </button>
     </div>
   )
 }
