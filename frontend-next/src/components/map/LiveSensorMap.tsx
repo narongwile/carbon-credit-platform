@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
 import { api, type NodeLatest } from '@/lib/api'
@@ -181,6 +181,8 @@ export default function LiveSensorMap({
 
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
   const [siteFilter, setSiteFilter] = useState<string>(initialSiteId || 'all')
+  const siteFilterRef = useRef(siteFilter)
+  siteFilterRef.current = siteFilter
   const [statusFilter, setStatusFilter] = useState<'all' | 'critical' | 'warning' | 'healthy'>('all')
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
   const [locating, setLocating] = useState(false)
@@ -235,7 +237,7 @@ export default function LiveSensorMap({
   }, [nodes, siteFilter, statusFilter, domainFilter])
 
   // Draw/update site transparent polygonal boundary (Google Polygonal Map style) & auto-fly/fit
-  useEffect(() => {
+  const syncSiteBoundary = useCallback((targetSiteId: string) => {
     const L = LRef.current
     const map = mapRef.current
     if (!L || !map) return
@@ -248,11 +250,11 @@ export default function LiveSensorMap({
       sitePolygonRef.current = null
     }
 
-    if (siteFilter === 'all') return
+    if (targetSiteId === 'all') return
 
-    const matched = nodes.filter((n) => n.siteId === siteFilter && Number.isFinite(n.lat) && Number.isFinite(n.lng))
-    const siteMeta = defaultSites.find((s) => s.id === siteFilter)
-    const siteName = siteMeta?.name || siteFilter
+    const matched = nodes.filter((n) => n.siteId === targetSiteId && Number.isFinite(n.lat) && Number.isFinite(n.lng))
+    const siteMeta = defaultSites.find((s) => s.id === targetSiteId)
+    const siteName = siteMeta?.name || targetSiteId
 
     let polygonCoords: [number, number][] = []
 
@@ -313,7 +315,11 @@ export default function LiveSensorMap({
         map.fitBounds(group.getBounds().pad(0.35), { duration: 1 })
       } catch {}
     }
-  }, [siteFilter, nodes])
+  }, [nodes])
+
+  useEffect(() => {
+    syncSiteBoundary(siteFilter)
+  }, [siteFilter, syncSiteBoundary])
 
   const visibleNodesRef = useRef(visibleNodes)
   visibleNodesRef.current = visibleNodes
@@ -680,6 +686,7 @@ export default function LiveSensorMap({
       })
 
       syncMarkers()
+      syncSiteBoundary(siteFilterRef.current)
     })()
 
     return () => {
