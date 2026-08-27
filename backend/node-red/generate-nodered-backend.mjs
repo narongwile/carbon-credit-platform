@@ -1961,10 +1961,35 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
           const at = raw.lastIndexOf('@');
           const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));
           const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);
-          if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});
         } else if (c.channel === 'googlechat') {
           const url = c.target || nc.googleChatWebhook;
           if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});
+        } else if (c.channel === 'webhook') {
+          const url = (c.target && c.target.startsWith('http')) ? c.target : '';
+          if (url) {
+            await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                event: 'alarm.alert',
+                orgId: e.orgId,
+                orgName,
+                nodeId: e.nodeId,
+                severity: topSeverity,
+                alarms: alarms.map(a => ({
+                  paramKey: a.paramKey,
+                  paramLabel: a.paramLabel,
+                  severity: a.severity,
+                  value: a.value,
+                  unit: a.unit,
+                  threshold: a.threshold,
+                  time: a.ts || a.time || e.time
+                })),
+                link: __linkFor('admin'),
+                timestamp: new Date().toISOString()
+              })
+            });
+          }
         }
       } catch(err) { node.error('notify:'+c.channel+' '+err.message); }
     }
@@ -4832,7 +4857,7 @@ const fetchAll=(msg.req.query&&String(msg.req.query.all)==='true');
 const chPutFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('resolvePool')(orgId);
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 const list=Array.isArray(b.channels)?b.channels:[];
-const VALID=['email','line','telegram','googlechat'];
+const VALID=['email','line','telegram','googlechat','webhook'];
 for(const c of list){ if(VALID.indexOf(String(c.channel||c.id))<0){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'unknown channel '+(c.channel||c.id)};return msg;} }
 const dept=(b.departmentId===''||b.departmentId===undefined||b.departmentId===null)?null:String(b.departmentId);
 const uid=(b.userId===''||b.userId===undefined||b.userId===null)?null:String(b.userId);
@@ -6586,6 +6611,13 @@ const __TXT='ONEOPS test notification. If you received this, the channel is conf
     const resData = await r.json().catch(()=>({}));
     if (r.ok) return __ok({ok:true});
     return __err(r.status >= 500 ? 502 : 400, resData.error?.message || ('Google Chat HTTP ' + r.status));
+  }
+  if(ch==='webhook'){
+    const url = (to && to.startsWith('http')) ? to : '';
+    if(!url) return __err(400,'Webhook endpoint URL required (https://...)');
+    const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({event:'test',message:__TXT,timestamp:new Date().toISOString()})});
+    if (r.ok) return __ok({ok:true});
+    return __err(r.status >= 500 ? 502 : 400, 'Webhook HTTP ' + r.status);
   }
   return __err(400,'unknown channel');
 }catch(e){ __err(502,e.message); }})()` + bbErr

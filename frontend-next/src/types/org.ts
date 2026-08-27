@@ -86,7 +86,7 @@ export interface DashboardTheme {
   accent: string
 }
 
-export type NotificationChannelId = 'email' | 'line' | 'telegram' | 'googlechat'
+export type NotificationChannelId = 'email' | 'line' | 'telegram' | 'googlechat' | 'webhook'
 
 export interface NotificationChannelConfig {
   id: NotificationChannelId

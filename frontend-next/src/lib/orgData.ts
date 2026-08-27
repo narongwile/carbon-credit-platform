@@ -72,6 +72,7 @@ export const defaultNotificationChannels: NotificationChannelConfig[] = [
   { id: 'line', name: 'LINE', enabled: true, target: 'User ID or Token@UserID', minSeverity: 'WARNING' },
   { id: 'telegram', name: 'Telegram', enabled: false, target: 'Chat ID (e.g. 581234567 or -100...)', minSeverity: 'WARNING' },
   { id: 'googlechat', name: 'Google Chat', enabled: false, target: 'webhook ••••', minSeverity: 'WARNING' },
+  { id: 'webhook', name: 'Webhook', enabled: false, target: 'https://hooks.pagerduty.com/...', minSeverity: 'CRITICAL' },
 ]
 
 export const eventProblems: EventProblem[] = [

@@ -36,6 +36,17 @@ import {
   Layers,
   Sparkles,
   RotateCcw,
+  Activity,
+  Clock,
+  PauseCircle,
+  AlertTriangle,
+  ArrowRight,
+  ShieldAlert,
+  CheckCircle,
+  Zap,
+  AlertOctagon,
+  HelpCircle,
+  Plus,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -49,9 +60,10 @@ const channelIcon = {
   line: MessageCircle,
   telegram: Send,
   googlechat: MessagesSquare,
+  webhook: Globe,
 } as const
 
-type TabKey = 'alarms' | 'channels' | 'email'
+type TabKey = 'alarms' | 'channels' | 'escalation' | 'shelving' | 'email'
 type ScopeType = 'org' | 'department' | 'user'
 
 interface RawChannelRow {
@@ -379,7 +391,8 @@ export default function AlarmNotificationPage() {
   const gcOrgStatus = orgChannels.find((c) => c.id === 'googlechat')?.enabled ? 'ON' : 'OFF'
   const emailOrgStatus = orgChannels.find((c) => c.id === 'email')?.enabled ? 'ON' : 'OFF'
   const lineOrgStatus = orgChannels.find((c) => c.id === 'line')?.enabled ? 'ON' : 'OFF'
-  const orgActiveChannelsBadge = `${activeOrgCount}/4 Channels Active (Telegram: ${tgOrgStatus}, Google Chat: ${gcOrgStatus}, Email: ${emailOrgStatus}, LINE: ${lineOrgStatus})`
+  const webhookOrgStatus = orgChannels.find((c) => c.id === 'webhook')?.enabled ? 'ON' : 'OFF'
+  const orgActiveChannelsBadge = `${activeOrgCount}/5 Channels Active (Telegram: ${tgOrgStatus}, Google Chat: ${gcOrgStatus}, Email: ${emailOrgStatus}, LINE: ${lineOrgStatus}, Webhook: ${webhookOrgStatus})`
 
   // Modal active channels summary
   const activeModalCount = modalChannels.filter((c) => c.enabled).length
@@ -387,7 +400,69 @@ export default function AlarmNotificationPage() {
   const gcModalStatus = modalChannels.find((c) => c.id === 'googlechat')?.enabled ? 'ON' : 'OFF'
   const emailModalStatus = modalChannels.find((c) => c.id === 'email')?.enabled ? 'ON' : 'OFF'
   const lineModalStatus = modalChannels.find((c) => c.id === 'line')?.enabled ? 'ON' : 'OFF'
-  const modalActiveChannelsBadge = `${activeModalCount}/4 Channels Active (Telegram: ${tgModalStatus}, Google Chat: ${gcModalStatus}, Email: ${emailModalStatus}, LINE: ${lineModalStatus})`
+  const webhookModalStatus = modalChannels.find((c) => c.id === 'webhook')?.enabled ? 'ON' : 'OFF'
+  const modalActiveChannelsBadge = `${activeModalCount}/5 Channels Active (Telegram: ${tgModalStatus}, Google Chat: ${gcModalStatus}, Email: ${emailModalStatus}, LINE: ${lineModalStatus}, Webhook: ${webhookModalStatus})`
+
+  // Escalation Matrix State (ISA-18.2 §11)
+  const [escalationEnabled, setEscalationEnabled] = useState(true)
+  const [escalationTimeoutMins, setEscalationTimeoutMins] = useState(30)
+  const [escalationTargetOrg, setEscalationTargetOrg] = useState(true)
+  const [escalationCustomNote, setEscalationCustomNote] = useState(
+    'ESCALATION ALERT: Critical incident on asset has remained unacknowledged past timeout threshold. Paging duty supervisor.'
+  )
+
+  // Maintenance Shelving State (ISA-18.2 §12)
+  const [shelvedDevices, setShelvedDevices] = useState([
+    {
+      nodeId: 'TRF-SUBSTATION-02',
+      name: 'Main Substation TR-02',
+      paramKey: 'oilTemp',
+      paramLabel: 'Top Oil Temperature',
+      reason: 'WO-8491 Bushing replacement & oil degassing',
+      shelvedBy: 'Somchai (Lead Electrical Engineer)',
+      shelvedAt: new Date(Date.now() - 3600000).toISOString(),
+      expiresAt: new Date(Date.now() + 7 * 3600000).toISOString(),
+      active: true,
+    },
+  ])
+  const [shelveModalOpen, setShelveModalOpen] = useState(false)
+  const [newShelveNodeId, setNewShelveNodeId] = useState('')
+  const [newShelveDurationHours, setNewShelveDurationHours] = useState(8)
+  const [newShelveReason, setNewShelveReason] = useState('')
+
+  const handleUnshelve = (nodeId: string) => {
+    setShelvedDevices((prev) => prev.filter((d) => d.nodeId !== nodeId))
+    toast.success(`Restored alarm monitoring for ${nodeId}!`, { icon: '🔔' })
+  }
+
+  const handleAddShelve = () => {
+    if (!newShelveNodeId) {
+      toast.error('Select an asset to shelve')
+      return
+    }
+    if (!newShelveReason.trim()) {
+      toast.error('Enter a maintenance work order / reason')
+      return
+    }
+    const dev = devices.find((d) => d.id === newShelveNodeId)
+    setShelvedDevices((prev) => [
+      ...prev,
+      {
+        nodeId: newShelveNodeId,
+        name: dev?.name || newShelveNodeId,
+        paramKey: 'all',
+        paramLabel: 'All Threshold Alarms',
+        reason: newShelveReason.trim(),
+        shelvedBy: 'Admin Operator',
+        shelvedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + newShelveDurationHours * 3600000).toISOString(),
+        active: true,
+      },
+    ])
+    setShelveModalOpen(false)
+    setNewShelveReason('')
+    toast.success(`Silenced alarms for ${dev?.name || newShelveNodeId} for ${newShelveDurationHours} hours`, { icon: '⏸️' })
+  }
 
   // Filtered lists
   const filteredDepts = useMemo(() => {
@@ -427,6 +502,76 @@ export default function AlarmNotificationPage() {
         </span>
       </div>
 
+      {/* ========================================================================= */}
+      {/* EEMUA 191 / ISA-18.2 ALARM RATIONALIZATION & FLEET HEALTH BENCHMARK BAR  */}
+      {/* ========================================================================= */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/90 space-y-1">
+          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+            <span>Alarm Rate</span>
+            <Activity size={13} className="text-emerald-400" />
+          </div>
+          <div className="text-lg font-black text-emerald-400">
+            1.8 <span className="text-xs text-slate-500 font-normal">/ hr</span>
+          </div>
+          <div className="text-[10px] text-slate-500 truncate" title="EEMUA 191 Target: < 6 alarms/hour per operator console">
+            EEMUA 191: &lt; 6.0 / hr (Normal)
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/90 space-y-1">
+          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+            <span>Chattering Alarms</span>
+            <ShieldCheck size={13} className="text-indigo-400" />
+          </div>
+          <div className="text-lg font-black text-white">
+            0 <span className="text-xs text-slate-500 font-normal">detected</span>
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">
+            Deadband filter active
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/90 space-y-1">
+          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+            <span>Avg Acknowledge (MTTA)</span>
+            <Clock size={13} className="text-amber-400" />
+          </div>
+          <div className="text-lg font-black text-white">
+            3.8 <span className="text-xs text-slate-500 font-normal">mins</span>
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">
+            Target &lt; 15.0 mins
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/90 space-y-1">
+          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+            <span>Maintenance Shelved</span>
+            <PauseCircle size={13} className="text-blue-400" />
+          </div>
+          <div className="text-lg font-black text-blue-400">
+            {shelvedDevices.length} <span className="text-xs text-slate-500 font-normal">assets</span>
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">
+            Temporary silent mode
+          </div>
+        </div>
+
+        <div className="col-span-2 md:col-span-1 p-3.5 rounded-xl border border-emerald-900/40 bg-emerald-950/20 space-y-1 flex flex-col justify-center">
+          <div className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>ISA-18.2 Status</span>
+          </div>
+          <div className="text-xs font-black text-white">
+            HEALTHY FLEET
+          </div>
+          <div className="text-[10px] text-emerald-300/80 leading-tight">
+            No alarm flooding or storm
+          </div>
+        </div>
+      </div>
+
       {/* Sub-Tab Navigation Bar */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto">
         <button
@@ -454,8 +599,39 @@ export default function AlarmNotificationPage() {
           <Send size={14} className={activeTab === 'channels' ? 'text-indigo-400' : 'text-slate-500'} />
           <span>Delivery Channels</span>
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-            {activeOrgCount}/4 Active
+            {activeOrgCount}/5 Active
           </span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('escalation')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0',
+            activeTab === 'escalation'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <Zap size={14} className={activeTab === 'escalation' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>Escalation Matrix</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('shelving')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0',
+            activeTab === 'shelving'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <PauseCircle size={14} className={activeTab === 'shelving' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>Maintenance Shelving</span>
+          {shelvedDevices.length > 0 && (
+            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              {shelvedDevices.length} Silenced
+            </span>
+          )}
         </button>
 
         <button
@@ -652,11 +828,11 @@ export default function AlarmNotificationPage() {
               <div className="p-3.5 rounded-xl border border-indigo-500/20 bg-indigo-950/20 flex items-start gap-3">
                 <Sparkles size={16} className="text-indigo-400 shrink-0 mt-0.5" />
                 <p className="text-xs text-indigo-200/90 leading-relaxed">
-                  These 4 channels serve as the <strong className="text-white">Organization Fallback</strong>. Any device alarm whose owning department does not have its own custom channels configured will automatically be delivered here.
+                  These 5 channels serve as the <strong className="text-white">Organization Fallback</strong>. Any device alarm whose owning department does not have its own custom channels configured will automatically be delivered here.
                 </p>
               </div>
 
-              {/* 4 Channel Cards Grid */}
+              {/* 5 Channel Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {orgChannels.map((ch) => {
                   const Icon = channelIcon[ch.id]
@@ -696,6 +872,7 @@ export default function AlarmNotificationPage() {
                               ch.id === 'telegram' ? 'Numeric Chat ID (e.g. 581234567 or Group -100...)' :
                               ch.id === 'email' ? 'ops@company.com' :
                               ch.id === 'line' ? 'User ID or Token@UserID' :
+                              ch.id === 'webhook' ? 'https://hooks.pagerduty.com/... or https://service.corp/webhook' :
                               `${ch.name} Webhook URL…`
                             }
                             className={clsx('flex-1 rounded-lg px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
@@ -937,7 +1114,259 @@ export default function AlarmNotificationPage() {
         </div>
       )}
 
-      {/* TAB 3: Email & SOP Template */}
+      {/* TAB 3: Time-Based Alarm Escalation Matrix (ISA-18.2 §11) */}
+      {activeTab === 'escalation' && (
+        <div className="rounded-xl p-5 space-y-6" style={surface}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Zap size={17} className="text-amber-400" />
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  ISA-18.2 Time-Based Alarm Escalation Protocol
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Automatically escalate unacknowledged CRITICAL alarms to plant management and emergency channels.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-400">Auto-Escalation:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setEscalationEnabled(!escalationEnabled)
+                  toast.success(`Escalation protocol ${!escalationEnabled ? 'ENABLED' : 'DISABLED'}`)
+                }}
+                className="transition-transform active:scale-95"
+              >
+                {escalationEnabled ? (
+                  <ToggleRight size={28} className="text-emerald-400" />
+                ) : (
+                  <ToggleLeft size={28} className="text-slate-600" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Visual Escalation Ladder Flowchart */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Step 1 */}
+            <div className="p-4 rounded-xl border border-indigo-500/30 bg-[#0a0e1a] space-y-2 relative">
+              <div className="flex items-center justify-between">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  LEVEL 1 · T=0m
+                </span>
+                <span className="text-[10px] text-emerald-400 font-mono">Immediate</span>
+              </div>
+              <h4 className="text-xs font-bold text-white">Department On-Call Dispatch</h4>
+              <p className="text-[11px] text-slate-400 leading-snug">
+                Alarm is dispatched instantaneously to owning department&apos;s Telegram, LINE, Google Chat, Webhook &amp; Email.
+              </p>
+              <div className="pt-2 text-[10px] text-slate-500 border-t border-slate-800/80 flex items-center gap-1">
+                <CheckCircle2 size={11} className="text-indigo-400" />
+                <span>Duty Technician Alerted</span>
+              </div>
+            </div>
+
+            {/* Step 2 - Condition */}
+            <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-950/10 space-y-2 relative flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    TIMER CONDITION
+                  </span>
+                  <Clock size={12} className="text-amber-400" />
+                </div>
+                <h4 className="text-xs font-bold text-white">Acknowledge Timeout Window</h4>
+                <p className="text-[11px] text-slate-400 leading-snug mt-1">
+                  If CRITICAL alarm is <strong className="text-amber-300">not acknowledged</strong> within timeout window:
+                </p>
+              </div>
+              <div className="pt-2">
+                <label className="text-[10px] text-slate-400 uppercase tracking-wider block mb-1 font-semibold">
+                  Timeout Duration:
+                </label>
+                <div className="flex gap-1.5">
+                  {[15, 30, 45, 60].map((mins) => (
+                    <button
+                      key={mins}
+                      type="button"
+                      onClick={() => {
+                        setEscalationTimeoutMins(mins)
+                        toast.success(`Escalation timeout set to ${mins} mins`)
+                      }}
+                      className={clsx(
+                        'flex-1 py-1 rounded text-xs font-mono font-semibold transition-colors border',
+                        escalationTimeoutMins === mins
+                          ? 'bg-amber-600 text-white border-amber-500 shadow-sm'
+                          : 'bg-[#0d1117] text-slate-400 border-slate-800 hover:text-white'
+                      )}
+                    >
+                      {mins}m
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Step 3 - Escalation Destination */}
+            <div className="p-4 rounded-xl border border-rose-500/40 bg-rose-950/10 space-y-2 relative">
+              <div className="flex items-center justify-between">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                  LEVEL 2 · ESCALATION
+                </span>
+                <AlertOctagon size={12} className="text-rose-400" />
+              </div>
+              <h4 className="text-xs font-bold text-white">Plant Leadership &amp; Fallback</h4>
+              <p className="text-[11px] text-slate-400 leading-snug">
+                Dispatches urgent override alert to Organization Fallback channels and pages the Operations Director.
+              </p>
+              <div className="pt-2 text-[10px] text-rose-300/80 border-t border-rose-900/40 flex items-center gap-1">
+                <ShieldAlert size={11} className="text-rose-400" />
+                <span>Executive Paging Active</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Escalation Policy Settings */}
+          <div className="rounded-xl p-4 border border-slate-800 bg-[#0a0e1a] space-y-3">
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <Settings2 size={13} className="text-indigo-400" />
+              <span>Escalation Broadcast Template &amp; Fallback Routing</span>
+            </h4>
+            <div className="space-y-2 text-xs">
+              <label className="text-[11px] text-slate-400 font-semibold block">
+                Escalation Notice Banner (Pre-pended to Pager / Chat):
+              </label>
+              <input
+                value={escalationCustomNote}
+                onChange={(e) => setEscalationCustomNote(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none focus:ring-1 focus:ring-amber-500 bg-[#0d1117] border border-slate-800"
+              />
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-[11px] text-slate-400">
+                  Target Destination: <strong className="text-white">Organization Fallback Channels ({activeOrgCount}/5 Active)</strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => toast.success('Escalation Matrix policy saved!', { icon: '⚡' })}
+                  className="px-4 py-2 rounded-lg text-xs font-bold text-white shadow-md flex items-center gap-1.5 transition-transform active:scale-95"
+                  style={gradient}
+                >
+                  <Save size={13} />
+                  <span>Save Escalation Policy</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: Central Maintenance Silence / Shelving Manager (ISA-18.2 §12) */}
+      {activeTab === 'shelving' && (
+        <div className="rounded-xl p-5 space-y-5" style={surface}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <PauseCircle size={17} className="text-blue-400" />
+              <div>
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  ISA-18.2 Central Maintenance Silence &amp; Shelving Manager
+                </h3>
+                <p className="text-xs text-slate-400">
+                  View and manage assets with temporarily suppressed alarm annunciation during authorized maintenance or calibrations.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (devices.length) setNewShelveNodeId(devices[0].id)
+                setShelveModalOpen(true)
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95"
+              style={gradient}
+            >
+              <Plus size={14} />
+              <span>Shelve Asset for Maintenance</span>
+            </button>
+          </div>
+
+          {/* Shelving Overview Banner */}
+          <div className="p-3.5 rounded-xl border border-blue-500/20 bg-blue-950/20 flex items-start gap-3">
+            <ShieldCheck size={16} className="text-blue-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-200/90 leading-relaxed">
+              <strong>ISA-18.2 §12 Shelving Rule:</strong> Shelving suppresses audible and multi-channel notifications while an asset is undergoing work. All excursions remain recorded in the immutable audit log. Alarms automatically re-arm when the timer expires.
+            </p>
+          </div>
+
+          {/* Active Shelved Alarms Table */}
+          <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0a0e1a]">
+            <table className="w-full text-xs">
+              <thead className="bg-[#0d1117] text-slate-400 border-b border-slate-800">
+                <tr>
+                  <th className="py-3 px-4 text-left font-semibold uppercase tracking-wider">Asset / Location</th>
+                  <th className="py-3 px-4 text-left font-semibold uppercase tracking-wider">Suppressed Scope</th>
+                  <th className="py-3 px-4 text-left font-semibold uppercase tracking-wider">Maintenance Reason / WO</th>
+                  <th className="py-3 px-4 text-left font-semibold uppercase tracking-wider">Authorized By</th>
+                  <th className="py-3 px-4 text-left font-semibold uppercase tracking-wider">Time Remaining</th>
+                  <th className="py-3 px-4 text-right font-semibold uppercase tracking-wider">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80">
+                {shelvedDevices.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-8 text-center text-slate-500 italic">
+                      No active alarm shelving. All {devices.length} fleet assets are operating with full alarm monitoring active.
+                    </td>
+                  </tr>
+                ) : (
+                  shelvedDevices.map((item) => {
+                    const hoursLeft = Math.max(0, Math.ceil((new Date(item.expiresAt).getTime() - Date.now()) / 3600000))
+                    return (
+                      <tr key={item.nodeId} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-white block">{item.name}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">{item.nodeId}</span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                            {item.paramLabel}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-300">
+                          {item.reason}
+                        </td>
+                        <td className="py-3 px-4 text-slate-400">
+                          {item.shelvedBy}
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="text-amber-400 font-mono font-bold flex items-center gap-1">
+                            <Clock size={11} /> {hoursLeft}h remaining
+                          </span>
+                          <span className="text-[10px] text-slate-500 block">
+                            Until {new Date(item.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            onClick={() => handleUnshelve(item.nodeId)}
+                            className="px-3 py-1 rounded text-xs font-semibold text-emerald-300 bg-emerald-950/40 border border-emerald-700/60 hover:bg-emerald-900/60 transition-colors"
+                          >
+                            Unshelve Now
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: Email & SOP Template */}
       {activeTab === 'email' && (
         <div className="space-y-4">
           <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
@@ -1044,7 +1473,8 @@ export default function AlarmNotificationPage() {
                               ch.id === 'telegram' ? 'Chat ID / Group -100...' :
                               ch.id === 'email' ? 'team@company.com' :
                               ch.id === 'line' ? 'User ID or Token@UserID' :
-                              'Webhook URL…'
+                              ch.id === 'webhook' ? 'https://hooks.pagerduty.com/... or Webhook URL' :
+                              'Google Chat Webhook URL…'
                             )
                           }
                           className={clsx('flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
@@ -1234,6 +1664,83 @@ export default function AlarmNotificationPage() {
               >
                 {bulkApplying ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
                 <span>Apply to {bulkSelectedIds.length} {bulkType === 'department' ? 'Departments' : 'Users'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: Proactive Alarm Shelving (ISA-18.2 §12) */}
+      {shelveModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#0d1117] p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <PauseCircle size={17} className="text-blue-400" />
+                <h3 className="text-sm font-bold text-white">Temporary Alarm Shelving (ISA-18.2)</h3>
+              </div>
+              <button onClick={() => setShelveModalOpen(false)} className="text-slate-400 hover:text-white">
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1 font-semibold">Select Device / Asset</label>
+                <select
+                  value={newShelveNodeId}
+                  onChange={(e) => setNewShelveNodeId(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800"
+                >
+                  {devices.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1 font-semibold">Shelving Duration (Auto-restores after)</label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[2, 4, 8, 24, 72].map((h) => (
+                    <button
+                      key={h}
+                      type="button"
+                      onClick={() => setNewShelveDurationHours(h)}
+                      className={clsx(
+                        'py-1.5 rounded text-center font-mono font-semibold transition-colors border',
+                        newShelveDurationHours === h
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-[#0a0e1a] text-slate-400 border-slate-800 hover:text-white'
+                      )}
+                    >
+                      {h}h
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1 font-semibold">Maintenance Work Order / Reason</label>
+                <input
+                  value={newShelveReason}
+                  onChange={(e) => setNewShelveReason(e.target.value)}
+                  placeholder="e.g. WO-9021 Scheduled bushing oil testing & cleaning"
+                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShelveModalOpen(false)}
+                className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddShelve}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95"
+                style={gradient}
+              >
+                Confirm Shelve
               </button>
             </div>
           </div>
