@@ -35,6 +35,7 @@ import {
   Copy,
   Layers,
   Sparkles,
+  RotateCcw,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -174,6 +175,7 @@ export default function AlarmNotificationPage() {
   const [modalChannels, setModalChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
   const [modalSaving, setModalSaving] = useState(false)
   const [modalSaved, setModalSaved] = useState(false)
+  const [modalHasCustom, setModalHasCustom] = useState(false)
   const [modalTestingChannel, setModalTestingChannel] = useState<string | null>(null)
 
   // Bulk Apply / Clone Modal State
@@ -193,6 +195,7 @@ export default function AlarmNotificationPage() {
     )
 
     if (matching.length > 0) {
+      setModalHasCustom(true)
       setModalChannels(
         defaultNotificationChannels.map((dc) => {
           const row = matching.find((r) => r.channel === dc.id)
@@ -211,6 +214,7 @@ export default function AlarmNotificationPage() {
       // Fetch fresh
       const rows = await api.orgChannels(orgId, type === 'department' ? id : undefined, type === 'user' ? id : undefined)
       if (rows && rows.length > 0) {
+        setModalHasCustom(true)
         setModalChannels(
           defaultNotificationChannels.map((dc) => {
             const row = rows.find((r) => r.channel === dc.id)
@@ -226,14 +230,35 @@ export default function AlarmNotificationPage() {
           })
         )
       } else {
+        setModalHasCustom(false)
         setModalChannels(defaultNotificationChannels)
       }
     }
   }
 
-  const copyOrgDefaultsIntoModal = () => {
-    setModalChannels(orgChannels.map((c) => ({ ...c })))
-    toast.success('Loaded values from Organization Fallback!')
+  const revertToOrgFallback = async () => {
+    if (!modalEntity) return
+    const isDept = modalEntity.type === 'department'
+    const confirm = window.confirm(
+      `Revert ${modalEntity.name} to Organization Fallback?\n\nThis will remove all custom channels for this ${isDept ? 'department' : 'user'}, and it will immediately follow the organization-wide fallback destinations.`
+    )
+    if (!confirm) return
+    setModalSaving(true)
+    try {
+      await api.putOrgChannels(
+        orgId,
+        [],
+        isDept ? modalEntity.id : undefined,
+        !isDept ? modalEntity.id : undefined
+      )
+      toast.success(`Reverted ${modalEntity.name} to Organization Fallback!`)
+      reloadAllChannels()
+      setModalEntity(null)
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to revert to fallback')
+    } finally {
+      setModalSaving(false)
+    }
   }
 
   const saveModalChannels = async () => {
@@ -953,18 +978,32 @@ export default function AlarmNotificationPage() {
 
             {/* Modal Sub-Header Badges */}
             <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
-              <div className="flex items-center gap-2 text-xs font-semibold text-indigo-300">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-indigo-300">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span>{modalActiveChannelsBadge}</span>
+                {modalHasCustom ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    Custom Override
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                    Inheriting Org Fallback
+                  </span>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={copyOrgDefaultsIntoModal}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
-              >
-                <Copy size={12} />
-                <span>Copy from Org Fallback</span>
-              </button>
+
+              {modalHasCustom && (
+                <button
+                  type="button"
+                  onClick={revertToOrgFallback}
+                  disabled={modalSaving}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/40 transition-colors shadow-sm disabled:opacity-50"
+                  title="Remove custom channels for this entity and revert to organization fallback"
+                >
+                  <RotateCcw size={12} />
+                  <span>Revert to Org Fallback</span>
+                </button>
+              )}
             </div>
 
             {/* Modal 4 Channel Cards */}
@@ -972,6 +1011,9 @@ export default function AlarmNotificationPage() {
               {modalChannels.map((ch) => {
                 const Icon = channelIcon[ch.id]
                 const isBusy = modalTestingChannel === ch.id
+                const orgCh = orgChannels.find((x) => x.id === ch.id)
+                const orgHint = orgCh?.enabled && orgCh?.target ? `Default: ${orgCh.target} (Org Fallback)` : ''
+
                 return (
                   <div
                     key={ch.id}
@@ -991,29 +1033,40 @@ export default function AlarmNotificationPage() {
                       </button>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={ch.target}
-                        onChange={(e) => setModalChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, target: e.target.value } : x)))}
-                        disabled={!ch.enabled}
-                        placeholder={
-                          ch.id === 'telegram' ? 'Chat ID / Group -100...' :
-                          ch.id === 'email' ? 'team@company.com' :
-                          ch.id === 'line' ? 'User ID or Token@UserID' :
-                          'Webhook URL…'
-                        }
-                        className={clsx('flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
-                        style={{ background: '#0d1117', border: '1px solid #1e2433' }}
-                      />
-                      <button
-                        type="button"
-                        disabled={!ch.enabled || !ch.target.trim() || isBusy}
-                        onClick={() => executeTest(ch.id, ch.target, setModalTestingChannel)}
-                        className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 flex items-center gap-1 border border-slate-700 shrink-0"
-                      >
-                        {isBusy ? <Loader2 size={11} className="animate-spin text-indigo-400" /> : <Send size={11} className="text-indigo-400" />}
-                        <span>{isBusy ? 'Testing…' : 'Test'}</span>
-                      </button>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={ch.target}
+                          onChange={(e) => setModalChannels((prev) => prev.map((x) => (x.id === ch.id ? { ...x, target: e.target.value } : x)))}
+                          disabled={!ch.enabled}
+                          placeholder={
+                            orgHint || (
+                              ch.id === 'telegram' ? 'Chat ID / Group -100...' :
+                              ch.id === 'email' ? 'team@company.com' :
+                              ch.id === 'line' ? 'User ID or Token@UserID' :
+                              'Webhook URL…'
+                            )
+                          }
+                          className={clsx('flex-1 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500', ch.enabled ? 'text-white' : 'text-slate-600')}
+                          style={{ background: '#0d1117', border: '1px solid #1e2433' }}
+                        />
+                        <button
+                          type="button"
+                          disabled={!ch.enabled || !ch.target.trim() || isBusy}
+                          onClick={() => executeTest(ch.id, ch.target, setModalTestingChannel)}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 flex items-center gap-1 border border-slate-700 shrink-0"
+                        >
+                          {isBusy ? <Loader2 size={11} className="animate-spin text-indigo-400" /> : <Send size={11} className="text-indigo-400" />}
+                          <span>{isBusy ? 'Testing…' : 'Test'}</span>
+                        </button>
+                      </div>
+
+                      {orgHint && !ch.target.trim() && (
+                        <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                          <Globe size={10} className="text-slate-600 shrink-0" />
+                          <span className="truncate">{orgHint}</span>
+                        </p>
+                      )}
                     </div>
 
                     {/* Min Severity */}
