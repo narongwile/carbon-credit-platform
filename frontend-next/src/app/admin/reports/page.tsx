@@ -345,6 +345,20 @@ function ReportsPageContent() {
     toast.success(`Saved preset profile "${name.trim()}"!`, { icon: '💾' })
   }
 
+  // Context-aware enterprise profiles: dynamically filtered so irrelevant profiles (e.g. Cold-Chain GDP
+  // when viewing transformers only, or Transformer Health when viewing cold-chain only) are suppressed.
+  const visibleProfiles = useMemo(() => {
+    const orgDomains = new Set(devices.map((d) => d.domain).filter(Boolean))
+    return ENTERPRISE_PROFILES.filter((p) => {
+      // 1. If fleet devices are loaded, ensure the organization actually owns assets in this profile's domain
+      if (devices.length > 0 && !p.domains.some((d) => orgDomains.has(d))) {
+        return false
+      }
+      // 2. Only show profiles compatible with the currently active domain filters
+      return p.domains.some((d) => selectedDomains.includes(d))
+    })
+  }, [devices, selectedDomains])
+
   const toggleDomain = (domId: string) => {
     setActiveProfileId(null)
     setSelectedDomains((prev) => {
@@ -976,7 +990,10 @@ function ReportsPageContent() {
                 <span>Enterprise Profiles:</span>
               </div>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {ENTERPRISE_PROFILES.map((p) => {
+                {visibleProfiles.length === 0 && (
+                  <span className="text-[11px] text-slate-500 italic px-2">No preset profiles for current domain filter</span>
+                )}
+                {visibleProfiles.map((p) => {
                   const active = activeProfileId === p.id
                   return (
                     <button

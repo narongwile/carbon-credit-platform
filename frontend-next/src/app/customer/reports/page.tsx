@@ -36,6 +36,8 @@ import {
   FileText,
   AlertTriangle,
   Layers,
+  Clock,
+  CheckCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -51,6 +53,13 @@ const RANGES = [
   { label: 'Last 90 Days', days: 90 },
 ]
 
+const AGGREGATION_RESOLUTIONS = [
+  { id: 'raw', label: 'Raw 1-Min' },
+  { id: '15m', label: '15-Min Avg' },
+  { id: '1h', label: '1-Hour TWA' },
+  { id: 'daily', label: 'Daily Rollup' },
+] as const
+
 export default function CustomerReportsPage() {
   const orgId = useSessionOrgId()
   const { orgNames } = useAppStore()
@@ -59,7 +68,8 @@ export default function CustomerReportsPage() {
   // Fleet scoped to this viewer's accessible products and departments
   const { devices } = useManagedDevices(orgId)
   const [days, setDays] = useState(30)
-  const [format, setFormat] = useState<'PDF' | 'XLSX' | 'CSV'>('PDF')
+  const [selectedFormats, setSelectedFormats] = useState<('PDF' | 'XLSX' | 'CSV')[]>(['PDF'])
+  const [aggregationInterval, setAggregationInterval] = useState<'raw' | '15m' | '1h' | 'daily'>('15m')
   const [busy, setBusy] = useState(false)
   const [selectedNodeId, setSelectedNodeId] = useState<string>('all')
 
@@ -69,6 +79,19 @@ export default function CustomerReportsPage() {
     alarms: AlarmLogItem[]
   } | null>(null)
 
+  const toggleExportFormat = (fmt: 'PDF' | 'XLSX' | 'CSV') => {
+    setSelectedFormats((prev) => {
+      if (prev.includes(fmt)) {
+        if (prev.length === 1) {
+          toast.error('Select at least one export format')
+          return prev
+        }
+        return prev.filter((f) => f !== fmt)
+      }
+      return [...prev, fmt]
+    })
+  }
+
   useEffect(() => {
     let cancelled = false
     buildIIoTReportData({
@@ -77,51 +100,53 @@ export default function CustomerReportsPage() {
       days,
       nodeId: selectedNodeId,
       selectedTypes: ['health', 'energy', 'alarm', 'executive'],
-      format,
+      format: selectedFormats[0] || 'PDF',
       devices,
+      classification: 'CONFIDENTIAL',
+      aggregationInterval: AGGREGATION_RESOLUTIONS.find((r) => r.id === aggregationInterval)?.label,
     }).then((res) => {
       if (!cancelled) setReportData(res)
     })
     return () => { cancelled = true }
-  }, [orgId, orgName, days, selectedNodeId, format, devices])
+  }, [orgId, orgName, days, selectedNodeId, selectedFormats, aggregationInterval, devices])
 
   const generate = async () => {
     if (devices.length === 0) {
       toast.error('No devices available in your accessible fleet')
       return
     }
+    if (selectedFormats.length === 0) {
+      toast.error('Select at least one export format')
+      return
+    }
     setBusy(true)
     try {
-      const data = reportData || await buildIIoTReportData({
+      const baseOpts = {
         orgId,
         orgName,
         days,
         nodeId: selectedNodeId,
         selectedTypes: ['health', 'energy', 'alarm', 'executive'],
-        format,
         devices,
+        classification: 'CONFIDENTIAL',
+        aggregationInterval: AGGREGATION_RESOLUTIONS.find((r) => r.id === aggregationInterval)?.label || '15-Minute Standard Rollup',
+      }
+      const data = reportData || await buildIIoTReportData({
+        ...baseOpts,
+        format: selectedFormats[0] || 'PDF',
       })
 
-      const reportOpts = {
-        orgId,
-        orgName,
-        days,
-        nodeId: selectedNodeId,
-        selectedTypes: ['health', 'energy', 'alarm', 'executive'],
-        format,
-        devices,
+      for (const fmt of selectedFormats) {
+        const currentOpts = { ...baseOpts, format: fmt }
+        if (fmt === 'PDF') {
+          await exportIIoTPDF(currentOpts, data)
+        } else if (fmt === 'XLSX') {
+          await exportIIoTXLSX(currentOpts, data)
+        } else {
+          await exportIIoTCSV(currentOpts, data)
+        }
       }
-
-      if (format === 'PDF') {
-        await exportIIoTPDF(reportOpts, data)
-        toast.success(`Executive PDF report downloaded`)
-      } else if (format === 'XLSX') {
-        exportIIoTXLSX(reportOpts, data)
-        toast.success(`Multi-sheet Excel report downloaded`)
-      } else {
-        exportIIoTCSV(reportOpts, data)
-        toast.success(`Structured CSV report downloaded`)
-      }
+      toast.success(`Downloaded ${selectedFormats.join(' & ')} report(s)!`)
     } catch (err: any) {
       toast.error(err?.message || 'Failed to generate report')
     } finally {
@@ -147,6 +172,10 @@ export default function CustomerReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
+            <ShieldCheck size={12} className="text-emerald-400" />
+            <span>SHA-256 Verified</span>
+          </div>
           <span className="text-xs text-slate-500 font-medium">Accessible:</span>
           <span className="text-xs font-semibold text-emerald-400 px-2.5 py-1 rounded bg-emerald-950/40 border border-emerald-800/40">
             {devices.length} Assets
@@ -222,16 +251,18 @@ export default function CustomerReportsPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-              Reporting Time Window
-            </label>
-            <div className="flex gap-2">
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                Reporting Window &amp; Resolution
+              </label>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
               {RANGES.map((r) => (
                 <button
                   key={r.days}
                   onClick={() => setDays(r.days)}
                   className={clsx(
-                    'flex-1 py-2 rounded-lg text-xs font-semibold transition-colors',
+                    'flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                     days === r.days
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
@@ -241,34 +272,64 @@ export default function CustomerReportsPage() {
                 </button>
               ))}
             </div>
+            <div className="flex items-center gap-1.5 mt-2">
+              <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                <Clock size={11} className="text-indigo-400" /> Resolution:
+              </span>
+              {AGGREGATION_RESOLUTIONS.map((res) => (
+                <button
+                  key={res.id}
+                  type="button"
+                  onClick={() => setAggregationInterval(res.id)}
+                  className={clsx(
+                    'px-2 py-0.5 rounded text-[10px] font-semibold transition-colors',
+                    aggregationInterval === res.id
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                  )}
+                >
+                  {res.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Format Selector */}
         <div>
           <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">
-            Export Format &amp; Document Type
+            Export Formats ({selectedFormats.length} selected - multi-select enabled)
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {(['PDF', 'XLSX', 'CSV'] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFormat(f)}
-                className={clsx(
-                  'flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all border',
-                  format === f
-                    ? 'bg-indigo-950/40 border-indigo-500 text-white shadow-sm'
-                    : 'bg-[#0a0e1a] border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
-                )}
-              >
-                {f === 'PDF' && <FileText size={15} className="text-rose-400" />}
-                {f === 'XLSX' && <FileSpreadsheet size={15} className="text-emerald-400" />}
-                {f === 'CSV' && <FileBarChart size={15} className="text-indigo-400" />}
-                <span>
-                  {f === 'PDF' ? 'Executive PDF Report' : f === 'XLSX' ? 'Multi-Sheet Excel (.xlsx)' : 'RFC 4180 CSV'}
-                </span>
-              </button>
-            ))}
+            {(['PDF', 'XLSX', 'CSV'] as const).map((f) => {
+              const on = selectedFormats.includes(f)
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => toggleExportFormat(f)}
+                  className={clsx(
+                    'flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all border',
+                    on
+                      ? 'bg-indigo-950/40 border-indigo-500 text-white shadow-sm'
+                      : 'bg-[#0a0e1a] border-slate-800 text-slate-400 hover:text-white hover:border-slate-700'
+                  )}
+                >
+                  <span
+                    className="w-3 h-3 rounded-sm flex items-center justify-center text-[8px] font-bold"
+                    style={on ? { background: '#6366f1', color: '#ffffff' } : { border: '1px solid #475569' }}
+                  >
+                    {on && '✓'}
+                  </span>
+                  {f === 'PDF' && <FileText size={15} className="text-rose-400" />}
+                  {f === 'XLSX' && <FileSpreadsheet size={15} className="text-emerald-400" />}
+                  {f === 'CSV' && <FileBarChart size={15} className="text-indigo-400" />}
+                  <span>
+                    {f === 'PDF' ? 'Executive PDF' : f === 'XLSX' ? 'Multi-Sheet Excel' : 'RFC 4180 CSV'}
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -281,7 +342,7 @@ export default function CustomerReportsPage() {
             style={gradient}
           >
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            <span>{busy ? 'Compiling Official Report...' : `Download ${format} Report (${orgName})`}</span>
+            <span>{busy ? 'Compiling Official Report...' : `Download ${selectedFormats.join(' & ')} Report(s) (${orgName})`}</span>
           </button>
         </div>
       </div>
