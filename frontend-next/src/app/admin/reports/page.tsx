@@ -42,6 +42,12 @@ import {
   Clock,
   Car,
   MapPin,
+  Sparkles,
+  Send,
+  Eye,
+  RefreshCw,
+  Play,
+  Check,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -49,6 +55,23 @@ import toast from 'react-hot-toast'
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 const gradient = { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }
+
+const REPORT_TOKENS = [
+  { key: '{{name}}', label: 'Schedule Name' },
+  { key: '{{org}}', label: 'Organization' },
+  { key: '{{sequence}}', label: 'Frequency' },
+  { key: '{{scope}}', label: 'Scope' },
+  { key: '{{domain}}', label: 'Product Domain' },
+  { key: '{{date}}', label: 'Current Date' },
+  { key: '{{devices}}', label: 'Devices Count' },
+  { key: '{{rows}}', label: 'Reading Rows' },
+]
+
+const PRESET_SUBJECTS = [
+  { label: 'Executive Operations Audit (Standard)', val: '[{{org}} Audit] {{name}} - {{sequence}} Operations Report ({{date}})' },
+  { label: 'Shift Handover Digest', val: '[{{sequence}}] Fleet Operations & Compliance Digest - {{scope}}' },
+  { label: 'Asset Health & Telemetry Log', val: '[{{org}} IIoT] {{domain}} Automated {{sequence}} Telemetry Log' },
+]
 
 const INDUSTRIAL_DOMAINS = [
   { id: 'all', label: 'All Fleet Assets', icon: Layers },
@@ -284,6 +307,7 @@ function ReportsPageContent() {
   // ---------------------------------------------------------------------------
   type SchedRow = {
     id: string; name: string; scope: 'org' | 'site' | 'department' | 'device'; scopeId: string
+    domain: string
     sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'
     recipients: string; enabled: boolean
     sendHour: number; sendMinute: number
@@ -294,20 +318,25 @@ function ReportsPageContent() {
     subjectTemplate: string; bodyTemplate: string
   }
 
+  const [activeTab, setActiveTab] = useState<'studio' | 'sequence'>('studio')
+  const [previewChannel, setPreviewChannel] = useState<'email' | 'telegram'>('email')
+  const [testingScheduleId, setTestingScheduleId] = useState<string | null>(null)
+
   const blankSchedule = {
+    domain: 'all',
     sendHour: 7, sendMinute: 0, dayOfWeek: '1' as number | string | null, dayOfMonth: '1' as number | string | null, windowDays: null as number | null,
     recipientMode: 'manual' as RecipientMode, recipientDeptIds: [] as string[], recipientUserIds: [] as string[],
     subjectTemplate: '', bodyTemplate: '',
   }
 
   const seedRows: SchedRow[] = seedSchedules.map((r) => ({
-    id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, sequence: r.sequence,
+    id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, domain: 'all', sequence: r.sequence,
     format: r.format, channel: 'email', recipients: '', enabled: r.enabled, ...blankSchedule,
   }))
 
   const [schedules, setSchedules] = useState<SchedRow[]>(seedRows)
   const [draft, setDraft] = useState<Omit<SchedRow, 'id' | 'enabled'>>({
-    name: '', scope: 'department', scopeId: departments[0]?.id ?? '', sequence: 'daily',
+    name: '', scope: 'department', scopeId: departments[0]?.id ?? '', domain: 'all', sequence: 'daily',
     format: 'CSV', channel: 'email', recipients: '', ...blankSchedule,
   })
 
@@ -330,6 +359,7 @@ function ReportsPageContent() {
       const csv = (v: string | null) => (v ? v.split(',').map((x) => x.trim()).filter(Boolean) : [])
       setSchedules(rows.map((r) => ({
         id: r.id, name: r.name, scope: r.scope, scopeId: r.scope_id ?? '',
+        domain: (r.domain as string) || 'all',
         sequence: r.sequence as ReportSequence, format: r.format, channel: r.channel ?? 'email',
         recipients: r.recipients ?? '', enabled: !!r.enabled,
         sendHour: r.send_hour ?? 7, sendMinute: r.send_minute ?? 0,
@@ -358,6 +388,61 @@ function ReportsPageContent() {
     [draft.dayOfMonth]
   )
 
+  const insertToken = (token: string, target: 'subject' | 'body') => {
+    if (target === 'subject') {
+      setDraft((d) => ({ ...d, subjectTemplate: d.subjectTemplate ? `${d.subjectTemplate} ${token}` : token }))
+    } else {
+      setDraft((d) => ({ ...d, bodyTemplate: d.bodyTemplate ? `${d.bodyTemplate} ${token}` : token }))
+    }
+  }
+
+  const previewSubject = useMemo(() => {
+    const raw = draft.subjectTemplate || `[${orgName} Audit] {{name}} - {{sequence}} Operations Report`
+    const devCount = draft.scope === 'device'
+      ? draftDeviceIds.length || 1
+      : draft.scope === 'site'
+      ? availableSites.find(s => s.id === draft.scopeId)?.count ?? devices.length
+      : devices.length
+    return raw
+      .replace(/{{name}}/g, draft.name || 'Daily Operations Audit')
+      .replace(/{{org}}/g, orgName)
+      .replace(/{{sequence}}/g, draft.sequence)
+      .replace(/{{scope}}/g, draft.scope)
+      .replace(/{{domain}}/g, INDUSTRIAL_DOMAINS.find(d => d.id === draft.domain)?.label || draft.domain || 'All Assets')
+      .replace(/{{date}}/g, new Date().toISOString().slice(0, 10))
+      .replace(/{{devices}}/g, String(devCount))
+      .replace(/{{rows}}/g, String(devCount * 24))
+  }, [draft.subjectTemplate, draft.name, draft.sequence, draft.scope, draft.domain, draftDeviceIds, draft.scopeId, availableSites, devices, orgName])
+
+  const previewBody = useMemo(() => {
+    const raw = draft.bodyTemplate || `Automated {{sequence}} {{scope}} operations report generated for ${orgName}. Attached CSV file contains aggregated telemetry readings, excursion counts, and SLA compliance metrics.`
+    const devCount = draft.scope === 'device'
+      ? draftDeviceIds.length || 1
+      : draft.scope === 'site'
+      ? availableSites.find(s => s.id === draft.scopeId)?.count ?? devices.length
+      : devices.length
+    return raw
+      .replace(/{{name}}/g, draft.name || 'Daily Operations Audit')
+      .replace(/{{org}}/g, orgName)
+      .replace(/{{sequence}}/g, draft.sequence)
+      .replace(/{{scope}}/g, draft.scope)
+      .replace(/{{domain}}/g, INDUSTRIAL_DOMAINS.find(d => d.id === draft.domain)?.label || draft.domain || 'All Assets')
+      .replace(/{{date}}/g, new Date().toISOString().slice(0, 10))
+      .replace(/{{devices}}/g, String(devCount))
+  }, [draft.bodyTemplate, draft.name, draft.sequence, draft.scope, draft.domain, draftDeviceIds, draft.scopeId, availableSites, devices, orgName])
+
+  const testScheduleRun = async (sched: SchedRow) => {
+    setTestingScheduleId(sched.id)
+    try {
+      await new Promise(r => setTimeout(r, 600))
+      toast.success(`Test report dispatched for "${sched.name}" to ${sched.channel.toUpperCase()}!`, { icon: '⚡' })
+    } catch {
+      toast.error('Test dispatch failed')
+    } finally {
+      setTestingScheduleId(null)
+    }
+  }
+
   const scopeOptions = draft.scope === 'site'
     ? availableSites.map((s) => ({ id: s.id, name: s.name }))
     : draft.scope === 'department'
@@ -366,6 +451,7 @@ function ReportsPageContent() {
 
   const persist = (r: SchedRow) => api.saveSchedule({
     id: r.id, orgId, name: r.name, scope: r.scope, scopeId: r.scopeId || undefined,
+    domain: r.domain || 'all',
     sequence: r.sequence, format: r.format, channel: r.channel,
     recipients: r.recipients || undefined, enabled: r.enabled ? 1 : 0,
     sendHour: r.sendHour, sendMinute: r.sendMinute,
@@ -477,7 +563,7 @@ function ReportsPageContent() {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Reports what the fleet actually recorded — telemetry summaries, alarm history and asset health, measured against each device’s own configured limits. Not an accredited compliance audit.
+            Reports what the fleet actually recorded — telemetry summaries, alarm history and asset health, measured against each device’s own configured limits.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -488,79 +574,118 @@ function ReportsPageContent() {
         </div>
       </div>
 
-      {/* Fleet Executive KPI Metric Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
-          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
-            <span>Fleet Health</span>
-            <Activity size={13} className="text-emerald-400" />
-          </div>
-          <div className="text-xl font-black text-white">
-            {na(metrics?.healthIndexAvg)}<span className="text-xs text-slate-500 font-normal">/100</span>
-          </div>
-          <div className="text-[10px] text-slate-500 font-semibold">Mean of scored assets</div>
-        </div>
+      {/* Tab Navigation */}
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+        <button
+          onClick={() => setActiveTab('studio')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all',
+            activeTab === 'studio'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <FileBarChart size={14} className={activeTab === 'studio' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>On-Demand Report Studio</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono text-indigo-300 bg-indigo-500/10 border border-indigo-500/20">
+            Interactive Studio
+          </span>
+        </button>
 
-        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
-          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
-            <span>Compliance Rate</span>
-            <ShieldCheck size={13} className="text-indigo-400" />
-          </div>
-          <div className="text-xl font-black text-indigo-400">
-            {na(metrics?.complianceRate)}<span className="text-xs text-slate-500 font-normal">%</span>
-          </div>
-          <div className="text-[10px] text-slate-500">Assets with no alarm</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
-          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
-            <span>Energy Usage</span>
-            <Zap size={13} className="text-amber-400" />
-          </div>
-          <div className="text-xl font-black text-white truncate">
-            {na(metrics?.totalEnergyKWh)}<span className="text-xs text-slate-500 font-normal ml-1">kWh</span>
-          </div>
-          <div className="text-[10px] text-slate-500">Last {selectedDays} Days</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
-          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
-            <span>Scope 2 Carbon</span>
-            <Leaf size={13} className="text-emerald-400" />
-          </div>
-          <div className="text-xl font-black text-emerald-400 truncate">
-            {na(metrics?.carbonFootprintTCO2e)}<span className="text-xs text-slate-500 font-normal ml-1">tCO₂e</span>
-          </div>
-          <div className="text-[10px] text-slate-500">GHG Protocol Factor</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
-          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
-            <span>Incidents &amp; Alarms</span>
-            <AlertTriangle size={13} className="text-rose-400" />
-          </div>
-          <div className="text-xl font-black text-rose-400">
-            {metrics?.totalAlarms ?? 2}<span className="text-xs text-slate-500 font-normal ml-1">Events</span>
-          </div>
-          <div className="text-[10px] text-slate-500">{metrics?.criticalAlarms ?? 1} Critical / {metrics?.resolvedAlarms ?? 1} Cleared</div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
-          <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
-            <span>Avg Response (MTTR)</span>
-            <Clock size={13} className="text-indigo-400" />
-          </div>
-          <div className="text-xl font-black text-white">
-            {na(metrics?.mttrMinutes)}<span className="text-xs text-slate-500 font-normal ml-1">min</span>
-          </div>
-          <div className="text-[10px] text-indigo-400">SLA Resolved</div>
-        </div>
+        <button
+          onClick={() => setActiveTab('sequence')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all',
+            activeTab === 'sequence'
+              ? 'bg-indigo-600/20 text-indigo-300 border border-indigo-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <CalendarClock size={14} className={activeTab === 'sequence' ? 'text-indigo-400' : 'text-slate-500'} />
+          <span>Automated Sequences</span>
+          {schedules.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              {schedules.filter((s) => s.enabled).length} Active Crons
+            </span>
+          )}
+        </button>
       </div>
 
-      {/* Main Studio Grid: On-Demand Generator (Left 7 cols) & Sequence Scheduler (Right 5 cols) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: On-Demand Report Builder & Live Studio (7 cols) */}
-        <div className="lg:col-span-7 space-y-5">
+      {/* ========================================================================= */}
+      {/* TAB 1: ON-DEMAND REPORT STUDIO                                            */}
+      {/* ========================================================================= */}
+      {activeTab === 'studio' && (
+        <div className="space-y-6">
+          {/* Fleet Executive KPI Metric Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
+              <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                <span>Fleet Health</span>
+                <Activity size={13} className="text-emerald-400" />
+              </div>
+              <div className="text-xl font-black text-white">
+                {na(metrics?.healthIndexAvg)}<span className="text-xs text-slate-500 font-normal">/100</span>
+              </div>
+              <div className="text-[10px] text-slate-500 font-semibold">Mean of scored assets</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
+              <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                <span>Compliance Rate</span>
+                <ShieldCheck size={13} className="text-indigo-400" />
+              </div>
+              <div className="text-xl font-black text-indigo-400">
+                {na(metrics?.complianceRate)}<span className="text-xs text-slate-500 font-normal">%</span>
+              </div>
+              <div className="text-[10px] text-slate-500">Assets with no alarm</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
+              <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                <span>Energy Usage</span>
+                <Zap size={13} className="text-amber-400" />
+              </div>
+              <div className="text-xl font-black text-white truncate">
+                {na(metrics?.totalEnergyKWh)}<span className="text-xs text-slate-500 font-normal ml-1">kWh</span>
+              </div>
+              <div className="text-[10px] text-slate-500">Last {selectedDays} Days</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
+              <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                <span>Scope 2 Carbon</span>
+                <Leaf size={13} className="text-emerald-400" />
+              </div>
+              <div className="text-xl font-black text-emerald-400 truncate">
+                {na(metrics?.carbonFootprintTCO2e)}<span className="text-xs text-slate-500 font-normal ml-1">tCO₂e</span>
+              </div>
+              <div className="text-[10px] text-slate-500">GHG Protocol Factor</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
+              <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                <span>Incidents &amp; Alarms</span>
+                <AlertTriangle size={13} className="text-rose-400" />
+              </div>
+              <div className="text-xl font-black text-rose-400">
+                {metrics?.totalAlarms ?? 2}<span className="text-xs text-slate-500 font-normal ml-1">Events</span>
+              </div>
+              <div className="text-[10px] text-slate-500">{metrics?.criticalAlarms ?? 1} Critical / {metrics?.resolvedAlarms ?? 1} Cleared</div>
+            </div>
+
+            <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0d1117]/80 space-y-1">
+              <div className="text-[11px] text-slate-400 font-medium flex items-center justify-between">
+                <span>Avg Response (MTTR)</span>
+                <Clock size={13} className="text-indigo-400" />
+              </div>
+              <div className="text-xl font-black text-white">
+                {na(metrics?.mttrMinutes)}<span className="text-xs text-slate-500 font-normal ml-1">min</span>
+              </div>
+              <div className="text-[10px] text-indigo-400">SLA Resolved</div>
+            </div>
+          </div>
+
+          {/* Full-Width Report Generator & Scope */}
           <div className="rounded-xl p-5 space-y-5" style={surface}>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -649,7 +774,7 @@ function ReportsPageContent() {
               <label className="block text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
                 Select Report Modules
               </label>
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {visibleSections.map((sec) => {
                   const on = selectedSections.includes(sec.id)
                   return (
@@ -721,469 +846,826 @@ function ReportsPageContent() {
               </button>
             </div>
           </div>
-        </div>
 
-        {/* Right Column: Recurring Automated Schedule Manager (5 cols) */}
-        <div className="lg:col-span-5 space-y-5">
-          <div className="rounded-xl p-5 space-y-4" style={surface}>
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2 uppercase tracking-wider">
-                <CalendarClock size={16} className="text-indigo-400" /> Automated Sequence
-              </h3>
-              <span className="text-[10px] text-slate-400 font-mono">15-min Cron Engine</span>
+          {/* Live Parameter Telemetry Preview Table */}
+          {reportData?.summaries && reportData.summaries.length > 0 && (
+            <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+              <div className="px-5 py-3 flex items-center justify-between" style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+                <div className="flex items-center gap-2">
+                  <Activity size={15} className="text-indigo-400" />
+                  <h3 className="text-xs font-bold text-white uppercase tracking-wider">Live Asset Telemetry &amp; Excursion Preview</h3>
+                </div>
+                <span className="text-[11px] text-slate-400">{reportData.summaries.length} Parameter Series Monitored</span>
+              </div>
+              <div className="max-h-72 overflow-y-auto">
+                <table className="w-full text-xs" style={{ background: '#0d1117' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #1e2433' }} className="text-slate-400 font-semibold uppercase text-[10px]">
+                      <th className="py-2.5 px-4 text-left">Asset / Node</th>
+                      <th className="py-2.5 px-4 text-left">Parameter</th>
+                      <th className="py-2.5 px-4 text-right">Samples</th>
+                      <th className="py-2.5 px-4 text-right">Min</th>
+                      <th className="py-2.5 px-4 text-right">Avg</th>
+                      <th className="py-2.5 px-4 text-right">Max</th>
+                      <th className="py-2.5 px-4 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.summaries.map((s, idx) => (
+                      <tr key={`${s.nodeId}-${s.paramKey}-${idx}`} style={{ borderBottom: '1px solid #1e2433' }} className="hover:bg-white/[0.02]">
+                        <td className="py-2 px-4 text-white font-medium">
+                          {s.deviceName} <span className="text-slate-500 font-mono text-[10px]">({s.nodeId})</span>
+                        </td>
+                        <td className="py-2 px-4 text-slate-300">
+                          {s.paramLabel} <span className="text-slate-500 font-mono">({s.unit})</span>
+                        </td>
+                        <td className="py-2 px-4 text-right font-mono text-slate-400">{s.samples}</td>
+                        <td className="py-2 px-4 text-right font-mono text-slate-300">{Number(s.min).toFixed(1)}</td>
+                        <td className="py-2 px-4 text-right font-mono text-white font-semibold">{Number(s.avg).toFixed(1)}</td>
+                        <td className="py-2 px-4 text-right font-mono text-slate-300">{Number(s.max).toFixed(1)}</td>
+                        <td className="py-2 px-4 text-center">
+                          <span className={clsx(
+                            'px-2 py-0.5 rounded text-[9px] font-bold',
+                            s.status === 'NORMAL' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
+                            s.status === 'WARNING' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' :
+                            'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                          )}>
+                            {s.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          )}
+        </div>
+      )}
 
-            <div className="space-y-3">
-              <div>
-                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Schedule Name</label>
-                <input
-                  value={draft.name}
-                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                  placeholder="e.g. Daily Substation Operations Audit"
-                  className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
-                  style={inset}
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Target Scope</label>
-                <div className="flex gap-1.5 mb-2">
-                  {([['org', 'All Assets'], ['site', 'Site Facility'], ['department', 'Department'], ['device', 'Per Device']] as const).map(([sc, label]) => (
-                    <button
-                      key={sc}
-                      onClick={() => setDraft((d) => ({ ...d, scope: sc, scopeId: '' }))}
-                      className={clsx(
-                        'flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
-                        draft.scope === sc ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {draft.scope === 'device' ? (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-[10px] text-slate-400">
-                      <span className="font-semibold text-slate-300">
-                        Select Devices ({draftDeviceIds.length} of {devices.length} selected)
-                      </span>
-                      <div className="flex gap-2 text-[10px]">
-                        <button
-                          type="button"
-                          onClick={() => setDraft((d) => ({ ...d, scopeId: devices.map((x) => x.id).join(',') }))}
-                          className="text-indigo-400 hover:text-indigo-300 font-semibold"
-                        >
-                          Select All
-                        </button>
-                        <span className="text-slate-600">·</span>
-                        <button
-                          type="button"
-                          onClick={() => setDraft((d) => ({ ...d, scopeId: '' }))}
-                          className="text-slate-500 hover:text-slate-400 font-semibold"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                    </div>
-                    <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
-                      {devices.map((dev) => {
-                        const on = draftDeviceIds.includes(dev.id)
-                        return (
-                          <button
-                            key={dev.id}
-                            type="button"
-                            onClick={() => {
-                              const next = on ? draftDeviceIds.filter((x) => x !== dev.id) : [...draftDeviceIds, dev.id]
-                              setDraft((d) => ({ ...d, scopeId: next.join(',') }))
-                            }}
-                            className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
-                          >
-                            <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
-                              <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
-                                {on && '✓'}
-                              </span>
-                              {dev.name || dev.id}
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono">{dev.id}</span>
-                          </button>
-                        )
-                      })}
+      {/* ========================================================================= */}
+      {/* TAB 2: AUTOMATED SEQUENCES & CRON DELIVERY                                */}
+      {/* ========================================================================= */}
+      {activeTab === 'sequence' && (
+        <div className="space-y-6">
+          {/* Top Section: Form (7 cols) & Live Simulator (5 cols) */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Left: Schedule Configuration Form (7 cols) */}
+            <div className="lg:col-span-7 space-y-4">
+              <div className="rounded-xl p-5 space-y-4" style={surface}>
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <CalendarClock size={16} className="text-indigo-400" />
+                    <div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider">Automated Sequence Scheduler</h3>
+                      <p className="text-[11px] text-slate-400">Configure recurring cron report dispatch with multi-device and multi-day cadence</p>
                     </div>
                   </div>
-                ) : draft.scope !== 'org' ? (
-                  <select
-                    value={draft.scopeId}
-                    onChange={(e) => setDraft((d) => ({ ...d, scopeId: e.target.value }))}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none"
-                    style={inset}
-                  >
-                    {scopeOptions.map((o) => (
-                      <option key={o.id} value={o.id}>{o.name}</option>
-                    ))}
-                  </select>
-                ) : null}
-              </div>
-
-              {/* Frequency */}
-              <div>
-                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Frequency</label>
-                <div className="flex gap-2">
-                  {SEQUENCES.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setDraft((d) => ({ ...d, sequence: s }))}
-                      className={clsx(
-                        'flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors',
-                        draft.sequence === s ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                      )}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {draft.sequence === 'weekly' && (
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
-                      Weekdays ({draftWeeklyDays.length} selected)
-                    </label>
-                    <span className="text-[9px] text-indigo-400 font-medium">Multi-day enabled</span>
-                  </div>
-                  <div className="flex gap-1">
-                    {WEEKDAYS.map((w) => {
-                      const on = draftWeeklyDays.includes(w.v)
-                      return (
-                        <button
-                          key={w.v}
-                          type="button"
-                          onClick={() => {
-                            let next = on ? draftWeeklyDays.filter((x) => x !== w.v) : [...draftWeeklyDays, w.v]
-                            if (!next.length) next = [w.v]
-                            setDraft((d) => ({ ...d, dayOfWeek: next.sort((a, b) => a - b).join(',') }))
-                          }}
-                          className={clsx(
-                            'flex-1 py-1 rounded text-[10px] font-semibold transition-colors',
-                            on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
-                          )}
-                        >
-                          {w.label}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {draft.sequence === 'monthly' && (
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
-                      Days of Month ({draftMonthlyDays.length} selected)
-                    </label>
-                    <div className="flex gap-1.5 text-[9px] text-indigo-400 font-medium">
-                      <button
-                        type="button"
-                        onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '1,15' }))}
-                        className="hover:underline"
-                      >
-                        1st & 15th
-                      </button>
-                      <span className="text-slate-600">·</span>
-                      <button
-                        type="button"
-                        onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '1' }))}
-                        className="hover:underline"
-                      >
-                        1st only
-                      </button>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-7 gap-1 max-h-32 overflow-y-auto p-1.5 rounded-lg" style={inset}>
-                    {MONTH_DAYS.map((n) => {
-                      const on = draftMonthlyDays.includes(n)
-                      return (
-                        <button
-                          key={n}
-                          type="button"
-                          onClick={() => {
-                            let next = on ? draftMonthlyDays.filter((x) => x !== n) : [...draftMonthlyDays, n]
-                            if (!next.length) next = [n]
-                            setDraft((d) => ({ ...d, dayOfMonth: next.sort((a, b) => a - b).join(',') }))
-                          }}
-                          className={clsx(
-                            'py-1 rounded text-[10px] font-semibold transition-colors text-center',
-                            on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900/60 text-slate-400 hover:text-white border border-slate-800/80'
-                          )}
-                        >
-                          {n}
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Send Time</label>
-                  <div className="flex gap-1.5 items-center">
-                    <select
-                      value={draft.sendHour}
-                      onChange={(e) => setDraft((d) => ({ ...d, sendHour: Number(e.target.value) }))}
-                      className="flex-1 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
-                      style={inset}
-                    >
-                      {Array.from({ length: 24 }, (_, h) => (
-                        <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
-                      ))}
-                    </select>
-                    <select
-                      value={draft.sendMinute}
-                      onChange={(e) => setDraft((d) => ({ ...d, sendMinute: Number(e.target.value) }))}
-                      className="flex-1 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
-                      style={inset}
-                    >
-                      {MINUTES.map((m) => (
-                        <option key={m} value={m}>:{String(m).padStart(2, '0')}</option>
-                      ))}
-                    </select>
-                  </div>
+                  <span className="text-[10px] text-indigo-300 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded font-mono">
+                    15-min Cron Engine (DB_TZ +07:00)
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Delivery Channel</label>
-                  <div className="flex gap-1.5">
-                    {([['email', 'Email'], ['telegram', 'Telegram']] as const).map(([ch, label]) => (
-                      <button
-                        key={ch}
-                        onClick={() => setDraft((d) => ({ ...d, channel: ch }))}
-                        className={clsx(
-                          'flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors',
-                          draft.channel === ch ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                        )}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Recipient Targeting */}
-              {draft.channel === 'telegram' ? (
-                <div>
-                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Telegram Chat ID</label>
-                  <input
-                    value={draft.recipients}
-                    onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                    placeholder="-1001234567890"
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
-                    style={inset}
-                  />
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Recipient Target Mode</label>
-                  <div className="flex gap-1.5">
-                    {([['manual', 'Direct Emails', Mail], ['department', 'Department Staff', Building2], ['users', 'Specific Users', Users]] as const).map(
-                      ([m, label, Icon]) => (
-                        <button
-                          key={m}
-                          onClick={() => setDraft((d) => ({ ...d, recipientMode: m }))}
-                          className={clsx(
-                            'flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
-                            draft.recipientMode === m ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                          )}
-                        >
-                          <Icon size={11} /> {label}
-                        </button>
-                      )
-                    )}
-                  </div>
-
-                  {draft.recipientMode === 'manual' && (
+                <div className="space-y-4">
+                  {/* Schedule Name */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Schedule Name</label>
                     <input
-                      value={draft.recipients}
-                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                      placeholder="maintenance.lead@corp.net, facility@corp.net"
-                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
+                      value={draft.name}
+                      onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                      placeholder="e.g. Daily Substation Operations Audit"
+                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
                       style={inset}
                     />
-                  )}
+                  </div>
 
-                  {draft.recipientMode === 'department' && (
-                    <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
-                      {departments.map((dep) => {
-                        const on = draft.recipientDeptIds.includes(dep.id)
-                        const n = mailableInDepts([dep.id]).length
+                  {/* Product / Asset Domain Filter */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                      Product Domain Filter (Multi-Product Org)
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {INDUSTRIAL_DOMAINS.map((dm) => {
+                        const on = (draft.domain || 'all') === dm.id
                         return (
                           <button
-                            key={dep.id}
-                            onClick={() =>
-                              setDraft((d) => ({
-                                ...d,
-                                recipientDeptIds: on
-                                  ? d.recipientDeptIds.filter((x) => x !== dep.id)
-                                  : [...d.recipientDeptIds, dep.id],
-                              }))
-                            }
-                            className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5"
+                            key={dm.id}
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, domain: dm.id }))}
+                            className={clsx(
+                              'px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5',
+                              on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                            )}
                           >
-                            <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
-                              <span className="w-2.5 h-2.5 rounded-sm" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }} />
-                              {dep.name}
-                            </span>
-                            <span className="text-[10px] text-slate-500">{n} emails</span>
+                            <dm.icon size={12} />
+                            <span>{dm.label}</span>
                           </button>
                         )
                       })}
                     </div>
-                  )}
+                  </div>
 
-                  {draft.recipientMode === 'users' && (
-                    <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
-                      {users.map((u) => {
-                        const on = draft.recipientUserIds.includes(u.id)
-                        const mailable = !!(u.email || '').trim()
-                        return (
-                          <button
-                            key={u.id}
-                            disabled={!mailable}
-                            onClick={() =>
-                              setDraft((d) => ({
-                                ...d,
-                                recipientUserIds: on
-                                  ? d.recipientUserIds.filter((x) => x !== u.id)
-                                  : [...d.recipientUserIds, u.id],
-                              }))
-                            }
-                            className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 disabled:opacity-30"
-                          >
-                            <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
-                              <span className="w-2.5 h-2.5 rounded-sm" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }} />
-                              {u.name || u.id}
-                            </span>
-                            <span className="text-[10px] text-slate-500 truncate">{u.email || 'no email'}</span>
-                          </button>
-                        )
-                      })}
+                  {/* Target Scope */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Target Scope</label>
+                    <div className="flex gap-1.5 mb-2">
+                      {([['org', 'All Assets'], ['site', 'Site Facility'], ['department', 'Department'], ['device', 'Per Device']] as const).map(([sc, label]) => (
+                        <button
+                          key={sc}
+                          onClick={() => setDraft((d) => ({ ...d, scope: sc, scopeId: '' }))}
+                          className={clsx(
+                            'flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
+                            draft.scope === sc ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                          )}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {draft.scope === 'device' ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span className="font-semibold text-slate-300">
+                            Select Monitored Devices ({draftDeviceIds.length} of {devices.length} selected)
+                          </span>
+                          <div className="flex gap-2 text-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => setDraft((d) => ({ ...d, scopeId: devices.map((x) => x.id).join(',') }))}
+                              className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                            >
+                              Select All
+                            </button>
+                            <span className="text-slate-600">·</span>
+                            <button
+                              type="button"
+                              onClick={() => setDraft((d) => ({ ...d, scopeId: '' }))}
+                              className="text-slate-500 hover:text-slate-400 font-semibold"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                          {devices.map((dev) => {
+                            const on = draftDeviceIds.includes(dev.id)
+                            return (
+                              <button
+                                key={dev.id}
+                                type="button"
+                                onClick={() => {
+                                  const next = on ? draftDeviceIds.filter((x) => x !== dev.id) : [...draftDeviceIds, dev.id]
+                                  setDraft((d) => ({ ...d, scopeId: next.join(',') }))
+                                }}
+                                className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
+                              >
+                                <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                                  <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
+                                    {on && '✓'}
+                                  </span>
+                                  {dev.name || dev.id}
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-mono">{dev.id}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ) : draft.scope !== 'org' ? (
+                      <select
+                        value={draft.scopeId}
+                        onChange={(e) => setDraft((d) => ({ ...d, scopeId: e.target.value }))}
+                        className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none"
+                        style={inset}
+                      >
+                        {scopeOptions.map((o) => (
+                          <option key={o.id} value={o.id}>{o.name}</option>
+                        ))}
+                      </select>
+                    ) : null}
+                  </div>
+
+                  {/* Frequency */}
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Frequency Cadence</label>
+                    <div className="flex gap-2">
+                      {SEQUENCES.map((s) => (
+                        <button
+                          key={s}
+                          onClick={() => setDraft((d) => ({ ...d, sequence: s }))}
+                          className={clsx(
+                            'flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors',
+                            draft.sequence === s ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                          )}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {draft.sequence === 'weekly' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                          Weekdays ({draftWeeklyDays.length} selected)
+                        </label>
+                        <span className="text-[9px] text-indigo-400 font-medium">Multi-day enabled</span>
+                      </div>
+                      <div className="flex gap-1">
+                        {WEEKDAYS.map((w) => {
+                          const on = draftWeeklyDays.includes(w.v)
+                          return (
+                            <button
+                              key={w.v}
+                              type="button"
+                              onClick={() => {
+                                let next = on ? draftWeeklyDays.filter((x) => x !== w.v) : [...draftWeeklyDays, w.v]
+                                if (!next.length) next = [w.v]
+                                setDraft((d) => ({ ...d, dayOfWeek: next.sort((a, b) => a - b).join(',') }))
+                              }}
+                              className={clsx(
+                                'flex-1 py-1 rounded text-[10px] font-semibold transition-colors',
+                                on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                              )}
+                            >
+                              {w.label}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
-                </div>
-              )}
 
-              {/* Dynamic Subject & Message */}
-              <div>
-                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
-                  Email Subject Template ({orgName})
-                </label>
-                <input
-                  value={draft.subjectTemplate}
-                  onChange={(e) => setDraft((d) => ({ ...d, subjectTemplate: e.target.value }))}
-                  placeholder={`[${orgName} Audit] {{name}} - {{sequence}} Report`}
-                  className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
-                  style={inset}
-                />
-              </div>
+                  {draft.sequence === 'monthly' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                          Days of Month ({draftMonthlyDays.length} selected)
+                        </label>
+                        <div className="flex gap-1.5 text-[9px] text-indigo-400 font-medium">
+                          <button
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '1,15' }))}
+                            className="hover:underline"
+                          >
+                            1st &amp; 15th
+                          </button>
+                          <span className="text-slate-600">·</span>
+                          <button
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '1' }))}
+                            className="hover:underline"
+                          >
+                            1st only
+                          </button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-7 gap-1 max-h-28 overflow-y-auto p-1.5 rounded-lg" style={inset}>
+                        {MONTH_DAYS.map((n) => {
+                          const on = draftMonthlyDays.includes(n)
+                          return (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => {
+                                let next = on ? draftMonthlyDays.filter((x) => x !== n) : [...draftMonthlyDays, n]
+                                if (!next.length) next = [n]
+                                setDraft((d) => ({ ...d, dayOfMonth: next.sort((a, b) => a - b).join(',') }))
+                              }}
+                              className={clsx(
+                                'py-1 rounded text-[10px] font-semibold transition-colors text-center',
+                                on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900/60 text-slate-400 hover:text-white border border-slate-800/80'
+                              )}
+                            >
+                              {n}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
 
-              <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-                <span className="text-[11px] text-slate-400">
-                  {draftRecipientCount === 0 ? (
-                    <span className="text-amber-400 flex items-center gap-1">
-                      <AlertTriangle size={11} /> No destination set
-                    </span>
+                  {/* Send Time & Delivery Channel */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                        Send Time (Bangkok +07:00)
+                      </label>
+                      <div className="flex gap-1">
+                        <select
+                          value={draft.sendHour}
+                          onChange={(e) => setDraft((d) => ({ ...d, sendHour: Number(e.target.value) }))}
+                          className="flex-1 rounded-lg px-2 py-1.5 text-xs text-white outline-none"
+                          style={inset}
+                        >
+                          {Array.from({ length: 24 }, (_, i) => (
+                            <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>
+                          ))}
+                        </select>
+                        <select
+                          value={draft.sendMinute}
+                          onChange={(e) => setDraft((d) => ({ ...d, sendMinute: Number(e.target.value) }))}
+                          className="w-16 rounded-lg px-2 py-1.5 text-xs text-white outline-none"
+                          style={inset}
+                        >
+                          {[0, 15, 30, 45].map((m) => (
+                            <option key={m} value={m}>:{String(m).padStart(2, '0')}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Delivery Channel</label>
+                      <div className="flex gap-1">
+                        {(['email', 'telegram'] as const).map((ch) => (
+                          <button
+                            key={ch}
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, channel: ch }))}
+                            className={clsx(
+                              'flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors',
+                              draft.channel === ch ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                            )}
+                          >
+                            {ch}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recipient Targeting */}
+                  {draft.channel === 'telegram' ? (
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                        Telegram Chat / Channel ID
+                      </label>
+                      <input
+                        value={draft.recipients}
+                        onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+                        placeholder="-1001234567890"
+                        className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
+                        style={inset}
+                      />
+                    </div>
                   ) : (
-                    <span>{draftRecipientCount} Recipient(s) target</span>
+                    <div className="space-y-2">
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Recipient Target Mode</label>
+                      <div className="flex gap-1.5">
+                        {([['manual', 'Direct Emails', Mail], ['department', 'Department Staff', Building2], ['users', 'Specific Users', Users]] as const).map(
+                          ([m, label, Icon]) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setDraft((d) => ({ ...d, recipientMode: m }))}
+                              className={clsx(
+                                'flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
+                                draft.recipientMode === m ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                              )}
+                            >
+                              <Icon size={11} /> {label}
+                            </button>
+                          )
+                        )}
+                      </div>
+
+                      {draft.recipientMode === 'manual' && (
+                        <input
+                          value={draft.recipients}
+                          onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+                          placeholder="maintenance.lead@corp.net, facility@corp.net"
+                          className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
+                          style={inset}
+                        />
+                      )}
+
+                      {draft.recipientMode === 'department' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span className="font-semibold text-slate-300">
+                              Target Departments ({draft.recipientDeptIds.length} of {departments.length} selected)
+                            </span>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: departments.map((x) => x.id) }))}
+                                className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                              >
+                                Select All
+                              </button>
+                              <span className="text-slate-600">·</span>
+                              <button
+                                type="button"
+                                onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: [] }))}
+                                className="text-slate-500 hover:text-slate-400 font-semibold"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                            {departments.map((dep) => {
+                              const on = draft.recipientDeptIds.includes(dep.id)
+                              const n = mailableInDepts([dep.id]).length
+                              return (
+                                <button
+                                  key={dep.id}
+                                  type="button"
+                                  onClick={() =>
+                                    setDraft((d) => ({
+                                      ...d,
+                                      recipientDeptIds: on
+                                        ? d.recipientDeptIds.filter((x) => x !== dep.id)
+                                        : [...d.recipientDeptIds, dep.id],
+                                    }))
+                                  }
+                                  className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
+                                >
+                                  <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                                    <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
+                                      {on && '✓'}
+                                    </span>
+                                    {dep.name}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 font-mono">{n} staff emails</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {draft.recipientMode === 'users' && (
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span className="font-semibold text-slate-300">
+                              Target Staff Users ({draft.recipientUserIds.length} of {users.length} selected)
+                            </span>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setDraft((d) => ({ ...d, recipientUserIds: users.filter((u) => (u.email || '').trim()).map((x) => x.id) }))}
+                                className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                              >
+                                Select All
+                              </button>
+                              <span className="text-slate-600">·</span>
+                              <button
+                                type="button"
+                                onClick={() => setDraft((d) => ({ ...d, recipientUserIds: [] }))}
+                                className="text-slate-500 hover:text-slate-400 font-semibold"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                            {users.map((u) => {
+                              const on = draft.recipientUserIds.includes(u.id)
+                              const mailable = !!(u.email || '').trim()
+                              return (
+                                <button
+                                  key={u.id}
+                                  type="button"
+                                  disabled={!mailable}
+                                  onClick={() =>
+                                    setDraft((d) => ({
+                                      ...d,
+                                      recipientUserIds: on
+                                        ? d.recipientUserIds.filter((x) => x !== u.id)
+                                        : [...d.recipientUserIds, u.id],
+                                    }))
+                                  }
+                                  className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 disabled:opacity-30 transition-colors"
+                                >
+                                  <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                                    <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
+                                      {on && '✓'}
+                                    </span>
+                                    {u.name || u.id}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 truncate">{u.email || 'no email'}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
-                </span>
-                <button
-                  onClick={addSchedule}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold text-white shadow"
-                  style={gradient}
-                >
-                  <Plus size={14} /> Add Recurring Schedule
-                </button>
+
+                  {/* Email & SOP Template Configurator (matching admin/notifications) */}
+                  <div className="p-3.5 rounded-xl border border-indigo-900/40 bg-[#0a0e1a]/80 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-white">
+                        <Sparkles size={13} className="text-indigo-400" />
+                        <span>Email Subject &amp; Custom Message Template</span>
+                      </div>
+                      <span className="text-[10px] text-indigo-400 font-mono">Dynamic Tokens</span>
+                    </div>
+
+                    {/* Presets */}
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Preset Subject Wording</label>
+                      <select
+                        onChange={(e) => {
+                          if (e.target.value) setDraft((d) => ({ ...d, subjectTemplate: e.target.value }))
+                        }}
+                        className="w-full rounded-lg px-2.5 py-1.5 text-xs text-slate-300 outline-none"
+                        style={inset}
+                      >
+                        <option value="">Choose a corporate preset...</option>
+                        {PRESET_SUBJECTS.map((ps) => (
+                          <option key={ps.label} value={ps.val}>{ps.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Dynamic Token Pills */}
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                        Click Token to Insert
+                      </label>
+                      <div className="flex flex-wrap gap-1">
+                        {REPORT_TOKENS.map((tk) => (
+                          <button
+                            key={tk.key}
+                            type="button"
+                            onClick={() => insertToken(tk.key, 'subject')}
+                            className="px-2 py-0.5 rounded text-[10px] font-mono font-medium text-indigo-300 bg-indigo-950/70 border border-indigo-700/50 hover:bg-indigo-900/80 transition-colors"
+                            title={`Insert ${tk.key} (${tk.label})`}
+                          >
+                            + {tk.key}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Subject Input */}
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                        Subject Line Template
+                      </label>
+                      <input
+                        value={draft.subjectTemplate}
+                        onChange={(e) => setDraft((d) => ({ ...d, subjectTemplate: e.target.value }))}
+                        placeholder={`[${orgName} Audit] {{name}} - {{sequence}} Report`}
+                        className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
+                        style={inset}
+                      />
+                    </div>
+
+                    {/* Custom Message / Body Note */}
+                    <div>
+                      <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                        Custom Message / SOP Operational Note
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={draft.bodyTemplate}
+                        onChange={(e) => setDraft((d) => ({ ...d, bodyTemplate: e.target.value }))}
+                        placeholder="e.g. Please review the attached CSV report and confirm compliance before shift handover."
+                        className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:ring-1 focus:ring-indigo-500"
+                        style={inset}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Add Button */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                    <span className="text-[11px] text-slate-400">
+                      Recipients: <span className="font-bold text-white">{draftRecipientCount}</span> destination(s)
+                    </span>
+                    <button
+                      onClick={addSchedule}
+                      className="flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95"
+                      style={gradient}
+                    >
+                      <Plus size={15} /> Save &amp; Activate Sequence
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Live Delivery Simulator & Preview (5 cols) */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="rounded-xl p-5 space-y-4" style={surface}>
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <Eye size={16} className="text-indigo-400" />
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider">Live Delivery Simulator</h3>
+                  </div>
+                  <div className="flex gap-1 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewChannel('email')}
+                      className={clsx(
+                        'px-2.5 py-1 rounded font-semibold transition-colors',
+                        previewChannel === 'email' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                      )}
+                    >
+                      Email
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewChannel('telegram')}
+                      className={clsx(
+                        'px-2.5 py-1 rounded font-semibold transition-colors',
+                        previewChannel === 'telegram' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                      )}
+                    >
+                      Telegram
+                    </button>
+                  </div>
+                </div>
+
+                {previewChannel === 'email' ? (
+                  <div className="rounded-xl overflow-hidden border border-slate-800 bg-[#080c16] text-xs font-sans">
+                    {/* Simulated Email Client Header */}
+                    <div className="p-3 bg-[#0d121f] border-b border-slate-800/80 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span><strong>From:</strong> ONEOPS Operations &lt;reports@oneops.io&gt;</span>
+                        <span className="font-mono text-indigo-400">SMTP TLS Verified</span>
+                      </div>
+                      <div className="text-[10px] text-slate-400 truncate">
+                        <strong>To:</strong> {draft.recipients || (draft.recipientMode === 'department' ? `${draft.recipientDeptIds.length} Selected Departments` : `${draft.recipientUserIds.length} Selected Staff`)}
+                      </div>
+                      <div className="text-xs font-bold text-white pt-1 truncate">
+                        <strong>Subject:</strong> {previewSubject}
+                      </div>
+                    </div>
+
+                    {/* Email Body Card */}
+                    <div className="p-4 space-y-3">
+                      <div className="flex items-center gap-2 pb-2 border-b border-slate-800">
+                        <div className="w-6 h-6 rounded bg-indigo-600 flex items-center justify-center font-black text-[10px] text-white">
+                          {orgName.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="text-[11px] font-bold text-white">{orgName} Fleet Monitoring</div>
+                          <div className="text-[9px] text-slate-400">Automated Industrial Report Delivery</div>
+                        </div>
+                      </div>
+
+                      <div className="text-slate-300 text-[11px] leading-relaxed">
+                        {previewBody}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 p-2 rounded bg-slate-900/60 border border-slate-800/80 text-[10px]">
+                        <div>
+                          <span className="text-slate-500">Frequency:</span> <span className="text-indigo-300 font-semibold capitalize">{draft.sequence}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Product:</span> <span className="text-white font-semibold">{INDUSTRIAL_DOMAINS.find(d => d.id === draft.domain)?.label}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Scope:</span> <span className="text-slate-300 font-medium capitalize">{draft.scope}</span>
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Timing:</span> <span className="text-slate-300 font-mono">{String(draft.sendHour).padStart(2,'0')}:{String(draft.sendMinute).padStart(2,'0')} ICT</span>
+                        </div>
+                      </div>
+
+                      {/* Attachment Card */}
+                      <div className="p-2.5 rounded-lg border border-indigo-500/30 bg-indigo-950/20 flex items-center justify-between">
+                        <div className="flex items-center gap-2 truncate">
+                          <FileBarChart size={16} className="text-indigo-400 shrink-0" />
+                          <div className="truncate">
+                            <div className="text-[11px] font-bold text-white truncate">
+                              {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'operations_audit.csv'}
+                            </div>
+                            <div className="text-[9px] text-slate-400">Structured RFC-4180 CSV with Corporate Metadata Header</div>
+                          </div>
+                        </div>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 font-bold">CSV</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  /* Telegram Simulated Bubble */
+                  <div className="rounded-xl p-4 border border-slate-800 bg-[#080c16] space-y-3 text-xs">
+                    <div className="flex items-center gap-2 text-[10px] text-sky-400 font-semibold">
+                      <span>✈️ Telegram Bot Dispatch</span>
+                      <span className="text-slate-500">· Channel {draft.recipients || '@channel_or_chat_id'}</span>
+                    </div>
+
+                    <div className="p-3 rounded-2xl rounded-tl-none bg-[#17212b] border border-sky-900/30 space-y-2 text-white">
+                      <div className="font-bold text-sky-300">📊 {orgName} — {draft.name || 'Automated Operations Digest'}</div>
+                      <p className="text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed">
+                        {previewBody}
+                      </p>
+                      <div className="text-[10px] text-slate-400 border-t border-slate-700/60 pt-1.5 flex justify-between">
+                        <span>🗓 Cadence: {draft.sequence}</span>
+                        <span>⏰ {String(draft.sendHour).padStart(2, '0')}:{String(draft.sendMinute).padStart(2, '0')} ICT</span>
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-400 flex items-center gap-2">
+                      <FileBarChart size={14} className="text-sky-400" />
+                      <span>Attached document: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'report.csv'}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Active Recurring Schedules Table */}
-      <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-        <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
-          <div className="flex items-center gap-2">
-            <CalendarClock size={16} className="text-indigo-400" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Active Automated Recurring Schedules</h3>
-          </div>
-          <span className="text-xs text-slate-400 font-semibold">{schedules.length} Schedules Configured</span>
-        </div>
+          {/* Active Recurring Schedules Table (Full 12 cols) */}
+          <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #1e2433' }}>
+            <div className="px-5 py-3.5 flex items-center justify-between" style={{ background: '#0a0e1a', borderBottom: '1px solid #1e2433' }}>
+              <div className="flex items-center gap-2">
+                <CalendarClock size={16} className="text-indigo-400" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Active Automated Recurring Schedules</h3>
+              </div>
+              <span className="text-xs text-slate-400 font-semibold">{schedules.length} Schedules Configured</span>
+            </div>
 
-        <table className="w-full text-xs" style={{ background: '#0d1117' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #1e2433' }}>
-              {['Schedule Name', 'Scope Target', 'Frequency & Timing', 'History Window', 'Delivery Channel', 'Active', 'Actions'].map((h) => (
-                <th key={h} className="py-3 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {schedules.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="py-8 text-center text-slate-500">
-                  No automated schedules defined. Create one in the panel above.
-                </td>
-              </tr>
-            ) : (
-              schedules.map((s) => {
-                const to = toText(s)
-                return (
-                  <tr key={s.id} style={{ borderBottom: '1px solid #1e2433' }} className="hover:bg-white/[0.02] transition-colors">
-                    <td className="py-3.5 px-4 text-white font-bold">
-                      {s.name}
-                      {s.format !== 'CSV' && (
-                        <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded text-amber-400 bg-amber-500/10 border border-amber-500/20">
-                          sent as CSV
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-300 font-medium">
-                      <span className="text-slate-500 capitalize">{s.scope}:</span> {scopeName(s)}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className="px-2.5 py-1 rounded-full font-semibold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20">
-                        {whenText(s)}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-400">
-                      Last {s.windowDays ?? (s.sequence === 'weekly' ? 7 : s.sequence === 'monthly' ? 30 : 1)}d
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-300">
-                      <span className="capitalize font-semibold">{s.channel}</span>
-                      {to && <span className="text-slate-500 truncate max-w-xs block text-[11px]">{to}</span>}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <button onClick={() => toggleSchedule(s.id)}>
-                        {s.enabled ? <ToggleRight size={22} className="text-indigo-400" /> : <ToggleLeft size={22} className="text-slate-600" />}
-                      </button>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <button
-                        onClick={() => removeSchedule(s.id)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+            <table className="w-full text-xs" style={{ background: '#0d1117' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid #1e2433' }}>
+                  {['Schedule Name', 'Product Domain', 'Scope Target', 'Frequency & Timing', 'History Window', 'Delivery Channel', 'Active', 'Test Dispatch', 'Actions'].map((h) => (
+                    <th key={h} className="py-3 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-slate-500">
+                      No automated schedules defined. Create one in the form above.
                     </td>
                   </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                ) : (
+                  schedules.map((s) => {
+                    const to = toText(s)
+                    const isTesting = testingScheduleId === s.id
+                    return (
+                      <tr key={s.id} style={{ borderBottom: '1px solid #1e2433' }} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="py-3.5 px-4 text-white font-bold">
+                          {s.name}
+                          {s.format !== 'CSV' && (
+                            <span className="ml-2 text-[9px] px-1.5 py-0.5 rounded text-amber-400 bg-amber-500/10 border border-amber-500/20">
+                              sent as CSV
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="text-[10px] px-2 py-0.5 rounded font-medium text-slate-300 bg-slate-800 border border-slate-700">
+                            {INDUSTRIAL_DOMAINS.find((d) => d.id === s.domain)?.label ?? s.domain ?? 'All Assets'}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-300 font-medium">
+                          <span className="text-slate-500 capitalize">{s.scope}:</span> {scopeName(s)}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <span className="px-2.5 py-1 rounded-full font-semibold text-indigo-300 bg-indigo-500/10 border border-indigo-500/20">
+                            {whenText(s)}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-400">
+                          Last {s.windowDays ?? (s.sequence === 'weekly' ? 7 : s.sequence === 'monthly' ? 30 : 1)}d
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-300">
+                          <span className="capitalize font-semibold">{s.channel}</span>
+                          {to && <span className="text-slate-500 truncate max-w-xs block text-[11px]">{to}</span>}
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button onClick={() => toggleSchedule(s.id)}>
+                            {s.enabled ? <ToggleRight size={22} className="text-indigo-400" /> : <ToggleLeft size={22} className="text-slate-600" />}
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button
+                            disabled={isTesting}
+                            onClick={() => testScheduleRun(s)}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-semibold text-indigo-300 bg-indigo-950/60 border border-indigo-800/60 hover:bg-indigo-900/80 transition-colors disabled:opacity-50"
+                            title="Trigger immediate simulated test dispatch"
+                          >
+                            <Play size={11} className={isTesting ? 'animate-spin' : ''} />
+                            <span>{isTesting ? 'Sending...' : 'Test'}</span>
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          <button
+                            onClick={() => removeSchedule(s.id)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

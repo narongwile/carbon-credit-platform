@@ -1260,8 +1260,9 @@ export interface ReportScheduleRow {
   id: string
   org_id: string
   name: string
-  scope: 'device' | 'department' | 'org'
+  scope: 'device' | 'department' | 'org' | 'site'
   scope_id: string | null
+  domain?: string | null
   sequence: 'daily' | 'weekly' | 'monthly'
   format: 'PDF' | 'XLSX' | 'CSV'
   channel: 'email' | 'telegram'
@@ -1290,8 +1291,9 @@ export interface SaveSchedule {
   id?: string
   orgId: string
   name: string
-  scope?: 'device' | 'department' | 'org'
+  scope?: 'device' | 'department' | 'org' | 'site'
   scopeId?: string
+  domain?: string
   sequence?: 'daily' | 'weekly' | 'monthly'
   format?: 'PDF' | 'XLSX' | 'CSV'
   channel?: 'email' | 'telegram'
