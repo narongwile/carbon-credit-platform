@@ -39,6 +39,7 @@ import {
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
   BarChart2, FileText, GripVertical, X, TrendingUp, ShieldCheck,
+  Download, Bot, FlaskConical, Battery,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Link from 'next/link'
@@ -754,8 +755,12 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }, [transformer?.sensors, nameplate, transformer?.voltage])
 
   const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bess' | 'bushing' | 'threats' | 'copilot' | 'lab' | 'fleet'>('dga')
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'threats'>('dga')
+  const [dtrMode, setDtrMode] = useState<'ampacity' | 'bess'>('ampacity')
   const [dossierExporting, setDossierExporting] = useState(false)
+  const [showCopilotDrawer, setShowCopilotDrawer] = useState(false)
+  const [showLabDgaModal, setShowLabDgaModal] = useState(false)
+  const [showFleetRiskModal, setShowFleetRiskModal] = useState(false)
 
   const handleExportOfficialDossier = async () => {
     setDossierExporting(true)
@@ -1439,33 +1444,55 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono">
                     Tier-1 Advanced IIoT
                   </span>
-                  <button
-                    onClick={handleExportOfficialDossier}
-                    disabled={dossierExporting}
-                    className="ml-2 px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm"
-                    title="Generate formal 5-page IEEE/IEC engineering inspection dossier"
-                  >
-                    <Download size={12} className={dossierExporting ? 'animate-bounce' : ''} />
-                    <span>{dossierExporting ? 'Generating Dossier...' : '📑 Export IEEE/IEC Dossier'}</span>
-                  </button>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      onClick={handleExportOfficialDossier}
+                      disabled={dossierExporting}
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm"
+                      title="Generate formal 5-page IEEE/IEC engineering inspection dossier"
+                    >
+                      <Download size={12} className={dossierExporting ? 'animate-bounce' : ''} />
+                      <span>{dossierExporting ? 'Generating Dossier...' : '📑 Export IEEE/IEC Dossier'}</span>
+                    </button>
+                    <button
+                      onClick={() => setShowCopilotDrawer(true)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                      title="Open Industrial GenAI Diagnostics Copilot"
+                    >
+                      <Bot size={13} />
+                      <span>🤖 Ask Copilot</span>
+                    </button>
+                    <button
+                      onClick={() => setShowLabDgaModal(true)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                      title="Import certified ASTM D3612 oil syringe test results"
+                    >
+                      <FlaskConical size={13} />
+                      <span>🧪 Lab DGA</span>
+                    </button>
+                    <button
+                      onClick={() => setShowFleetRiskModal(true)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                      title="Open Fleet Risk Matrix (ISO 55000)"
+                    >
+                      <Building2 size={13} />
+                      <span>🏢 Fleet Risk</span>
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 overflow-x-auto">
                   {[
                     { id: 'dga' as const, label: '🔬 DGA, RUL & RoG' },
-                    { id: 'dtr' as const, label: '⚡ Dynamic Thermal (DTR)' },
-                    { id: 'bess' as const, label: '🔋 BESS Co-Op' },
+                    { id: 'dtr' as const, label: '⚡ Dynamic Rating & BESS' },
                     { id: 'bushing' as const, label: '🔌 Bushing (tan δ)' },
                     { id: 'threats' as const, label: '🛡️ 5-Threats & OLTC' },
-                    { id: 'copilot' as const, label: '🤖 GenAI Copilot' },
-                    { id: 'lab' as const, label: '🧪 Hybrid Lab DGA' },
-                    { id: 'fleet' as const, label: '🏢 Fleet Risk' },
                   ].map((sub) => (
                     <button
                       key={sub.id}
                       onClick={() => setPdmSubTab(sub.id)}
                       className={clsx(
-                        'text-xs px-3 py-1.5 rounded-md font-semibold transition-all whitespace-nowrap',
+                        'text-xs px-3.5 py-1.5 rounded-md font-semibold transition-all whitespace-nowrap',
                         pdmSubTab === sub.id
                           ? 'bg-indigo-600 text-white shadow-sm'
                           : 'text-slate-400 hover:text-slate-200'
@@ -1555,33 +1582,62 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 </div>
               )}
 
-              {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) */}
+              {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) & BESS Co-Optimization */}
               {pdmSubTab === 'dtr' && (
-                <DynamicThermalRating
-                  nameplateKva={liveTelemetry.ratedKva}
-                  currentLoadKva={liveTelemetry.loadKva}
-                  oilTemp={liveTelemetry.oilTemp}
-                  hotSpotTemp={liveTelemetry.hotSpotTemp}
-                  lat={transformer.lat ?? 13.7563}
-                  lng={transformer.lng ?? 100.5018}
-                  assetId={transformer.id}
-                  assetName={transformer.name}
-                />
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-800/60">
+                    <span className="text-xs font-semibold text-slate-300">
+                      Co-Optimizing Dynamic Line/Transformer Ampacity with Substation Energy Storage
+                    </span>
+                    <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800">
+                      <button
+                        onClick={() => setDtrMode('ampacity')}
+                        className={clsx(
+                          'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
+                          dtrMode === 'ampacity' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                        )}
+                      >
+                        <Zap size={13} />
+                        <span>⚡ Live DTR Ampacity</span>
+                      </button>
+                      <button
+                        onClick={() => setDtrMode('bess')}
+                        className={clsx(
+                          'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
+                          dtrMode === 'bess' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                        )}
+                      >
+                        <Battery size={13} />
+                        <span>🔋 BESS Peak Shaving</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {dtrMode === 'ampacity' ? (
+                    <DynamicThermalRating
+                      nameplateKva={liveTelemetry.ratedKva}
+                      currentLoadKva={liveTelemetry.loadKva}
+                      oilTemp={liveTelemetry.oilTemp}
+                      hotSpotTemp={liveTelemetry.hotSpotTemp}
+                      lat={transformer.lat ?? 13.7563}
+                      lng={transformer.lng ?? 100.5018}
+                      assetId={transformer.id}
+                      assetName={transformer.name}
+                    />
+                  ) : (
+                    <BessCoOptimization
+                      transformerName={transformer.name}
+                      orgName={currentOrgName}
+                      nameplateKva={liveTelemetry.ratedKva}
+                      currentLoadKva={liveTelemetry.loadKva}
+                      hotSpotTemp={liveTelemetry.hotSpotTemp}
+                      dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
+                    />
+                  )}
+                </div>
               )}
 
-              {/* Sub-Tab 3: BESS Peak Shaving & Carbon Arbitrage */}
-              {pdmSubTab === 'bess' && (
-                <BessCoOptimization
-                  transformerName={transformer.name}
-                  orgName={currentOrgName}
-                  nameplateKva={liveTelemetry.ratedKva}
-                  currentLoadKva={liveTelemetry.loadKva}
-                  hotSpotTemp={liveTelemetry.hotSpotTemp}
-                  dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
-                />
-              )}
-
-              {/* Sub-Tab 4: Bushing Health & Tan-Delta (tan δ) */}
+              {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
               {pdmSubTab === 'bushing' && (
                 <BushingHealthStudio
                   voltageKv={liveTelemetry.voltageKv}
@@ -1591,7 +1647,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 />
               )}
 
-              {/* Sub-Tab 5: 5-Threats & OLTC Multi-Hazard Studio */}
+              {/* Sub-Tab 4: 5-Threats & OLTC Multi-Hazard Studio */}
               {pdmSubTab === 'threats' && (
                 <SubstationThreatsStudio
                   assetId={transformer.id}
@@ -1601,51 +1657,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   mainOilTemp={liveTelemetry.oilTemp}
                   bushingTanDelta={0.82}
                 />
-              )}
-
-              {/* Sub-Tab 6: Industrial GenAI Diagnostics Copilot */}
-              {pdmSubTab === 'copilot' && (
-                <GenAiDiagnosticsCopilot
-                  assetId={transformer.id}
-                  assetName={transformer.name}
-                  orgName={currentOrgName}
-                  dgaGases={{
-                    h2: liveTelemetry.h2,
-                    ch4: liveTelemetry.ch4,
-                    c2h2: liveTelemetry.c2h2,
-                    c2h4: liveTelemetry.c2h4,
-                    c2h6: liveTelemetry.c2h6,
-                    co: liveTelemetry.co,
-                    co2: liveTelemetry.co2,
-                  }}
-                  duvalVerdict="T2 - Thermal Fault (300°C - 700°C)"
-                  rttDays={38}
-                  oilTemp={liveTelemetry.oilTemp}
-                  hotSpotTemp={liveTelemetry.hotSpotTemp}
-                  dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
-                  bushingStatus="Phase B Warning (tan δ: 0.82%)"
-                  dpAging={590}
-                  moisturePpm={liveTelemetry.moisture}
-                />
-              )}
-
-              {/* Sub-Tab 6: Hybrid Lab DGA Ingestion */}
-              {pdmSubTab === 'lab' && (
-                <LabDgaIngestion
-                  onlineGases={{
-                    h2: liveTelemetry.h2,
-                    ch4: liveTelemetry.ch4,
-                    c2h2: liveTelemetry.c2h2,
-                    c2h4: liveTelemetry.c2h4,
-                    c2h6: liveTelemetry.c2h6,
-                  }}
-                  assetId={transformer.id || 'TRF-01'}
-                />
-              )}
-
-              {/* Sub-Tab 7: Fleet Risk Matrix (ISO 55000) */}
-              {pdmSubTab === 'fleet' && (
-                <FleetRiskMatrix />
               )}
             </div>
           </div>
@@ -1778,6 +1789,131 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           onReset={resetTrendSlots}
         />
       )}
+
+      {/* GenAI Diagnostics Copilot Slide-over Drawer */}
+      {showCopilotDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-all animate-fade-in">
+          <div className="w-full max-w-2xl h-full bg-[#0d1117] border-l border-slate-800 shadow-2xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-[#0a0e1a]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-indigo-600/20 text-indigo-400">
+                  <Bot size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Industrial GenAI Diagnostics Copilot</h3>
+                  <p className="text-[11px] text-slate-400">{transformer.name} · {currentOrgName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCopilotDrawer(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <GenAiDiagnosticsCopilot
+                assetId={transformer.id}
+                assetName={transformer.name}
+                orgName={currentOrgName}
+                dgaGases={{
+                  h2: liveTelemetry.h2,
+                  ch4: liveTelemetry.ch4,
+                  c2h2: liveTelemetry.c2h2,
+                  c2h4: liveTelemetry.c2h4,
+                  c2h6: liveTelemetry.c2h6,
+                  co: liveTelemetry.co,
+                  co2: liveTelemetry.co2,
+                }}
+                duvalVerdict="T2 - Thermal Fault (300°C - 700°C)"
+                rttDays={38}
+                oilTemp={liveTelemetry.oilTemp}
+                hotSpotTemp={liveTelemetry.hotSpotTemp}
+                dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
+                bushingStatus="Phase B Warning (tan δ: 0.82%)"
+                dpAging={590}
+                moisturePpm={liveTelemetry.moisture}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hybrid Lab DGA Ingestion Modal */}
+      {showLabDgaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-4xl max-h-[90vh] bg-[#0d1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-[#0a0e1a]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-cyan-600/20 text-cyan-400">
+                  <FlaskConical size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Hybrid Laboratory DGA Ingestion (ASTM D3612)</h3>
+                  <p className="text-[11px] text-slate-400">Upload certified lab oil test report for {transformer.name}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowLabDgaModal(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <LabDgaIngestion
+                onlineGases={{
+                  h2: liveTelemetry.h2,
+                  ch4: liveTelemetry.ch4,
+                  c2h2: liveTelemetry.c2h2,
+                  c2h4: liveTelemetry.c2h4,
+                  c2h6: liveTelemetry.c2h6,
+                }}
+                assetId={transformer.id || 'TRF-01'}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fleet Risk Matrix Modal */}
+      {showFleetRiskModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-5xl max-h-[90vh] bg-[#0d1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-[#0a0e1a]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-amber-600/20 text-amber-400">
+                  <Building2 size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Fleet Risk Matrix & Criticality Index (ISO 55000)</h3>
+                  <p className="text-[11px] text-slate-400">Fleet-wide asset risk profile · {currentOrgName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowFleetRiskModal(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              <FleetRiskMatrix />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Action Button for Copilot */}
+      <button
+        onClick={() => setShowCopilotDrawer(true)}
+        className="fixed bottom-6 right-6 z-40 px-4 py-3 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs shadow-2xl flex items-center gap-2 border border-indigo-400/40 hover:scale-105 transition-all"
+        title="Open Industrial GenAI Diagnostics Copilot"
+      >
+        <Bot size={18} className="animate-pulse" />
+        <span>Ask Industrial AI Copilot</span>
+        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+      </button>
 
       {/* Site management + Alarm event log + transport/connectivity timeline (Mobile logs tab / Desktop bottom) */}
       <div className={clsx('p-4 space-y-4', mobileTab === 'logs' ? 'block' : 'hidden lg:block')}>
