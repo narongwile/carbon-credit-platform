@@ -624,7 +624,10 @@ export function exportIIoTCSV(
 
   const filename = `${opts.orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_Operations_Report_${opts.days}d_${Date.now()}.csv`
   downloadCSVSections(filename, sections, [
-    `Organization: ${opts.orgName}`,
+    `Organization: ${opts.orgName} (${opts.orgId})`,
+    opts.siteName ? `Site Scope: ${opts.siteName}` : 'Site Scope: All Sites',
+    opts.departmentName ? `Department Scope: ${opts.departmentName}` : 'Department Scope: All Departments',
+    opts.domain && opts.domain !== 'all' ? `Asset Domain: ${opts.domain}` : 'Asset Domain: All Fleet Domains',
     `Reporting Window: Last ${opts.days} Days`,
     `Generated At: ${fmtDateTime(new Date())} (${DISPLAY_TZ_LABEL})`,
   ])
