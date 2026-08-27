@@ -169,7 +169,7 @@ export default function FleetPage() {
               fleetView === 'risk' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
             )}
           >
-            🏢 Fleet Risk Matrix (ISO 55000)
+            🏢 Fleet Risk Matrix
           </button>
         </div>
       </div>

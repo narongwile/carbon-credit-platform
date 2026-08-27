@@ -1364,7 +1364,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     { id: 'dga' as const, label: '🔬 DGA, RUL & RoG' },
                     { id: 'dtr' as const, label: '⚡ Dynamic Thermal (DTR)' },
                     { id: 'lab' as const, label: '🧪 Hybrid Lab DGA' },
-                    { id: 'fleet' as const, label: '🏢 Fleet Risk (ISO 55000)' },
+                    { id: 'fleet' as const, label: '🏢 Fleet Risk' },
                   ].map((sub) => (
                     <button
                       key={sub.id}
