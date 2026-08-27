@@ -2039,6 +2039,31 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});
           } catch(err) { node.error('notify:user-googlechat '+err.message); }
         }
+        const rawWebhook = String(pf.webhookApi || pf.webhookUrl || '').trim();
+        if (sel.webhook && rawWebhook && rawWebhook.startsWith('http')) {
+          try {
+            await fetch(rawWebhook, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                event: 'user_alarm',
+                nodeId: e.nodeId,
+                severity: topSeverity,
+                alarms: alarms.map(a => ({
+                  paramKey: a.paramKey,
+                  paramLabel: a.paramLabel,
+                  severity: a.severity,
+                  value: a.value,
+                  unit: a.unit,
+                  threshold: a.threshold,
+                  time: a.ts || a.time || e.time
+                })),
+                link: __linkFor(u.role),
+                timestamp: new Date().toISOString()
+              })
+            });
+          } catch(err) { node.error('notify:user-webhook '+err.message); }
+        }
       }
     } catch(err) { node.warn('notify:user-prefs '+err.message); }
   } catch(err) { node.error('notify: '+err.message); }
@@ -2261,6 +2286,30 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         };
         await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(personalGchat)});
       } catch(err) { node.error('notifyPersonal:googlechat ' + err.message); }
+    }
+    const rawWebhook = String(pf.webhookApi || pf.webhookUrl || '').trim();
+    if (sel.webhook && rawWebhook && rawWebhook.startsWith('http')) {
+      try {
+        await fetch(rawWebhook, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            event: 'personal_alarm',
+            nodeId: e.nodeId,
+            severity: topSeverity,
+            alarms: alarms.map(a => ({
+              paramLabel: a.paramLabel,
+              severity: a.severity,
+              value: a.value,
+              unit: a.unit,
+              threshold: a.threshold,
+              time: a.ts || a.time || e.time
+            })),
+            link,
+            timestamp: new Date().toISOString()
+          })
+        });
+      } catch(err) { node.error('notifyPersonal:webhook ' + err.message); }
     }
   } catch(err) { node.error('notifyPersonal: ' + err.message); }
 })();

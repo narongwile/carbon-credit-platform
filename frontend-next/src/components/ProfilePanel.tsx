@@ -16,7 +16,7 @@ export default function ProfilePanel({ portal }: { portal: string }) {
   const [profile, setProfile] = useState({ name: '', username: '', email: '', phone: '' })
   // Per-user notification channel credentials (any role): where THIS user's
   // alerts go. Stored in user_prefs alongside phone, so no schema change.
-  const [channels, setChannels] = useState({ telegramBotApi: '', lineMsgApi: '', googleChatApi: '' })
+  const [channels, setChannels] = useState({ telegramBotApi: '', lineMsgApi: '', googleChatApi: '', webhookApi: '' })
   const [pwd, setPwd] = useState({ current: '', next: '', confirm: '' })
   const [savedProfile, setSavedProfile] = useState(false)
   const [savedPwd, setSavedPwd] = useState(false)
@@ -26,12 +26,13 @@ export default function ProfilePanel({ portal }: { portal: string }) {
     if (!s) return
     setProfile({ name: s.name, username: s.username, email: s.email, phone: '' })
     if (apiEnabled) api.getMyConfig(s.id).then((r) => {
-      const p = (r?.prefs ?? {}) as { phone?: string; telegramBotApi?: string; lineMsgApi?: string; googleChatApi?: string }
+      const p = (r?.prefs ?? {}) as { phone?: string; telegramBotApi?: string; lineMsgApi?: string; googleChatApi?: string; webhookApi?: string }
       if (p.phone) setProfile((cur) => ({ ...cur, phone: p.phone as string }))
       setChannels({
         telegramBotApi: p.telegramBotApi ?? '',
         lineMsgApi: p.lineMsgApi ?? '',
         googleChatApi: p.googleChatApi ?? '',
+        webhookApi: p.webhookApi ?? '',
       })
     })
   }, [])
@@ -114,6 +115,12 @@ export default function ProfilePanel({ portal }: { portal: string }) {
             <Field label="Google Chat Webhook" value={channels.googleChatApi}
               onChange={(v) => setChannels((c) => ({ ...c, googleChatApi: v }))}
               placeholder="https://chat.googleapis.com/v1/spaces/…/messages?key=…" />
+          </div>
+          <div>
+            <Field label="Personal Webhook URL (Slack / Discord / PagerDuty / Automation)" value={channels.webhookApi}
+              onChange={(v) => setChannels((c) => ({ ...c, webhookApi: v }))}
+              placeholder="https://hooks.slack.com/services/... or https://discord.com/api/webhooks/..." />
+            <p className="text-[10px] text-slate-500 mt-1">💡 รองรับ HTTP POST Webhook สำหรับส่งแจ้งเตือนต่อไปยัง Slack, Discord, PagerDuty หรือระบบส่วนตัว</p>
           </div>
         </div>
         <button onClick={saveProfile} className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium text-white" style={savedProfile ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}>
