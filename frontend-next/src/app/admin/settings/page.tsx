@@ -212,13 +212,20 @@ export default function SettingsPage() {
     }
     setSavedLoc(true)
     setTimeout(() => setSavedLoc(false), 2000)
-    toast.success(
-      orgLat == null
-        ? 'Factory location cleared'
-        : factoryAddress
-        ? `Factory location saved: ${factoryAddress.split(',')[0]} (${orgLat.toFixed(4)}, ${orgLng.toFixed(4)})`
-        : `Factory location saved (${orgLat.toFixed(4)}, ${orgLng.toFixed(4)})`
-    )
+    // orgLat/orgLng are captured into locals right where the guard above has
+    // already confirmed both are set — `orgLat == null` alone doesn't let TS
+    // narrow orgLng too, since the two are only linked by the equal-nullness
+    // check earlier in the function, not by this expression itself.
+    if (orgLat == null || orgLng == null) {
+      toast.success('Factory location cleared')
+    } else {
+      const lat = orgLat, lng = orgLng
+      toast.success(
+        factoryAddress
+          ? `Factory location saved: ${factoryAddress.split(',')[0]} (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+          : `Factory location saved (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+      )
+    }
   }
 
   const saveBrandName = async () => {

@@ -97,6 +97,8 @@ export default function LiveSensorMap({
   pickActive,
   onPick,
   onOpenDevice,
+  initialSiteId,
+  onSiteChange,
 }: {
   nodes: GeoNode[]
   height?: string
