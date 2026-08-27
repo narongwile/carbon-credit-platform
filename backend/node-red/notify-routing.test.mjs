@@ -1,5 +1,5 @@
 import { readFileSync } from 'fs'
-const flows = JSON.parse(readFileSync('/home/user/carbon-credit-platform/backend/node-red/flows.nodered-backend.json','utf8'))
+const flows = JSON.parse(readFileSync(new URL('./flows.nodered-backend.json', import.meta.url), 'utf8'))
 const fn = flows.find(n => n.id === 'notify').func
 
 const USERS = [
@@ -30,6 +30,7 @@ const pool = { query: async (sql) => {
   return [[]]
 }}
 const globalCtx = { get: (k) => ({
+  pool: pool,
   resolvePool: () => pool,
   mailConfig: async () => ({ from:'noreply@x', transport:{ sendMail: async (m) => { mails.push(m.to) } } }),
   notifyConfig: async () => ({ telegramChatId:'GLOBALCHAT' }),
@@ -37,14 +38,14 @@ const globalCtx = { get: (k) => ({
 const node = { warn: (m)=>console.log('  warn:', m), error: (m)=>console.log('  ERROR:', m) }
 globalThis.fetch = async (url, opt) => { posts.push({ url, body: opt?.body }); return { ok:true } }
 
-const msg = { payload: { nodeId:'tr-001', orgId:'org-1', departmentId:'dept-a',
+const msg = { payload: { nodeId:'tr-001', orgId:'org-1', departmentId:'dept-a', paramKey:'oilTemp',
   paramLabel:'Oil Temperature', value:99, unit:'°C', threshold:95, severity:'CRITICAL', kind:'threshold', time:new Date(0).toISOString() } }
 
 // CORS_ORIGIN doubles as the app origin, so deep links work without extra config.
 const env = { get: (k) => (k === 'CORS_ORIGIN' ? 'https://iiotplatform.thermexpertise.com' : undefined) }
 new Function('env','node','global','msg','fetch', fn)(env, node, globalCtx, msg, globalThis.fetch)
 
-await new Promise(r => setTimeout(r, 60))
+await new Promise(r => setTimeout(r, 300))
 console.log('\nemails ->', mails)
 console.log('posts  ->', posts.map(p => p.url.replace(/bot[^/]*/,'bot***')))
 const ok = (label, cond) => console.log((cond?'PASS':'FAIL')+' — '+label)

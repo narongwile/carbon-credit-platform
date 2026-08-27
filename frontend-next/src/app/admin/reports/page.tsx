@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { getDepartmentsByOrg, reportSchedules as seedSchedules } from '@/lib/orgData'
+import { sites as defaultSites } from '@/lib/fleetData'
 import type { ReportSequence } from '@/types/org'
 import type { RecipientMode } from '@/lib/api'
 import {
@@ -38,6 +40,8 @@ import {
   FileSpreadsheet,
   FileText,
   Clock,
+  Car,
+  MapPin,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -51,6 +55,7 @@ const INDUSTRIAL_DOMAINS = [
   { id: 'transformer', label: 'Transformers (ETERNITY)', icon: Zap },
   { id: 'carbonNode', label: 'Cold-Chain (Refrigeration)', icon: Activity },
   { id: 'bloodBox', label: 'BloodBOX (Cold Transit)', icon: ShieldCheck },
+  { id: 'automobile', label: 'Formula EV Telemetry', icon: Car },
 ]
 
 // Each entry below names ONLY what the generator actually computes — see
@@ -131,7 +136,12 @@ const MONTH_DAYS = Array.from({ length: 28 }, (_, i) => i + 1)
 
 type OrgUser = { id: string; name?: string | null; email?: string | null; department_ids?: string[]; department_id?: string | null }
 
-export default function ReportsPage() {
+function ReportsPageContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const urlSiteId = searchParams.get('siteId')
+  const urlDomain = searchParams.get('domain')
+
   const live = useIsLive()
   const { selectedOrgId, orgNames } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
@@ -147,8 +157,30 @@ export default function ReportsPage() {
 
   const { devices } = useManagedDevices(orgId)
 
+  // Compute available sites for this organization's devices
+  const availableSites = useMemo(() => {
+    const siteMap = new Map<string, { id: string; name: string; count: number }>()
+    devices.forEach((d) => {
+      if (d.siteId) {
+        const existing = siteMap.get(d.siteId)
+        if (existing) {
+          existing.count++
+        } else {
+          const meta = defaultSites.find((s) => s.id === d.siteId)
+          siteMap.set(d.siteId, {
+            id: d.siteId,
+            name: meta?.name || d.siteId,
+            count: 1,
+          })
+        }
+      }
+    })
+    return Array.from(siteMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }, [devices])
+
   // Filter & Studio State
-  const [selectedDomain, setSelectedDomain] = useState<string>('all')
+  const [selectedDomain, setSelectedDomain] = useState<string>(urlDomain || 'all')
+  const [selectedSite, setSelectedSite] = useState<string>(urlSiteId || 'all')
   const [selectedDept, setSelectedDept] = useState<string>('all')
   const [selectedDays, setSelectedDays] = useState<number>(30)
   const [selectedSections, setSelectedSections] = useState<string[]>(['health', 'energy', 'alarm', 'executive'])
@@ -162,6 +194,8 @@ export default function ReportsPage() {
     alarms: AlarmLogItem[]
   } | null>(null)
 
+  const activeSiteName = selectedSite !== 'all' ? availableSites.find((s) => s.id === selectedSite)?.name : undefined
+
   useEffect(() => {
     let cancelled = false
     buildIIoTReportData({
@@ -169,6 +203,8 @@ export default function ReportsPage() {
       orgName,
       days: selectedDays,
       domain: selectedDomain,
+      siteId: selectedSite,
+      siteName: activeSiteName,
       departmentId: selectedDept,
       selectedTypes: selectedSections,
       format: exportFormat,
@@ -177,7 +213,7 @@ export default function ReportsPage() {
       if (!cancelled) setReportData(res)
     })
     return () => { cancelled = true }
-  }, [orgId, orgName, selectedDays, selectedDomain, selectedDept, selectedSections, exportFormat, devices])
+  }, [orgId, orgName, selectedDays, selectedDomain, selectedSite, activeSiteName, selectedDept, selectedSections, exportFormat, devices])
 
   const toggleSection = (id: string) => {
     setSelectedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -190,29 +226,20 @@ export default function ReportsPage() {
     }
     setGenerating(true)
     try {
-      const data = reportData || await buildIIoTReportData({
-        orgId,
-        orgName,
-        days: selectedDays,
-        domain: selectedDomain,
-        departmentId: selectedDept,
-        departmentName: departments.find(d => d.id === selectedDept)?.name,
-        selectedTypes: selectedSections,
-        format: exportFormat,
-        devices,
-      })
-
       const reportOpts = {
         orgId,
         orgName,
         days: selectedDays,
         domain: selectedDomain,
+        siteId: selectedSite,
+        siteName: activeSiteName,
         departmentId: selectedDept,
         departmentName: departments.find(d => d.id === selectedDept)?.name,
         selectedTypes: selectedSections,
         format: exportFormat,
         devices,
       }
+      const data = reportData || await buildIIoTReportData(reportOpts)
 
       if (exportFormat === 'PDF') {
         await exportIIoTPDF(reportOpts, data)
@@ -235,7 +262,7 @@ export default function ReportsPage() {
   // Scheduling Logic
   // ---------------------------------------------------------------------------
   type SchedRow = {
-    id: string; name: string; scope: 'org' | 'department' | 'device'; scopeId: string
+    id: string; name: string; scope: 'org' | 'site' | 'department' | 'device'; scopeId: string
     sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'
     recipients: string; enabled: boolean
     sendHour: number; sendMinute: number; dayOfWeek: number | null; dayOfMonth: number | null
@@ -293,7 +320,9 @@ export default function ReportsPage() {
     return () => { cancelled = true }
   }, [orgId])
 
-  const scopeOptions = draft.scope === 'department'
+  const scopeOptions = draft.scope === 'site'
+    ? availableSites.map((s) => ({ id: s.id, name: s.name }))
+    : draft.scope === 'department'
     ? departments.map((d) => ({ id: d.id, name: d.name }))
     : draft.scope === 'device' ? devices.map((d) => ({ id: d.id, name: d.name })) : []
 
@@ -356,6 +385,8 @@ export default function ReportsPage() {
   const scopeName = (s: SchedRow) =>
     s.scope === 'org'
       ? 'All devices'
+      : s.scope === 'site'
+      ? (availableSites.find((st) => st.id === s.scopeId)?.name ?? s.scopeId)
       : (s.scope === 'department'
           ? departments.find((d) => d.id === s.scopeId)?.name
           : devices.find((d) => d.id === s.scopeId)?.name) ?? s.scopeId
@@ -504,8 +535,8 @@ export default function ReportsPage() {
               </div>
             </div>
 
-            {/* Domain & Department Filters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Domain, Site & Department Filters */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold">
                   Asset Domain Filter
@@ -518,6 +549,28 @@ export default function ReportsPage() {
                 >
                   {INDUSTRIAL_DOMAINS.map((d) => (
                     <option key={d.id} value={d.id}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold flex items-center gap-1">
+                  <Building2 size={12} className="text-indigo-400" />
+                  Site Facility Scope
+                </label>
+                <select
+                  value={selectedSite}
+                  onChange={(e) => setSelectedSite(e.target.value)}
+                  className={`w-full rounded-lg px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer transition-all ${
+                    selectedSite !== 'all'
+                      ? 'bg-indigo-950/90 text-indigo-200 border border-indigo-500/60 ring-1 ring-indigo-500/40'
+                      : 'text-white'
+                  }`}
+                  style={selectedSite === 'all' ? inset : undefined}
+                >
+                  <option value="all">All Sites ({devices.length} assets)</option>
+                  {availableSites.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.count} assets)</option>
                   ))}
                 </select>
               </div>
@@ -643,13 +696,13 @@ export default function ReportsPage() {
 
               <div>
                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Target Scope</label>
-                <div className="flex gap-2 mb-2">
-                  {([['org', 'All Assets'], ['department', 'Department'], ['device', 'Per Device']] as const).map(([sc, label]) => (
+                <div className="flex gap-1.5 mb-2">
+                  {([['org', 'All Assets'], ['site', 'Site Facility'], ['department', 'Department'], ['device', 'Per Device']] as const).map(([sc, label]) => (
                     <button
                       key={sc}
                       onClick={() => setDraft((d) => ({ ...d, scope: sc, scopeId: '' }))}
                       className={clsx(
-                        'flex-1 py-1.5 rounded-lg text-[11px] font-semibold transition-colors',
+                        'flex-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
                         draft.scope === sc ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
                       )}
                     >
@@ -986,5 +1039,13 @@ export default function ReportsPage() {
         </table>
       </div>
     </div>
+  )
+}
+
+export default function ReportsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ReportsPageContent />
+    </Suspense>
   )
 }

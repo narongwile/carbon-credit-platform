@@ -29,6 +29,8 @@ export interface IIoTReportOptions {
   title?: string
   days: number
   domain?: string
+  siteId?: string
+  siteName?: string
   departmentId?: string
   departmentName?: string
   nodeId?: string
@@ -148,6 +150,9 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
     if (opts.departmentId && opts.departmentId !== 'all') {
       const depts = d.departmentIds || ((d as any).departmentId ? [(d as any).departmentId] : [])
       if (depts.length > 0 && !depts.includes(opts.departmentId)) return false
+    }
+    if (opts.siteId && opts.siteId !== 'all') {
+      if (d.siteId !== opts.siteId) return false
     }
     if (opts.nodeId && opts.nodeId !== 'all') {
       if (d.id !== opts.nodeId) return false
@@ -323,11 +328,14 @@ export async function exportIIoTPDF(
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
   doc.setTextColor(148, 163, 184)
-  doc.text(
-    `Scope: ${opts.departmentName ? `${opts.departmentName} · ` : ''}Last ${opts.days} Days (${DISPLAY_TZ_LABEL}) · Generated: ${new Date().toLocaleString()}`,
-    14,
-    20
-  )
+  const scopeParts = [
+    opts.siteName ? `Site: ${opts.siteName}` : '',
+    opts.departmentName ? `Dept: ${opts.departmentName}` : '',
+    opts.domain && opts.domain !== 'all' ? `Domain: ${opts.domain}` : '',
+    `Last ${opts.days} Days (${DISPLAY_TZ_LABEL})`,
+    `Generated: ${new Date().toLocaleString()}`,
+  ].filter(Boolean).join(' · ')
+  doc.text(`Scope: ${scopeParts}`, 14, 20)
 
   // ── Executive KPI Summary Cards ──
   let y = 35
@@ -478,6 +486,8 @@ export function exportIIoTXLSX(
       name: 'Executive_Summary',
       rows: [
         ['ORGANIZATION', opts.orgName],
+        ['SITE SCOPE', opts.siteName || 'All Sites'],
+        ['DEPARTMENT SCOPE', opts.departmentName || 'All Departments'],
         ['REPORT WINDOW', `Last ${opts.days} Days (${DISPLAY_TZ_LABEL})`],
         ['GENERATED AT', fmtDateTime(new Date())],
         [],

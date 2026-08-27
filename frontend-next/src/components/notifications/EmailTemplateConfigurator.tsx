@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { api, useIsLive } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
+import { getSession } from '@/lib/auth'
 import { Mail, Sparkles, Send, Eye, ShieldAlert, RotateCcw, AlertTriangle, Smartphone, Monitor } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -29,6 +30,8 @@ const buildDefaultTemplate = (orgName: string = '{{org_name}}'): EmailTemplateCo
 
 const DYNAMIC_TOKENS = [
   { key: '{{device_name}}', label: 'Device Name / Asset', desc: 'e.g. TR-SUBSTATION-01' },
+  { key: '{{site_name}}', label: 'Site / Substation', desc: 'e.g. KMUTT Main Substation' },
+  { key: '{{location}}', label: 'Physical Location', desc: 'e.g. Bangkok, Thung Khru' },
   { key: '{{severity}}', label: 'Alarm Severity', desc: 'CRITICAL / WARNING' },
   { key: '{{category}}', label: 'Category', desc: 'e.g. Thermal & Oil, Voltage' },
   { key: '{{param_label}}', label: 'Parameter Label', desc: 'e.g. Top Oil Temperature' },
@@ -40,8 +43,9 @@ const DYNAMIC_TOKENS = [
 ]
 
 const getPresetSubjects = (orgName: string = '{{org_name}}') => [
+  { label: 'Site Scoped (Recommended)', val: `[{{severity}}] {{site_name}}: {{device_name}} - {{param_label}}` },
   { label: 'Standard Enterprise', val: `[{{severity}}] ${orgName} Alert: {{device_name}} - {{param_label}} ({{category}})` },
-  { label: 'Urgent Dispatch', val: `🚨 URGENT [{{severity}}]: {{device_name}} reached {{value}} (Limit: {{threshold}})` },
+  { label: 'Urgent Dispatch', val: `🚨 URGENT [{{severity}}]: {{device_name}} at {{site_name}} reached {{value}} (Limit: {{threshold}})` },
   { label: 'Asset & Category', val: `[ALARM] {{category}} Alert on {{device_name}} - {{param_label}}` },
 ]
 
@@ -60,7 +64,7 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
   const [template, setTemplate] = useState<EmailTemplateConfig>(defaultTpl)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [testEmail, setTestEmail] = useState('')
+  const [testEmail, setTestEmail] = useState(() => getSession()?.email || '')
   const [sendingTest, setSendingTest] = useState(false)
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile' | 'plain'>('desktop')
   const [simulatedSeverity, setSimulatedSeverity] = useState<'CRITICAL' | 'WARNING'>('CRITICAL')
@@ -199,6 +203,8 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
   const sampleVars: Record<string, string> = {
     device_name: 'TR-SUBSTATION-01',
     node_id: 'TR-SUBSTATION-01',
+    site_name: 'KMUTT Main Substation',
+    location: 'Bangkok, Thung Khru (13.6515° N, 100.4965° E)',
     org_id: orgId,
     severity: simulatedSeverity,
     category: simulatedSeverity === 'CRITICAL' ? 'Thermal & Oil' : 'Voltage',
@@ -561,6 +567,10 @@ ${previewHeader ? `Notice: ${previewHeader}\n\n` : ''}${previewSop ? `SOP Protoc
                     <div className="grid grid-cols-3 py-1 border-b border-slate-800/80">
                       <span className="text-slate-400">Device Asset</span>
                       <span className="col-span-2 text-white font-mono font-semibold">{sampleVars.device_name}</span>
+                    </div>
+                    <div className="grid grid-cols-3 py-1 border-b border-slate-800/80">
+                      <span className="text-slate-400">Site Facility</span>
+                      <span className="col-span-2 text-indigo-300 font-medium">{sampleVars.site_name}</span>
                     </div>
                     <div className="grid grid-cols-3 py-1 border-b border-slate-800/80">
                       <span className="text-slate-400">Trigger Value</span>

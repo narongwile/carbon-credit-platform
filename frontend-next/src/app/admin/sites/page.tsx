@@ -8,7 +8,7 @@ import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive } from '@/lib/api'
 import { DOMAIN_TO_PLATFORM } from '@/lib/entitlements'
 import { DOMAIN_META, type SensorDomain, type SensorHost, type SiteOperations } from '@/types/fleet'
-import { Building2, Zap, Thermometer, Droplet, MapPin, Leaf, AlertTriangle, Activity, HeartPulse, Car, ArrowUpRight, TrendingUp } from 'lucide-react'
+import { Building2, Zap, Thermometer, Droplet, MapPin, Leaf, AlertTriangle, Activity, HeartPulse, Car, ArrowUpRight, TrendingUp, FileBarChart } from 'lucide-react'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -229,6 +229,14 @@ export default function SitesPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <Link
+                  href={`/admin/reports?siteId=${encodeURIComponent(site.id)}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/25 transition-all shadow-sm"
+                  title={`Generate site compliance and telemetry report for ${site.name}`}
+                >
+                  <FileBarChart size={13} className="text-amber-400" />
+                  <span>Report →</span>
+                </Link>
                 <Link
                   href={`/admin/trends?siteId=${encodeURIComponent(site.id)}`}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 transition-all shadow-sm"

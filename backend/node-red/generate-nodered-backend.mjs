@@ -1648,7 +1648,7 @@ const e = alarms[0];
 if (!e.severity || !e.paramKey) return null; // Safety guard: ignore raw telemetry
 
 const pool = global.get('resolvePool')(e.orgId);
-const controlPool = global.get('pool');
+const controlPool = global.get('pool') || pool;
 const __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok';
 
 const formatTime = (ts) => {
@@ -1833,6 +1833,14 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       if (orgRows.length && orgRows[0].name) orgName = orgRows[0].name;
     } catch(_) {}
 
+    let siteName = '';
+    try {
+      if (pool) {
+        const [nodeRows] = await pool.query("SELECT s.name as siteName FROM nodes n LEFT JOIN sites s ON s.id=n.site_id WHERE n.id=?", [e.nodeId]);
+        if (nodeRows && nodeRows.length && nodeRows[0].siteName) siteName = nodeRows[0].siteName;
+      }
+    } catch(_) {}
+
     let emailTpl = null;
     try {
       const [tRows] = await controlPool.query("SELECT sval FROM platform_settings WHERE skey=?", ['email_template.' + e.orgId]);
@@ -1851,6 +1859,8 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
     const __templateVars = {
       device_name: e.nodeId,
       node_id: e.nodeId,
+      site_name: siteName || orgName,
+      location: siteName || orgName,
       org_id: e.orgId,
       org_name: orgName,
       severity: topSeverity,
@@ -1873,7 +1883,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       + '</div>'
       + (emailHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + __esc(emailHeaderNote) + '</div>' : '')
       + '<div style=\"padding: 24px;\">'
-      + '<div style=\"margin-bottom: 16px; color: #94a3b8; font-size: 14px;\">Device: <strong style=\"color:#fff; font-family:monospace;\">' + __esc(e.nodeId) + '</strong></div>'
+      + '<div style=\"margin-bottom: 16px; color: #94a3b8; font-size: 14px;\">Device: <strong style=\"color:#fff; font-family:monospace;\">' + __esc(e.nodeId) + '</strong>' + (siteName ? ' &nbsp;·&nbsp; Site: <strong style=\"color:#a5b4fc;\">' + __esc(siteName) + '</strong>' : '') + '</div>'
       
       + alarms.map(a => {
           const info = __riskFor(a.paramKey, a.domain);
