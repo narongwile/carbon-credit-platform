@@ -89,9 +89,15 @@ export default function DeviceExportDialog({
   }, [nodeId, range.start, range.end, validRange])
 
   const buildCsv = () => {
+    const metaHeader = [
+      `# Organization: ${orgName} (${selectedOrgId})`,
+      `# Device: ${deviceName} (${nodeId})`,
+      `# Window: ${from} → ${to} (${DISPLAY_TZ_LABEL})`,
+      `# Exported At: ${fmtDateTime(new Date())}`,
+    ].join('\n')
     const header = 'device,param_key,value,taken_at'
     const body = (rows ?? []).map((r) => [deviceName, r.param_key, r.value, fmtDateTime(r.taken_at)].join(','))
-    return [header, ...body].join('\n')
+    return [metaHeader, '', header, ...body].join('\n')
   }
 
   const buildPdf = async (): Promise<Blob> => {

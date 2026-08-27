@@ -49,7 +49,7 @@ const round = (v: number, dp = 2) => (Number.isFinite(v) ? Number(v.toFixed(dp))
 
 export function buildDeviceReport(
   rep: NodeReport,
-  opts: { deviceName?: string; domain?: SensorDomain },
+  opts: { deviceName?: string; domain?: SensorDomain; orgName?: string },
 ): DeviceReport {
   const domain = (opts.domain ?? (rep.node?.domain as SensorDomain | undefined))
   const schema = domain ? ALARM_SCHEMA[domain] : undefined
@@ -184,7 +184,7 @@ export function buildDeviceReport(
   const meta = [
     `Device: ${name} (${rep.nodeId})`,
     schema ? `Product: ${schema.label}` : '',
-    rep.node?.org_id ? `Organization: ${rep.node.org_id}` : '',
+    opts.orgName ? `Organization: ${opts.orgName}` : rep.node?.org_id ? `Organization: ${rep.node.org_id}` : '',
     `Period: ${stamp(rep.from)} — ${stamp(rep.to)}`,
     rep.presence ? `Presence: ${rep.presence.online ? 'online' : 'offline'}, last seen ${fmt(rep.presence.last_seen)}${rep.presence.fw ? `, fw ${rep.presence.fw}` : ''}` : '',
     `Readings: ${rep.series.reduce((n, s) => n + s.n, 0)} samples in ${rep.series.length} hourly buckets`,

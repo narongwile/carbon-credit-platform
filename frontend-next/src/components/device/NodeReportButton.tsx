@@ -181,7 +181,9 @@ export default function NodeReportButton({
       const p = period()
       const raw = await api.nodeReport(nodeId, p.from, p.to)
       if (!raw) { toast.error('Report data unavailable'); return }
-      const report = buildDeviceReport(raw, { deviceName, domain })
+      const orgId = useAppStore.getState().selectedOrgId
+      const orgName = useAppStore.getState().orgNames[orgId] || 'ONEOPS'
+      const report = buildDeviceReport(raw, { deviceName, domain, orgName })
       if (!raw.series.length && !raw.events.length) {
         toast('No readings stored for this period', { icon: '📭' })
       }
