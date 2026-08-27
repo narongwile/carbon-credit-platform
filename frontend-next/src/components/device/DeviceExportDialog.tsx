@@ -23,6 +23,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
+import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
 import { X, Download, Send, Loader2, FileText, Table, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -97,6 +98,21 @@ export default function DeviceExportDialog({
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
     const doc = new jsPDF()
+    const pageWidth = doc.internal.pageSize.getWidth()
+
+    let logoBottom = 0
+    try {
+      const orgLogo = await getOrgLogoDataUrl(selectedOrgId, orgName)
+      if (orgLogo?.dataUrl) {
+        const maxW = 28, maxH = 22
+        const scale = Math.min(maxW / orgLogo.width, maxH / orgLogo.height)
+        const w = orgLogo.width * scale, h = orgLogo.height * scale
+        const x = pageWidth - 14 - w
+        doc.addImage(orgLogo.dataUrl, orgLogo.format, x, 14, w, h, undefined, 'FAST')
+        logoBottom = 14 + h
+      }
+    } catch {}
+
     doc.setFontSize(16); doc.setTextColor(99, 102, 241)
     doc.text(`${orgName} — Device Export`, 14, 18)
     // slate-600, not the previous (90,90,90)/(140,140,140): both sit on this
@@ -109,9 +125,10 @@ export default function DeviceExportDialog({
     doc.text(`Device: ${deviceName}`, 14, 27)
     doc.text(`Window: ${from} → ${to} (${DISPLAY_TZ_LABEL})`, 14, 33)
     doc.text(`Readings: ${(rows ?? []).length}`, 14, 39)
+    const tableStartY = Math.max(46, logoBottom + 6)
     if ((rows ?? []).length) {
       autoTable(doc, {
-        startY: 46,
+        startY: tableStartY,
         head: [['Parameter', 'Value', 'Taken at']],
         body: (rows ?? []).map((r) => [r.param_key, String(r.value), fmtDateTime(r.taken_at)]),
         theme: 'striped',

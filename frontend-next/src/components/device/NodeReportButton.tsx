@@ -16,6 +16,8 @@ import { useEffect, useRef, useState } from 'react'
 import { api, useIsLive } from '@/lib/api'
 import { buildDeviceReport, type DeviceReport } from '@/lib/deviceReport'
 import { fetchPhotoDataUrl } from '@/lib/photoDataUrl'
+import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
+import { useAppStore } from '@/lib/store'
 import { downloadCSVSections, downloadText } from '@/lib/exportFile'
 import { downloadXLSX } from '@/lib/xlsx'
 import type { SensorDomain } from '@/types/fleet'
@@ -122,17 +124,34 @@ export default function NodeReportButton({
       }
     }
 
+    // Render Organization Logo on the top left
+    let textLeftX = 14
+    let logoBottom = 0
+    try {
+      const orgId = useAppStore.getState().selectedOrgId
+      const orgName = useAppStore.getState().orgNames[orgId]
+      const orgLogo = await getOrgLogoDataUrl(orgId, orgName)
+      if (orgLogo?.dataUrl) {
+        const maxW = 24, maxH = 20
+        const scale = Math.min(maxW / orgLogo.width, maxH / orgLogo.height)
+        const w = orgLogo.width * scale, h = orgLogo.height * scale
+        doc.addImage(orgLogo.dataUrl, orgLogo.format, 14, 12, w, h, undefined, 'FAST')
+        textLeftX = 14 + w + 5
+        logoBottom = 12 + h
+      }
+    } catch {}
+
     doc.setFontSize(16); doc.setTextColor(99, 102, 241)
-    doc.text(report.title, 14, 16)
+    doc.text(report.title, textLeftX, 16)
     // slate-600, matching the same fix in DeviceExportDialog.tsx and
     // iiotReportGenerator.ts — this meta block is the closest thing this
     // report has to a subheading, and (90,90,90) undershoots the AA floor
     // once font size and print reproduction are taken into account.
     doc.setFontSize(9); doc.setTextColor(71, 85, 105)
-    report.meta.forEach((line, i) => doc.text(line, 14, 24 + i * 5))
-    // Leave room for the photo if it is taller than the meta block, so the
-    // first table never starts underneath it.
-    let y = Math.max(26 + report.meta.length * 5, photoBottom + 10)
+    report.meta.forEach((line, i) => doc.text(line, textLeftX, 23 + i * 4.8))
+    // Leave room for the photo and the logo if either is taller than the meta block, so the
+    // first table never starts underneath them.
+    let y = Math.max(26 + report.meta.length * 5, photoBottom + 10, logoBottom + 10)
 
     for (const section of report.sections) {
       doc.setFontSize(11); doc.setTextColor(30, 30, 30)

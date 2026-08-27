@@ -22,6 +22,7 @@ import { fmtDateTime, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import { ALARM_SCHEMA, paramStatus } from '@/lib/alarmParams'
 import type { SensorDomain } from '@/types/fleet'
 import type { ManagedDevice } from '@/types/org'
+import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
 
 export interface IIoTReportOptions {
   orgId: string
@@ -319,6 +320,21 @@ export async function exportIIoTPDF(
   // ── Header Banner ──
   doc.setFillColor(13, 17, 23)
   doc.rect(0, 0, pageWidth, 28, 'F')
+
+  // Organization Logo (Rendered in top-right of banner)
+  try {
+    const orgLogo = await getOrgLogoDataUrl(opts.orgId, opts.orgName)
+    if (orgLogo?.dataUrl) {
+      const maxW = 34
+      const maxH = 20
+      const scale = Math.min(maxW / orgLogo.width, maxH / orgLogo.height)
+      const w = orgLogo.width * scale
+      const h = orgLogo.height * scale
+      const x = pageWidth - 14 - w
+      const y = 4 + (maxH - h) / 2
+      doc.addImage(orgLogo.dataUrl, orgLogo.format, x, y, w, h, undefined, 'FAST')
+    }
+  } catch {}
 
   doc.setFontSize(16)
   doc.setFont('helvetica', 'bold')
