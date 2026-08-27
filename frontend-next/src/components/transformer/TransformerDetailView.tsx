@@ -1481,7 +1481,20 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
               {pdmSubTab === 'bushing' && (
                 <BushingHealthStudio
-                  voltageKv={nameplate?.voltage ? Number(nameplate.voltage) : 115}
+                  // Nameplate has no `voltage` field — it is `voltageClass`, and
+                  // it is a STRING ("115 kV", "22/0.4 kV"), so Number() on it
+                  // yields NaN. Same resolved-then-override-then-transformer
+                  // precedence the two Voltage rows in this file already use;
+                  // parseFloat takes the leading (highest) class, which is the
+                  // bushing voltage this studio wants.
+                  voltageKv={
+                    parseFloat(
+                      nameplate?.resolved?.voltageClass ||
+                      nameplate?.voltageClass ||
+                      transformer.voltage ||
+                      ''
+                    ) || 115
+                  }
                   assetId={transformer.id}
                   assetName={transformer.name}
                 />

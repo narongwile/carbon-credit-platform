@@ -72,7 +72,7 @@ export default function GenAiDiagnosticsCopilot({
     const initialGreeting: ChatMessage = {
       id: 'msg-init',
       sender: 'ai',
-      text: `สวัสดีครับวิศวกรผู้ดูแลระบบ ผมคือ **Industrial GenAI Diagnostics Copilot** 🤖 พร้อมช่วยวินิจฉัยสภาพหม้อแปลง **${assetName} (${assetId})** แบบเรียลไทม์\n\n📌 **สรุปสถานะด่วนจาก Telemetry ปัจจุบัน:**\n- **DGA Diagnosis:** ตรวจพบก๊าซ C₂H₂ สะสม 3.2 ppm เข้าข่าย **${duvalVerdict}**\n- **พยากรณ์ Time-to-Trip (RTT):** คาดว่าจะแตะระดับขีดอันตรายในอีก **${rttDays} วัน** หากไม่มีการระบายก๊าซ\n- **Bushing Health:** ตรวจพบการเสื่อมของฉนวนที่ **${bushingStatus}**\n- **DTR Headroom:** ขณะนี้ยังมีขีดความสามารถรองรับโหลดได้อีก **+${dtrHeadroomKva.toLocaleString()} kVA** อย่างปลอดภัย\n\nคุณสามารถคลิกคำถามด่วนด้านล่าง หรือสอบถามเจาะจงได้เลยครับ!`,
+      text: `สวัสดีครับวิศวกรผู้ดูแลระบบ ผมคือ **Industrial GenAI Diagnostics Copilot** 🤖 พร้อมช่วยวินิจฉัยสภาพหม้อแปลง **${assetName} (${assetId})** แบบเรียลไทม์\n\n📌 **สรุปสถานะด่วนจาก Telemetry ปัจจุบัน:**\n- **DGA Diagnosis:** ตรวจพบก๊าซ C₂H₂ สะสม ${dgaGases.c2h2} ppm เข้าข่าย **${duvalVerdict}**\n- **พยากรณ์ Time-to-Trip (RTT):** คาดว่าจะแตะระดับขีดอันตรายในอีก **${rttDays} วัน** หากไม่มีการระบายก๊าซ\n- **Bushing Health:** ตรวจพบการเสื่อมของฉนวนที่ **${bushingStatus}**\n- **DTR Headroom:** ขณะนี้ยังมีขีดความสามารถรองรับโหลดได้อีก **+${dtrHeadroomKva.toLocaleString()} kVA** อย่างปลอดภัย\n\nคุณสามารถคลิกคำถามด่วนด้านล่าง หรือสอบถามเจาะจงได้เลยครับ!`,
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
     }
     setMessages([initialGreeting])
@@ -125,7 +125,7 @@ export default function GenAiDiagnosticsCopilot({
       if (text.includes('RCA') || text.includes('สาเหตุ') || text.includes('C2H2')) {
         reply = `### 🔍 ผลการวิเคราะห์สาเหตุรากเหง้า (Root Cause Analysis - RCA)\n**อ้างอิงมาตรฐาน IEEE C57.104-2019 & IEC 60599:**\n\n1. **กลไกการเกิดก๊าซ (Gas Generation Mechanism):**\n   - สัดส่วนก๊าซ Acetylene (C₂H₂ = ${dgaGases.c2h2} ppm) ร่วมกับ Ethylene (C₂H₄ = ${dgaGases.c2h4} ppm) ใน Duval Pentagon บ่งชี้ว่าเกิด **ความร้อนสูงเฉพาะจุด (Thermal Hot-Spot > 500°C)**\n   - สาเหตุที่เป็นไปได้สูง: หน้าสัมผัสของชุด Tap Changer (OLTC) หลวม หรือกระแสไหลวน (Circulating Currents) บริเวณแกนเหล็กขดลวด\n\n2. **ความเร่งด่วนและ Time-to-Trip:**\n   - เวกเตอร์ความเร็วในการสะสมก๊าซอยู่ที่ **+0.42 %/วัน** ซึ่งทำให้คาดการณ์ RTT อยู่ที่ **${rttDays} วัน** ก่อนที่สวิตช์ตรวจจับก๊าซจะตัดวงจร (Trip)\n\n3. **ข้อเสนอแนะทางวิศวกรรม:**\n   - สั่งเก็บตัวอย่างน้ำมันไซริงค์ซ้ำใน 7 วัน เพื่อสอบเทียบ Drift (ASTM D3612)\n   - เตรียมต่อเครื่องกรองและไล่ก๊าซน้ำมัน (Degassing Machine) ในแผนซ่อมบำรุงประจำเดือน`
       } else if (text.includes('โหลด') || text.includes('DTR') || text.includes('overload')) {
-        reply = `### ⚡ ผลการประเมินการจ่ายโหลดแบบไดนามิก (DTR Assessment)\n**อิงตามมาตรฐาน IEEE C57.115:**\n\n- **สถานะปัจจุบัน:** ขณะนี้หม้อแปลงมี Headroom ปลอดภัยเหลืออยู่ **+${dtrHeadroomKva.toLocaleString()} kVA**\n- **คำตอบ:** **สามารถรับโหลดเพิ่ม 300 kVA ได้อย่างปลอดภัย 100%** โดยอุณหภูมิ Hot-Spot จะขยับจาก ${hotSpotTemp}°C ขึ้นไปอยู่ที่ประมาณ **84.5°C** (ยังต่ำกว่าขีดจำกัดความปลอดภัย 120°C มาก)\n\n💰 **การวิเคราะห์ความคุ้มค่า (Economic Arbitrage):**\n- การรันโหลดเพิ่ม 300 kVA เป็นเวลา 4 ชั่วโมง จะสร้างมูลค่าพลังงานไฟฟ้าประมาณ **+$132 USD**\n- ในขณะที่ค่าเสื่อมราคาของฉนวนกระดาษ (Aging Loss) เพิ่มขึ้นเพียง **-$0.85 USD** เท่านั้น ถือว่าคุ้มค่าอย่างยิ่ง\n- **คำแนะนำ:** แนะนำให้เปิดระบบ **Auto-Dispatch ONAF-1 Pre-Cooling** ไว้ล่วงหน้า 30 นาที เพื่อหน่วงอุณหภูมิไม่ให้พุ่งเร็วเกินไปครับ`
+        reply = `### ⚡ ผลการประเมินการจ่ายโหลดแบบไดนามิก (DTR Assessment)\n**อิงตามมาตรฐาน IEEE C57.115:**\n\n- **สถานะปัจจุบัน:** ขณะนี้หม้อแปลงมี Headroom ปลอดภัยเหลืออยู่ **+${dtrHeadroomKva.toLocaleString()} kVA**\n- **คำตอบ:** Headroom ที่คำนวณได้คือ **${dtrHeadroomKva.toLocaleString()} kVA** — ตัวเลขนี้มาจากแบบจำลอง DTR ไม่ใช่การอนุมัติให้จ่ายโหลดเพิ่ม กรุณายืนยันกับอุณหภูมิ Hot-Spot จริง (ปัจจุบัน ${hotSpotTemp}°C, ขีดจำกัด 120°C) และสภาพโหลดหน้างานก่อนตัดสินใจทุกครั้ง\n\n💰 **การวิเคราะห์ความคุ้มค่า (Economic Arbitrage):**\n- การรันโหลดเพิ่ม 300 kVA เป็นเวลา 4 ชั่วโมง จะสร้างมูลค่าพลังงานไฟฟ้าประมาณ **+$132 USD**\n- ในขณะที่ค่าเสื่อมราคาของฉนวนกระดาษ (Aging Loss) เพิ่มขึ้นเพียง **-$0.85 USD** เท่านั้น ถือว่าคุ้มค่าอย่างยิ่ง\n- **คำแนะนำ:** แนะนำให้เปิดระบบ **Auto-Dispatch ONAF-1 Pre-Cooling** ไว้ล่วงหน้า 30 นาที เพื่อหน่วงอุณหภูมิไม่ให้พุ่งเร็วเกินไปครับ`
       } else if (text.includes('Bushing') || text.includes('บุชชิ่ง') || text.includes('tan delta')) {
         reply = `### 🔌 ผลการประเมินความเสี่ยงบุชชิ่ง Phase B\n**อ้างอิงมาตรฐาน IEEE C57.19.00 / IEC 60137:**\n\n1. **ระดับความรุนแรง:** 🟡 **ELEVATED RISK (เฝ้าระวังระดับสูง)**\n   - ค่า **tan δ = 0.82%** (เกณฑ์ปกติ < 0.5%, เริ่มเสื่อม 0.5–1.0%, อันตราย > 1.0%)\n   - ค่า **ΔC₁ Drift = +3.6%** บ่งชี้ว่าเริ่มมีการเจาะทะลุ (Puncture) เล็กน้อยระหว่างชั้นกระดาษฉนวน Condenser Foil ภายในบุชชิ่ง\n   - สัญญาณ Partial Discharge (PD) ที่ **195 pC** บนกราฟ PRPD ชี้ว่าเป็นชนิด **Void/Cavity Discharge** (มีโพรงอากาศในฉนวน)\n\n2. **ความเสี่ยง Flashover:**\n   - ยังไม่เกิดการระเบิดในทันที แต่ห้ามปล่อยทิ้งไว้เกิน 60 วัน เพราะความร้อนจะเร่งให้ค่า tan δ ทะลุ 1.0% จนฉนวนระเบิดได้\n   - แนะนำให้จัดซื้อบุชชิ่งอะไหล่สำรอง (P/N: BSH-115KV) และสลับตัวในการ Overhaul รอบหน้า`
       } else if (text.includes('CMMS') || text.includes('ใบสั่งงาน') || text.includes('Work Order')) {
@@ -163,11 +163,11 @@ export default function GenAiDiagnosticsCopilot({
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-white">Industrial GenAI Diagnostics Copilot</h3>
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-500/40 font-mono font-bold flex items-center gap-1">
-                <Sparkles size={10} /> LLM AGENT ACTIVE
+                <Sparkles size={10} /> RULE-BASED · NOT A LIVE MODEL
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Autonomous multi-sensor fault reasoning, IEEE standard citation &amp; CMMS dispatch automation
+              Pre-written IEEE/IEC guidance selected by keyword from your question — not a live model. Verify every figure against the readings before acting.
             </p>
           </div>
         </div>
@@ -253,7 +253,7 @@ export default function GenAiDiagnosticsCopilot({
         {isTyping && (
           <div className="flex items-center gap-2 text-slate-400 text-xs italic">
             <Bot size={14} className="animate-spin text-indigo-400" />
-            <span>Copilot กำลังวิเคราะห์ผลลัพธ์และค้นหามาตรฐาน IEEE/IEC...</span>
+            <span>กำลังเลือกคำแนะนำที่ตรงกับคำถาม...</span>
           </div>
         )}
 
