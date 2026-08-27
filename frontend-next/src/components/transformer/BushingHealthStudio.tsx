@@ -67,10 +67,12 @@ export default function BushingHealthStudio({
   voltageKv = 115,
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
+  orgName = 'Industrial Substation',
 }: {
   voltageKv?: number
   assetId?: string
   assetName?: string
+  orgName?: string
 }) {
   const [bushings, setBushings] = useState<BushingData[]>(DEFAULT_BUSHINGS)
   const [selectedPhase, setSelectedPhase] = useState<'A' | 'B' | 'C'>('B')

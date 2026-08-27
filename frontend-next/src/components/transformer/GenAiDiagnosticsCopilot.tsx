@@ -12,6 +12,7 @@ import toast from 'react-hot-toast'
 interface GenAiDiagnosticsCopilotProps {
   assetId?: string
   assetName?: string
+  orgName?: string
   dgaGases?: {
     h2: number
     ch4: number
@@ -45,6 +46,7 @@ interface ChatMessage {
 export default function GenAiDiagnosticsCopilot({
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
+  orgName = 'Industrial Substation',
   dgaGases = { h2: 65, ch4: 45, c2h2: 3.2, c2h4: 35, c2h6: 28, co: 420, co2: 3200 },
   duvalVerdict = 'T2 - Thermal Fault (300°C - 700°C)',
   rttDays = 38,

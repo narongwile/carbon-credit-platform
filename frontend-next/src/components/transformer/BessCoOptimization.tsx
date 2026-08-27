@@ -14,6 +14,7 @@ import clsx from 'clsx'
 
 interface BessCoOptimizationProps {
   transformerName?: string
+  orgName?: string
   nameplateKva?: number
   currentLoadKva?: number
   hotSpotTemp?: number
@@ -22,15 +23,18 @@ interface BessCoOptimizationProps {
 
 export default function BessCoOptimization({
   transformerName = 'Main Substation TR-01',
+  orgName = 'Industrial Substation',
   nameplateKva = 2500,
   currentLoadKva = 1850,
   hotSpotTemp = 78,
   dtrHeadroomKva = 1015,
 }: BessCoOptimizationProps) {
   const [bessMode, setBessMode] = useState<'peak-shave' | 'tou-arbitrage' | 'preservation'>('peak-shave')
-  const [bessCapacityKwh, setBessCapacityKwh] = useState(500) // 500 kWh LFP Storage
-  const [batterySocPct, setBatterySocPct] = useState(82) // 82% State of Charge
-  const [shaveThresholdKva, setShaveThresholdKva] = useState(2000) // Shave above 2,000 kVA
+  const defaultCapacity = Math.max(100, Math.round(nameplateKva * 0.2))
+  const defaultThreshold = Math.max(200, Math.round(nameplateKva * 0.8))
+  const [bessCapacityKwh, setBessCapacityKwh] = useState(defaultCapacity)
+  const [batterySocPct, setBatterySocPct] = useState(82)
+  const [shaveThresholdKva, setShaveThresholdKva] = useState(defaultThreshold)
   const [autoDispatchActive, setAutoDispatchActive] = useState(true)
   const [manualDischarging, setManualDischarging] = useState(false)
 

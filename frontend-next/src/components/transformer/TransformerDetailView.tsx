@@ -1561,6 +1561,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               {pdmSubTab === 'bess' && (
                 <BessCoOptimization
                   transformerName={transformer.name}
+                  orgName={currentOrgName}
                   nameplateKva={liveTelemetry.ratedKva}
                   currentLoadKva={liveTelemetry.loadKva}
                   hotSpotTemp={liveTelemetry.hotSpotTemp}
@@ -1574,6 +1575,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   voltageKv={liveTelemetry.voltageKv}
                   assetId={transformer.id}
                   assetName={transformer.name}
+                  orgName={currentOrgName}
                 />
               )}
 
@@ -1582,6 +1584,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 <GenAiDiagnosticsCopilot
                   assetId={transformer.id}
                   assetName={transformer.name}
+                  orgName={currentOrgName}
                   dgaGases={{
                     h2: liveTelemetry.h2,
                     ch4: liveTelemetry.ch4,

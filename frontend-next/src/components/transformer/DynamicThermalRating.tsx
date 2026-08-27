@@ -49,28 +49,44 @@ export default function DynamicThermalRating({
   // Fetch Live Weather Feed
   const fetchLiveWeather = useCallback(async () => {
     setWeatherLoading(true)
+    const cacheKey = `meteo_cache_${lat.toFixed(3)}_${lng.toFixed(3)}`
+    try {
+      const cached = typeof window !== 'undefined' ? sessionStorage.getItem(cacheKey) : null
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Date.now() - parsed.ts < 5 * 60 * 1000) {
+          setAmbientTemp(parsed.temp)
+          setWindSpeed(parsed.wind)
+          setSolarIrradiance(parsed.solar)
+          setWeatherSource('open-meteo')
+          setWeatherLoading(false)
+          return
+        }
+      }
+    } catch {}
+
     try {
       const res = await fetch(
-        // wind_speed_unit=ms is REQUIRED, not a preference: Open-Meteo defaults
-        // wind_speed_10m to km/h, and every consumer below treats this value as
-        // m/s (the ~1.2%-per-m/s ampacity factor and the 0.8 °C-per-m/s hot-spot
-        // term). Without it a real 3.8 m/s breeze arrives as 13.7, inflating
-        // dynamic ampacity ~11% and subtracting 11 °C from hot-spot instead of
-        // 3 °C — both in the direction that makes the transformer look cooler
-        // and more capable than it is, which is the wrong way to be wrong about
-        // an overload limit.
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,relative_humidity_2m,direct_normal_irradiance&wind_speed_unit=ms`,
         { signal: AbortSignal.timeout(3000) }
       )
       if (!res.ok) throw new Error('Weather API unreachable')
       const data = await res.json()
       if (data.current) {
-        setAmbientTemp(Number(data.current.temperature_2m.toFixed(1)))
-        setWindSpeed(Number(data.current.wind_speed_10m.toFixed(1)))
-        if (data.current.direct_normal_irradiance != null) {
-          setSolarIrradiance(Math.round(data.current.direct_normal_irradiance))
-        }
+        const temp = Number(data.current.temperature_2m.toFixed(1))
+        const wind = Number(data.current.wind_speed_10m.toFixed(1))
+        const solar = data.current.direct_normal_irradiance != null ? Math.round(data.current.direct_normal_irradiance) : 640
+
+        setAmbientTemp(temp)
+        setWindSpeed(wind)
+        setSolarIrradiance(solar)
         setWeatherSource('open-meteo')
+
+        try {
+          if (typeof window !== 'undefined') {
+            sessionStorage.setItem(cacheKey, JSON.stringify({ temp, wind, solar, ts: Date.now() }))
+          }
+        } catch {}
       }
     } catch {
       // The weather feed is unreachable, so these are MODELLED values, not a
