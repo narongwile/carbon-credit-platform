@@ -9,11 +9,13 @@
 // 3. Grid View: Side-by-side comparative cards
 // ---------------------------------------------------------------------------
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, Suspense } from 'react'
 import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { api, useIsLive } from '@/lib/api'
 import { useManagedDevices } from '@/lib/useManagedDevices'
+import { sites as defaultSites } from '@/lib/fleetData'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { downloadCSV } from '@/lib/exportFile'
 import { fmtHM, fmtDayMonth, fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
@@ -22,7 +24,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine, Brush, AreaChart, Area,
 } from 'recharts'
 import {
-  Loader2, Download, Check, Layers, LayoutGrid, Rows, TrendingUp, Activity, Sparkles, AlertTriangle, Calendar, RefreshCw, Eye, EyeOff
+  Loader2, Download, Check, Layers, LayoutGrid, Rows, TrendingUp, Activity, Sparkles, AlertTriangle, Calendar, RefreshCw, Eye, EyeOff, Building2, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -51,7 +53,9 @@ interface Loaded { id: string; name: string; rows: Row[] }
 const toUTC = (ms: number) => new Date(ms).toISOString()
 
 function deviceDetailRoute(domain: SensorDomain, id: string): string {
-  return domain === 'transformer' ? `/admin/transformers/detail?id=${encodeURIComponent(id)}` : `/admin/nodes/detail?id=${encodeURIComponent(id)}`
+  if (domain === 'transformer') return `/admin/transformers/detail?id=${encodeURIComponent(id)}`
+  if (domain === 'automobile') return `/admin/automobile?id=${encodeURIComponent(id)}`
+  return `/admin/nodes/detail?id=${encodeURIComponent(id)}`
 }
 
 function TrendsLegend({
@@ -99,15 +103,24 @@ function TrendsLegend({
   )
 }
 
-export default function TrendsPage() {
+function TrendsPageContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const urlSiteId = searchParams.get('siteId')
+  const urlDomain = searchParams.get('domain') as SensorDomain | null
+  const urlParam = searchParams.get('param')
+  const urlDevices = searchParams.get('devices')
+  const urlRange = searchParams.get('range') as (typeof RANGES)[number]['id'] | null
+
   const live = useIsLive()
   const selectedOrgId = useAppStore((s) => s.selectedOrgId)
   const orgId = selectedOrgId || 'org-1'
   const { devices } = useManagedDevices(orgId)
 
-  const [domain, setDomain] = useState<SensorDomain>('transformer')
-  const [paramKey, setParamKey] = useState('oilTemp')
-  const [rangeId, setRangeId] = useState<(typeof RANGES)[number]['id']>('24h')
+  const [siteFilter, setSiteFilter] = useState<string>(urlSiteId || 'all')
+  const [domain, setDomain] = useState<SensorDomain>(urlDomain || 'transformer')
+  const [paramKey, setParamKey] = useState(urlParam || 'oilTemp')
+  const [rangeId, setRangeId] = useState<(typeof RANGES)[number]['id']>(urlRange || '24h')
   const [customRange, setCustomRange] = useState<{ from: string; to: string } | null>(null)
   const [showCustomPicker, setShowCustomPicker] = useState(false)
 
@@ -115,7 +128,12 @@ export default function TrendsPage() {
   const [showThresholds, setShowThresholds] = useState(true)
   const [showBrush, setShowBrush] = useState(true)
 
-  const [picked, setPicked] = useState<string[]>([])
+  const [picked, setPicked] = useState<string[]>(() => {
+    if (urlDevices) {
+      return urlDevices.split(',').filter(Boolean).slice(0, MAX_DEVICES)
+    }
+    return []
+  })
   const [loaded, setLoaded] = useState<Loaded[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [win, setWin] = useState({ from: Date.now() - 1440 * 60_000, to: Date.now() })
@@ -129,7 +147,34 @@ export default function TrendsPage() {
     ? (fromDisplayInput(customRange.to) - fromDisplayInput(customRange.from)) / 60_000
     : (RANGES.find((r) => r.id === rangeId)?.minutes ?? 1440)
 
-  const candidates = useMemo(() => devices.filter((d) => d.domain === domain), [devices, domain])
+  const candidates = useMemo(() => {
+    return devices.filter((d) => {
+      if (d.domain !== domain) return false
+      if (siteFilter !== 'all' && d.siteId !== siteFilter) return false
+      return true
+    })
+  }, [devices, domain, siteFilter])
+
+  const availableSites = useMemo(() => {
+    const siteMap = new Map<string, { id: string; name: string; count: number }>()
+    devices.forEach((d) => {
+      if (d.domain === domain && d.siteId) {
+        const existing = siteMap.get(d.siteId)
+        if (existing) {
+          existing.count++
+        } else {
+          const meta = defaultSites.find((s) => s.id === d.siteId)
+          siteMap.set(d.siteId, {
+            id: d.siteId,
+            name: meta?.name || d.siteId,
+            count: 1,
+          })
+        }
+      }
+    })
+    return Array.from(siteMap.values()).sort((a, b) => a.name.localeCompare(b.name))
+  }, [devices, domain])
+
   const domainsPresent = useMemo(() => {
     const set = new Set(devices.map((d) => d.domain).filter(Boolean) as SensorDomain[])
     return set.size ? Array.from(set) : (['transformer'] as SensorDomain[])
@@ -143,6 +188,13 @@ export default function TrendsPage() {
     }
   }, [domainsPresent, domain])
 
+  // Sync schema changes if paramKey is not valid for domain
+  useEffect(() => {
+    if (!schema.params.some((p) => p.key === paramKey)) {
+      setParamKey(schema.params[0]?.key ?? '')
+    }
+  }, [domain, schema, paramKey])
+
   useEffect(() => {
     setPicked((cur) => {
       const stillValid = cur.filter((id) => candidates.some((d) => d.id === id))
@@ -155,6 +207,14 @@ export default function TrendsPage() {
     setPicked((cur) => (cur.includes(id)
       ? cur.filter((x) => x !== id)
       : cur.length >= MAX_DEVICES ? cur : [...cur, id]))
+
+  const selectAllCandidates = () => {
+    setPicked(candidates.map((d) => d.id).slice(0, MAX_DEVICES))
+  }
+
+  const clearAllSelection = () => {
+    setPicked([])
+  }
 
   useEffect(() => {
     setHiddenIds((cur) => {
@@ -309,6 +369,41 @@ export default function TrendsPage() {
               </select>
             )}
 
+            {/* Site Scope Selector */}
+            {availableSites.length > 0 && (
+              <div className="relative flex items-center">
+                <Building2 size={12} className="absolute left-2.5 text-indigo-400 pointer-events-none" />
+                <select
+                  value={siteFilter}
+                  onChange={(e) => setSiteFilter(e.target.value)}
+                  className={`text-xs font-semibold pl-7 pr-6 py-1.5 rounded-lg border outline-none cursor-pointer transition-all ${
+                    siteFilter !== 'all'
+                      ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/40'
+                      : 'text-white border-[#1e2433]'
+                  }`}
+                  style={siteFilter === 'all' ? inset : undefined}
+                  title="Filter devices by site (กรองอุปกรณ์ตามไซต์)"
+                >
+                  <option value="all">All Sites ({devices.filter((d) => d.domain === domain).length})</option>
+                  {availableSites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.count})
+                    </option>
+                  ))}
+                </select>
+                {siteFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setSiteFilter('all')}
+                    className="ml-1 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                    title="Clear site filter (แสดงทุกไซต์)"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            )}
+
             <select
               value={paramKey}
               onChange={(e) => setParamKey(e.target.value)}
@@ -412,12 +507,33 @@ export default function TrendsPage() {
         {/* Device Selection Chips */}
         <div>
           <div className="text-[11px] text-slate-500 mb-1.5 flex items-center justify-between">
-            <span>Select devices to compare ({picked.length}/{MAX_DEVICES}):</span>
+            <div className="flex items-center gap-2">
+              <span>Select devices to compare ({picked.length}/{MAX_DEVICES}):</span>
+              {candidates.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={selectAllCandidates}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium underline cursor-pointer"
+                  >
+                    Select All ({Math.min(candidates.length, MAX_DEVICES)})
+                  </button>
+                  <span className="text-slate-600">·</span>
+                  <button
+                    type="button"
+                    onClick={clearAllSelection}
+                    className="text-[10px] text-slate-400 hover:text-slate-300 font-medium underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
             <span className="text-[10px] text-slate-600">Click to toggle device</span>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {candidates.length === 0 && (
-              <span className="text-xs text-slate-600">No {DOMAIN_META[domain].label.toLowerCase()} devices in this organization.</span>
+              <span className="text-xs text-slate-600">No {DOMAIN_META[domain].label.toLowerCase()} devices found matching this site filter.</span>
             )}
             {candidates.map((d) => {
               const on = picked.includes(d.id)
@@ -792,5 +908,13 @@ export default function TrendsPage() {
         </p>
       )}
     </div>
+  )
+}
+
+export default function TrendsPage() {
+  return (
+    <Suspense fallback={null}>
+      <TrendsPageContent />
+    </Suspense>
   )
 }
