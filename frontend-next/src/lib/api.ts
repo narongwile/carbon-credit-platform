@@ -1265,7 +1265,7 @@ export interface ReportScheduleRow {
   domain?: string | null
   sequence: 'daily' | 'weekly' | 'monthly'
   format: 'PDF' | 'XLSX' | 'CSV'
-  channel: 'email' | 'telegram' | 'line' | 'webhook'
+  channel: 'email' | 'telegram' | 'line' | 'googlechat' | 'webhook'
   recipients: string | null
   enabled: 0 | 1
   last_run_at: string | null
@@ -1296,7 +1296,7 @@ export interface SaveSchedule {
   domain?: string
   sequence?: 'daily' | 'weekly' | 'monthly'
   format?: 'PDF' | 'XLSX' | 'CSV'
-  channel?: 'email' | 'telegram' | 'line' | 'webhook'
+  channel?: 'email' | 'telegram' | 'line' | 'googlechat' | 'webhook'
   recipients?: string
   enabled?: 0 | 1
   sendHour?: number

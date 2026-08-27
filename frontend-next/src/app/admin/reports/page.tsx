@@ -61,6 +61,8 @@ import {
   Save,
   Webhook,
   MessageSquare,
+  Bot,
+  MessagesSquare,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -504,7 +506,7 @@ function ReportsPageContent() {
   type SchedRow = {
     id: string; name: string; scope: 'org' | 'site' | 'department' | 'device'; scopeId: string
     domain: string
-    sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram' | 'line' | 'webhook'
+    sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram' | 'line' | 'googlechat' | 'webhook'
     recipients: string; enabled: boolean
     sendHour: number; sendMinute: number
     dayOfWeek: number | string | null
@@ -515,7 +517,7 @@ function ReportsPageContent() {
   }
 
   const [activeTab, setActiveTab] = useState<'studio' | 'sequence'>('studio')
-  const [previewChannel, setPreviewChannel] = useState<'email' | 'telegram' | 'line' | 'webhook'>('email')
+  const [previewChannel, setPreviewChannel] = useState<'email' | 'telegram' | 'line' | 'googlechat' | 'webhook'>('email')
   const [testingScheduleId, setTestingScheduleId] = useState<string | null>(null)
 
   const blankSchedule = {
@@ -1607,7 +1609,7 @@ function ReportsPageContent() {
                           Last {s.windowDays ?? (s.sequence === 'weekly' ? 7 : s.sequence === 'monthly' ? 30 : 1)}d
                         </td>
                         <td className="py-3.5 px-4 text-slate-300">
-                          <span className="capitalize font-semibold">{s.channel}</span>
+                          <span className="capitalize font-semibold">{s.channel === 'googlechat' ? 'Google Chat' : s.channel}</span>
                           {to && <span className="text-slate-500 truncate max-w-xs block text-[11px]">{to}</span>}
                         </td>
                         <td className="py-3.5 px-4">
@@ -1948,11 +1950,12 @@ function ReportsPageContent() {
 
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Delivery Channel</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
                       {([
                         ['email', 'Email', Mail],
                         ['telegram', 'Telegram', Send],
                         ['line', 'LINE', MessageSquare],
+                        ['googlechat', 'Google Chat', Bot],
                         ['webhook', 'Webhook', Webhook],
                       ] as const).map(([ch, label, Icon]) => (
                         <button
@@ -2003,6 +2006,22 @@ function ReportsPageContent() {
                     />
                     <span className="text-[10px] text-slate-500 mt-1 block">
                       Dispatches interactive Flex Bubble cards directly via LINE Messaging API.
+                    </span>
+                  </div>
+                ) : draft.channel === 'googlechat' ? (
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                      Google Chat Space Webhook URL
+                    </label>
+                    <input
+                      value={draft.recipients}
+                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+                      placeholder="https://chat.googleapis.com/v1/spaces/AAAA.../messages?key=...&token=..."
+                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
+                      style={inset}
+                    />
+                    <span className="text-[10px] text-slate-500 mt-1 block">
+                      Dispatches interactive Cards V2 summary cards directly into your Google Chat Space.
                     </span>
                   </div>
                 ) : draft.channel === 'webhook' ? (
@@ -2249,7 +2268,7 @@ function ReportsPageContent() {
                       <h3 className="text-xs font-bold text-white uppercase tracking-wider">Live Dispatch Simulator</h3>
                     </div>
                     <div className="flex gap-1 text-[10px] flex-wrap">
-                      {(['email', 'telegram', 'line', 'webhook'] as const).map((ch) => (
+                      {(['email', 'telegram', 'line', 'googlechat', 'webhook'] as const).map((ch) => (
                         <button
                           key={ch}
                           type="button"
@@ -2259,7 +2278,7 @@ function ReportsPageContent() {
                             previewChannel === ch ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
                           )}
                         >
-                          {ch}
+                          {ch === 'googlechat' ? 'Google Chat' : ch}
                         </button>
                       ))}
                     </div>
@@ -2352,6 +2371,52 @@ function ReportsPageContent() {
                         </div>
                         <button type="button" className="w-full py-1.5 rounded-lg bg-[#06c755] text-white text-[11px] font-bold shadow hover:bg-[#05b34c] transition-colors">
                           VIEW AUDIT REPORT
+                        </button>
+                      </div>
+                    </div>
+                  ) : previewChannel === 'googlechat' ? (
+                    <div className="rounded-xl p-3 border border-slate-800 bg-[#0a0f18] space-y-2.5 text-xs">
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-400 border-b border-slate-800 pb-1.5">
+                        <Bot size={13} className="text-emerald-400" />
+                        <span className="font-bold text-slate-200"># operations-audit</span>
+                        <span className="text-slate-500">· Google Workspace Space</span>
+                      </div>
+                      <div className="p-3.5 rounded-xl border border-slate-700/70 bg-[#121926] space-y-2.5 text-white">
+                        <div className="flex items-center gap-2.5 pb-2 border-b border-slate-700/60">
+                          <div className="w-7 h-7 rounded-full bg-emerald-600 flex items-center justify-center font-black text-[10px] text-white">
+                            OP
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-bold text-white">ONEOPS · {draft.name || 'Industrial Fleet Report'}</div>
+                            <div className="text-[9px] text-emerald-400 capitalize">{draft.sequence} Operations Digest</div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-[10px] p-2 rounded bg-[#0a0f18] border border-slate-800">
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Cadence</span>
+                            <strong className="text-white capitalize">{draft.sequence}</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Scope</span>
+                            <strong className="text-white capitalize">{draft.scope}</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Product</span>
+                            <strong className="text-white truncate block">{INDUSTRIAL_DOMAINS.find(d => d.id === draft.domain)?.label}</strong>
+                          </div>
+                          <div>
+                            <span className="text-slate-400 block text-[9px]">Attachment</span>
+                            <strong className="text-indigo-300 truncate block">{draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'operations.csv'}</strong>
+                          </div>
+                        </div>
+
+                        <p className="text-[10px] text-slate-300 leading-relaxed italic">
+                          {previewBody}
+                        </p>
+
+                        <button type="button" className="w-full py-1.5 rounded-lg bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-500 transition-colors shadow">
+                          OPEN AUDIT REPORT IN ONEOPS
                         </button>
                       </div>
                     </div>

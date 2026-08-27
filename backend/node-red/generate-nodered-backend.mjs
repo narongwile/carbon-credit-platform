@@ -4238,6 +4238,37 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
         });
         if (!lr.ok) node.warn('report '+s.name+': line push failed ('+lr.status+')');
       } else { node.warn('report '+s.name+': line skipped (no LINE token/user id)'); }
+    } else if (channel === 'googlechat') {
+      if (to) {
+        const gchatMsg = {
+          text: '📊 *ONEOPS Report:* ' + s.name + '\\n' + subject + '\\n' + body + '\\n📁 Attached Data: ' + fname + ' (' + __rowCount + ' rows)',
+          cardsV2: [{
+            cardId: 'report_digest_' + Date.now(),
+            card: {
+              header: {
+                title: 'ONEOPS · ' + (s.name || 'Industrial Fleet Report'),
+                subtitle: (s.sequence || 'Automated').toUpperCase() + ' Operations Digest',
+                imageType: 'CIRCLE'
+              },
+              sections: [{
+                header: 'Fleet Telemetry & Status',
+                widgets: [
+                  { decoratedText: { topLabel: 'Frequency', text: s.sequence || 'Daily' } },
+                  { decoratedText: { topLabel: 'Monitored Assets', text: nodeIds.length + ' devices' } },
+                  { decoratedText: { topLabel: 'CSV Data Points', text: __rowCount + ' rows recorded' } },
+                  { textParagraph: { text: '<i>' + body + '</i>' } }
+                ]
+              }]
+            }
+          }]
+        };
+        const gr = await fetch(to, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(gchatMsg)
+        });
+        if (!gr.ok) node.warn('report '+s.name+': googlechat post failed ('+gr.status+')');
+      } else { node.warn('report '+s.name+': googlechat skipped (no webhook URL)'); }
     } else if (channel === 'webhook') {
       if (to) {
         const whPayload = {
