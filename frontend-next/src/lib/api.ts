@@ -423,16 +423,29 @@ export const api = {
    * so a department set here is what makes nodes.department_id actually
    * change where an alarm is delivered.
    */
-  orgChannels: (orgId: string, departmentId?: string) =>
-    req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number }[]>(
-      `/api/orgs/${orgId}/channels${departmentId ? `?departmentId=${encodeURIComponent(departmentId)}` : ''}`),
+  orgChannels: (orgId: string, departmentId?: string, userId?: string) => {
+    const params = new URLSearchParams()
+    if (departmentId) params.set('departmentId', departmentId)
+    if (userId) params.set('userId', userId)
+    const qs = params.toString()
+    return req<{ id: number; channel: string; target: string | null; min_severity: string; enabled: number }[]>(
+      `/api/orgs/${orgId}/channels${qs ? `?${qs}` : ''}`
+    )
+  },
   // Accepts either shape: the UI models a channel as { id }, the table as
   // { channel }. The backend reads channel||id, so both are valid here.
   // The org-level and each department's rows are independent — saving one
   // never wipes another.
-  putOrgChannels: (orgId: string, channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[], departmentId?: string) =>
-    req<{ ok: boolean; count: number; departmentId: string | null }>(
-      `/api/orgs/${orgId}/channels`, { method: 'PUT', body: JSON.stringify({ channels, departmentId: departmentId ?? null }) }),
+  putOrgChannels: (
+    orgId: string,
+    channels: { id?: string; channel?: string; target?: string | null; enabled?: boolean; minSeverity?: string }[],
+    departmentId?: string,
+    userId?: string
+  ) =>
+    req<{ ok: boolean; count: number; departmentId: string | null; userId?: string | null }>(
+      `/api/orgs/${orgId}/channels`,
+      { method: 'PUT', body: JSON.stringify({ channels, departmentId: departmentId ?? null, userId: userId ?? null }) }
+    ),
   /**
    * Enterprise Email Alarm Template & Custom SOP Message Configuration
    */

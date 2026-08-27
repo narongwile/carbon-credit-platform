@@ -93,16 +93,19 @@ CREATE TABLE IF NOT EXISTS documents (
   INDEX (node_id, department_id)
 );
 
--- Notification channel config per org/department
+-- Notification channel config per org/department/user
 CREATE TABLE IF NOT EXISTS notification_channels (
   id          BIGINT AUTO_INCREMENT PRIMARY KEY,
   org_id      VARCHAR(64) NOT NULL,
   department_id VARCHAR(64),
+  user_id     VARCHAR(64),
   channel     ENUM('email','line','telegram','googlechat') NOT NULL,
   target      VARCHAR(255),
   min_severity ENUM('WARNING','CRITICAL') DEFAULT 'WARNING',
   enabled     TINYINT(1) DEFAULT 1,
-  INDEX (org_id)
+  INDEX (org_id),
+  INDEX (org_id, department_id),
+  INDEX (org_id, user_id)
 );
 
 -- Tenancy / RBAC data model (provisioned by superadmin; managed by admin).

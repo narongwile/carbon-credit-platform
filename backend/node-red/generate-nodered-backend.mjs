@@ -1897,8 +1897,19 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
 
     let channels = [];
     if (pool && e.orgId) {
-      const [rows] = await pool.query("SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)", [e.orgId, e.departmentId || null]);
-      channels = rows;
+      try {
+        const [r] = await pool.query(
+          "SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND user_id IN (SELECT user_id FROM user_departments WHERE department_id=?)) )",
+          [e.orgId, e.departmentId || null, e.departmentId || null]
+        );
+        channels = r;
+      } catch(err) {
+        const [r] = await pool.query(
+          "SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)",
+          [e.orgId, e.departmentId || null]
+        );
+        channels = r;
+      }
     }
     const nc = await global.get('notifyConfig')();
     if (!channels.length) {
@@ -4676,10 +4687,20 @@ if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authenticatio
 const chGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('resolvePool')(orgId);
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 const dept=(msg.req.query&&msg.req.query.departmentId)||null;
+const uid=(msg.req.query&&msg.req.query.userId)||null;
 (async()=>{
-  const[r]= dept
-    ? await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id=? ORDER BY channel",[orgId,dept])
-    : await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id IS NULL ORDER BY channel",[orgId]);
+  let r = [];
+  try {
+    r = uid
+      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND user_id=? ORDER BY channel",[orgId,uid]))[0]
+      : (dept
+          ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId,dept]))[0]
+          : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId]))[0]);
+  } catch(e) {
+    r = dept
+      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id=? ORDER BY channel",[orgId,dept]))[0]
+      : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id IS NULL ORDER BY channel",[orgId]))[0];
+  }
   msg.headers=__CORS; msg.payload=r; node.send(msg);
 })()` + bbErr
 
@@ -4689,24 +4710,65 @@ const list=Array.isArray(b.channels)?b.channels:[];
 const VALID=['email','line','telegram','googlechat'];
 for(const c of list){ if(VALID.indexOf(String(c.channel||c.id))<0){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'unknown channel '+(c.channel||c.id)};return msg;} }
 const dept=(b.departmentId===''||b.departmentId===undefined||b.departmentId===null)?null:String(b.departmentId);
+const uid=(b.userId===''||b.userId===undefined||b.userId===null)?null:String(b.userId);
 (async()=>{
-  // The department must be one of THIS org's, or an admin could attach their
-  // channels to another tenant's department id — and notify() would then
-  // deliver that tenant's alarms to this org's destination.
   if(dept){
     const[d]=await global.get('pool').query("SELECT id FROM departments WHERE id=? AND org_id=?",[dept,orgId]);
     if(!d.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'department is not in this organization'};node.send(msg);return;}
   }
-  // Replace only the set being edited. The org-level and each department's
-  // rows are independent: saving one must never wipe another, which is why
-  // this deletes by an exact department match rather than by org alone.
-  if(dept) await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=?",[orgId,dept]);
-  else await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL",[orgId]);
-  for(const c of list){
-    await pool.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
-      [orgId, dept, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+  if(uid){
+    const[u]=await global.get('pool').query("SELECT id FROM users WHERE id=? AND org_id=?",[uid,orgId]);
+    if(!u.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'user is not in this organization'};node.send(msg);return;}
   }
-  msg.headers=__CORS; msg.payload={ok:true,count:list.length,departmentId:dept}; node.send(msg);
+  if(uid){
+    try {
+      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND user_id=?",[orgId,uid]);
+      for(const c of list){
+        await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+          [orgId, null, uid, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+      }
+    } catch(e) {
+      if(String(e&&e.message||'').indexOf('user_id')>=0){
+        await pool.query("ALTER TABLE notification_channels ADD COLUMN user_id VARCHAR(64) NULL AFTER department_id");
+        await pool.query("DELETE FROM notification_channels WHERE org_id=? AND user_id=?",[orgId,uid]);
+        for(const c of list){
+          await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+            [orgId, null, uid, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+        }
+      } else throw e;
+    }
+  } else if(dept){
+    try {
+      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='')",[orgId,dept]);
+    } catch(e){
+      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=?",[orgId,dept]);
+    }
+    for(const c of list){
+      try {
+        await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+          [orgId, dept, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+      } catch(e){
+        await pool.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
+          [orgId, dept, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+      }
+    }
+  } else {
+    try {
+      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='')",[orgId]);
+    } catch(e){
+      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL",[orgId]);
+    }
+    for(const c of list){
+      try {
+        await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+          [orgId, null, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+      } catch(e){
+        await pool.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
+          [orgId, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+      }
+    }
+  }
+  msg.headers=__CORS; msg.payload={ok:true,count:list.length,departmentId:dept,userId:uid}; node.send(msg);
 })()` + bbErr
 
 // --- Org Email Alarm Template Config (GET / PUT / TEST) --------------------
