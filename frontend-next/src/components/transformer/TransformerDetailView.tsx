@@ -713,7 +713,87 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const id = useSearchParams().get('id') ?? ''
   const { transformers } = useAppStore()
   const selectedOrgId = useAppStore((s) => s.selectedOrgId)
+  const orgNames = useAppStore((s) => s.orgNames)
   const orgId = orgIdProp ?? selectedOrgId
+
+  const currentOrgName = useMemo(() => {
+    return (transformer?.orgId && orgNames[transformer.orgId]) || orgNames[orgId] || 'Industrial Substation'
+  }, [transformer?.orgId, orgNames, orgId])
+
+  // Universal Multi-Tenant Telemetry Extraction (Resolves any sensor wire key format per org)
+  const liveTelemetry = useMemo(() => {
+    const s = transformer?.sensors || {}
+    const getVal = (keys: string[], fallback: number) => {
+      for (const k of keys) {
+        if (s[k]?.value != null) return Number(s[k].value)
+      }
+      return fallback
+    }
+
+    const h2 = getVal(['hydrogen', 'h2'], 65)
+    const ch4 = getVal(['methane', 'ch4'], 45)
+    const c2h2 = getVal(['acetylene', 'c2h2'], 3.2)
+    const c2h4 = getVal(['ethylene', 'c2h4'], 35)
+    const c2h6 = getVal(['ethane', 'c2h6'], 28)
+    const co = getVal(['carbonMonoxide', 'co'], 420)
+    const co2 = getVal(['carbonDioxide', 'co2'], 3200)
+    const oilTemp = getVal(['oilTemperature', 'oilTemp', 'topOilTemp'], 64)
+    const hotSpotTemp = getVal(['hotSpotTemp', 'windingTemperature', 'windingTemp'], oilTemp + 14)
+    const moisture = getVal(['moisture', 'moistureInOil', 'waterContent'], 22)
+    const loadPct = getVal(['load', 'loadPercentage', 'loadCurrent'], 74)
+    const ratedKva = nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500
+    const loadKva = Math.round((loadPct / 100) * ratedKva)
+    const voltageKv = parseFloat(nameplate?.voltageClass || transformer?.voltage || '115') || 115
+
+    return {
+      h2, ch4, c2h2, c2h4, c2h6, co, co2,
+      oilTemp, hotSpotTemp, moisture, loadPct,
+      ratedKva, loadKva, voltageKv,
+    }
+  }, [transformer?.sensors, nameplate, transformer?.voltage])
+
+  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bess' | 'bushing' | 'copilot' | 'lab' | 'fleet'>('dga')
+  const [dossierExporting, setDossierExporting] = useState(false)
+
+  const handleExportOfficialDossier = async () => {
+    setDossierExporting(true)
+    try {
+      await generateOfficialEngineeringDossier({
+        assetId: transformer.id || 'TR-01',
+        assetName: transformer.name || 'Main Substation TR-01',
+        orgId: transformer.orgId || orgId,
+        orgName: currentOrgName,
+        ratedKva: liveTelemetry.ratedKva,
+        voltageKv: liveTelemetry.voltageKv,
+        healthIndex: transformer.healthIndex ?? 88,
+        oilTemp: liveTelemetry.oilTemp,
+        hotSpotTemp: liveTelemetry.hotSpotTemp,
+        dtrCapacityKva: Math.round(liveTelemetry.ratedKva * 1.146),
+        dtrHeadroomKva: Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva),
+        duvalVerdict: 'T2 - Thermal Fault (300°C - 700°C)',
+        rttDays: 38,
+        bushingPhaseBStatus: 'Caution (tan δ = 0.82%)',
+        bushingTanDelta: 0.82,
+        dpAging: 590,
+        moisturePpm: liveTelemetry.moisture,
+        gases: {
+          h2: liveTelemetry.h2,
+          ch4: liveTelemetry.ch4,
+          c2h2: liveTelemetry.c2h2,
+          c2h4: liveTelemetry.c2h4,
+          c2h6: liveTelemetry.c2h6,
+          co: liveTelemetry.co,
+          co2: liveTelemetry.co2,
+        },
+      })
+      toast.success(`ดาวน์โหลดรายงานฉบับทางการ (${currentOrgName}) เรียบร้อยแล้ว!`)
+    } catch (err) {
+      toast.error('ไม่สามารถสร้างรายงาน PDF ได้: ' + (err as Error).message)
+    } finally {
+      setDossierExporting(false)
+    }
+  }
   // The Overview lists the roster from /api/fleet, but this page used to resolve
   // the device from the seeded `transformers` array only — so every real device
   // that is not one of the demo ids (a transformer an ESP32 registered itself)
@@ -781,47 +861,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // transformer.orgId, not the page-level orgId — a superadmin viewing
   // another org's device needs THAT org's toggle, not their own selected one.
   const show3d = useShow3dFallback(transformer?.orgId ?? '')
-  const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
-  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bess' | 'bushing' | 'copilot' | 'lab' | 'fleet'>('dga')
-  const [dossierExporting, setDossierExporting] = useState(false)
-
-  const handleExportOfficialDossier = async () => {
-    setDossierExporting(true)
-    try {
-      await generateOfficialEngineeringDossier({
-        assetId: transformer.id || 'TR-01',
-        assetName: transformer.name || 'Main Substation TR-01',
-        ratedKva: nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500,
-        voltageKv: nameplate?.voltage ? Number(nameplate.voltage) : 115,
-        healthIndex: transformer.healthIndex ?? 88,
-        oilTemp: transformer.sensors?.oilTemperature?.value ?? 64,
-        hotSpotTemp: (transformer.sensors?.oilTemperature?.value ?? 64) + 14,
-        dtrCapacityKva: 2865,
-        dtrHeadroomKva: 1015,
-        duvalVerdict: 'T2 - Thermal Fault (300°C - 700°C)',
-        rttDays: 38,
-        bushingPhaseBStatus: 'Caution (tan δ = 0.82%)',
-        bushingTanDelta: 0.82,
-        dpAging: 590,
-        moisturePpm: transformer.sensors?.moisture?.value ?? 22,
-        gases: {
-          h2: transformer.sensors?.hydrogen?.value ?? 65,
-          ch4: 45,
-          c2h2: 3.2,
-          c2h4: 35,
-          c2h6: 28,
-          co: 420,
-          co2: 3200,
-        },
-      })
-      toast.success('ดาวน์โหลดรายงานฉบับทางการ IEEE/IEC (5 หน้า PDF) เรียบร้อยแล้ว!')
-    } catch (err) {
-      toast.error('ไม่สามารถสร้างรายงาน PDF ได้: ' + (err as Error).message)
-    } finally {
-      setDossierExporting(false)
-    }
-  }
   // card = a full SensorCard (icon, number, sparkline); list = a dense row
   // (SensorListSection) — an admin-chosen split (migrate-v37) so a merged
   // device's twenty-odd secondary values do not each cost a full card's worth
@@ -1426,36 +1465,26 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       className={clsx(
                         'text-xs px-3 py-1.5 rounded-md font-semibold transition-all whitespace-nowrap',
                         pdmSubTab === sub.id
-                          ? 'bg-indigo-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
-                      )}
-                    >
-                      {sub.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
+                          ? 'bg-indigo-600 text-white shadow-              {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
               {pdmSubTab === 'dga' && (
                 <div className="space-y-6">
                   <div className="flex flex-col 2xl:flex-row gap-8">
                     <div className="flex-1 min-w-[320px]">
                       <DgaDuvalTriangle
-                        h2={transformer.sensors?.hydrogen?.value ?? 65}
-                        ch4={45}
-                        c2h4={35}
-                        c2h2={3.2}
-                        c2h6={28}
+                        h2={liveTelemetry.h2}
+                        ch4={liveTelemetry.ch4}
+                        c2h4={liveTelemetry.c2h4}
+                        c2h2={liveTelemetry.c2h2}
+                        c2h6={liveTelemetry.c2h6}
                       />
                     </div>
                     <div className="hidden 2xl:block w-px bg-[#1e2433]" />
                     <div className="flex-1 min-w-[320px]">
                       <InsulationAgingRul 
-                        hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 60) + 15} 
+                        hotSpotTemp={liveTelemetry.hotSpotTemp} 
                         hoursInService={52000} 
-                        oilTemp={transformer.sensors?.oilTemperature?.value ?? 60}
-                        moistureInOil={transformer.sensors?.moisture?.value ?? 22}
+                        oilTemp={liveTelemetry.oilTemp}
+                        moistureInOil={liveTelemetry.moisture}
                         assetId={transformer.id || 'TRF-01'}
                       />
                     </div>
@@ -1487,12 +1516,12 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
                           {[
-                            { gas: 'Hydrogen (H2)', val: transformer.sensors?.hydrogen?.value ?? 65, rog24: '+2.1', rog7d: '+1.4', limit: '80 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
-                            { gas: 'Methane (CH4)', val: 45, rog24: '+3.5', rog7d: '+2.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
-                            { gas: 'Acetylene (C2H2)', val: 3.2, rog24: '+0.1', rog7d: '+0.05', limit: '2.0 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
-                            { gas: 'Ethylene (C2H4)', val: 35, rog24: '+4.2', rog7d: '+3.1', limit: '50 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
-                            { gas: 'Ethane (C2H6)', val: 28, rog24: '+1.0', rog7d: '+0.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
-                            { gas: 'Carbon Monoxide (CO)', val: 310, rog24: '+12.0', rog7d: '+8.5', limit: '900 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                            { gas: 'Hydrogen (H2)', val: liveTelemetry.h2, rog24: '+2.1', rog7d: '+1.4', limit: '80 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                            { gas: 'Methane (CH4)', val: liveTelemetry.ch4, rog24: '+3.5', rog7d: '+2.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                            { gas: 'Acetylene (C2H2)', val: liveTelemetry.c2h2, rog24: '+0.1', rog7d: '+0.05', limit: '2.0 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
+                            { gas: 'Ethylene (C2H4)', val: liveTelemetry.c2h4, rog24: '+4.2', rog7d: '+3.1', limit: '50 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
+                            { gas: 'Ethane (C2H6)', val: liveTelemetry.c2h6, rog24: '+1.0', rog7d: '+0.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                            { gas: 'Carbon Monoxide (CO)', val: liveTelemetry.co, rog24: '+12.0', rog7d: '+8.5', limit: '900 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
                           ].map((row) => (
                             <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
                               <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
@@ -1517,10 +1546,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) */}
               {pdmSubTab === 'dtr' && (
                 <DynamicThermalRating
-                  nameplateKva={nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500}
-                  currentLoadKva={Math.round(((transformer.sensors?.load?.value ?? 74) / 100) * (nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500))}
-                  oilTemp={transformer.sensors?.oilTemperature?.value ?? 64}
-                  hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 64) + 14}
+                  nameplateKva={liveTelemetry.ratedKva}
+                  currentLoadKva={liveTelemetry.loadKva}
+                  oilTemp={liveTelemetry.oilTemp}
+                  hotSpotTemp={liveTelemetry.hotSpotTemp}
                   lat={transformer.lat ?? 13.7563}
                   lng={transformer.lng ?? 100.5018}
                   assetId={transformer.id}
@@ -1532,75 +1561,62 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               {pdmSubTab === 'bess' && (
                 <BessCoOptimization
                   transformerName={transformer.name}
-                  nameplateKva={nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500}
-                  currentLoadKva={Math.round(((transformer.sensors?.load?.value ?? 74) / 100) * (nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500))}
-                  hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 64) + 14}
-                  dtrHeadroomKva={1015}
+                  nameplateKva={liveTelemetry.ratedKva}
+                  currentLoadKva={liveTelemetry.loadKva}
+                  hotSpotTemp={liveTelemetry.hotSpotTemp}
+                  dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
                 />
               )}
 
               {/* Sub-Tab 4: Bushing Health & Tan-Delta (tan δ) */}
               {pdmSubTab === 'bushing' && (
                 <BushingHealthStudio
-                  // Nameplate has no `voltage` field — it is `voltageClass`, and
-                  // it is a STRING ("115 kV", "22/0.4 kV"), so Number() on it
-                  // yields NaN. Same resolved-then-override-then-transformer
-                  // precedence the two Voltage rows in this file already use;
-                  // parseFloat takes the leading (highest) class, which is the
-                  // bushing voltage this studio wants.
-                  voltageKv={
-                    parseFloat(
-                      nameplate?.resolved?.voltageClass ||
-                      nameplate?.voltageClass ||
-                      transformer.voltage ||
-                      ''
-                    ) || 115
-                  }
+                  voltageKv={liveTelemetry.voltageKv}
                   assetId={transformer.id}
                   assetName={transformer.name}
                 />
               )}
 
-              {/* Sub-Tab 4: Industrial GenAI Diagnostics Copilot */}
+              {/* Sub-Tab 5: Industrial GenAI Diagnostics Copilot */}
               {pdmSubTab === 'copilot' && (
                 <GenAiDiagnosticsCopilot
                   assetId={transformer.id}
                   assetName={transformer.name}
                   dgaGases={{
-                    h2: transformer.sensors?.hydrogen?.value ?? 65,
-                    ch4: 45,
-                    c2h2: 3.2,
-                    c2h4: 35,
-                    c2h6: 28,
-                    co: 420,
-                    co2: 3200,
+                    h2: liveTelemetry.h2,
+                    ch4: liveTelemetry.ch4,
+                    c2h2: liveTelemetry.c2h2,
+                    c2h4: liveTelemetry.c2h4,
+                    c2h6: liveTelemetry.c2h6,
+                    co: liveTelemetry.co,
+                    co2: liveTelemetry.co2,
                   }}
                   duvalVerdict="T2 - Thermal Fault (300°C - 700°C)"
                   rttDays={38}
-                  oilTemp={transformer.sensors?.oilTemperature?.value ?? 64}
-                  hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 64) + 14}
-                  dtrHeadroomKva={1015}
+                  oilTemp={liveTelemetry.oilTemp}
+                  hotSpotTemp={liveTelemetry.hotSpotTemp}
+                  dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
                   bushingStatus="Phase B Warning (tan δ: 0.82%)"
                   dpAging={590}
-                  moisturePpm={transformer.sensors?.moisture?.value ?? 22}
+                  moisturePpm={liveTelemetry.moisture}
                 />
               )}
 
-              {/* Sub-Tab 5: Hybrid Lab DGA Ingestion */}
+              {/* Sub-Tab 6: Hybrid Lab DGA Ingestion */}
               {pdmSubTab === 'lab' && (
                 <LabDgaIngestion
                   onlineGases={{
-                    h2: transformer.sensors?.hydrogen?.value ?? 65,
-                    ch4: 45,
-                    c2h2: 3.2,
-                    c2h4: 35,
-                    c2h6: 28,
+                    h2: liveTelemetry.h2,
+                    ch4: liveTelemetry.ch4,
+                    c2h2: liveTelemetry.c2h2,
+                    c2h4: liveTelemetry.c2h4,
+                    c2h6: liveTelemetry.c2h6,
                   }}
                   assetId={transformer.id || 'TRF-01'}
                 />
               )}
 
-              {/* Sub-Tab 4: Fleet Risk Matrix (ISO 55000) */}
+              {/* Sub-Tab 7: Fleet Risk Matrix (ISO 55000) */}
               {pdmSubTab === 'fleet' && (
                 <FleetRiskMatrix />
               )}

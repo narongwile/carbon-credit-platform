@@ -1,8 +1,10 @@
 import { fmtDateTime } from '@/lib/displayTime'
+import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
 
 export interface DossierData {
   assetId: string
   assetName: string
+  orgId?: string
   orgName?: string
   ratedKva: number
   voltageKv: number
@@ -53,7 +55,7 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
     doc.setTextColor(255, 255, 255)
-    doc.text('OFFICIAL SUBSTATION ASSET INSPECTION DOSSIER', 14, 12)
+    doc.text(`${(data.orgName || 'SUBSTATION').toUpperCase()} — ASSET INSPECTION DOSSIER`, 14, 12)
 
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
@@ -79,7 +81,7 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(148, 163, 184)
-    doc.text(`Confidential — Issued by OneOps IIoT Substation Analytics Platform`, 14, pageHeight - 9)
+    doc.text(`Confidential — Issued for ${data.orgName || 'Enterprise Asset'} by OneOps Platform`, 14, pageHeight - 9)
     doc.text(`Verified against IEEE C57.104, IEEE C57.115, IEC 60599 Standards`, 14, pageHeight - 5)
     doc.text(`Timestamp: ${fmtDateTime(new Date().toISOString())} UTC+07:00`, pageWidth - 70, pageHeight - 9)
     doc.text(`Security Checksum: SHA-256 e8f4...b912`, pageWidth - 70, pageHeight - 5)
@@ -93,38 +95,52 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   // Certificate Badge
   doc.setDrawColor(99, 102, 241)
   doc.setLineWidth(0.8)
-  doc.roundedRect(14, 34, pageWidth - 28, 48, 3, 3)
+  doc.roundedRect(14, 34, pageWidth - 28, 49, 3, 3)
 
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
+  doc.setFontSize(12)
   doc.setTextColor(30, 41, 59)
-  doc.text('SUBSTATION ASSET HEALTH CERTIFICATION', 20, 43)
+  doc.text('SUBSTATION ASSET HEALTH CERTIFICATION', 20, 42)
 
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
+  doc.setFontSize(7.5)
   doc.setTextColor(100, 116, 139)
-  doc.text('Authorized per ISO 55000 Asset Management Standard & IEEE Comprehensive Transformer Guide', 20, 48)
+  doc.text('Authorized per ISO 55000 Asset Management Standard & IEEE Comprehensive Transformer Guide', 20, 47)
+
+  // Dynamic Corporate / Organization Logo
+  if (data.orgId) {
+    try {
+      const orgLogo = await getOrgLogoDataUrl(data.orgId, data.orgName || 'Industrial Substation')
+      if (orgLogo?.dataUrl) {
+        const maxW = 28, maxH = 18
+        const scale = Math.min(maxW / orgLogo.width, maxH / orgLogo.height)
+        const w = orgLogo.width * scale, h = orgLogo.height * scale
+        doc.addImage(orgLogo.dataUrl, orgLogo.format, pageWidth - 24 - w, 38, w, h, undefined, 'FAST')
+      }
+    } catch {}
+  }
 
   // Health Index Score Callout
   doc.setFillColor(238, 242, 255)
-  doc.roundedRect(pageWidth - 62, 38, 42, 38, 2, 2, 'F')
+  doc.roundedRect(pageWidth - 62, 44, 42, 36, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(9)
   doc.setTextColor(99, 102, 241)
-  doc.text('COMPOSITE HI', pageWidth - 56, 45)
-  doc.setFontSize(22)
-  doc.text(`${data.healthIndex}`, pageWidth - 56, 56)
-  doc.setFontSize(8)
+  doc.text('COMPOSITE HI', pageWidth - 56, 51)
+  doc.setFontSize(20)
+  doc.text(`${data.healthIndex}`, pageWidth - 56, 61)
+  doc.setFontSize(7.5)
   doc.setTextColor(71, 85, 105)
-  doc.text('Status: CONDITION B', pageWidth - 56, 64)
-  doc.text('Good (Monitor RoG)', pageWidth - 56, 69)
+  doc.text('Status: CONDITION B', pageWidth - 56, 68)
+  doc.text('Good (Monitor RoG)', pageWidth - 56, 73)
 
   // Nameplate Table inside Card
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(71, 85, 105)
-  doc.text(`Asset Name: ${data.assetName}`, 20, 56)
-  doc.text(`Asset Identifier: ${data.assetId}`, 20, 62)
-  doc.text(`Rated Power: ${data.ratedKva.toLocaleString()} kVA`, 20, 68)
-  doc.text(`Operating Voltage: ${data.voltageKv} kV / 22 kV Class`, 20, 74)
+  doc.text(`Organization: ${data.orgName || 'Industrial Substation'}`, 20, 54)
+  doc.text(`Asset Name: ${data.assetName}`, 20, 60)
+  doc.text(`Asset Identifier: ${data.assetId}`, 20, 66)
+  doc.text(`Rated Power: ${data.ratedKva.toLocaleString()} kVA`, 20, 72)
+  doc.text(`Operating Voltage: ${data.voltageKv} kV / 22 kV Class`, 20, 78)
 
   // Executive Summary Narrative
   doc.setFont('helvetica', 'bold')
