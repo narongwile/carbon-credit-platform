@@ -41,7 +41,9 @@ globalThis.fetch = async (url, opt) => { posts.push({ url, body: opt?.body }); r
 const msg = { payload: { nodeId:'tr-001', orgId:'org-1', departmentId:'dept-a', paramKey:'oilTemp',
   paramLabel:'Oil Temperature', value:99, unit:'°C', threshold:95, severity:'CRITICAL', kind:'threshold', time:new Date(0).toISOString() } }
 
-// CORS_ORIGIN doubles as the app origin, so deep links work without extra config.
+// APP_BASE_URL/FRONTEND_URL deliberately left UNSET here: node-red.yaml's own
+// comment says the deep link falls back to CORS_ORIGIN when they're unset, so
+// this is the exact path that contract promises — not just a convenient stand-in.
 const env = { get: (k) => (k === 'CORS_ORIGIN' ? 'https://iiotplatform.thermexpertise.com' : undefined) }
 new Function('env','node','global','msg','fetch', fn)(env, node, globalCtx, msg, globalThis.fetch)
 
@@ -62,7 +64,12 @@ ok('google chat posted to the saved webhook', posts.some(p=>p.url==='https://cha
 // --- rich payloads + deep links -------------------------------------------
 const body = (host) => JSON.parse(posts.find(p => p.url.includes(host)).body)
 const tg = body('api.telegram.org'), line = body('api.line.me'), gc = body('chat.googleapis.com')
-const VIEWER_LINK = 'https://iiotplatform.thermexpertise.com/customer/devices/tr-001/'
+// __buildBaseUrl(orgId) rewrites the CORS_ORIGIN host with the org's own
+// subdomain (org-1 -> 'eternity', the seed org's reserved name) and __linkFor
+// appends a domain-specific path (transformer -> /customer/transformers/detail/)
+// plus ?id=<nodeId> — this is the CURRENT contract, not the older flat
+// /customer/devices/<id>/ shape a stale version of this literal once asserted.
+const VIEWER_LINK = 'https://eternity.iiotplatform.thermexpertise.com/customer/transformers/detail/?id=tr-001'
 
 ok('telegram sends HTML, not a bare line', tg.parse_mode === 'HTML' && tg.text.includes('<b>'))
 ok('telegram carries an Open device button', tg.reply_markup.inline_keyboard[0][0].url === VIEWER_LINK)
@@ -75,4 +82,5 @@ ok('google chat keeps a text fallback', typeof gc.text === 'string' && gc.text.l
 ok('google chat button opens the device',
    gc.cardsV2[0].card.sections[0].widgets.some(w => w.buttonList?.buttons?.[0]?.onClick?.openLink?.url === VIEWER_LINK))
 ok('viewer link points at /customer/, never /admin/', !JSON.stringify([tg,line,gc]).includes('/admin/nodes/'))
-ok('links end in a slash (trailingSlash export)', VIEWER_LINK.endsWith('/') && tg.reply_markup.inline_keyboard[0][0].url.endsWith('/'))
+ok('link is scoped to the ORG\'S OWN subdomain, not a bare/shared host', tg.reply_markup.inline_keyboard[0][0].url.startsWith('https://eternity.'))
+ok('link names the exact device that alarmed', tg.reply_markup.inline_keyboard[0][0].url.endsWith('?id=tr-001'))
