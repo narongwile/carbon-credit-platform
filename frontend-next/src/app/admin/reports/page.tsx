@@ -215,6 +215,27 @@ function ReportsPageContent() {
     return () => { cancelled = true }
   }, [orgId, orgName, selectedDays, selectedDomain, selectedSite, activeSiteName, selectedDept, selectedSections, exportFormat, devices])
 
+  // Cold-Chain Temperature Summary (MKT) is strictly for refrigeration/bloodBox assets.
+  // Never show or apply it for transformers (ETERNITY) or Formula EV telemetry.
+  const visibleSections = useMemo(() => {
+    return REPORT_SECTIONS.filter((sec) => {
+      if (sec.id === 'coldchain') {
+        if (selectedDomain === 'transformer' || selectedDomain === 'automobile') return false
+        if (selectedDomain === 'all') {
+          return devices.some((d) => d.domain === 'carbonNode' || d.domain === 'bloodBox')
+        }
+      }
+      return true
+    })
+  }, [selectedDomain, devices])
+
+  // Automatically drop 'coldchain' from selected modules when switching to transformer or automobile
+  useEffect(() => {
+    if (selectedDomain === 'transformer' || selectedDomain === 'automobile') {
+      setSelectedSections((prev) => prev.filter((x) => x !== 'coldchain'))
+    }
+  }, [selectedDomain])
+
   const toggleSection = (id: string) => {
     setSelectedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
@@ -599,7 +620,7 @@ function ReportsPageContent() {
                 Select Report Modules
               </label>
               <div className="space-y-2">
-                {REPORT_SECTIONS.map((sec) => {
+                {visibleSections.map((sec) => {
                   const on = selectedSections.includes(sec.id)
                   return (
                     <div
