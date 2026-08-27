@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import dynamic from 'next/dynamic'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAppStore } from '@/lib/store'
 import { getGeoNodes, type GeoNode } from '@/lib/geoNodes'
 import { useIsLive } from '@/lib/api'
@@ -61,8 +61,10 @@ function ManualCoordEntry({ onSet, busy }: { onSet: (lat: number, lng: number) =
   )
 }
 
-export default function MapPage() {
+function MapPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialSiteId = searchParams.get('siteId')
   const selectedOrgId = useAppStore((s) => s.selectedOrgId)
   const sessionOrgId = useSessionOrgId('org-1')
   const orgId = selectedOrgId || sessionOrgId || 'org-1'
@@ -104,6 +106,11 @@ export default function MapPage() {
           pickActive={!!session}
           onPick={(lat, lng) => placement.pick(lat, lng)}
           onOpenDevice={(id, domain) => router.push(monitorRoute(domain, id))}
+          initialSiteId={initialSiteId}
+          onSiteChange={(siteId) => {
+            const url = siteId === 'all' ? '/admin/map' : `/admin/map?siteId=${encodeURIComponent(siteId)}`
+            router.replace(url, { scroll: false })
+          }}
         />
 
         {canEdit && live && (
@@ -253,5 +260,13 @@ export default function MapPage() {
         <NodePhotoPreview nodeId={previewId} canEdit onClose={() => setPreviewId(null)} />
       )}
     </div>
+  )
+}
+
+export default function MapPage() {
+  return (
+    <Suspense fallback={null}>
+      <MapPageContent />
+    </Suspense>
   )
 }

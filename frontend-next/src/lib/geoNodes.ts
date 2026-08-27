@@ -82,6 +82,7 @@ export function getGeoNodes(orgId?: string): GeoNode[] {
     return {
       id: h.id,
       orgId: h.orgId,
+      siteId: h.siteId,
       name: `${h.name} · ${label}`,
       domain: h.domain,
       platform: DOMAIN_META[h.domain].platform,

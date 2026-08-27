@@ -9,6 +9,7 @@ import { calculateDistanceMeters, formatDistance, reverseGeocode } from '@/lib/g
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
+import { sites as defaultSites } from '@/lib/fleetData'
 import type { SensorDomain } from '@/types/fleet'
 import {
   Map as MapIcon,
@@ -23,6 +24,8 @@ import {
   Car,
   Filter,
   Check,
+  Building2,
+  X,
 } from 'lucide-react'
 
 const MAP_LAYERS = {
@@ -105,6 +108,8 @@ export default function LiveSensorMap({
   pickActive?: boolean
   onPick?: (lat: number, lng: number) => void
   onOpenDevice?: (nodeId: string, domain: GeoNode['domain']) => void
+  initialSiteId?: string | null
+  onSiteChange?: (siteId: string | 'all') => void
 }) {
   const elRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<any>(null)
@@ -117,30 +122,83 @@ export default function LiveSensorMap({
   const fittedRef = useRef(false)
 
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
+  const [siteFilter, setSiteFilter] = useState<string>(initialSiteId || 'all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'critical' | 'warning' | 'healthy'>('all')
   const [domainFilter, setDomainFilter] = useState<'all' | SensorDomain>('all')
   const [locating, setLocating] = useState(false)
 
-  const counts = useMemo(() => {
-    return {
-      all: nodes.length,
-      critical: nodes.filter((n) => n.health === 'critical').length,
-      warning: nodes.filter((n) => n.health === 'warning').length,
-      healthy: nodes.filter((n) => n.health === 'healthy').length,
-      transformer: nodes.filter((n) => n.domain === 'transformer').length,
-      carbonNode: nodes.filter((n) => n.domain === 'carbonNode').length,
-      bloodBox: nodes.filter((n) => n.domain === 'bloodBox').length,
-      automobile: nodes.filter((n) => n.domain === 'automobile').length,
+  useEffect(() => {
+    if (initialSiteId !== undefined) {
+      setSiteFilter(initialSiteId || 'all')
     }
+  }, [initialSiteId])
+
+  const availableSites = useMemo(() => {
+    const siteMap = new Map<string, { id: string; name: string; count: number }>()
+    nodes.forEach((n) => {
+      if (n.siteId) {
+        const existing = siteMap.get(n.siteId)
+        if (existing) {
+          existing.count++
+        } else {
+          const meta = defaultSites.find((s) => s.id === n.siteId)
+          siteMap.set(n.siteId, {
+            id: n.siteId,
+            name: meta?.name || n.siteId,
+            count: 1,
+          })
+        }
+      }
+    })
+    return Array.from(siteMap.values()).sort((a, b) => a.name.localeCompare(b.name))
   }, [nodes])
+
+  const counts = useMemo(() => {
+    const scoped = siteFilter === 'all' ? nodes : nodes.filter((n) => n.siteId === siteFilter)
+    return {
+      all: scoped.length,
+      critical: scoped.filter((n) => n.health === 'critical').length,
+      warning: scoped.filter((n) => n.health === 'warning').length,
+      healthy: scoped.filter((n) => n.health === 'healthy').length,
+      transformer: scoped.filter((n) => n.domain === 'transformer').length,
+      carbonNode: scoped.filter((n) => n.domain === 'carbonNode').length,
+      bloodBox: scoped.filter((n) => n.domain === 'bloodBox').length,
+      automobile: scoped.filter((n) => n.domain === 'automobile').length,
+    }
+  }, [nodes, siteFilter])
 
   const visibleNodes = useMemo(() => {
     return nodes.filter((n) => {
+      if (siteFilter !== 'all' && n.siteId !== siteFilter) return false
       if (statusFilter !== 'all' && n.health !== statusFilter) return false
       if (domainFilter !== 'all' && n.domain !== domainFilter) return false
       return true
     })
-  }, [nodes, statusFilter, domainFilter])
+  }, [nodes, siteFilter, statusFilter, domainFilter])
+
+  // Fly/fit to site bounds when a site is scoped
+  useEffect(() => {
+    if (siteFilter === 'all') return
+    const L = LRef.current
+    const map = mapRef.current
+    if (!L || !map) return
+    const matched = nodes.filter((n) => n.siteId === siteFilter && Number.isFinite(n.lat) && Number.isFinite(n.lng))
+    if (!matched.length) {
+      const siteMeta = defaultSites.find((s) => s.id === siteFilter)
+      if (siteMeta?.lat && siteMeta?.lng) {
+        map.flyTo([siteMeta.lat, siteMeta.lng], 15, { duration: 1 })
+      }
+      return
+    }
+    if (matched.length === 1) {
+      map.flyTo([matched[0].lat, matched[0].lng], 16, { duration: 1 })
+    } else {
+      try {
+        const group = L.featureGroup(matched.map((n) => L.marker([n.lat, n.lng])))
+        map.fitBounds(group.getBounds().pad(0.35), { duration: 1 })
+      } catch {}
+    }
+  }, [siteFilter, nodes])
 
   const visibleNodesRef = useRef(visibleNodes)
   visibleNodesRef.current = visibleNodes
@@ -735,6 +793,49 @@ export default function LiveSensorMap({
                 }`}
               >
                 <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
+              </button>
+            )}
+          </>
+        )}
+
+        {availableSites.length > 0 && (
+          <>
+            <div className="w-px h-4 bg-slate-800 mx-1 flex-shrink-0" />
+            <div className="relative flex items-center">
+              <Building2 size={12} className="absolute left-2.5 text-indigo-400 pointer-events-none" />
+              <select
+                value={siteFilter}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setSiteFilter(val)
+                  onSiteChange?.(val)
+                }}
+                className={`text-xs font-semibold pl-7 pr-6 py-1 rounded-xl shadow-md border outline-none appearance-none cursor-pointer transition-all ${
+                  siteFilter !== 'all'
+                    ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/40'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border-[#1e2433]'
+                }`}
+                title="Filter sensors by installation site (กรองเซนเซอร์ตามไซต์)"
+              >
+                <option value="all">All Sites ({nodes.length})</option>
+                {availableSites.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.count})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {siteFilter !== 'all' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSiteFilter('all')
+                  onSiteChange?.('all')
+                }}
+                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Clear site filter (แสดงทุกไซต์)"
+              >
+                <X size={12} />
               </button>
             )}
           </>

@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useAppStore } from '@/lib/store'
 import { getSitesByOrg } from '@/lib/fleetData'
 import { useFleetHosts } from '@/lib/useManagedDevices'
@@ -181,12 +182,22 @@ export default function SitesPage() {
                   <div className="text-xs text-slate-500 flex items-center gap-1"><MapPin size={11} /> {site.address}</div>
                 </div>
               </div>
-              <div className="flex gap-1.5">
-                {ops.domains.filter((d) => domains.includes(d)).map((d) => {
-                  const Icon = domainIcon[d]
-                  const meta = DOMAIN_META[d]
-                  return <span key={d} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${meta.accent}1f`, color: meta.accent }} title={meta.platform}><Icon size={14} /></span>
-                })}
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/admin/map?siteId=${encodeURIComponent(site.id)}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 transition-all shadow-sm"
+                  title={`View all ${hostList.length} devices at this site on Live Sensor Map`}
+                >
+                  <MapPin size={13} className="text-indigo-400" />
+                  <span>View on Map ({hostList.length}) →</span>
+                </Link>
+                <div className="flex gap-1.5">
+                  {ops.domains.filter((d) => domains.includes(d)).map((d) => {
+                    const Icon = domainIcon[d]
+                    const meta = DOMAIN_META[d]
+                    return <span key={d} className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${meta.accent}1f`, color: meta.accent }} title={meta.platform}><Icon size={14} /></span>
+                  })}
+                </div>
               </div>
             </div>
 
