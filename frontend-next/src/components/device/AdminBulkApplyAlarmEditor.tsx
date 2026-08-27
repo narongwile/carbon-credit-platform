@@ -332,7 +332,14 @@ export default function AdminBulkApplyAlarmEditor({
         )}
       </div>
 
-      <AlarmParamConfig domain={domain} nodeId={nodeId} orgId={orgId} onApplyAll={applyRule} applyAllLabel={applyAllLabel} />
+      <AlarmParamConfig
+        domain={domain}
+        nodeId={nodeId}
+        orgId={orgId}
+        onApplyAll={applyRule}
+        applyAllLabel={applyAllLabel}
+        targetDeviceIds={targetDeviceIds}
+      />
     </div>
   )
 }

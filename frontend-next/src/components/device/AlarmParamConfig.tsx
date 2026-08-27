@@ -372,6 +372,7 @@ export default function AlarmParamConfig({
   onApplyAll,
   applyAllLabel,
   mode = 'device',
+  targetDeviceIds,
 }: {
   domain?: SensorDomain
   nodeId?: string
@@ -390,6 +391,8 @@ export default function AlarmParamConfig({
    * cached view for this same node.
    */
   mode?: 'device' | 'personal'
+  /** Optional filter of device IDs in the active scope (e.g. from department/user bulk selection) */
+  targetDeviceIds?: Set<string>
 }) {
   const live = useIsLive()
   const schema = getAlarmSchema(domain)
@@ -490,6 +493,34 @@ export default function AlarmParamConfig({
   // -------------------------------------------------------------------------
   // Unified Parameter List: Catalog + Live Samples + Display Params + Custom
   // -------------------------------------------------------------------------
+  // Devices in the active target scope (single device, selected departments/users, or full domain)
+  const scopedDevices = useMemo(() => {
+    if (nodeId) {
+      return devices.filter((d) => d.id === nodeId)
+    }
+    if (targetDeviceIds && targetDeviceIds.size > 0) {
+      return devices.filter((d) => d.domain === domain && targetDeviceIds.has(d.id))
+    }
+    return devices.filter((d) => d.domain === domain)
+  }, [devices, domain, nodeId, targetDeviceIds])
+
+  // Active keys reported across the active target scope (union of all reporting devices in scope)
+  const activeKeysAcrossScope = useMemo(() => {
+    const s = new Set<string>()
+    if (nodeId) {
+      Object.keys(liveReadings).forEach((k) => s.add(k))
+      const dev = devices.find((d) => d.id === nodeId) as { lastSample?: Record<string, unknown> } | undefined
+      if (dev?.lastSample) Object.keys(dev.lastSample).forEach((k) => s.add(k))
+    } else {
+      for (const dev of scopedDevices) {
+        if ((dev as any)?.lastSample) {
+          Object.keys((dev as any).lastSample).forEach((k) => s.add(k))
+        }
+      }
+    }
+    return s
+  }, [nodeId, liveReadings, devices, scopedDevices])
+
   /**
    * Keys THIS device has actually reported — the same evidence SENSOR READINGS
    * is built from (api.latest + the fleet row's lastSample). null on the
@@ -604,15 +635,26 @@ export default function AlarmParamConfig({
    * gets SAVED and validated must not depend on which rows are on screen.
    */
   const scopedParams = useMemo(() => {
-    // When scoped to what THIS device actually reports (default "Reported by device" tab):
-    // Only parameters present in this device's live telemetry / lastSample (reportedKeys)
-    // or configured in its SENSOR READINGS (configuredDisplayKeys) are shown.
+    // When scoped to what devices in scope actually report (default "Reported by device" / "Active in selection"):
+    // Only parameters present in telemetry/lastSample, configured sensor readings, or existing rules are shown.
     // Full catalog parameters are revealed when the operator switches to "Full catalog".
-    if (scopeFilter === 'reported' && reportedKeys && reportedKeys.size > 0) {
-      return allParams.filter((p) => reportedKeys.has(p.key) || configuredDisplayKeys.includes(p.key))
+    if (scopeFilter === 'reported') {
+      const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
+      if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
+        return allParams.filter(
+          (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
+        )
+      }
     }
     return allParams
-  }, [allParams, scopeFilter, reportedKeys, configuredDisplayKeys])
+  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys])
+
+  const activeParamsCount = useMemo(() => {
+    const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
+    return allParams.filter(
+      (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
+    ).length
+  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys])
 
   const readingCount = useMemo(() => scopedParams.filter((p) => p.paramType !== 'compound').length, [scopedParams])
   const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
@@ -952,37 +994,146 @@ export default function AlarmParamConfig({
     toast.success(enable ? 'Enabled all alarm parameters' : 'Disabled all alarm parameters')
   }
 
-  // Live status evaluation helper
-  const getLiveStatusBadge = (param: AlarmParam, liveVal?: number) => {
-    if (liveVal === undefined || liveVal === null || isNaN(liveVal)) {
-      return <span className="text-[10px] text-slate-600 font-mono">—</span>
+  // Resolves live readings for this parameter across the scoped devices
+  const getDeviceReadings = (paramKey: string) => {
+    const results: Array<{ deviceId: string; deviceName: string; value: number }> = []
+    if (nodeId) {
+      const dev = devices.find((d) => d.id === nodeId)
+      const raw = liveReadings[paramKey] ?? (dev as any)?.lastSample?.[paramKey]
+      const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
+      if (!isNaN(val)) {
+        results.push({ deviceId: nodeId, deviceName: dev?.name || nodeId, value: val })
+      }
+    } else {
+      for (const dev of scopedDevices) {
+        const raw = (dev as any)?.lastSample?.[paramKey]
+        const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
+        if (!isNaN(val)) {
+          results.push({ deviceId: dev.id, deviceName: dev.name || dev.id, value: val })
+        }
+      }
     }
+    return results
+  }
+
+  // Live status evaluation helper with Device labeling (IIoT Best Practice: asset tagging & spread overview)
+  const renderLiveReadingCell = (param: ExtendedAlarmParam) => {
+    const devReadings = getDeviceReadings(param.key)
+    if (!devReadings.length) {
+      return <span className="text-[10px] text-slate-600 font-mono italic" title="No telemetry reported yet for this sensor">—</span>
+    }
+
     const v = vals[rowId(param)] ?? param
     const isHigh = param.direction === 'high'
-    const isCrit = isHigh ? liveVal >= v.critical : liveVal <= v.critical
-    const isWarn = isHigh ? liveVal >= v.warn : liveVal <= v.warn
 
-    if (isCrit) {
+    // 1. Single device in scope or exactly 1 device reports this sensor
+    if (devReadings.length === 1) {
+      const dr = devReadings[0]
+      const isCrit = isHigh ? dr.value >= v.critical : dr.value <= v.critical
+      const isWarn = isHigh ? dr.value >= v.warn : dr.value <= v.warn
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-950/80 text-red-400 border border-red-800 text-[10px] font-semibold font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-          {liveVal.toFixed(1)} {param.unit} (CRIT)
-        </span>
+        <div
+          className={clsx(
+            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono border shadow-sm',
+            isCrit ? 'bg-red-950/80 text-red-300 border-red-800' :
+            isWarn ? 'bg-amber-950/80 text-amber-300 border-amber-800' :
+            'bg-emerald-950/80 text-emerald-300 border-emerald-800/80'
+          )}
+        >
+          <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', isCrit ? 'bg-red-400 animate-pulse' : isWarn ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400')} />
+          <span className="text-slate-300 font-sans font-semibold max-w-[90px] truncate">{dr.deviceName}:</span>
+          <span className="font-bold">{dr.value.toFixed(1)} {param.unit}</span>
+          {isCrit && <span className="text-[8px] px-1 rounded bg-red-600 text-white font-extrabold uppercase">Crit</span>}
+          {isWarn && !isCrit && <span className="text-[8px] px-1 rounded bg-amber-600 text-white font-extrabold uppercase">Warn</span>}
+        </div>
       )
     }
-    if (isWarn) {
+
+    // 2. 2 to 3 devices reporting this sensor: show neat badge stack
+    if (devReadings.length <= 3) {
       return (
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-400 border border-amber-800 text-[10px] font-semibold font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-          {liveVal.toFixed(1)} {param.unit} (WARN)
-        </span>
+        <div className="flex flex-col gap-1 py-0.5">
+          {devReadings.map((dr) => {
+            const isCrit = isHigh ? dr.value >= v.critical : dr.value <= v.critical
+            const isWarn = isHigh ? dr.value >= v.warn : dr.value <= v.warn
+            return (
+              <div
+                key={dr.deviceId}
+                className={clsx(
+                  'inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all',
+                  isCrit ? 'bg-red-950/80 text-red-300 border-red-800 animate-pulse' :
+                  isWarn ? 'bg-amber-950/80 text-amber-300 border-amber-800' :
+                  'bg-slate-900/90 text-slate-300 border-slate-700/80'
+                )}
+              >
+                <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', isCrit ? 'bg-red-400' : isWarn ? 'bg-amber-400' : 'bg-emerald-400')} />
+                <span className="text-slate-300 font-sans font-medium max-w-[80px] truncate">{dr.deviceName}:</span>
+                <span className={clsx('font-bold', isCrit ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-emerald-400')}>
+                  {dr.value.toFixed(1)} {param.unit}
+                </span>
+                {isCrit && <span className="text-[8px] px-0.5 rounded bg-red-800 text-white font-bold">CRIT</span>}
+              </div>
+            )
+          })}
+        </div>
       )
     }
+
+    // 3. More than 3 devices: show range & worst-case summary with popover tooltip
+    let minVal = devReadings[0].value
+    let maxVal = devReadings[0].value
+    let hasAnyCrit = false
+    let hasAnyWarn = false
+
+    for (const dr of devReadings) {
+      if (dr.value < minVal) minVal = dr.value
+      if (dr.value > maxVal) maxVal = dr.value
+      const isCrit = isHigh ? dr.value >= v.critical : dr.value <= v.critical
+      const isWarn = isHigh ? dr.value >= v.warn : dr.value <= v.warn
+      if (isCrit) hasAnyCrit = true
+      else if (isWarn && !hasAnyCrit) hasAnyWarn = true
+    }
+
     return (
-      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/80 text-[10px] font-semibold font-mono">
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-        {liveVal.toFixed(1)} {param.unit}
-      </span>
+      <div className="relative group inline-block">
+        <div
+          className={clsx(
+            'inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-mono border cursor-help shadow-sm transition-all',
+            hasAnyCrit ? 'bg-red-950/80 text-red-300 border-red-800 animate-pulse' :
+            hasAnyWarn ? 'bg-amber-950/80 text-amber-300 border-amber-800' :
+            'bg-slate-900/90 text-slate-300 border-slate-700'
+          )}
+        >
+          <span className={clsx('w-1.5 h-1.5 rounded-full shrink-0', hasAnyCrit ? 'bg-red-400' : hasAnyWarn ? 'bg-amber-400' : 'bg-emerald-400')} />
+          <span>{minVal.toFixed(1)} – {maxVal.toFixed(1)} {param.unit}</span>
+          <span className="text-[9px] px-1 rounded bg-slate-800 text-slate-400 font-sans font-bold">
+            {devReadings.length} devs
+          </span>
+          {hasAnyCrit && <span className="text-[8px] px-1 rounded bg-red-600 text-white font-extrabold">1+ CRIT</span>}
+        </div>
+
+        {/* Floating Tooltip displaying all devices */}
+        <div className="hidden group-hover:block absolute left-0 bottom-full mb-1 z-30 w-52 p-2 rounded-lg bg-slate-950 border border-slate-700 shadow-2xl text-[10px] pointer-events-none">
+          <div className="flex items-center justify-between font-bold text-white pb-1 border-b border-slate-800 mb-1">
+            <span>{param.label}</span>
+            <span className="text-slate-400">{devReadings.length} devices</span>
+          </div>
+          <div className="max-h-36 overflow-y-auto space-y-1 pr-1 font-mono">
+            {devReadings.map((dr) => {
+              const isCrit = isHigh ? dr.value >= v.critical : dr.value <= v.critical
+              const isWarn = isHigh ? dr.value >= v.warn : dr.value <= v.warn
+              return (
+                <div key={dr.deviceId} className="flex items-center justify-between">
+                  <span className="text-slate-300 font-sans truncate max-w-[100px]">{dr.deviceName}</span>
+                  <span className={clsx('font-bold', isCrit ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-emerald-400')}>
+                    {dr.value.toFixed(1)} {param.unit}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
     )
   }
 
@@ -1194,33 +1345,36 @@ export default function AlarmParamConfig({
             })}
           </div>
 
-          {/* Scope: this device's own sensors, or the whole catalog.
-              Only offered on a per-device editor — the org-level one has no
-              single device whose readings could scope it. */}
-          {reportedKeys && reportedKeys.size > 0 && (
-            <div className="flex items-center gap-1 flex-shrink-0" data-scope-filter>
-              <button
-                onClick={() => setScopeFilter('reported')}
-                title="Only parameters this device actually reports — plus any it already has an alarm on"
-                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap"
-                style={scopeFilter === 'reported'
-                  ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#fff' }
-                  : { ...inset, color: '#94a3b8' }}
-              >
-                This device&apos;s sensors
-              </button>
-              <button
-                onClick={() => setScopeFilter('all')}
-                title="Every parameter this product supports — use to pre-configure an alarm before the sensor reports"
-                className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap"
-                style={scopeFilter === 'all'
-                  ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1', color: '#fff' }
-                  : { ...inset, color: '#94a3b8' }}
-              >
-                Full catalog
-              </button>
-            </div>
-          )}
+          {/* Scope Filter: Reported/Active in Selection vs Full Catalog */}
+          <div className="flex items-center gap-1 flex-shrink-0" data-scope-filter>
+            <button
+              type="button"
+              onClick={() => setScopeFilter('reported')}
+              title={
+                nodeId
+                  ? "Only parameters this device actually reports — plus any it already has an alarm on"
+                  : "Only parameters actively reported across the selected devices"
+              }
+              className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5 font-medium"
+              style={scopeFilter === 'reported'
+                ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1', color: '#fff' }
+                : { ...inset, color: '#94a3b8' }}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+              <span>{nodeId ? `This device's sensors (${activeParamsCount})` : `Active in selection (${activeParamsCount})`}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setScopeFilter('all')}
+              title="Every parameter this product supports — use to configure alarm baseline across the full catalog"
+              className="text-[11px] px-2.5 py-1.5 rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5 font-medium"
+              style={scopeFilter === 'all'
+                ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1', color: '#fff' }
+                : { ...inset, color: '#94a3b8' }}
+            >
+              <span>Full catalog ({allParams.length})</span>
+            </button>
+          </div>
 
           {/* Instant Search Bar */}
           <div className="relative min-w-[200px] flex-shrink-0">
@@ -1266,7 +1420,7 @@ export default function AlarmParamConfig({
               {filteredParams.map((p) => {
                 const current = vals[rowId(p)] ?? { warn: p.warn, critical: p.critical, enabled: !p.unrationalized, rate: p.rate?.warn }
                 const isEnabled = current.enabled !== false
-                const liveVal = liveReadings[p.key] ?? (devices.find((d) => d.id === nodeId) as any)?.lastSample?.[p.key]
+                const devReadings = getDeviceReadings(p.key)
 
                 return (
                   <tr
@@ -1321,11 +1475,28 @@ export default function AlarmParamConfig({
                           <span>💡 {p.riskInsight}</span>
                         </div>
                       )}
+                      {!nodeId && scopedDevices.length > 1 && (
+                        <div className="mt-1 flex items-center gap-1">
+                          <span
+                            className={clsx(
+                              'text-[9px] px-1.5 py-0.2 rounded font-mono',
+                              devReadings.length === scopedDevices.length
+                                ? 'bg-indigo-950/70 text-indigo-300 border border-indigo-800/40'
+                                : devReadings.length > 0
+                                ? 'bg-slate-800 text-slate-300 border border-slate-700'
+                                : 'bg-slate-900/50 text-slate-500 border border-slate-800/50'
+                            )}
+                            title={`${devReadings.length} of ${scopedDevices.length} devices in scope report this parameter`}
+                          >
+                            📍 {devReadings.length === scopedDevices.length ? `All ${scopedDevices.length} Devices` : `${devReadings.length}/${scopedDevices.length} Devices`}
+                          </span>
+                        </div>
+                      )}
                     </td>
 
                     {/* Live Reading */}
-                    <td className="py-2 px-3 whitespace-nowrap">
-                      {getLiveStatusBadge(p, liveVal)}
+                    <td className="py-2 px-3">
+                      {renderLiveReadingCell(p)}
                     </td>
 
                     {/* Direction Toggle */}
