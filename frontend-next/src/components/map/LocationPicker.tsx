@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import MapSearchBar from '@/components/map/MapSearchBar'
 import { Layers, Map as MapIcon, Globe, Moon, Navigation, Loader2 } from 'lucide-react'
+import { reverseGeocode, useReverseAddress } from '@/lib/geoAddress'
 import 'leaflet/dist/leaflet.css'
 
 const MAP_LAYERS = {
@@ -65,11 +66,39 @@ export default function LocationPicker({
     onChangeRef.current = onChange
   }, [onChange])
 
+  const { address: currentPinAddress, loading: addressLoading } = useReverseAddress(lat, lng)
+
+  const updateFactoryMarkerPopup = async (marker: any, targetLat: number, targetLng: number) => {
+    if (!marker) return
+    marker.bindPopup(`
+      <div style="font-family:sans-serif; min-width:180px; padding:2px;">
+        <div style="font-size:12px; font-weight:700; color:#0f172a;">🏭 พิกัดโรงงาน (Factory Location)</div>
+        <div style="font-size:10px; color:#64748b; font-family:monospace; margin-top:2px;">${targetLat.toFixed(6)}, ${targetLng.toFixed(6)}</div>
+        <div style="font-size:10px; color:#6366f1; margin-top:4px; font-style:italic;">กำลังระบุชื่อสถานที่...</div>
+        <div style="font-size:9px; color:#94a3b8; margin-top:4px;">(ลากหมุดเพื่อปรับตำแหน่งได้)</div>
+      </div>
+    `)
+    const addr = await reverseGeocode(targetLat, targetLng)
+    if (addr) {
+      marker.bindPopup(`
+        <div style="font-family:sans-serif; min-width:200px; padding:3px;">
+          <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:2px;">🏭 พิกัดโรงงาน (Factory Location)</div>
+          <div style="font-size:11px; color:#1e293b; font-weight:600; line-height:1.35; margin-bottom:4px;">📍 ${addr}</div>
+          <div style="font-size:10px; color:#64748b; font-family:monospace;">${targetLat.toFixed(6)}, ${targetLng.toFixed(6)}</div>
+          <div style="font-size:9px; color:#6366f1; margin-top:5px; border-top:1px solid #e2e8f0; padding-top:2px;">✓ ยืนยันตำแหน่งแล้ว (ลากหมุดเพื่อปรับได้)</div>
+        </div>
+      `)
+      if (marker.isPopupOpen?.()) {
+        marker.openPopup()
+      }
+    }
+  }
+
   const handleMyLocation = () => {
     if (!navigator.geolocation || !mapRef.current) return
     setLocating(true)
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         setLocating(false)
         const { latitude, longitude } = pos.coords
         const L = LRef.current, map = mapRef.current
@@ -90,12 +119,14 @@ export default function LocationPicker({
           iconAnchor: [10, 10],
         })
 
+        const addr = await reverseGeocode(latitude, longitude)
         const popupDiv = document.createElement('div')
         popupDiv.style.fontFamily = 'sans-serif'
-        popupDiv.style.minWidth = '160px'
+        popupDiv.style.minWidth = '170px'
         popupDiv.style.padding = '2px'
         popupDiv.innerHTML = `
           <div style="font-size: 12px; font-weight: 700; color: #0f172a; margin-bottom: 2px;">📍 ตำแหน่งปัจจุบันของคุณ</div>
+          ${addr ? `<div style="font-size: 11px; color: #1e293b; font-weight: 600; margin-bottom: 4px; line-height: 1.35;">📍 ${addr}</div>` : ''}
           <div style="font-size: 10px; color: #64748b; font-family: monospace; margin-bottom: 6px;">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div>
           <button type="button" id="btn-pin-factory-here" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; background: #4f46e5; color: #ffffff; border: none; border-radius: 6px; padding: 5px 8px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.2s;">
             📌 ปักหมุดที่นี่เป็นพิกัดโรงงาน
@@ -306,6 +337,35 @@ export default function LocationPicker({
           </div>
         )}
       </div>
+
+      {/* Floating Bottom Status Pill with Address Confirmation */}
+      {lat != null && lng != null && (
+        <div
+          className="absolute bottom-2 left-2 z-[500] max-w-[calc(100%-1rem)] sm:max-w-md px-3 py-1.5 rounded-lg shadow-xl text-[11px] flex items-center gap-2 border border-slate-700/80"
+          style={{ background: 'rgba(10, 14, 26, 0.94)', backdropFilter: 'blur(10px)' }}
+        >
+          <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+          <div className="flex-1 truncate">
+            {addressLoading ? (
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <Loader2 size={11} className="animate-spin text-cyan-400 shrink-0" />
+                กำลังระบุชื่อสถานที่...
+              </span>
+            ) : currentPinAddress ? (
+              <span className="text-slate-200 font-medium truncate block" title={currentPinAddress}>
+                📍 {currentPinAddress}
+              </span>
+            ) : (
+              <span className="text-slate-400 font-mono">
+                {lat.toFixed(5)}, {lng.toFixed(5)}
+              </span>
+            )}
+          </div>
+          <span className="text-[10px] font-mono text-indigo-300 shrink-0 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800">
+            {lat.toFixed(4)}, {lng.toFixed(4)}
+          </span>
+        </div>
+      )}
 
       <div ref={elRef} style={{ width: '100%', height: '100%', borderRadius: '0.75rem', zIndex: 0 }} />
     </div>

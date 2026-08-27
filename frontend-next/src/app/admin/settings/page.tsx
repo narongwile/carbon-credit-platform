@@ -25,6 +25,7 @@ import {
   ExternalLink,
   Sliders,
   Navigation,
+  Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -33,6 +34,7 @@ import { getSession } from '@/lib/auth'
 import AdminBulkApplyAlarmEditor from '@/components/device/AdminBulkApplyAlarmEditor'
 import KindCatalogEditor from '@/components/device/KindCatalogEditor'
 import { useKindCatalog } from '@/lib/useKindCatalog'
+import { useReverseAddress } from '@/lib/geoAddress'
 import { defaultNotificationChannels } from '@/lib/orgData'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { KindScope } from '@/lib/api'
@@ -74,6 +76,8 @@ export default function SettingsPage() {
   const [orgLat, setOrgLat] = useState<number | null>(null)
   const [orgLng, setOrgLng] = useState<number | null>(null)
   const [savedLoc, setSavedLoc] = useState(false)
+  // Reverse geocoded address verification for factory location
+  const { address: factoryAddress, loading: addressLoading } = useReverseAddress(orgLat, orgLng)
 
   // System preferences state
   const [emailAlerts, setEmailAlerts] = useState(true)
@@ -208,7 +212,13 @@ export default function SettingsPage() {
     }
     setSavedLoc(true)
     setTimeout(() => setSavedLoc(false), 2000)
-    toast.success(orgLat == null ? 'Factory location cleared' : 'Factory location saved')
+    toast.success(
+      orgLat == null
+        ? 'Factory location cleared'
+        : factoryAddress
+        ? `Factory location saved: ${factoryAddress.split(',')[0]} (${orgLat.toFixed(4)}, ${orgLng.toFixed(4)})`
+        : `Factory location saved (${orgLat.toFixed(4)}, ${orgLng.toFixed(4)})`
+    )
   }
 
   const saveBrandName = async () => {
@@ -501,6 +511,47 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+
+            {/* Real-time Location Verification Box */}
+            {orgLat != null && orgLng != null && (
+              <div className="mt-4 p-4 rounded-xl border border-indigo-500/30 bg-indigo-950/20 space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                    <span className="text-xs font-bold text-white">ข้อมูลสถานที่ที่ปักหมุด (Pinned Location Details)</span>
+                  </div>
+                  <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-slate-300 font-mono">
+                    {orgLat.toFixed(6)}, {orgLng.toFixed(6)}
+                  </span>
+                </div>
+
+                <div className="flex items-start gap-2.5 pt-1 text-xs">
+                  <MapPin size={16} className="text-indigo-400 mt-0.5 shrink-0" />
+                  <div className="flex-1 space-y-1">
+                    {addressLoading ? (
+                      <div className="flex items-center gap-2 text-slate-400 text-xs">
+                        <Loader2 size={13} className="animate-spin text-cyan-400" />
+                        <span>กำลังค้นหาชื่อสถานที่และที่อยู่จริง (Resolving address from GPS)…</span>
+                      </div>
+                    ) : factoryAddress ? (
+                      <>
+                        <div className="text-indigo-200 font-semibold text-sm leading-relaxed">
+                          📍 {factoryAddress}
+                        </div>
+                        <div className="text-[11px] text-slate-400 flex items-center gap-1.5 pt-0.5">
+                          <span className="text-emerald-400 font-semibold">✓ ข้อมูลสถานที่ถูกต้อง</span>
+                          <span>· พิกัดนี้จะถูกนำไปใช้เป็นศูนย์กลางโรงงานสำหรับหม้อแปลงและอุปกรณ์ทุกตัวที่ไม่มี GPS</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-slate-400 text-xs">
+                        <span>พิกัด {orgLat.toFixed(6)}, {orgLng.toFixed(6)} (ไม่มีข้อมูลชื่อสถานที่จากฐานข้อมูลแผนที่สาธารณะ)</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-3 mt-4 pt-3 border-t border-slate-800/80">
               <button
