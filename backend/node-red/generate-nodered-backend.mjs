@@ -4221,6 +4221,44 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
         const tr = await fetch('https://api.telegram.org/bot'+tg+'/sendDocument', { method:'POST', body: fd });
         if (!tr.ok) node.warn('report '+s.name+': telegram sendDocument failed ('+tr.status+')');
       } else { node.warn('report '+s.name+': telegram skipped (no TELEGRAM_BOT_TOKEN/chat id), '+nodeIds.length+' nodes'); }
+    } else if (channel === 'line') {
+      const lineToken = (await global.get('notifyConfig')()).lineToken;
+      if (lineToken && to) {
+        const lineMsg = {
+          to,
+          messages: [{
+            type: 'text',
+            text: '📊 ONEOPS Report: ' + s.name + '\\n' + subject + '\\n' + body + '\\n\\n📁 Attached: ' + fname + ' (' + __rowCount + ' rows)'
+          }]
+        };
+        const lr = await fetch('https://api.line.me/v2/bot/message/push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + lineToken },
+          body: JSON.stringify(lineMsg)
+        });
+        if (!lr.ok) node.warn('report '+s.name+': line push failed ('+lr.status+')');
+      } else { node.warn('report '+s.name+': line skipped (no LINE token/user id)'); }
+    } else if (channel === 'webhook') {
+      if (to) {
+        const whPayload = {
+          event: 'report.generated',
+          scheduleId: s.id,
+          scheduleName: s.name,
+          orgId: s.org_id,
+          sequence: s.sequence,
+          timestamp: new Date().toISOString(),
+          recordCount: __rowCount,
+          devicesTargeted: nodeIds.length,
+          fileName: fname,
+          csvData: csv
+        };
+        const wr = await fetch(to, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'User-Agent': 'ONEOPS-IIoT-Engine/2.0' },
+          body: JSON.stringify(whPayload)
+        });
+        if (!wr.ok) node.warn('report '+s.name+': webhook post failed ('+wr.status+')');
+      } else { node.warn('report '+s.name+': webhook skipped (no destination URL)'); }
     } else if (to) {
       const mc = await global.get('mailConfig')();
       if (mc.transport) { await mc.transport.sendMail({ from: mc.from, to, subject, text: body, attachments: [{ filename: fname, content: csv }] }); }

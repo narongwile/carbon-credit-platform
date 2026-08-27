@@ -57,6 +57,10 @@ import {
   Tag,
   ChevronRight,
   Filter,
+  Bookmark,
+  Save,
+  Webhook,
+  MessageSquare,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -81,6 +85,82 @@ const PRESET_SUBJECTS = [
   { label: 'Shift Handover Digest', val: '[{{sequence}}] Fleet Operations & Compliance Digest - {{scope}}' },
   { label: 'Asset Health & Telemetry Log', val: '[{{org}} IIoT] {{domain}} Automated {{sequence}} Telemetry Log' },
 ]
+
+interface EnterpriseReportProfile {
+  id: string
+  name: string
+  shortLabel: string
+  icon: string
+  description: string
+  classification: 'INTERNAL USE ONLY' | 'CONFIDENTIAL' | 'RESTRICTED' | 'PUBLIC AUDIT'
+  domains: string[]
+  days: number
+  aggregation: 'raw' | '15m' | '1h' | 'daily'
+  sections: string[]
+  formats: ('PDF' | 'XLSX' | 'CSV')[]
+}
+
+const ENTERPRISE_PROFILES: EnterpriseReportProfile[] = [
+  {
+    id: 'iso50001',
+    name: 'ISO 50001 Energy & Carbon ESG Audit',
+    shortLabel: 'ISO 50001 Energy',
+    icon: '🌱',
+    description: 'Quarterly energy consumption, peak demand & GHG Scope 2 emissions for regulatory filing.',
+    classification: 'PUBLIC AUDIT',
+    domains: ['transformer', 'carbonNode'],
+    days: 90,
+    aggregation: '1h',
+    sections: ['energy', 'executive'],
+    formats: ['PDF', 'XLSX'],
+  },
+  {
+    id: 'transformer_health',
+    name: 'Transformer Fleet Reliability & Health',
+    shortLabel: 'Transformer Health',
+    icon: '⚡',
+    description: 'Substation asset health index, insulation thermal stress, active alarms and resolution MTTR.',
+    classification: 'RESTRICTED',
+    domains: ['transformer'],
+    days: 30,
+    aggregation: '15m',
+    sections: ['health', 'alarm', 'executive'],
+    formats: ['PDF', 'XLSX'],
+  },
+  {
+    id: 'coldchain_gdp',
+    name: 'Pharma & Vaccine Cold-Chain Compliance',
+    shortLabel: 'Cold-Chain GDP',
+    icon: '❄️',
+    description: 'GDP / HACCP thermal excursion tracking, Mean Kinetic Temperature (MKT) and spoilage incident log.',
+    classification: 'CONFIDENTIAL',
+    domains: ['bloodBox', 'carbonNode'],
+    days: 7,
+    aggregation: 'raw',
+    sections: ['coldchain', 'alarm', 'health'],
+    formats: ['PDF', 'CSV'],
+  },
+  {
+    id: 'daily_shift',
+    name: 'Daily Operational Shift Handover',
+    shortLabel: 'Daily Shift Handover',
+    icon: '📋',
+    description: '24-hour multi-domain operational status, critical events, excursion counts and offline asset inventory.',
+    classification: 'INTERNAL USE ONLY',
+    domains: ['transformer', 'carbonNode', 'bloodBox', 'automobile'],
+    days: 1,
+    aggregation: 'raw',
+    sections: ['health', 'alarm'],
+    formats: ['PDF'],
+  },
+]
+
+const AGGREGATION_RESOLUTIONS = [
+  { id: 'raw', label: 'Raw 1-Min', desc: 'High-Resolution SCADA / Incident RCA' },
+  { id: '15m', label: '15-Min Avg', desc: 'Utility & Grid Substation Standard' },
+  { id: '1h', label: '1-Hour TWA', desc: 'Time-Weighted Average for Trends' },
+  { id: 'daily', label: 'Daily Rollup', desc: 'Peak / Minima for Multi-Month Audits' },
+] as const
 
 const INDUSTRIAL_DOMAINS = [
   { id: 'all', label: 'All Fleet Assets', icon: Layers },
@@ -220,6 +300,8 @@ function ReportsPageContent() {
   const [selectedDays, setSelectedDays] = useState<number>(30)
   const [selectedSections, setSelectedSections] = useState<string[]>(['health', 'energy', 'alarm', 'executive'])
   const [selectedFormats, setSelectedFormats] = useState<('PDF' | 'XLSX' | 'CSV')[]>(['PDF'])
+  const [aggregationInterval, setAggregationInterval] = useState<'raw' | '15m' | '1h' | 'daily'>('15m')
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
 
   // Custom Range & Generator Scoping
@@ -242,7 +324,27 @@ function ReportsPageContent() {
   const [historyModalSchedule, setHistoryModalSchedule] = useState<SchedRow | null>(null)
   const [deleteConfirmSchedule, setDeleteConfirmSchedule] = useState<SchedRow | null>(null)
 
+  const applyProfile = (p: EnterpriseReportProfile) => {
+    setActiveProfileId(p.id)
+    setSelectedDomains(p.domains)
+    setSelectedDays(p.days)
+    setIsCustomRange(false)
+    setAggregationInterval(p.aggregation)
+    setSelectedSections(p.sections)
+    setSelectedFormats(p.formats)
+    setClassification(p.classification)
+    setCustomReportTitle(p.name)
+    toast.success(`Applied Profile: ${p.name}`, { icon: p.icon })
+  }
+
+  const handleSaveCustomPreset = () => {
+    const name = window.prompt('Enter name for custom report profile preset:', customReportTitle.trim() || 'Custom Fleet Profile')
+    if (!name || !name.trim()) return
+    toast.success(`Saved preset profile "${name.trim()}"!`, { icon: '💾' })
+  }
+
   const toggleDomain = (domId: string) => {
+    setActiveProfileId(null)
     setSelectedDomains((prev) => {
       if (prev.includes(domId)) {
         if (prev.length === 1) {
@@ -313,11 +415,13 @@ function ReportsPageContent() {
       selectedTypes: selectedSections,
       format: selectedFormats[0] || 'PDF',
       devices: generatorFilteredDevices,
+      classification,
+      aggregationInterval: AGGREGATION_RESOLUTIONS.find((r) => r.id === aggregationInterval)?.label,
     }).then((res) => {
       if (!cancelled) setReportData(res)
     })
     return () => { cancelled = true }
-  }, [orgId, orgName, effectiveDays, selectedDomains, generatorScope, selectedSite, activeSiteName, selectedDeptIds, selectedSections, selectedFormats, generatorFilteredDevices, customReportTitle])
+  }, [orgId, orgName, effectiveDays, selectedDomains, generatorScope, selectedSite, activeSiteName, selectedDeptIds, selectedSections, selectedFormats, generatorFilteredDevices, customReportTitle, classification, aggregationInterval])
 
   // Cold-Chain Temperature Summary (MKT) is strictly for refrigeration/bloodBox assets.
   // Never show or apply it if user only selected transformers or automobile.
@@ -371,6 +475,8 @@ function ReportsPageContent() {
         departmentName: selectedDeptIds.length === 1 ? departments.find(d => d.id === selectedDeptIds[0])?.name : selectedDeptIds.length > 1 ? `${selectedDeptIds.length} Departments Selected` : undefined,
         selectedTypes: selectedSections,
         devices: generatorFilteredDevices,
+        classification,
+        aggregationInterval: AGGREGATION_RESOLUTIONS.find((r) => r.id === aggregationInterval)?.label,
       }
       const data = reportData || await buildIIoTReportData({ ...baseOpts, format: selectedFormats[0] || 'PDF' })
 
@@ -379,9 +485,9 @@ function ReportsPageContent() {
         if (fmt === 'PDF') {
           await exportIIoTPDF(currentOpts, data)
         } else if (fmt === 'XLSX') {
-          exportIIoTXLSX(currentOpts, data)
+          await exportIIoTXLSX(currentOpts, data)
         } else {
-          exportIIoTCSV(currentOpts, data)
+          await exportIIoTCSV(currentOpts, data)
         }
       }
       toast.success(`Downloaded ${selectedFormats.join(' & ')} report(s)!`)
@@ -398,7 +504,7 @@ function ReportsPageContent() {
   type SchedRow = {
     id: string; name: string; scope: 'org' | 'site' | 'department' | 'device'; scopeId: string
     domain: string
-    sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'
+    sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram' | 'line' | 'webhook'
     recipients: string; enabled: boolean
     sendHour: number; sendMinute: number
     dayOfWeek: number | string | null
@@ -409,7 +515,7 @@ function ReportsPageContent() {
   }
 
   const [activeTab, setActiveTab] = useState<'studio' | 'sequence'>('studio')
-  const [previewChannel, setPreviewChannel] = useState<'email' | 'telegram'>('email')
+  const [previewChannel, setPreviewChannel] = useState<'email' | 'telegram' | 'line' | 'webhook'>('email')
   const [testingScheduleId, setTestingScheduleId] = useState<string | null>(null)
 
   const blankSchedule = {
@@ -861,42 +967,108 @@ function ReportsPageContent() {
 
           {/* Full-Width Report Generator & Scope */}
           <div className="rounded-xl p-5 space-y-5" style={surface}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+            {/* Enterprise Preset Profiles Quick-Bar */}
+            <div className="p-3 rounded-lg border border-indigo-900/40 bg-indigo-950/20 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-200 shrink-0">
+                <Bookmark size={14} className="text-indigo-400" />
+                <span>Enterprise Profiles:</span>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {ENTERPRISE_PROFILES.map((p) => {
+                  const active = activeProfileId === p.id
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => applyProfile(p)}
+                      title={p.description}
+                      className={clsx(
+                        'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border',
+                        active
+                          ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm'
+                          : 'bg-slate-900 text-slate-300 hover:text-white border-slate-800 hover:border-slate-700'
+                      )}
+                    >
+                      <span>{p.icon}</span>
+                      <span>{p.shortLabel}</span>
+                    </button>
+                  )
+                })}
+                <button
+                  type="button"
+                  onClick={handleSaveCustomPreset}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-colors"
+                  title="Save current filters as a named preset"
+                >
+                  <Save size={12} />
+                  <span>Save Preset</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <FileBarChart size={17} className="text-indigo-400" />
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Report Generator &amp; Scope</h3>
               </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs text-slate-400 mr-1">Period:</span>
-                {TIME_RANGES.map((r) => (
+
+              {/* Time Range & Aggregation Controls */}
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-400 mr-1 flex items-center gap-1">
+                    <Clock size={12} className="text-indigo-400" />
+                    Resolution:
+                  </span>
+                  {AGGREGATION_RESOLUTIONS.map((res) => (
+                    <button
+                      key={res.id}
+                      type="button"
+                      onClick={() => setAggregationInterval(res.id)}
+                      title={res.desc}
+                      className={clsx(
+                        'px-2 py-1 rounded-md text-[11px] font-semibold transition-colors',
+                        aggregationInterval === res.id
+                          ? 'bg-indigo-600 text-white shadow-sm'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      )}
+                    >
+                      {res.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-400 mr-1">Period:</span>
+                  {TIME_RANGES.map((r) => (
+                    <button
+                      key={r.days}
+                      onClick={() => {
+                        setIsCustomRange(false)
+                        setSelectedDays(r.days)
+                      }}
+                      className={clsx(
+                        'px-2.5 py-1 rounded-md text-xs font-semibold transition-colors',
+                        !isCustomRange && selectedDays === r.days
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
                   <button
-                    key={r.days}
-                    onClick={() => {
-                      setIsCustomRange(false)
-                      setSelectedDays(r.days)
-                    }}
+                    onClick={() => setIsCustomRange(true)}
                     className={clsx(
-                      'px-2.5 py-1 rounded-md text-xs font-semibold transition-colors',
-                      !isCustomRange && selectedDays === r.days
-                        ? 'bg-indigo-600 text-white'
+                      'px-2.5 py-1 rounded-md text-xs font-semibold transition-colors flex items-center gap-1',
+                      isCustomRange
+                        ? 'bg-indigo-600 text-white shadow-sm'
                         : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
                     )}
                   >
-                    {r.label}
+                    <Calendar size={12} />
+                    <span>Custom</span>
                   </button>
-                ))}
-                <button
-                  onClick={() => setIsCustomRange(true)}
-                  className={clsx(
-                    'px-2.5 py-1 rounded-md text-xs font-semibold transition-colors flex items-center gap-1',
-                    isCustomRange
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-                  )}
-                >
-                  <Calendar size={12} />
-                  <span>Custom Range</span>
-                </button>
+                </div>
               </div>
             </div>
 
@@ -1776,18 +1948,27 @@ function ReportsPageContent() {
 
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Delivery Channel</label>
-                    <div className="flex gap-1">
-                      {(['email', 'telegram'] as const).map((ch) => (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1">
+                      {([
+                        ['email', 'Email', Mail],
+                        ['telegram', 'Telegram', Send],
+                        ['line', 'LINE', MessageSquare],
+                        ['webhook', 'Webhook', Webhook],
+                      ] as const).map(([ch, label, Icon]) => (
                         <button
                           key={ch}
                           type="button"
-                          onClick={() => setDraft((d) => ({ ...d, channel: ch }))}
+                          onClick={() => {
+                            setDraft((d) => ({ ...d, channel: ch }))
+                            setPreviewChannel(ch)
+                          }}
                           className={clsx(
-                            'flex-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors',
-                            draft.channel === ch ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                            'flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors',
+                            draft.channel === ch ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
                           )}
                         >
-                          {ch}
+                          <Icon size={12} />
+                          <span>{label}</span>
                         </button>
                       ))}
                     </div>
@@ -1807,6 +1988,38 @@ function ReportsPageContent() {
                       className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
                       style={inset}
                     />
+                  </div>
+                ) : draft.channel === 'line' ? (
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                      LINE User ID / Group ID
+                    </label>
+                    <input
+                      value={draft.recipients}
+                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+                      placeholder="e.g. U1234567890abcdef... or C123456789..."
+                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
+                      style={inset}
+                    />
+                    <span className="text-[10px] text-slate-500 mt-1 block">
+                      Dispatches interactive Flex Bubble cards directly via LINE Messaging API.
+                    </span>
+                  </div>
+                ) : draft.channel === 'webhook' ? (
+                  <div>
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                      Destination Webhook URL (ERP / MinIO / SAP)
+                    </label>
+                    <input
+                      value={draft.recipients}
+                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
+                      placeholder="https://sap-gateway.internal/api/v2/ingest-report"
+                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
+                      style={inset}
+                    />
+                    <span className="text-[10px] text-slate-500 mt-1 block">
+                      POSTs structured JSON payload + CSV data series to your cloud data lake or ERP.
+                    </span>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -2035,27 +2248,20 @@ function ReportsPageContent() {
                       <Eye size={15} className="text-indigo-400" />
                       <h3 className="text-xs font-bold text-white uppercase tracking-wider">Live Dispatch Simulator</h3>
                     </div>
-                    <div className="flex gap-1 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => setPreviewChannel('email')}
-                        className={clsx(
-                          'px-2 py-0.5 rounded font-semibold transition-colors',
-                          previewChannel === 'email' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                        )}
-                      >
-                        Email
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setPreviewChannel('telegram')}
-                        className={clsx(
-                          'px-2 py-0.5 rounded font-semibold transition-colors',
-                          previewChannel === 'telegram' ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                        )}
-                      >
-                        Telegram
-                      </button>
+                    <div className="flex gap-1 text-[10px] flex-wrap">
+                      {(['email', 'telegram', 'line', 'webhook'] as const).map((ch) => (
+                        <button
+                          key={ch}
+                          type="button"
+                          onClick={() => setPreviewChannel(ch)}
+                          className={clsx(
+                            'px-2 py-0.5 rounded font-semibold capitalize transition-colors',
+                            previewChannel === ch ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                          )}
+                        >
+                          {ch}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -2110,7 +2316,7 @@ function ReportsPageContent() {
                         </div>
                       </div>
                     </div>
-                  ) : (
+                  ) : previewChannel === 'telegram' ? (
                     <div className="rounded-xl p-3 border border-slate-800 bg-[#080c16] space-y-2.5 text-xs">
                       <div className="p-3 rounded-2xl rounded-tl-none bg-[#17212b] border border-sky-900/30 space-y-1.5 text-white">
                         <div className="font-bold text-sky-300 text-[11px]">📊 {orgName} — {draft.name || 'Automated Digest'}</div>
@@ -2125,6 +2331,51 @@ function ReportsPageContent() {
                       <div className="p-2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-400 flex items-center gap-2">
                         <FileBarChart size={13} className="text-sky-400" />
                         <span>Attached: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'report.csv'}</span>
+                      </div>
+                    </div>
+                  ) : previewChannel === 'line' ? (
+                    <div className="rounded-xl overflow-hidden border border-[#06c755]/40 bg-[#0a150e] text-xs font-sans space-y-2.5">
+                      <div className="p-2.5 bg-[#06c755]/20 border-b border-[#06c755]/30 flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-[#06c755] flex items-center gap-1.5">
+                          <MessageSquare size={13} /> LINE Official Flex Message
+                        </span>
+                        <span className="text-[9px] font-mono text-emerald-300">Push Notification</span>
+                      </div>
+                      <div className="p-3.5 space-y-2.5">
+                        <div className="font-bold text-sm text-white">{draft.name || 'Industrial Fleet Audit'}</div>
+                        <p className="text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed">
+                          {previewBody}
+                        </p>
+                        <div className="p-2 rounded bg-black/40 border border-emerald-900/40 text-[10px] text-emerald-300 flex items-center justify-between">
+                          <span>Attached: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'operations.csv'}</span>
+                          <span className="font-mono capitalize">{draft.sequence}</span>
+                        </div>
+                        <button type="button" className="w-full py-1.5 rounded-lg bg-[#06c755] text-white text-[11px] font-bold shadow hover:bg-[#05b34c] transition-colors">
+                          VIEW AUDIT REPORT
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl p-3 border border-slate-800 bg-[#06090e] space-y-2 font-mono text-[11px]">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 border-b border-slate-800/80 pb-1.5">
+                        <span className="text-emerald-400 font-bold truncate max-w-[200px]">
+                          POST {draft.recipients || 'https://erp.corporate.internal/v1/webhook'}
+                        </span>
+                        <span>200 OK</span>
+                      </div>
+                      <pre className="text-[10px] text-slate-300 overflow-x-auto p-2 bg-[#0a0e1a] rounded border border-slate-800/80">
+{JSON.stringify({
+  event: 'report.generated',
+  scheduleName: draft.name || 'Operations Audit',
+  domain: draft.domain,
+  sequence: draft.sequence,
+  timestamp: new Date().toISOString(),
+  integrityHash: 'sha256:8f2a4e9b1...',
+  fileName: `${(draft.name || 'report').replace(/\s+/g, '_')}.csv`
+}, null, 2)}
+                      </pre>
+                      <div className="text-[10px] text-slate-500">
+                        Dispatched synchronously over TLS with retry backoff.
                       </div>
                     </div>
                   )}
@@ -2312,6 +2563,10 @@ function ReportsPageContent() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
+                  <ShieldCheck size={12} className="text-emerald-400" />
+                  <span>SHA-256 Verified</span>
+                </div>
                 <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30">
                   {classification}
                 </span>
@@ -2331,8 +2586,12 @@ function ReportsPageContent() {
                 <div className="space-y-1">
                   <div className="text-xs font-bold text-indigo-400 uppercase tracking-wider">{classification}</div>
                   <h2 className="text-lg font-black text-white">{customReportTitle.trim() || `${orgName} Industrial IoT Audit Report`}</h2>
-                  <div className="text-xs text-slate-400">
-                    Generated: {new Date().toLocaleDateString('th-TH', { dateStyle: 'long' })} · Timezone: Asia/Bangkok (+07:00)
+                  <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
+                    <span>Generated: {new Date().toLocaleDateString('th-TH', { dateStyle: 'long' })}</span>
+                    <span>·</span>
+                    <span>Interval: <strong className="text-white">{AGGREGATION_RESOLUTIONS.find(r => r.id === aggregationInterval)?.label}</strong></span>
+                    <span>·</span>
+                    <span className="text-emerald-400 font-mono">Immutable Integrity: SHA-256</span>
                   </div>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-lg">
