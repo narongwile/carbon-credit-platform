@@ -1467,6 +1467,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   currentLoadKva={Math.round(((transformer.sensors?.load?.value ?? 74) / 100) * (nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500))}
                   oilTemp={transformer.sensors?.oilTemperature?.value ?? 64}
                   hotSpotTemp={(transformer.sensors?.oilTemperature?.value ?? 64) + 14}
+                  lat={transformer.lat ?? 13.7563}
+                  lng={transformer.lng ?? 100.5018}
+                  assetId={transformer.id}
+                  assetName={transformer.name}
                 />
               )}
 
