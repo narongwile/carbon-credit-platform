@@ -1644,6 +1644,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   assetId={transformer.id}
                   assetName={transformer.name}
                   orgName={currentOrgName}
+                  isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
                 />
               )}
 
@@ -1656,6 +1657,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   voltageKv={liveTelemetry.voltageKv}
                   mainOilTemp={liveTelemetry.oilTemp}
                   bushingTanDelta={0.82}
+                  hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
+                  hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
                 />
               )}
             </div>

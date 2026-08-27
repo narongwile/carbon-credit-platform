@@ -19,6 +19,8 @@ interface SubstationThreatsStudioProps {
   voltageKv?: number
   mainOilTemp?: number
   bushingTanDelta?: number
+  hasArresterSensor?: boolean
+  hasOltcSensor?: boolean
 }
 
 // Surge Arrester Phases
@@ -39,8 +41,12 @@ export default function SubstationThreatsStudio({
   voltageKv = 115,
   mainOilTemp = 64,
   bushingTanDelta = 0.82,
+  hasArresterSensor = false,
+  hasOltcSensor = false,
 }: SubstationThreatsStudioProps) {
   const [activeSection, setActiveSection] = useState<'surge' | 'oltc' | 'wildlife'>('surge')
+  const [arresterInstalled, setArresterInstalled] = useState(hasArresterSensor)
+  const [oltcInstalled, setOltcInstalled] = useState(hasOltcSensor)
 
   // Surge Arrester State (IEC 60099-5)
   const [arresters, setArresters] = useState<ArresterPhaseData[]>([
@@ -156,6 +162,39 @@ export default function SubstationThreatsStudio({
       {/* SECTION 1: Surge Arrester & Lightning Analysis (IEC 60099-5) */}
       {activeSection === 'surge' && (
         <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className={clsx(
+              'text-[10px] px-2 py-0.5 rounded font-mono font-bold border',
+              arresterInstalled
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
+            )}>
+              {arresterInstalled ? '🟢 ONLINE SURGE CT SENSOR CONNECTED' : '📡 THUNDERSTORM STATS / MOV BASELINE'}
+            </span>
+            <button
+              onClick={() => setArresterInstalled(!arresterInstalled)}
+              className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
+            >
+              Hardware CT: {arresterInstalled ? 'Installed' : 'Not Installed (Estimate)'}
+            </button>
+          </div>
+
+          {!arresterInstalled && (
+            <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
+              <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
+                <Zap size={15} />
+              </div>
+              <div className="text-xs space-y-1">
+                <div className="font-bold text-amber-300">
+                  สถานะฮาร์ดแวร์: ยังไม่ได้ติดตั้งเซนเซอร์ Surge Arrester CT (อุปกรณ์ตรวจวัดกระแสรั่วไหลแบบ Online)
+                </div>
+                <p className="text-slate-300 leading-relaxed">
+                  ระบบกำลังประเมินความเสี่ยงฟ้าผ่าตาม <strong>สถิติความหนาแน่นฟ้าผ่าเชิงพื้นที่ (Thailand Ground Flash Density: ~85 ครั้ง/ปี/ตร.กม.)</strong> และแบบจำลองการรับกระแสเสิร์จสะสมของแท่ง Metal Oxide Varistor (MOV) หากมีการติดตั้ง CT กับดักฟ้าผ่าเพิ่มในอนาคต สัญญาณกระแสรั่วไหลสดจะเชื่อมต่อเข้าสู่ระบบอัตโนมัติทันที
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Top KPI Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {arresters.map((arr) => (
@@ -255,6 +294,39 @@ export default function SubstationThreatsStudio({
       {/* SECTION 2: OLTC Tap Changer & Contact Coking (IEEE C57.131) */}
       {activeSection === 'oltc' && (
         <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <span className={clsx(
+              'text-[10px] px-2 py-0.5 rounded font-mono font-bold border',
+              oltcInstalled
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
+            )}>
+              {oltcInstalled ? '🟢 ONLINE OLTC TELEMETRY ACTIVE' : '📡 TIME-BASED PREVENTIVE SCHEDULE'}
+            </span>
+            <button
+              onClick={() => setOltcInstalled(!oltcInstalled)}
+              className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
+            >
+              Hardware MCSA: {oltcInstalled ? 'Installed' : 'Not Installed (Estimate)'}
+            </button>
+          </div>
+
+          {!oltcInstalled && (
+            <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
+              <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
+                <Sliders size={15} />
+              </div>
+              <div className="text-xs space-y-1">
+                <div className="font-bold text-amber-300">
+                  สถานะฮาร์ดแวร์: ยังไม่ได้ติดตั้งเซนเซอร์ตรวจจับกระแสมอเตอร์ OLTC และอุณหภูมิน้ำมันเฉพาะถัง
+                </div>
+                <p className="text-slate-300 leading-relaxed">
+                  ระบบกำลังติดตามรอบอายุการใช้งานตาม <strong>ตารางการบำรุงรักษาเชิงเวลา (Time-based Preventive Maintenance: 50,000 ไซเคิล)</strong> และค่าประมาณการจากประวัติการทำงาน หากติดตั้งชุดเซนเซอร์ OLTC Monitoring สัญญาณวิเคราะห์ MCSA และ ΔT จะเชื่อมต่อเข้าสู่ระบบอัตโนมัติทันที
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Diverter Tank Delta T Monitor */}
             <div className="rounded-xl p-4 bg-[#0d1117] border border-slate-800 space-y-4">

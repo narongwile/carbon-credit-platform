@@ -68,12 +68,15 @@ export default function BushingHealthStudio({
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
   orgName = 'Industrial Substation',
+  isSensorInstalled = false,
 }: {
   voltageKv?: number
   assetId?: string
   assetName?: string
   orgName?: string
+  isSensorInstalled?: boolean
 }) {
+  const [sensorInstalled, setSensorInstalled] = useState(isSensorInstalled)
   const [bushings, setBushings] = useState<BushingData[]>(DEFAULT_BUSHINGS)
   const [selectedPhase, setSelectedPhase] = useState<'A' | 'B' | 'C'>('B')
   const [pdFilter, setPdFilter] = useState<'all' | 'corona' | 'internal' | 'surface'>('all')
@@ -113,9 +116,13 @@ export default function BushingHealthStudio({
       })
     }
 
-    if (pdFilter === 'all') return points
-    return points.filter((p) => p.type === pdFilter)
-  }, [selectedPhase, pdFilter])
+    return points
+  }, [selectedPhase])
+
+  const filteredPoints = useMemo(() => {
+    if (pdFilter === 'all') return prpdData
+    return prpdData.filter((p) => p.type === pdFilter)
+  }, [prpdData, pdFilter])
 
   return (
     <div className="rounded-2xl p-5 space-y-6 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -131,37 +138,73 @@ export default function BushingHealthStudio({
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-500/30 font-mono font-bold">
               {voltageKv} kV High-Voltage Class
             </span>
+            <span className={clsx(
+              'text-[9px] px-1.5 py-0.5 rounded font-mono font-bold border',
+              sensorInstalled
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
+            )}>
+              {sensorInstalled ? '🟢 ONLINE SENSOR ADAPTER' : '📡 OFFLINE LAB / IEEE BASELINE'}
+            </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Real-time dielectric loss dissipation factor (tan δ), C1 capacitance drift &amp; Phase-Resolved Partial Discharge (PRPD)
+            Dielectric dissipation factor (tan δ), C1 capacitance drift &amp; Phase-Resolved Partial Discharge (PRPD)
           </p>
         </div>
 
-        {/* Phase Selector */}
-        <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 self-start lg:self-auto">
-          {(['A', 'B', 'C'] as const).map((p) => {
-            const b = bushings.find((item) => item.phase === p)
-            const isWarn = b?.status === 'warning'
-            return (
-              <button
-                key={p}
-                onClick={() => setSelectedPhase(p)}
-                className={clsx(
-                  'text-xs px-3 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5',
-                  selectedPhase === p
-                    ? isWarn
-                      ? 'bg-amber-600 text-white font-bold shadow-sm'
-                      : 'bg-indigo-600 text-white font-bold shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                )}
-              >
-                <span>Phase {p}</span>
-                {isWarn && <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse" />}
-              </button>
-            )
-          })}
+        {/* Hardware Status Toggle & Phase Selector */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => setSensorInstalled(!sensorInstalled)}
+            className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors flex items-center gap-1.5 font-medium"
+            title="Toggle between physical online sensor and offline/annual test baseline"
+          >
+            <span>Hardware: {sensorInstalled ? 'Installed' : 'Not Installed (Estimate)'}</span>
+          </button>
+
+          {/* Phase Selector */}
+          <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 self-start lg:self-auto">
+            {(['A', 'B', 'C'] as const).map((p) => {
+              const b = bushings.find((item) => item.phase === p)
+              const isWarn = b?.status === 'warning'
+              return (
+                <button
+                  key={p}
+                  onClick={() => setSelectedPhase(p)}
+                  className={clsx(
+                    'text-xs px-3 py-1.5 rounded-md font-semibold transition-all flex items-center gap-1.5',
+                    selectedPhase === p
+                      ? isWarn
+                        ? 'bg-amber-600 text-white font-bold shadow-sm'
+                        : 'bg-indigo-600 text-white font-bold shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  )}
+                >
+                  <span>Phase {p}</span>
+                  {isWarn && <span className="w-2 h-2 rounded-full bg-amber-300 animate-pulse" />}
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
+
+      {/* Uninstalled Notice Banner */}
+      {!sensorInstalled && (
+        <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
+          <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
+            <Zap size={15} />
+          </div>
+          <div className="text-xs space-y-1">
+            <div className="font-bold text-amber-300 flex items-center gap-2">
+              <span>สถานะฮาร์ดแวร์: ยังไม่ได้ติดตั้งชุดเซนเซอร์ Online Bushing Adapter (อุปกรณ์ตรวจจับเรียลไทม์)</span>
+            </div>
+            <p className="text-slate-300 leading-relaxed">
+              ระบบกำลังแสดงผลประเมินตาม <strong>เกณฑ์แบบจำลองการเสื่อมอายุตามมาตรฐาน IEEE C57.19.00</strong> ร่วมกับ <strong>ผลการทดสอบประจำปี (Annual Maintenance Doble Test)</strong> เมื่อมีการติดตั้งชุดหัววัด Online Bushing Adapter เพิ่มเติมในอนาคต สัญญาณสดจะเชื่อมต่อเข้าสู่กราฟ PRPD อัตโนมัติทันที
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* 3-Phase Bushing Health Summary Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
