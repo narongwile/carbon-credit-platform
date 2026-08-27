@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   ExternalLink,
   Sliders,
+  Navigation,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -166,6 +167,31 @@ export default function SettingsPage() {
       }
     }
     toast.success('Logo removed')
+  }
+
+  // Fast GPS pinning from current position
+  const [gettingLoc, setGettingLoc] = useState(false)
+  const useCurrentLocationAsFactory = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser')
+      return
+    }
+    setGettingLoc(true)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGettingLoc(false)
+        const lat = Number(pos.coords.latitude.toFixed(7))
+        const lng = Number(pos.coords.longitude.toFixed(7))
+        setOrgLat(lat)
+        setOrgLng(lng)
+        toast.success(`Pinned factory to current GPS: ${lat}, ${lng}`)
+      },
+      (err) => {
+        setGettingLoc(false)
+        toast.error('Could not get GPS location: ' + err.message)
+      },
+      { timeout: 10000, enableHighAccuracy: true }
+    )
   }
 
   const saveLocation = async () => {
@@ -370,16 +396,59 @@ export default function SettingsPage() {
 
           {/* Factory Location Picker */}
           <div className="rounded-xl p-5" style={surface}>
-            <div className="flex items-center gap-2 mb-3">
-              <MapPin size={18} className="text-indigo-400" />
-              <div>
-                <h3 className="text-sm font-semibold text-white">Factory &amp; Facility Location</h3>
-                <p className="text-xs text-slate-400">
-                  Fallback coordinates used for asset maps and telemetry devices without GPS sensors.
-                </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2.5">
+                <MapPin size={20} className="text-indigo-400 shrink-0" />
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-bold text-white">Factory &amp; Facility Location</h3>
+                    {orgLat != null && orgLng != null ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono">
+                        {orgLat.toFixed(5)}, {orgLng.toFixed(5)}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/60 font-medium">
+                        No Location Pinned
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Fallback coordinates used for asset maps and telemetry devices without GPS sensors.
+                  </p>
+                </div>
+              </div>
+
+              {/* Quick Actions */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={useCurrentLocationAsFactory}
+                  disabled={gettingLoc}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all shadow-sm disabled:opacity-50"
+                  title="Detect GPS position and pin factory here immediately"
+                >
+                  <Navigation size={13} className={clsx(gettingLoc && 'animate-spin text-cyan-400')} />
+                  <span>{gettingLoc ? 'Detecting GPS…' : 'Use Current Location'}</span>
+                </button>
+                {orgLat != null && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOrgLat(null)
+                      setOrgLng(null)
+                      toast.success('Factory location pin cleared')
+                    }}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-rose-400 border border-slate-800 transition-colors"
+                    title="Clear pinned location"
+                  >
+                    <Trash2 size={12} />
+                    <span>Clear Pin</span>
+                  </button>
+                )}
               </div>
             </div>
 
+            {/* LocationPicker with Search, My Location (radar pulse), Satellite & Streets switcher */}
             <LocationPicker
               lat={orgLat}
               lng={orgLng}
@@ -387,7 +456,11 @@ export default function SettingsPage() {
                 setOrgLat(lat)
                 setOrgLng(lng)
               }}
-              height="200px"
+              height="360px"
+              showSearch={true}
+              showMyLocation={true}
+              showLayerSwitcher={true}
+              defaultLayer="streets"
             />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">

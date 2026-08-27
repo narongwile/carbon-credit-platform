@@ -89,11 +89,32 @@ export default function LocationPicker({
           iconSize: [20, 20],
           iconAnchor: [10, 10],
         })
+
+        const popupDiv = document.createElement('div')
+        popupDiv.style.fontFamily = 'sans-serif'
+        popupDiv.style.minWidth = '160px'
+        popupDiv.style.padding = '2px'
+        popupDiv.innerHTML = `
+          <div style="font-size: 12px; font-weight: 700; color: #0f172a; margin-bottom: 2px;">📍 ตำแหน่งปัจจุบันของคุณ</div>
+          <div style="font-size: 10px; color: #64748b; font-family: monospace; margin-bottom: 6px;">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div>
+          <button type="button" id="btn-pin-factory-here" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; background: #4f46e5; color: #ffffff; border: none; border-radius: 6px; padding: 5px 8px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+            📌 ปักหมุดที่นี่เป็นพิกัดโรงงาน
+          </button>
+        `
+
         const m = L.marker([latitude, longitude], { icon: userIcon })
           .addTo(map)
-          .bindPopup('<b style="color:#0f172a">ตำแหน่งปัจจุบันของคุณ (Your Location)</b>')
+          .bindPopup(popupDiv)
           .openPopup()
         userMarkerRef.current = m
+
+        const btn = popupDiv.querySelector('#btn-pin-factory-here') as HTMLElement | null
+        if (btn) {
+          btn.onclick = () => {
+            handlePlaceSelect(latitude, longitude)
+            m.closePopup()
+          }
+        }
       },
       () => setLocating(false),
       { timeout: 10000, enableHighAccuracy: true }
@@ -132,6 +153,7 @@ export default function LocationPicker({
       // Initial marker
       if (lat != null && lng != null) {
         markerRef.current = L.marker([lat, lng], { draggable: interactive }).addTo(map)
+        markerRef.current.bindPopup('<b style="color:#0f172a">🏭 พิกัดโรงงาน (Factory Location)</b>')
         if (interactive) {
           markerRef.current.on('dragend', (e: any) => {
             const pos = e.target.getLatLng()
@@ -148,6 +170,7 @@ export default function LocationPicker({
             markerRef.current.setLatLng([lat, lng])
           } else {
             markerRef.current = L.marker([lat, lng], { draggable: true }).addTo(map)
+            markerRef.current.bindPopup('<b style="color:#0f172a">🏭 พิกัดโรงงาน (Factory Location)</b>')
             markerRef.current.on('dragend', (ev: any) => {
               const pos = ev.target.getLatLng()
               onChangeRef.current(pos.lat, pos.lng)
@@ -167,6 +190,37 @@ export default function LocationPicker({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Synchronize marker when lat or lng changes externally (typed in input, or current location clicked)
+  useEffect(() => {
+    const map = mapRef.current
+    const L = LRef.current
+    if (!map || !L) return
+
+    if (lat != null && lng != null) {
+      if (markerRef.current) {
+        const cur = markerRef.current.getLatLng()
+        if (Math.abs(cur.lat - lat) > 0.000001 || Math.abs(cur.lng - lng) > 0.000001) {
+          markerRef.current.setLatLng([lat, lng])
+          map.flyTo([lat, lng], Math.max(map.getZoom(), 14), { duration: 0.8 })
+        }
+      } else {
+        const m = L.marker([lat, lng], { draggable: interactive }).addTo(map)
+        m.bindPopup('<b style="color:#0f172a">🏭 พิกัดโรงงาน (Factory Location)</b>')
+        if (interactive) {
+          m.on('dragend', (e: any) => {
+            const pos = e.target.getLatLng()
+            onChangeRef.current(pos.lat, pos.lng)
+          })
+        }
+        markerRef.current = m
+        map.flyTo([lat, lng], Math.max(map.getZoom(), 14), { duration: 0.8 })
+      }
+    } else if (markerRef.current) {
+      map.removeLayer(markerRef.current)
+      markerRef.current = null
+    }
+  }, [lat, lng, interactive])
 
   const switchLayer = (layerKey: LayerKey) => {
     setCurrentLayer(layerKey)
