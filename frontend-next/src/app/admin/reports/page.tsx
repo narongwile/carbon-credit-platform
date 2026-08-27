@@ -211,12 +211,15 @@ function ReportsPageContent() {
   }, [devices])
 
   // Filter & Studio State
-  const [selectedDomain, setSelectedDomain] = useState<string>(urlDomain || 'all')
+  const ALL_DOMAIN_KEYS = ['transformer', 'carbonNode', 'bloodBox', 'automobile'] as const
+  const [selectedDomains, setSelectedDomains] = useState<string[]>(() =>
+    urlDomain && ALL_DOMAIN_KEYS.includes(urlDomain as any) ? [urlDomain] : ['transformer', 'carbonNode', 'bloodBox', 'automobile']
+  )
   const [selectedSite, setSelectedSite] = useState<string>(urlSiteId || 'all')
-  const [selectedDept, setSelectedDept] = useState<string>('all')
+  const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([])
   const [selectedDays, setSelectedDays] = useState<number>(30)
   const [selectedSections, setSelectedSections] = useState<string[]>(['health', 'energy', 'alarm', 'executive'])
-  const [exportFormat, setExportFormat] = useState<'PDF' | 'XLSX' | 'CSV'>('PDF')
+  const [selectedFormats, setSelectedFormats] = useState<('PDF' | 'XLSX' | 'CSV')[]>(['PDF'])
   const [generating, setGenerating] = useState(false)
 
   // Custom Range & Generator Scoping
@@ -239,6 +242,32 @@ function ReportsPageContent() {
   const [historyModalSchedule, setHistoryModalSchedule] = useState<SchedRow | null>(null)
   const [deleteConfirmSchedule, setDeleteConfirmSchedule] = useState<SchedRow | null>(null)
 
+  const toggleDomain = (domId: string) => {
+    setSelectedDomains((prev) => {
+      if (prev.includes(domId)) {
+        if (prev.length === 1) {
+          toast.error('Select at least one product domain')
+          return prev
+        }
+        return prev.filter((d) => d !== domId)
+      }
+      return [...prev, domId]
+    })
+  }
+
+  const toggleExportFormat = (fmt: 'PDF' | 'XLSX' | 'CSV') => {
+    setSelectedFormats((prev) => {
+      if (prev.includes(fmt)) {
+        if (prev.length === 1) {
+          toast.error('Select at least one export format')
+          return prev
+        }
+        return prev.filter((f) => f !== fmt)
+      }
+      return [...prev, fmt]
+    })
+  }
+
   const effectiveDays = useMemo(() => {
     if (!isCustomRange) return selectedDays
     const diff = Math.round((new Date(customEndDate).getTime() - new Date(customStartDate).getTime()) / 86400000)
@@ -247,18 +276,18 @@ function ReportsPageContent() {
 
   const generatorFilteredDevices = useMemo(() => {
     let list = devices
-    if (selectedDomain !== 'all') {
-      list = list.filter((d) => d.domain === selectedDomain)
+    if (selectedDomains.length > 0 && selectedDomains.length < ALL_DOMAIN_KEYS.length) {
+      list = list.filter((d) => d.domain && selectedDomains.includes(d.domain))
     }
     if (generatorScope === 'site' && selectedSite !== 'all') {
       list = list.filter((d) => d.siteId === selectedSite)
-    } else if (generatorScope === 'department' && selectedDept !== 'all') {
-      list = list.filter((d) => d.departmentIds?.includes(selectedDept))
+    } else if (generatorScope === 'department' && selectedDeptIds.length > 0) {
+      list = list.filter((d) => d.departmentIds?.some((id) => selectedDeptIds.includes(id)))
     } else if (generatorScope === 'device') {
       list = list.filter((d) => generatorDeviceIds.includes(d.id))
     }
     return list
-  }, [devices, selectedDomain, generatorScope, selectedSite, selectedDept, generatorDeviceIds])
+  }, [devices, selectedDomains, generatorScope, selectedSite, selectedDeptIds, generatorDeviceIds])
 
   // Live Metrics & Preview Cache
   const [reportData, setReportData] = useState<{
@@ -276,39 +305,40 @@ function ReportsPageContent() {
       orgName,
       title: customReportTitle.trim() || undefined,
       days: effectiveDays,
-      domain: selectedDomain,
+      domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length === ALL_DOMAIN_KEYS.length ? 'all' : selectedDomains.join(','),
       siteId: generatorScope === 'site' ? selectedSite : undefined,
       siteName: generatorScope === 'site' ? activeSiteName : undefined,
-      departmentId: generatorScope === 'department' ? selectedDept : undefined,
+      departmentId: selectedDeptIds.length === 1 ? selectedDeptIds[0] : undefined,
+      departmentName: selectedDeptIds.length === 1 ? departments.find(d => d.id === selectedDeptIds[0])?.name : selectedDeptIds.length > 1 ? `${selectedDeptIds.length} Departments Selected` : undefined,
       selectedTypes: selectedSections,
-      format: exportFormat,
+      format: selectedFormats[0] || 'PDF',
       devices: generatorFilteredDevices,
     }).then((res) => {
       if (!cancelled) setReportData(res)
     })
     return () => { cancelled = true }
-  }, [orgId, orgName, effectiveDays, selectedDomain, generatorScope, selectedSite, activeSiteName, selectedDept, selectedSections, exportFormat, generatorFilteredDevices, customReportTitle])
+  }, [orgId, orgName, effectiveDays, selectedDomains, generatorScope, selectedSite, activeSiteName, selectedDeptIds, selectedSections, selectedFormats, generatorFilteredDevices, customReportTitle])
 
   // Cold-Chain Temperature Summary (MKT) is strictly for refrigeration/bloodBox assets.
-  // Never show or apply it for transformers (ETERNITY) or Formula EV telemetry.
+  // Never show or apply it if user only selected transformers or automobile.
   const visibleSections = useMemo(() => {
     return REPORT_SECTIONS.filter((sec) => {
       if (sec.id === 'coldchain') {
-        if (selectedDomain === 'transformer' || selectedDomain === 'automobile') return false
-        if (selectedDomain === 'all') {
-          return devices.some((d) => d.domain === 'carbonNode' || d.domain === 'bloodBox')
-        }
+        const hasColdChain = selectedDomains.some((d) => d === 'carbonNode' || d === 'bloodBox')
+        if (!hasColdChain) return false
+        return devices.some((d) => d.domain === 'carbonNode' || d.domain === 'bloodBox')
       }
       return true
     })
-  }, [selectedDomain, devices])
+  }, [selectedDomains, devices])
 
-  // Automatically drop 'coldchain' from selected modules when switching to transformer or automobile
+  // Automatically drop 'coldchain' from selected modules when no cold-chain domains are selected
   useEffect(() => {
-    if (selectedDomain === 'transformer' || selectedDomain === 'automobile') {
+    const hasColdChain = selectedDomains.some((d) => d === 'carbonNode' || d === 'bloodBox')
+    if (!hasColdChain) {
       setSelectedSections((prev) => prev.filter((x) => x !== 'coldchain'))
     }
-  }, [selectedDomain])
+  }, [selectedDomains])
 
   const toggleSection = (id: string) => {
     setSelectedSections((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -319,34 +349,42 @@ function ReportsPageContent() {
       toast.error('Select at least one report section')
       return
     }
+    if (!selectedFormats.length) {
+      toast.error('Select at least one export format')
+      return
+    }
+    if (!selectedDomains.length) {
+      toast.error('Select at least one product domain')
+      return
+    }
     setGenerating(true)
     try {
-      const reportOpts = {
+      const baseOpts = {
         orgId,
         orgName,
         title: customReportTitle.trim() || undefined,
         days: effectiveDays,
-        domain: selectedDomain,
+        domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length === ALL_DOMAIN_KEYS.length ? 'all' : selectedDomains.join(','),
         siteId: generatorScope === 'site' ? selectedSite : undefined,
         siteName: generatorScope === 'site' ? activeSiteName : undefined,
-        departmentId: generatorScope === 'department' ? selectedDept : undefined,
-        departmentName: generatorScope === 'department' ? departments.find(d => d.id === selectedDept)?.name : undefined,
+        departmentId: selectedDeptIds.length === 1 ? selectedDeptIds[0] : undefined,
+        departmentName: selectedDeptIds.length === 1 ? departments.find(d => d.id === selectedDeptIds[0])?.name : selectedDeptIds.length > 1 ? `${selectedDeptIds.length} Departments Selected` : undefined,
         selectedTypes: selectedSections,
-        format: exportFormat,
         devices: generatorFilteredDevices,
       }
-      const data = reportData || await buildIIoTReportData(reportOpts)
+      const data = reportData || await buildIIoTReportData({ ...baseOpts, format: selectedFormats[0] || 'PDF' })
 
-      if (exportFormat === 'PDF') {
-        await exportIIoTPDF(reportOpts, data)
-        toast.success(`Executive PDF report downloaded`)
-      } else if (exportFormat === 'XLSX') {
-        exportIIoTXLSX(reportOpts, data)
-        toast.success(`Multi-sheet Excel report downloaded`)
-      } else {
-        exportIIoTCSV(reportOpts, data)
-        toast.success(`Structured CSV report downloaded`)
+      for (const fmt of selectedFormats) {
+        const currentOpts = { ...baseOpts, format: fmt }
+        if (fmt === 'PDF') {
+          await exportIIoTPDF(currentOpts, data)
+        } else if (fmt === 'XLSX') {
+          exportIIoTXLSX(currentOpts, data)
+        } else {
+          exportIIoTCSV(currentOpts, data)
+        }
       }
+      toast.success(`Downloaded ${selectedFormats.join(' & ')} report(s)!`)
     } catch (err: any) {
       toast.error(err?.message || 'Failed to generate report')
     } finally {
@@ -528,14 +566,14 @@ function ReportsPageContent() {
     setDraft({
       ...blankSchedule,
       name: '',
-      domain: selectedDomain !== 'all' ? selectedDomain : 'all',
+      domain: selectedDomains.length === 1 ? selectedDomains[0] : 'all',
       scope: generatorScope === 'all' ? 'org' : generatorScope,
       scopeId: generatorScope === 'site' ? (selectedSite === 'all' ? '' : selectedSite)
-             : generatorScope === 'department' ? (selectedDept === 'all' ? '' : selectedDept)
+             : generatorScope === 'department' ? selectedDeptIds.join(',')
              : generatorScope === 'device' ? generatorDeviceIds.join(',')
              : '',
       sequence: 'daily',
-      format: 'CSV',
+      format: selectedFormats[0] || 'CSV',
       channel: 'email',
       recipients: '',
     })
@@ -570,17 +608,20 @@ function ReportsPageContent() {
   const handleConvertStudioToSequence = () => {
     setActiveTab('sequence')
     setEditingScheduleId(null)
+    const domLabel = selectedDomains.length === 1
+      ? INDUSTRIAL_DOMAINS.find((d) => d.id === selectedDomains[0])?.label
+      : `${selectedDomains.length} Domains`
     setDraft({
       ...blankSchedule,
-      name: `${customReportTitle.trim() || (selectedDomain !== 'all' ? INDUSTRIAL_DOMAINS.find(d => d.id === selectedDomain)?.label : 'Fleet Operations') || 'Fleet'} Automated Audit`,
-      domain: selectedDomain,
+      name: `${customReportTitle.trim() || domLabel || 'Fleet Operations'} Automated Audit`,
+      domain: selectedDomains.length === 1 ? selectedDomains[0] : 'all',
       scope: generatorScope === 'all' ? 'org' : generatorScope,
       scopeId: generatorScope === 'site' ? (selectedSite === 'all' ? '' : selectedSite)
-             : generatorScope === 'department' ? (selectedDept === 'all' ? '' : selectedDept)
+             : generatorScope === 'department' ? selectedDeptIds.join(',')
              : generatorScope === 'device' ? generatorDeviceIds.join(',')
              : '',
       sequence: effectiveDays <= 1 ? 'daily' : effectiveDays <= 7 ? 'weekly' : 'monthly',
-      format: exportFormat,
+      format: selectedFormats[0] || 'CSV',
       channel: 'email',
       recipients: '',
       windowDays: effectiveDays,
@@ -923,42 +964,78 @@ function ReportsPageContent() {
             </div>
 
             {/* Domain & Scope Selection */}
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold">
-                    Asset Domain Filter
+            <div className="space-y-4">
+              {/* Multi-Domain Selector Pills */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
+                    Asset Domain Filter ({selectedDomains.length} of {ALL_DOMAIN_KEYS.length} selected)
                   </label>
-                  <select
-                    value={selectedDomain}
-                    onChange={(e) => setSelectedDomain(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-indigo-500"
-                    style={inset}
-                  >
-                    {INDUSTRIAL_DOMAINS.map((d) => (
-                      <option key={d.id} value={d.id}>{d.label}</option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDomains([...ALL_DOMAIN_KEYS])}
+                      className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                    >
+                      Select All
+                    </button>
+                    <span className="text-slate-600">·</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedDomains([])}
+                      className="text-slate-500 hover:text-slate-400 font-semibold"
+                    >
+                      Clear
+                    </button>
+                  </div>
                 </div>
-
-                <div className="sm:col-span-2">
-                  <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold">
-                    Target Scope ({generatorFilteredDevices.length} assets targeted)
-                  </label>
-                  <div className="flex gap-1.5">
-                    {([['all', 'All Fleet Assets'], ['site', 'Site Facility'], ['department', 'Department'], ['device', 'Selected Devices']] as const).map(([sc, label]) => (
+                <div className="flex flex-wrap gap-2">
+                  {INDUSTRIAL_DOMAINS.filter((d) => d.id !== 'all').map((dm) => {
+                    const on = selectedDomains.includes(dm.id)
+                    return (
                       <button
-                        key={sc}
-                        onClick={() => setGeneratorScope(sc)}
+                        key={dm.id}
+                        type="button"
+                        onClick={() => toggleDomain(dm.id)}
                         className={clsx(
-                          'flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors',
-                          generatorScope === sc ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                          'px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-2 border',
+                          on
+                            ? 'bg-indigo-600/25 text-indigo-200 border-indigo-500/60 shadow-sm'
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white hover:border-slate-700'
                         )}
                       >
-                        {label}
+                        <span
+                          className="w-3.5 h-3.5 rounded-sm flex items-center justify-center text-[9px] font-bold"
+                          style={on ? { background: '#6366f1', color: '#ffffff' } : { border: '1px solid #475569' }}
+                        >
+                          {on && '✓'}
+                        </span>
+                        <dm.icon size={13} className={on ? 'text-indigo-300' : 'text-slate-500'} />
+                        <span>{dm.label}</span>
                       </button>
-                    ))}
-                  </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* Target Scope Mode Selector */}
+              <div>
+                <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold">
+                  Target Scope ({generatorFilteredDevices.length} assets targeted)
+                </label>
+                <div className="flex gap-1.5">
+                  {([['all', 'All Fleet Assets'], ['site', 'Site Facility'], ['department', 'Department Scope'], ['device', 'Selected Devices']] as const).map(([sc, label]) => (
+                    <button
+                      key={sc}
+                      onClick={() => setGeneratorScope(sc)}
+                      className={clsx(
+                        'flex-1 py-1.5 rounded-lg text-xs font-semibold transition-colors',
+                        generatorScope === sc ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -984,21 +1061,56 @@ function ReportsPageContent() {
               )}
 
               {generatorScope === 'department' && (
-                <div>
-                  <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold">
-                    Select Department
-                  </label>
-                  <select
-                    value={selectedDept}
-                    onChange={(e) => setSelectedDept(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-indigo-500"
-                    style={inset}
-                  >
-                    <option value="all">Entire Organization ({devices.length} devices)</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span className="font-semibold text-slate-300">
+                      Target Departments ({selectedDeptIds.length} of {departments.length} selected — empty targets all)
+                    </span>
+                    <div className="flex gap-2 text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDeptIds(departments.map((d) => d.id))}
+                        className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                      >
+                        Select All
+                      </button>
+                      <span className="text-slate-600">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDeptIds([])}
+                        className="text-slate-500 hover:text-slate-400 font-semibold"
+                      >
+                        Clear (All)
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                    {departments.map((dep) => {
+                      const on = selectedDeptIds.includes(dep.id)
+                      const devCount = devices.filter((d) => d.departmentIds?.includes(dep.id)).length
+                      return (
+                        <button
+                          key={dep.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDeptIds(on ? selectedDeptIds.filter((id) => id !== dep.id) : [...selectedDeptIds, dep.id])
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1.5 rounded text-xs hover:bg-white/5 transition-colors border border-transparent hover:border-slate-800"
+                        >
+                          <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                            <span
+                              className="w-3 h-3 rounded-sm flex items-center justify-center text-[8px] font-bold"
+                              style={on ? { background: '#6366f1', color: '#fff' } : { border: '1px solid #334155' }}
+                            >
+                              {on && '✓'}
+                            </span>
+                            {dep.name}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">{devCount} assets</span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
 
@@ -1098,25 +1210,37 @@ function ReportsPageContent() {
 
             {/* Export Format & Actions Bar */}
             <div className="pt-3 border-t border-slate-800 flex flex-col lg:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-2 w-full lg:w-auto">
-                <span className="text-xs text-slate-400 font-semibold uppercase">Export Format:</span>
-                {(['PDF', 'XLSX', 'CSV'] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setExportFormat(f)}
-                    className={clsx(
-                      'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
-                      exportFormat === f
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
-                    )}
-                  >
-                    {f === 'PDF' && <FileText size={13} />}
-                    {f === 'XLSX' && <FileSpreadsheet size={13} />}
-                    {f === 'CSV' && <FileBarChart size={13} />}
-                    <span>{f}</span>
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 w-full lg:w-auto flex-wrap">
+                <span className="text-xs text-slate-400 font-semibold uppercase">
+                  Export Formats ({selectedFormats.length}):
+                </span>
+                {(['PDF', 'XLSX', 'CSV'] as const).map((f) => {
+                  const on = selectedFormats.includes(f)
+                  return (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => toggleExportFormat(f)}
+                      className={clsx(
+                        'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border',
+                        on
+                          ? 'bg-indigo-600 text-white shadow-sm border-indigo-500'
+                          : 'bg-slate-900 text-slate-400 hover:text-white border-slate-800 hover:border-slate-700'
+                      )}
+                    >
+                      <span
+                        className="w-3 h-3 rounded-sm flex items-center justify-center text-[8px] font-bold"
+                        style={on ? { background: '#ffffff', color: '#4f46e5' } : { border: '1px solid #475569' }}
+                      >
+                        {on && '✓'}
+                      </span>
+                      {f === 'PDF' && <FileText size={13} />}
+                      {f === 'XLSX' && <FileSpreadsheet size={13} />}
+                      {f === 'CSV' && <FileBarChart size={13} />}
+                      <span>{f}</span>
+                    </button>
+                  )
+                })}
               </div>
 
               <div className="flex items-center gap-2 w-full lg:w-auto flex-wrap justify-end">
@@ -1142,12 +1266,12 @@ function ReportsPageContent() {
 
                 <button
                   onClick={handleGenerateAndDownload}
-                  disabled={generating || !selectedSections.length}
+                  disabled={generating || !selectedSections.length || !selectedFormats.length}
                   className="flex items-center justify-center gap-2 px-6 py-2 rounded-lg text-xs font-bold text-white shadow-md disabled:opacity-50 transition-transform active:scale-95"
                   style={gradient}
                 >
                   <Download size={14} />
-                  <span>{generating ? 'Generating...' : `Generate & Download ${exportFormat}`}</span>
+                  <span>{generating ? 'Generating...' : `Generate & Download (${selectedFormats.join(' + ')})`}</span>
                 </button>
               </div>
             </div>
@@ -2296,7 +2420,7 @@ function ReportsPageContent() {
                 style={gradient}
               >
                 <Download size={14} />
-                <span>Download Formal {exportFormat} Report</span>
+                <span>Download Formal {selectedFormats.join(' & ')} Report</span>
               </button>
             </div>
           </div>
