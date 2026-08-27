@@ -5,7 +5,7 @@ import 'leaflet/dist/leaflet.css'
 import { healthColor, type GeoNode } from '@/lib/geoNodes'
 import { api, type NodeLatest } from '@/lib/api'
 import { subscribeTelemetry, type TelemetryFrame } from '@/lib/telemetryBus'
-import { calculateDistanceMeters, formatDistance } from '@/lib/geoAddress'
+import { calculateDistanceMeters, formatDistance, reverseGeocode } from '@/lib/geoAddress'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
 import { fmtDateTime } from '@/lib/displayTime'
 import MapSearchBar from '@/components/map/MapSearchBar'
@@ -113,6 +113,7 @@ export default function LiveSensorMap({
   const markersRef = useRef<Map<string, any>>(new Map())
   const userMarkerRef = useRef<any>(null)
   const userLocRef = useRef<{ lat: number; lng: number } | null>(null)
+  const addressMapRef = useRef<Map<string, string>>(new Map())
   const fittedRef = useRef(false)
 
   const [currentLayer, setCurrentLayer] = useState<LayerKey>('streets')
@@ -226,6 +227,18 @@ export default function LiveSensorMap({
       ? `<div style="${SECTION}">Asset</div>${row('Model', np.model)}${row('Rating', np.ratedKva, ' kVA')}${row('Voltage', np.voltageClass)}`
       : ''
 
+    const addr = addressMapRef.current.get(n.id)
+    const locationSection = addr
+      ? `<div style="display:flex;align-items:flex-start;gap:5px;margin-top:6px;font-size:11px;color:#cbd5e1;line-height:1.35;background:rgba(255,255,255,0.04);padding:5px 7px;border-radius:6px;border:1px solid #1e2433">
+           <span style="color:#6366f1;flex-shrink:0">📍</span>
+           <span style="flex:1">${esc(addr)}</span>
+         </div>`
+      : Number.isFinite(n.lat) && Number.isFinite(n.lng)
+      ? `<div style="display:flex;align-items:center;gap:4px;margin-top:6px;font-size:10px;color:#64748b;font-family:monospace">
+           <span>📍 ${n.lat.toFixed(5)}, ${n.lng.toFixed(5)}</span>
+         </div>`
+      : ''
+
     const userLoc = userLocRef.current
     let distanceSection = ''
     if (userLoc && Number.isFinite(n.lat) && Number.isFinite(n.lng)) {
@@ -268,6 +281,7 @@ export default function LiveSensorMap({
          </div>
          ${readings}
          ${asset}
+         ${locationSection}
          ${distanceSection}
          ${connectivitySection}
          ${latest?.lastReadingAt ? `<div style="color:#64748b;font-size:10px;margin-top:6px">Last reading ${esc(fmtDateTime(latest.lastReadingAt))}</div>` : ''}
@@ -328,11 +342,31 @@ export default function LiveSensorMap({
         existing.setStyle(style)
         existing.setPopupContent(popupHtml(n))
         if (existing.setTooltipContent) existing.setTooltipContent(tooltipHtml(n))
-        if (existing.isPopupOpen?.()) loadLatest(n.id, true)
+        if (existing.isPopupOpen?.()) {
+          loadLatest(n.id, true)
+          if (Number.isFinite(n.lat) && Number.isFinite(n.lng) && !addressMapRef.current.has(n.id)) {
+            reverseGeocode(n.lat, n.lng).then((resolved) => {
+              if (resolved) {
+                addressMapRef.current.set(n.id, resolved)
+                existing.setPopupContent(popupHtml(n))
+              }
+            })
+          }
+        }
       } else {
         const m = L.circleMarker([n.lat, n.lng], { radius: 9, ...style })
           .addTo(map)
           .bindPopup(popupHtml(n))
+        m.on('popupopen', async () => {
+          loadLatest(n.id, true)
+          if (Number.isFinite(n.lat) && Number.isFinite(n.lng) && !addressMapRef.current.has(n.id)) {
+            const resolved = await reverseGeocode(n.lat, n.lng)
+            if (resolved) {
+              addressMapRef.current.set(n.id, resolved)
+              m.setPopupContent(popupHtml(n))
+            }
+          }
+        })
         if (m.bindTooltip) {
           m.bindTooltip(tooltipHtml(n), {
             direction: 'top',
