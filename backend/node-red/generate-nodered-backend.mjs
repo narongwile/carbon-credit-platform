@@ -4054,22 +4054,34 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
   const nextRunAt = async (seq, h, m, dow, dom) => {
     const mins = (Number(h)||0)*60 + (Number(m)||0);
     if (seq === 'weekly') {
-      const d = Math.min(7, Math.max(1, Number(dow)||1));
-      const [r] = await pool.query(
-        "SELECT CASE WHEN base > NOW(3) THEN base ELSE base + INTERVAL 7 DAY END AS nxt FROM " +
-        "(SELECT TIMESTAMP(DATE(NOW(3))) + INTERVAL ((? - (WEEKDAY(NOW(3))+1) + 7) % 7) DAY + INTERVAL ? MINUTE AS base) t",
-        [d, mins]);
-      return r[0].nxt;
+      const days = String(dow || '1').split(',').map(x => Number(x.trim())).filter(x => x >= 1 && x <= 7);
+      if (!days.length) days.push(1);
+      let earliest = null;
+      for (const d of days) {
+        const [r] = await pool.query(
+          "SELECT CASE WHEN base > NOW(3) THEN base ELSE base + INTERVAL 7 DAY END AS nxt FROM " +
+          "(SELECT TIMESTAMP(DATE(NOW(3))) + INTERVAL ((? - (WEEKDAY(NOW(3))+1) + 7) % 7) DAY + INTERVAL ? MINUTE AS base) t",
+          [d, mins]);
+        const nxt = r[0].nxt;
+        if (!earliest || new Date(nxt) < new Date(earliest)) earliest = nxt;
+      }
+      return earliest;
     }
     if (seq === 'monthly') {
       // Capped at 28 so the date exists in February. A schedule asking for the
       // 31st would otherwise silently skip most of the year.
-      const d = Math.min(28, Math.max(1, Number(dom)||1));
-      const [r] = await pool.query(
-        "SELECT CASE WHEN base > NOW(3) THEN base ELSE base + INTERVAL 1 MONTH END AS nxt FROM " +
-        "(SELECT TIMESTAMP(DATE_FORMAT(NOW(3),'%Y-%m-01')) + INTERVAL (?-1) DAY + INTERVAL ? MINUTE AS base) t",
-        [d, mins]);
-      return r[0].nxt;
+      const days = String(dom || '1').split(',').map(x => Number(x.trim())).filter(x => x >= 1 && x <= 28);
+      if (!days.length) days.push(1);
+      let earliest = null;
+      for (const d of days) {
+        const [r] = await pool.query(
+          "SELECT CASE WHEN base > NOW(3) THEN base ELSE base + INTERVAL 1 MONTH END AS nxt FROM " +
+          "(SELECT TIMESTAMP(DATE_FORMAT(NOW(3),'%Y-%m-01')) + INTERVAL (?-1) DAY + INTERVAL ? MINUTE AS base) t",
+          [d, mins]);
+        const nxt = r[0].nxt;
+        if (!earliest || new Date(nxt) < new Date(earliest)) earliest = nxt;
+      }
+      return earliest;
     }
     const [r] = await pool.query(
       "SELECT CASE WHEN base > NOW(3) THEN base ELSE base + INTERVAL 1 DAY END AS nxt FROM " +
@@ -4124,7 +4136,7 @@ const ctl = global.get('pool'); if (!ctl || typeof ctl.query !== 'function') ret
   const [due] = await pool.query("SELECT * FROM report_schedules WHERE enabled=1 AND (next_run_at IS NULL OR next_run_at<=NOW(3))");
   for (const s of due) {
     let nodeIds = [];
-    if (s.scope==='device' && s.scope_id) nodeIds = [s.scope_id];
+    if (s.scope==='device' && s.scope_id) nodeIds = String(s.scope_id).split(',').map(x=>x.trim()).filter(Boolean);
     else if (s.scope==='site' && s.scope_id) {
       const [ns] = await pool.query("SELECT id FROM nodes WHERE org_id=? AND site_id=?", [s.org_id, s.scope_id]);
       nodeIds = ns.map(n=>n.id);
@@ -4237,20 +4249,15 @@ const pool=global.get('resolvePool')(orgId);
 const num=(v,lo,hi,dflt)=>{const n=Number(v); return Number.isFinite(n) ? Math.min(hi,Math.max(lo,Math.round(n))) : dflt;};
 const hour=num(b.sendHour,0,23,7);
 const minute=[0,15,30,45].indexOf(num(b.sendMinute,0,45,0))>=0 ? num(b.sendMinute,0,45,0) : Math.round(num(b.sendMinute,0,45,0)/15)*15;
-const dow=b.sequence==='weekly' ? num(b.dayOfWeek,1,7,1) : null;
-const dom=b.sequence==='monthly' ? num(b.dayOfMonth,1,28,1) : null;
+const dow=b.sequence==='weekly' ? (Array.isArray(b.dayOfWeek) ? b.dayOfWeek.join(',') : (b.dayOfWeek !== null && b.dayOfWeek !== undefined ? String(b.dayOfWeek) : '1')) : null;
+const dom=b.sequence==='monthly' ? (Array.isArray(b.dayOfMonth) ? b.dayOfMonth.join(',') : (b.dayOfMonth !== null && b.dayOfMonth !== undefined ? String(b.dayOfMonth) : '1')) : null;
 const winRaw=(b.windowDays===''||b.windowDays===null||b.windowDays===undefined) ? null : num(b.windowDays,1,365,null);
 const mode=['manual','department','users'].indexOf(String(b.recipientMode||'manual'))>=0 ? String(b.recipientMode||'manual') : 'manual';
 const csvIds=(v)=>Array.isArray(v) ? v.filter(Boolean).join(',') : (v ? String(v) : null);
-// Accept BOTH spellings. The reports page posts scope_id (snake), this handler
-// only ever read b.scopeId (camel), so scope_id arrived as undefined and every
-// department- or device-scoped schedule was stored with a NULL target — which
-// reportRunFunc then treats as "no scope_id", widening the report to the whole
-// organization. A "Line 3 daily" schedule silently mailed the entire fleet.
-// The frontend is fixed to send scopeId; reading both keeps schedules created
-// by the old page (and any other caller) working.
-const scopeId=(b.scopeId!==undefined && b.scopeId!==null && b.scopeId!=='') ? b.scopeId
-             : ((b.scope_id!==undefined && b.scope_id!==null && b.scope_id!=='') ? b.scope_id : null);
+const rawScope = b.scopeId !== undefined && b.scopeId !== null && b.scopeId !== '' ? b.scopeId
+               : (b.scopeIds !== undefined && b.scopeIds !== null && b.scopeIds !== '' ? b.scopeIds
+               : ((b.scope_id !== undefined && b.scope_id !== null && b.scope_id !== '') ? b.scope_id : null));
+const scopeId = Array.isArray(rawScope) ? rawScope.filter(Boolean).join(',') : (rawScope ? String(rawScope) : null);
 (async()=>{const id=b.id||'rpt-'+Date.now();
   await pool.query("INSERT INTO report_schedules (id,org_id,name,scope,scope_id,sequence,format,channel,recipients,enabled,send_hour,send_minute,day_of_week,day_of_month,window_days,recipient_mode,recipient_dept_ids,recipient_user_ids,subject_template,body_template,next_run_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(3)) ON DUPLICATE KEY UPDATE name=VALUES(name),scope=VALUES(scope),scope_id=VALUES(scope_id),sequence=VALUES(sequence),format=VALUES(format),channel=VALUES(channel),recipients=VALUES(recipients),enabled=VALUES(enabled),send_hour=VALUES(send_hour),send_minute=VALUES(send_minute),day_of_week=VALUES(day_of_week),day_of_month=VALUES(day_of_month),window_days=VALUES(window_days),recipient_mode=VALUES(recipient_mode),recipient_dept_ids=VALUES(recipient_dept_ids),recipient_user_ids=VALUES(recipient_user_ids),subject_template=VALUES(subject_template),body_template=VALUES(body_template)",
     [id,orgId,b.name,b.scope||'device',scopeId,b.sequence||'daily',b.format||'CSV',b.channel||'email',b.recipients||null,b.enabled===false?0:1,

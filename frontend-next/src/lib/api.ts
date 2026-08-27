@@ -1273,8 +1273,8 @@ export interface ReportScheduleRow {
   // not UTC — see the migration for why.
   send_hour: number
   send_minute: number
-  day_of_week: number | null      // 1=Mon .. 7=Sun, weekly only
-  day_of_month: number | null     // 1..28, monthly only
+  day_of_week: number | string | null      // 1=Mon .. 7=Sun, weekly only (supports comma-separated multi-day)
+  day_of_month: number | string | null     // 1..28, monthly only (supports comma-separated multi-day)
   window_days: number | null      // null = derive from sequence
   recipient_mode: RecipientMode
   recipient_dept_ids: string | null   // comma-separated
@@ -1299,8 +1299,8 @@ export interface SaveSchedule {
   enabled?: 0 | 1
   sendHour?: number
   sendMinute?: number
-  dayOfWeek?: number | null
-  dayOfMonth?: number | null
+  dayOfWeek?: number | string | null
+  dayOfMonth?: number | string | null
   windowDays?: number | null
   recipientMode?: RecipientMode
   recipientDeptIds?: string[]

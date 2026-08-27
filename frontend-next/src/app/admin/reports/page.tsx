@@ -286,14 +286,16 @@ function ReportsPageContent() {
     id: string; name: string; scope: 'org' | 'site' | 'department' | 'device'; scopeId: string
     sequence: ReportSequence; format: 'PDF' | 'XLSX' | 'CSV'; channel: 'email' | 'telegram'
     recipients: string; enabled: boolean
-    sendHour: number; sendMinute: number; dayOfWeek: number | null; dayOfMonth: number | null
+    sendHour: number; sendMinute: number
+    dayOfWeek: number | string | null
+    dayOfMonth: number | string | null
     windowDays: number | null
     recipientMode: RecipientMode; recipientDeptIds: string[]; recipientUserIds: string[]
     subjectTemplate: string; bodyTemplate: string
   }
 
   const blankSchedule = {
-    sendHour: 7, sendMinute: 0, dayOfWeek: 1, dayOfMonth: 1, windowDays: null as number | null,
+    sendHour: 7, sendMinute: 0, dayOfWeek: '1' as number | string | null, dayOfMonth: '1' as number | string | null, windowDays: null as number | null,
     recipientMode: 'manual' as RecipientMode, recipientDeptIds: [] as string[], recipientUserIds: [] as string[],
     subjectTemplate: '', bodyTemplate: '',
   }
@@ -331,7 +333,7 @@ function ReportsPageContent() {
         sequence: r.sequence as ReportSequence, format: r.format, channel: r.channel ?? 'email',
         recipients: r.recipients ?? '', enabled: !!r.enabled,
         sendHour: r.send_hour ?? 7, sendMinute: r.send_minute ?? 0,
-        dayOfWeek: r.day_of_week ?? 1, dayOfMonth: r.day_of_month ?? 1,
+        dayOfWeek: r.day_of_week ?? '1', dayOfMonth: r.day_of_month ?? '1',
         windowDays: r.window_days ?? null,
         recipientMode: (r.recipient_mode ?? 'manual') as RecipientMode,
         recipientDeptIds: csv(r.recipient_dept_ids), recipientUserIds: csv(r.recipient_user_ids),
@@ -340,6 +342,21 @@ function ReportsPageContent() {
     })
     return () => { cancelled = true }
   }, [orgId])
+
+  const draftDeviceIds = useMemo(() =>
+    draft.scopeId.split(',').map((x) => x.trim()).filter(Boolean),
+    [draft.scopeId]
+  )
+
+  const draftWeeklyDays = useMemo(() =>
+    String(draft.dayOfWeek ?? '1').split(',').map((x) => Number(x.trim())).filter((x) => x >= 1 && x <= 7),
+    [draft.dayOfWeek]
+  )
+
+  const draftMonthlyDays = useMemo(() =>
+    String(draft.dayOfMonth ?? '1').split(',').map((x) => Number(x.trim())).filter((x) => x >= 1 && x <= 28),
+    [draft.dayOfMonth]
+  )
 
   const scopeOptions = draft.scope === 'site'
     ? availableSites.map((s) => ({ id: s.id, name: s.name }))
@@ -368,6 +385,10 @@ function ReportsPageContent() {
 
   const addSchedule = async () => {
     if (!draft.name.trim()) { toast.error('Give the schedule a name'); return }
+    if (draft.scope === 'device' && !draft.scopeId.trim()) {
+      toast.error('Select at least one device')
+      return
+    }
     if (draftRecipientCount === 0) {
       toast.error(draft.recipientMode === 'manual' || draft.channel === 'telegram'
         ? 'Add at least one recipient'
@@ -403,19 +424,28 @@ function ReportsPageContent() {
     if (live && !(await api.deleteSchedule(id))) { setSchedules(prev); toast.error('Could not delete the schedule') }
   }
 
-  const scopeName = (s: SchedRow) =>
-    s.scope === 'org'
-      ? 'All devices'
-      : s.scope === 'site'
-      ? (availableSites.find((st) => st.id === s.scopeId)?.name ?? s.scopeId)
-      : (s.scope === 'department'
-          ? departments.find((d) => d.id === s.scopeId)?.name
-          : devices.find((d) => d.id === s.scopeId)?.name) ?? s.scopeId
+  const scopeName = (s: SchedRow) => {
+    if (s.scope === 'org') return 'All devices'
+    if (s.scope === 'site') return availableSites.find((st) => st.id === s.scopeId)?.name ?? s.scopeId
+    if (s.scope === 'department') return departments.find((d) => d.id === s.scopeId)?.name ?? s.scopeId
+    const ids = String(s.scopeId || '').split(',').map((x) => x.trim()).filter(Boolean)
+    if (ids.length === 0) return 'All devices'
+    if (ids.length === 1) return devices.find((d) => d.id === ids[0])?.name ?? ids[0]
+    const names = ids.map((id) => devices.find((d) => d.id === id)?.name ?? id)
+    return `${ids.length} Devices: ${names.slice(0, 2).join(', ')}${names.length > 2 ? ` +${names.length - 2}` : ''}`
+  }
 
   const whenText = (s: SchedRow) => {
     const t = `${String(s.sendHour).padStart(2, '0')}:${String(s.sendMinute).padStart(2, '0')}`
-    if (s.sequence === 'weekly') return `${WEEKDAYS.find((w) => w.v === s.dayOfWeek)?.label ?? 'Mon'} ${t}`
-    if (s.sequence === 'monthly') return `day ${s.dayOfMonth ?? 1} · ${t}`
+    if (s.sequence === 'weekly') {
+      const dows = String(s.dayOfWeek ?? '1').split(',').map((x) => Number(x.trim())).filter((x) => x >= 1 && x <= 7)
+      const labels = dows.map((d) => WEEKDAYS.find((w) => w.v === d)?.label ?? `Day ${d}`).join(', ')
+      return `${labels || 'Mon'} ${t}`
+    }
+    if (s.sequence === 'monthly') {
+      const doms = String(s.dayOfMonth ?? '1').split(',').map((x) => x.trim()).filter(Boolean)
+      return `day ${doms.join(', ') || '1'} · ${t}`
+    }
     return `daily ${t}`
   }
 
@@ -731,7 +761,56 @@ function ReportsPageContent() {
                     </button>
                   ))}
                 </div>
-                {draft.scope !== 'org' && (
+                {draft.scope === 'device' ? (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span className="font-semibold text-slate-300">
+                        Select Devices ({draftDeviceIds.length} of {devices.length} selected)
+                      </span>
+                      <div className="flex gap-2 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => setDraft((d) => ({ ...d, scopeId: devices.map((x) => x.id).join(',') }))}
+                          className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                        >
+                          Select All
+                        </button>
+                        <span className="text-slate-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setDraft((d) => ({ ...d, scopeId: '' }))}
+                          className="text-slate-500 hover:text-slate-400 font-semibold"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                      {devices.map((dev) => {
+                        const on = draftDeviceIds.includes(dev.id)
+                        return (
+                          <button
+                            key={dev.id}
+                            type="button"
+                            onClick={() => {
+                              const next = on ? draftDeviceIds.filter((x) => x !== dev.id) : [...draftDeviceIds, dev.id]
+                              setDraft((d) => ({ ...d, scopeId: next.join(',') }))
+                            }}
+                            className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
+                          >
+                            <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                              <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
+                                {on && '✓'}
+                              </span>
+                              {dev.name || dev.id}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">{dev.id}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : draft.scope !== 'org' ? (
                   <select
                     value={draft.scopeId}
                     onChange={(e) => setDraft((d) => ({ ...d, scopeId: e.target.value }))}
@@ -742,7 +821,7 @@ function ReportsPageContent() {
                       <option key={o.id} value={o.id}>{o.name}</option>
                     ))}
                   </select>
-                )}
+                ) : null}
               </div>
 
               {/* Frequency */}
@@ -766,37 +845,83 @@ function ReportsPageContent() {
 
               {draft.sequence === 'weekly' && (
                 <div>
-                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Weekday</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Weekdays ({draftWeeklyDays.length} selected)
+                    </label>
+                    <span className="text-[9px] text-indigo-400 font-medium">Multi-day enabled</span>
+                  </div>
                   <div className="flex gap-1">
-                    {WEEKDAYS.map((w) => (
-                      <button
-                        key={w.v}
-                        onClick={() => setDraft((d) => ({ ...d, dayOfWeek: w.v }))}
-                        className={clsx(
-                          'flex-1 py-1 rounded text-[10px] font-semibold',
-                          draft.dayOfWeek === w.v ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                        )}
-                      >
-                        {w.label}
-                      </button>
-                    ))}
+                    {WEEKDAYS.map((w) => {
+                      const on = draftWeeklyDays.includes(w.v)
+                      return (
+                        <button
+                          key={w.v}
+                          type="button"
+                          onClick={() => {
+                            let next = on ? draftWeeklyDays.filter((x) => x !== w.v) : [...draftWeeklyDays, w.v]
+                            if (!next.length) next = [w.v]
+                            setDraft((d) => ({ ...d, dayOfWeek: next.sort((a, b) => a - b).join(',') }))
+                          }}
+                          className={clsx(
+                            'flex-1 py-1 rounded text-[10px] font-semibold transition-colors',
+                            on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
+                          )}
+                        >
+                          {w.label}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               )}
 
               {draft.sequence === 'monthly' && (
                 <div>
-                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Day of Month</label>
-                  <select
-                    value={draft.dayOfMonth ?? 1}
-                    onChange={(e) => setDraft((d) => ({ ...d, dayOfMonth: Number(e.target.value) }))}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none"
-                    style={inset}
-                  >
-                    {MONTH_DAYS.map((n) => (
-                      <option key={n} value={n}>Day {n}</option>
-                    ))}
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Days of Month ({draftMonthlyDays.length} selected)
+                    </label>
+                    <div className="flex gap-1.5 text-[9px] text-indigo-400 font-medium">
+                      <button
+                        type="button"
+                        onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '1,15' }))}
+                        className="hover:underline"
+                      >
+                        1st & 15th
+                      </button>
+                      <span className="text-slate-600">·</span>
+                      <button
+                        type="button"
+                        onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '1' }))}
+                        className="hover:underline"
+                      >
+                        1st only
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-7 gap-1 max-h-32 overflow-y-auto p-1.5 rounded-lg" style={inset}>
+                    {MONTH_DAYS.map((n) => {
+                      const on = draftMonthlyDays.includes(n)
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          onClick={() => {
+                            let next = on ? draftMonthlyDays.filter((x) => x !== n) : [...draftMonthlyDays, n]
+                            if (!next.length) next = [n]
+                            setDraft((d) => ({ ...d, dayOfMonth: next.sort((a, b) => a - b).join(',') }))
+                          }}
+                          className={clsx(
+                            'py-1 rounded text-[10px] font-semibold transition-colors text-center',
+                            on ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900/60 text-slate-400 hover:text-white border border-slate-800/80'
+                          )}
+                        >
+                          {n}
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
 
