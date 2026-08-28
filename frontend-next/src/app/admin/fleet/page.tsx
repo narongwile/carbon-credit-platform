@@ -367,6 +367,8 @@ export default function FleetPage() {
         onClose={() => setShowDiag(false)}
         nodeId={active?.id ?? null}
         deviceName={active?.name}
+        domain={active?.domain}
+        orgId={orgId}
         presence={presence}
         values={values}
         lastReadingAt={lastReadingAt}

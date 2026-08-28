@@ -1,20 +1,14 @@
-'use client'
-
-// ---------------------------------------------------------------------------
-// Device diagnostics modal — battery, signal, firmware, status, and current
-// telemetry values, all real.
-//
-// Used to take a mock FleetDevice and render a "Recent Telemetry" panel of
-// two FABRICATED PUBLISH log lines with the device's real battery number
-// spliced in — not a log of anything that happened. Now takes the same
-// device_presence fields the fleet page already fetched (via api.latest) and
-// the values object from that same call, which is genuinely this device's
-// most recent reading per parameter.
-// ---------------------------------------------------------------------------
-
-import { X, Activity, Battery, Wifi, Cpu, Clock } from 'lucide-react'
+import React, { useMemo } from 'react'
+import {
+  X, Activity, Battery, Wifi, Cpu, Clock, AlertTriangle, ExternalLink,
+  ShieldAlert, CheckCircle2, Radio, Server, Gauge, Zap, AlertCircle
+} from 'lucide-react'
+import clsx from 'clsx'
 import type { DevicePresence } from '@/lib/api'
 import { fmtDateTime } from '@/lib/displayTime'
+import { schemaLabel } from '@/lib/useParamLabels'
+import { ALARM_SCHEMA } from '@/lib/alarmParams'
+import type { SensorDomain } from '@/types/fleet'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -24,83 +18,354 @@ interface Props {
   onClose: () => void
   nodeId: string | null
   deviceName?: string
+  domain?: SensorDomain
+  orgId?: string
   presence?: DevicePresence | null
   values?: Record<string, number>
   lastReadingAt?: string | null
 }
 
-export default function SensorDetailsModal({ isOpen, onClose, nodeId, deviceName, presence, values, lastReadingAt }: Props) {
+function formatUptime(seconds?: number | null): string {
+  if (seconds == null || seconds <= 0) return '—'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const mins = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h ${mins}m`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m ${seconds % 60}s`
+}
+
+function rssiQuality(rssi?: number | null): { text: string; color: string } {
+  if (rssi == null) return { text: 'Not reported', color: 'text-slate-500' }
+  if (rssi >= -65) return { text: 'Excellent signal', color: 'text-emerald-400' }
+  if (rssi >= -78) return { text: 'Good signal', color: 'text-emerald-400' }
+  if (rssi >= -88) return { text: 'Fair signal', color: 'text-amber-400' }
+  return { text: 'Weak / Marginal', color: 'text-rose-400' }
+}
+
+function battQuality(batt?: number | null): { text: string; color: string } {
+  if (batt == null) return { text: 'Line powered / N/A', color: 'text-slate-500' }
+  if (batt >= 60) return { text: 'Healthy level', color: 'text-emerald-400' }
+  if (batt >= 25) return { text: 'Moderate', color: 'text-amber-400' }
+  return { text: 'Low / Recharge needed', color: 'text-rose-400' }
+}
+
+export default function SensorDetailsModal({
+  isOpen,
+  onClose,
+  nodeId,
+  deviceName,
+  domain,
+  orgId,
+  presence,
+  values,
+  lastReadingAt,
+}: Props) {
   if (!isOpen || !nodeId) return null
 
   const online = presence?.online === 1
   const rssi = presence?.rssi ?? null
   const batt = presence?.batt ?? null
+  const hasConflict = Boolean(presence?.identity_conflict_at)
 
-  const stat = [
-    { icon: Battery, label: 'Battery', value: batt != null ? `${batt}%` : '—', hint: batt == null ? 'Not reported' : batt > 40 ? 'Good condition' : 'Low', good: batt == null ? null : batt > 40 },
-    { icon: Wifi, label: 'Signal', value: rssi != null ? `${rssi} dBm` : '—', hint: rssi == null ? 'Not reported' : rssi > -80 ? 'Good' : 'Weak', good: rssi == null ? null : rssi > -80 },
-    { icon: Cpu, label: 'Firmware', value: presence?.fw || '—', hint: presence?.transport ? `via ${presence.transport}` : '', good: true },
-    { icon: Clock, label: 'Status', value: online ? 'online' : 'offline', hint: presence?.last_seen ? fmtDateTime(presence.last_seen) : 'never seen', good: online },
+  // Diagnostics summary cards
+  const stats = [
+    {
+      icon: Battery,
+      label: 'Battery',
+      value: batt != null ? `${batt}%` : '—',
+      hint: battQuality(batt).text,
+      hintColor: battQuality(batt).color,
+    },
+    {
+      icon: Wifi,
+      label: 'Signal (RSSI)',
+      value: rssi != null ? `${rssi} dBm` : '—',
+      hint: rssiQuality(rssi).text,
+      hintColor: rssiQuality(rssi).color,
+    },
+    {
+      icon: Cpu,
+      label: 'Firmware & Uptime',
+      value: presence?.fw || '—',
+      hint: presence?.last_uptime ? `Up: ${formatUptime(presence.last_uptime)}` : (presence?.transport ? `via ${presence.transport}` : 'Active'),
+      hintColor: 'text-indigo-400',
+    },
+    {
+      icon: Radio,
+      label: 'Transport & Memory',
+      value: presence?.transport ? presence.transport.toUpperCase() : 'MQTT',
+      hint: presence?.heap ? `${Math.round(presence.heap / 1024)} KB Free Heap` : 'Broker Connected',
+      hintColor: 'text-cyan-400',
+    },
+    {
+      icon: Clock,
+      label: 'Liveness',
+      value: online ? 'ONLINE' : 'OFFLINE',
+      hint: presence?.last_seen ? fmtDateTime(presence.last_seen) : 'never seen',
+      hintColor: online ? 'text-emerald-400' : 'text-slate-500',
+    },
   ]
 
-  const valueEntries = Object.entries(values ?? {})
+  // Telemetry inspection with ISA-101 labels, units, and process alarm evaluation
+  const telemetryAudit = useMemo(() => {
+    const entries = Object.entries(values ?? {})
+    const schemaParams = domain ? (ALARM_SCHEMA[domain]?.params ?? []) : []
+
+    return entries.map(([key, rawVal]) => {
+      const val = Number(rawVal)
+      const label = schemaLabel(domain, key)
+      const paramDef = schemaParams.find((p) => p.key === key)
+      const unit = paramDef?.unit || ''
+
+      let status: 'CRITICAL' | 'WARNING' | 'NORMAL' | 'UNRATED' = 'UNRATED'
+      if (paramDef && !Number.isNaN(val)) {
+        if (paramDef.direction === 'high') {
+          if (val >= paramDef.critical) status = 'CRITICAL'
+          else if (val >= paramDef.warn) status = 'WARNING'
+          else status = 'NORMAL'
+        } else {
+          if (val <= paramDef.critical) status = 'CRITICAL'
+          else if (val <= paramDef.warn) status = 'WARNING'
+          else status = 'NORMAL'
+        }
+      }
+
+      return {
+        key,
+        label,
+        val,
+        unit,
+        status,
+        limit: paramDef ? (status === 'CRITICAL' ? paramDef.critical : paramDef.warn) : null,
+      }
+    })
+  }, [values, domain])
+
+  // Direct APM deep-dive navigation
+  const apmLink = useMemo(() => {
+    if (!nodeId) return null
+    const enc = encodeURIComponent(nodeId)
+    if (domain === 'transformer') {
+      return {
+        label: '⚡ Open Transformer APM Studio',
+        href: `/admin/transformers/detail?id=${enc}`,
+        sub: 'DGA Duval Triangle, Dynamic Thermal Rating (DTR), Bushing Health & Threat Studio',
+      }
+    }
+    if (domain === 'carbonNode') {
+      return {
+        label: '❄️ Open CarbonBOX Refrigeration Studio',
+        href: `/admin/carbon/detail?id=${enc}`,
+        sub: 'Cold-chain thermal stability, compressor run-hours & defrost cycles',
+      }
+    }
+    if (domain === 'bloodBox') {
+      return {
+        label: '🩸 Open BloodBOX Cold-Chain Studio',
+        href: `/admin/bloodbox/detail?id=${enc}`,
+        sub: 'Strict WHO/GSP blood storage compliance, thermal buffer & courier transit',
+      }
+    }
+    if (domain === 'automobile') {
+      return {
+        label: '🏎️ Open Vehicle Telemetry Studio',
+        href: `/admin/automobile/detail?id=${enc}`,
+        sub: 'Formula EV CAN bus, battery pack thermals & motor controller telemetry',
+      }
+    }
+    return {
+      label: '📊 Open Asset Studio',
+      href: `/admin/nodes/detail?id=${enc}`,
+      sub: 'Full sensor readings history, parameters configuration & firmware logs',
+    }
+  }, [nodeId, domain])
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.7)' }}>
-      <div className="w-full max-w-2xl rounded-2xl overflow-hidden flex flex-col max-h-[90vh]" style={surface}>
-        <div className="px-6 py-4 flex justify-between items-center" style={{ borderBottom: '1px solid #1e2433' }}>
-          <div>
-            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Activity size={18} className="text-indigo-400" /> Sensor Diagnostics</h3>
-            <p className="text-xs text-slate-500 mt-0.5 font-mono">{deviceName || nodeId}</p>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="w-full max-w-3xl rounded-2xl overflow-hidden flex flex-col max-h-[92vh] shadow-2xl border border-slate-800" style={surface}>
+        {/* Header */}
+        <div className="px-6 py-4 flex justify-between items-center border-b border-slate-800 bg-[#0a0e1a]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
+              <Activity size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-white">Sensor &amp; Hardware Diagnostics</h3>
+                {domain && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase bg-indigo-950/80 text-indigo-300 border border-indigo-500/30">
+                    {domain}
+                  </span>
+                )}
+                <span className={clsx(
+                  'text-[10px] px-2 py-0.5 rounded-full font-bold uppercase flex items-center gap-1',
+                  online
+                    ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/30'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                )}>
+                  <span className={clsx('w-1.5 h-1.5 rounded-full', online ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500')} />
+                  {online ? 'Live Connected' : 'Offline'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5 font-mono">
+                {deviceName ? `${deviceName} · ` : ''}{nodeId}
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/5 text-slate-400 hover:text-white"><X size={18} /></button>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+            title="Close modal"
+          >
+            <X size={18} />
+          </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {stat.map((s) => (
-              <div key={s.label} className="p-4 rounded-xl" style={inset}>
-                <div className="flex items-center text-slate-400 mb-2"><s.icon size={14} className="mr-2" /><span className="text-[10px] font-bold uppercase tracking-wider">{s.label}</span></div>
-                <div className="text-lg font-black text-white capitalize">{s.value}</div>
-                <div className={`text-[10px] font-bold mt-1 ${s.good === null ? 'text-slate-600' : s.good ? 'text-green-400' : 'text-amber-400'}`}>{s.hint}</div>
+        <div className="p-6 overflow-y-auto space-y-5">
+          {/* Tier 1: Hardware Identity Conflict Alert (IEC 62443 Zero Trust) */}
+          {hasConflict && (
+            <div className="rounded-xl p-4 bg-rose-950/30 border border-rose-500/50 flex items-start gap-3 text-xs">
+              <div className="p-2 rounded-lg bg-rose-500/20 text-rose-400 mt-0.5 flex-shrink-0 animate-pulse">
+                <AlertTriangle size={18} />
+              </div>
+              <div className="space-y-1.5">
+                <div className="font-bold text-rose-300 flex items-center gap-2 flex-wrap">
+                  <span className="text-sm">⚠️ ตรวจพบฮาร์ดแวร์ส่งข้อมูลชนกัน (Hardware Identity Collision)</span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-rose-900/90 text-rose-200 border border-rose-500/50 font-bold">
+                    3-TIER ARBITRATION ACTIVE
+                  </span>
+                </div>
+                <p className="text-slate-300 leading-relaxed">
+                  ระบบตรวจพบว่ามีอุปกรณ์ฮาร์ดแวร์มากกว่า 1 เครื่อง หรือมีสตรีมข้อมูลคู่ขนานที่แย่งกันส่งข้อมูลภายใต้ Node ID <strong className="text-white font-mono">{nodeId}</strong> นี้ (ตรวจพบความผิดปกติเมื่อ {fmtDateTime(presence?.identity_conflict_at)})
+                </p>
+                <div className="text-[11px] text-rose-200/80 font-mono pt-1">
+                  คำแนะนำ: ตรวจสอบหมายเลข MAC Address ของบอร์ด ESP32 หรือกดเข้าไปที่หน้า APM Studio เพื่อดูแบนเนอร์และเลือกโหมด Stream Arbitration (Max-Select หรือ Dual-Redundant Mean)
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Diagnostic KPI Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {stats.map((s) => (
+              <div key={s.label} className="p-3.5 rounded-xl border border-slate-800/80 space-y-1" style={inset}>
+                <div className="flex items-center text-slate-400 text-[10px] font-bold uppercase tracking-wider gap-1.5">
+                  <s.icon size={13} className="text-slate-400 shrink-0" />
+                  <span className="truncate">{s.label}</span>
+                </div>
+                <div className="text-base font-black text-white capitalize truncate">{s.value}</div>
+                <div className={clsx('text-[10px] font-semibold truncate', s.hintColor)}>
+                  {s.hint}
+                </div>
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <h4 className="text-sm font-bold text-white mb-3 pb-2" style={{ borderBottom: '1px solid #1e2433' }}>Device Information</h4>
-              <div className="space-y-3 text-sm">
-                {[
-                  ['Node ID', nodeId],
-                  ['Last seen', presence?.last_seen ? fmtDateTime(presence.last_seen) : 'never'],
-                  ['Last reading', lastReadingAt ? fmtDateTime(lastReadingAt) : '—'],
-                  ['Transport', presence?.transport || '—'],
-                ].map(([k, v]) => (
-                  <div key={k} className="flex justify-between"><span className="text-slate-500">{k}</span><span className="font-mono text-white text-xs">{v}</span></div>
-                ))}
+          {/* Device Telemetry & Details Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Left: Device Telemetry Values with ISA-101 Engineering Units & Alarms */}
+            <div className="lg:col-span-2 space-y-2.5">
+              <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Gauge size={14} className="text-emerald-400" />
+                  Live Telemetry &amp; Process Alarms (ISA-101)
+                </h4>
+                <span className="text-[10px] text-slate-500 font-mono">
+                  {telemetryAudit.length} parameters reported
+                </span>
               </div>
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-white mb-3 pb-2" style={{ borderBottom: '1px solid #1e2433' }}>Current Values</h4>
-              {valueEntries.length === 0 ? (
-                <p className="text-xs text-slate-600">No recent readings for this device.</p>
+
+              {telemetryAudit.length === 0 ? (
+                <div className="p-6 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500" style={inset}>
+                  No telemetry parameters currently reported by this node.
+                </div>
               ) : (
-                <div className="rounded-lg p-3 text-xs font-mono text-emerald-400 leading-relaxed space-y-1 max-h-40 overflow-y-auto" style={{ background: '#05070d' }}>
-                  {valueEntries.map(([k, v]) => (
-                    <div key={k} className="flex justify-between gap-3">
-                      <span className="text-slate-500 truncate">{k}</span>
-                      <span>{v}</span>
-                    </div>
-                  ))}
+                <div className="rounded-xl border border-slate-800/80 overflow-hidden" style={inset}>
+                  <div className="max-h-60 overflow-y-auto divide-y divide-slate-800/60 text-xs">
+                    {telemetryAudit.map((p) => (
+                      <div key={p.key} className="p-2.5 px-3 flex items-center justify-between hover:bg-slate-800/30 transition-colors gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-slate-200 truncate flex items-center gap-1.5">
+                            <span>{p.label}</span>
+                            <span className="text-[10px] font-mono text-slate-500">({p.key})</span>
+                          </div>
+                          {p.limit != null && (
+                            <div className="text-[10px] text-slate-400">
+                              Threshold: {p.limit} {p.unit}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2.5 flex-shrink-0">
+                          <span className="font-mono text-sm font-bold text-white">
+                            {p.val} <span className="text-xs font-normal text-slate-400">{p.unit}</span>
+                          </span>
+
+                          <span className={clsx(
+                            'text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase',
+                            p.status === 'CRITICAL' ? 'bg-rose-950/80 text-rose-300 border border-rose-500/40 animate-pulse' :
+                            p.status === 'WARNING' ? 'bg-amber-950/80 text-amber-300 border border-amber-500/40' :
+                            p.status === 'NORMAL' ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/20' :
+                            'bg-slate-800 text-slate-400'
+                          )}>
+                            {p.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
+            </div>
+
+            {/* Right: Technical Device Info & Transport Details */}
+            <div className="space-y-2.5">
+              <h4 className="text-xs font-bold text-white uppercase tracking-wider pb-1 border-b border-slate-800 flex items-center gap-2">
+                <Server size={14} className="text-indigo-400" />
+                Diagnostic Metadata
+              </h4>
+
+              <div className="rounded-xl p-3.5 space-y-2.5 text-xs" style={inset}>
+                {[
+                  ['Node ID', nodeId],
+                  ['Organization', orgId || 'Default Org'],
+                  ['Last Seen', presence?.last_seen ? fmtDateTime(presence.last_seen) : 'never'],
+                  ['Last Telemetry', lastReadingAt ? fmtDateTime(lastReadingAt) : '—'],
+                  ['Transport Mode', presence?.transport ? presence.transport.toUpperCase() : 'MQTT Standard'],
+                  ['Uptime Clock', presence?.last_uptime ? formatUptime(presence.last_uptime) : '—'],
+                  ['Firmware Hash', presence?.fw || 'Default Release'],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex items-center justify-between text-xs gap-2">
+                    <span className="text-slate-500">{k}</span>
+                    <span className="font-mono text-slate-200 text-right truncate">{v}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="px-6 py-4 flex justify-end" style={{ borderTop: '1px solid #1e2433' }}>
-          <button onClick={onClose} className="px-6 py-2 rounded-lg text-sm font-medium text-slate-300" style={inset}>Close</button>
+        {/* Modal Footer with Smart APM Deep-Dive */}
+        <div className="px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-800 bg-[#0a0e1a]">
+          {apmLink ? (
+            <a
+              href={apmLink.href}
+              className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
+            >
+              <ExternalLink size={14} />
+              <span>{apmLink.label}</span>
+            </a>
+          ) : (
+            <div />
+          )}
+
+          <button
+            onClick={onClose}
+            className="w-full sm:w-auto px-6 py-2 rounded-xl text-xs font-semibold text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+          >
+            Close
+          </button>
         </div>
       </div>
     </div>

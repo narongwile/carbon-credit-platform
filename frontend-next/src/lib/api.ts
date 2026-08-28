@@ -34,6 +34,9 @@ export interface DevicePresence {
   fw?: string | null
   transport?: string | null
   identity_conflict_at?: string | null
+  last_uptime?: number | null
+  uptime_regressions?: number | null
+  heap?: number | null
 }
 
 /**
