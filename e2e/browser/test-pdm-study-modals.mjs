@@ -57,42 +57,54 @@ const STUDIES = [
   ['Fleet Risk Matrix', 'Fleet Risk Matrix'],
 ]
 
+// Wait on the dialog's actual presence, never on a fixed delay: under the dev
+// server a 700ms sleep intermittently landed before React had committed, which
+// looked exactly like a broken close handler.
+const openStudy = async (label) => {
+  await page.locator(`button:has-text("${label}")`).first().click()
+  await page.waitForSelector('[role="dialog"]', { state: 'attached', timeout: 8000 })
+}
+const waitClosed = () => page.waitForSelector('[role="dialog"]', { state: 'detached', timeout: 8000 })
+
 for (const [button, expectInTitle] of STUDIES) {
   const btn = page.locator(`button:has-text("${button}")`).first()
   if (!(await btn.count())) { t(`launcher has "${button}"`, false, 'button not found'); continue }
-  await btn.click()
-  await page.waitForTimeout(700)
-  const dialog = page.locator('[role="dialog"]')
-  const open = await dialog.count() > 0
-  const title = open ? await dialog.getAttribute('aria-label') : ''
+
+  let title = ''
+  try {
+    await openStudy(button)
+    title = (await page.locator('[role="dialog"]').getAttribute('aria-label')) || ''
+  } catch { /* assertion below reports it */ }
   t(`"${button}" opens a dialog titled for it`,
-    open && String(title).includes(expectInTitle),
-    open ? `aria-label=${title}` : 'no [role=dialog] appeared')
+    title.includes(expectInTitle), title ? `aria-label=${title}` : 'no [role=dialog] appeared')
 
   // Escape must close it — the hand-rolled dialogs ignored the keyboard.
   await page.keyboard.press('Escape')
-  await page.waitForTimeout(500)
-  t(`"${button}" closes on Escape`, await page.locator('[role="dialog"]').count() === 0)
+  const closed = await waitClosed().then(() => true).catch(() => false)
+  t(`"${button}" closes on Escape`, closed)
 }
 
 // ── scroll lock + backdrop close ──────────────────────────────────────────
-await page.locator('button:has-text("Fleet Risk Matrix")').first().click()
-await page.waitForTimeout(600)
+await openStudy('Fleet Risk Matrix')
 const lockedOverflow = await page.evaluate(() => document.body.style.overflow)
 t('body scroll is locked while a study is open', lockedOverflow === 'hidden', `overflow=${lockedOverflow}`)
 
-// Clicking inside must NOT close (the stopPropagation guard).
-await page.locator('[role="dialog"]').click({ position: { x: 200, y: 200 } }).catch(() => {})
+// Clicking inside must NOT close (the stopPropagation guard). Target the
+// dialog's own heading rather than an arbitrary coordinate: (200,200) inside
+// the panel can land on whatever control the study happens to render there,
+// which makes this assertion measure that control instead of the guard.
+await page.locator('[role="dialog"] h3').first().click().catch(() => {})
 await page.waitForTimeout(400)
 t('clicking inside the panel does not close it', await page.locator('[role="dialog"]').count() > 0)
 
 // Clicking the backdrop must close.
 await page.evaluate(() => {
-    const backdrop = document.querySelector(String.fromCharCode(91)+"role=\"dialog\""+String.fromCharCode(93))?.parentElement
-    if (backdrop) backdrop.click()
+  const dlg = document.querySelector('[role="dialog"]')
+  const backdrop = dlg && dlg.parentElement
+  if (backdrop) backdrop.click()
 })
-await page.waitForFunction(() => !document.querySelector('[role="dialog"]'), null, { timeout: 4000 }).catch(() => {})
-t('clicking the backdrop closes the study', await page.locator('[role="dialog"]').count() === 0)
+const backdropClosed = await waitClosed().then(() => true).catch(() => false)
+t('clicking the backdrop closes the study', backdropClosed)
 
 const restoredOverflow = await page.evaluate(() => document.body.style.overflow)
 t('body scroll is restored after closing', restoredOverflow !== 'hidden', `overflow=${restoredOverflow}`)

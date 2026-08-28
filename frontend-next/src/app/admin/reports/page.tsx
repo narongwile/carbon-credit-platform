@@ -255,7 +255,6 @@ const MONTH_DAYS = Array.from({ length: 28 }, (_, i) => i + 1)
 type OrgUser = { id: string; name?: string | null; email?: string | null; department_ids?: string[]; department_id?: string | null }
 
 function ReportsPageContent() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const urlSiteId = searchParams.get('siteId')
   const urlDomain = searchParams.get('domain')
@@ -302,6 +301,27 @@ function ReportsPageContent() {
     urlDomain && ALL_DOMAIN_KEYS.includes(urlDomain as any) ? [urlDomain] : ['transformer', 'carbonNode', 'bloodBox', 'automobile']
   )
   const [selectedSite, setSelectedSite] = useState<string>(urlSiteId || 'all')
+
+  // Keep the URL in sync with the filters, not just read it once on mount.
+  // useRouter() was imported and called here and its result never used, so
+  // ?siteId=/&domain= worked in one direction only: you could arrive on a
+  // filtered view, but the moment you changed the site or domain the address
+  // bar still described the state the page opened with — nothing to bookmark,
+  // copy or send to a colleague, and a refresh silently reverted the filter.
+  //
+  // Written through the History API rather than router.replace(): under this
+  // app's next.config (output: 'export' + trailingSlash: true) router.replace
+  // silently drops the query string — confirmed earlier by intercepting
+  // history.replaceState in a real browser while fixing the identical bug on
+  // admin/trends.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams()
+    if (selectedSite !== 'all') params.set('siteId', selectedSite)
+    if (selectedDomains.length === 1) params.set('domain', selectedDomains[0])
+    const qs = params.toString()
+    window.history.replaceState(null, '', qs ? `${window.location.pathname}?${qs}` : window.location.pathname)
+  }, [selectedSite, selectedDomains])
   const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([])
   const [selectedDays, setSelectedDays] = useState<number>(30)
   const [selectedSections, setSelectedSections] = useState<string[]>(['health', 'energy', 'alarm', 'executive'])

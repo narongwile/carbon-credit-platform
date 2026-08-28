@@ -107,6 +107,14 @@ test_proofs_and_integrity:
     # carry a DemoDataBanner, and no fabricated record may be attributed to a
     # real named laboratory or utility.
     - node e2e/proofs/test-studio-data-provenance.mjs
+    # The frontend has NO unused-variable detection: .eslintrc extends only
+    # next/core-web-vitals, which does not enable no-unused-vars for TS
+    # (verified by probe). That is the same blind spot that hid the org-level
+    # Telegram regression in the Node-RED strings, and in this range it also
+    # hid a dead useRouter on admin/reports (one-way deep links) and an
+    # unreachable enable-all control in AlarmParamConfig. Baseline gate: fails
+    # only on NEW computed-but-unused values.
+    - node e2e/proofs/test-frontend-deadcode.mjs
     # The alarm editor's no-data fallback row set must name CATALOG keys
     # ('oilTemp'), not the telemetry payload names realtime.ts maps them to
     # ('oilTemperature'). It named the payload ones, so both temperature

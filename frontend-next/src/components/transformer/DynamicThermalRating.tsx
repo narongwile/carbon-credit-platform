@@ -129,7 +129,10 @@ export default function DynamicThermalRating({
     // panel cannot report different capacities for the same asset — they used
     // to, because those three used a flat nameplate * 1.146 instead.
     const effectiveCooling: CoolingStage = coolingDispatched ? 'ONAF2' : coolingStage
-    const { dynamicRatingKva, ambientFactor, windFactor, solarFactor } = computeDynamicRating({
+    // Only the rating is consumed here; the individual factors are applied
+    // inside computeDynamicRating and were destructured for a breakdown this
+    // panel does not render.
+    const { dynamicRatingKva } = computeDynamicRating({
       nameplateKva, ambientTemp, windSpeed, solarIrradiance, coolingStage: effectiveCooling,
     })
     const dynamicRatingPct = ((dynamicRatingKva / nameplateKva) * 100).toFixed(1)

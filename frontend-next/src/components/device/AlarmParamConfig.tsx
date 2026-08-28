@@ -1305,6 +1305,27 @@ export default function AlarmParamConfig({
             >
               <RefreshCw size={11} /> Defaults
             </button>
+            {/* toggleAll was implemented (including its toast) and never given
+                a control, so "enable/disable every parameter" existed in the
+                code and was unreachable in the UI. With up to 80 rows in the
+                full catalog, arming or clearing them one checkbox at a time is
+                the difference between using this editor and giving up on it. */}
+            <button
+              type="button"
+              onClick={() => toggleAll(true)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 border border-slate-800"
+              title="Enable every parameter currently listed"
+            >
+              Enable all
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleAll(false)}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium text-slate-400 hover:text-white hover:bg-white/5 border border-slate-800"
+              title="Disable every parameter currently listed"
+            >
+              Disable all
+            </button>
             <button
               type="button"
               onClick={() => setShowAddParam(!showAddParam)}

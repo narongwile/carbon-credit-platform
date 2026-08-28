@@ -40,12 +40,30 @@ export default function StudyModal({
   const panelRef = useRef<HTMLDivElement>(null)
   const restoreFocusTo = useRef<HTMLElement | null>(null)
 
+  // Callers pass `onClose={() => setActiveStudy(null)}` — a NEW function every
+  // render. With onClose in the dependency array the whole effect tore down and
+  // re-ran on every render while the dialog was open, and two of the three
+  // things it does are not idempotent:
+  //
+  //   * prevOverflow was re-read AFTER the lock was applied, so from the second
+  //     run on it captured 'hidden'. The final cleanup then "restored" hidden
+  //     and the page stayed scroll-locked with no dialog on screen.
+  //   * restoreFocusTo was re-captured from document.activeElement, which by
+  //     then was the panel itself, so closing returned focus to a removed node
+  //     instead of the launcher — and the repeated focus() could steal focus
+  //     mid-interaction.
+  //
+  // Held in a ref so the effect depends only on `open` and runs once per
+  // open/close, which is what its body assumes.
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose }, [onClose])
+
   useEffect(() => {
     if (!open) return
     restoreFocusTo.current = document.activeElement as HTMLElement | null
     panelRef.current?.focus()
 
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current() }
     document.addEventListener('keydown', onKey)
 
     // Lock page scroll so the sheet behind the dialog does not move.
@@ -57,7 +75,7 @@ export default function StudyModal({
       document.body.style.overflow = prevOverflow
       restoreFocusTo.current?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
 

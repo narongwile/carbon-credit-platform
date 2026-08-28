@@ -108,7 +108,6 @@ export default function GenAiDiagnosticsCopilot({
   const [inputQuery, setInputQuery] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [showWorkOrderModal, setShowWorkOrderModal] = useState(false)
-  const [activeTab, setActiveTab] = useState<'copilot' | 'rca' | 'workorder'>('copilot')
   const chatEndRef = useRef<HTMLDivElement>(null)
   // The reply timer must be cancellable: this component lives in a drawer that
   // unmounts on close, and the pending setTimeout would otherwise fire its
