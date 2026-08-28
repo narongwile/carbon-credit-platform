@@ -10,6 +10,7 @@ import NodeDocuments from '@/components/device/NodeDocuments'
 import NodeSitePanel from '@/components/device/NodeSitePanel'
 import NodeReportButton from '@/components/device/NodeReportButton'
 import DeviceLiveStatus from '@/components/device/DeviceLiveStatus'
+import MyAlertSettings from '@/components/device/MyAlertSettings'
 import Link from 'next/link'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
 

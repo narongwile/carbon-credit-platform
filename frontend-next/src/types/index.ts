@@ -70,6 +70,28 @@ export interface SensorData {
   oilLevel: SensorReading
   load: SensorReading
   ambientTemperature: SensorReading
+  /**
+   * Optional extended channels — beyond the six every transformer reports.
+   * A unit fitted with a bushing tap adapter, an arrester leakage CT or an
+   * instrumented OLTC publishes these as well, and the PdM studios key
+   * "is this sensor installed?" off their presence.
+   *
+   * Optional precisely BECAUSE absence is meaningful: an undefined channel
+   * means no instrument is fitted, which the studios must render differently
+   * from a measured value — never as a default that reads as a reading.
+   *
+   * Declared explicitly rather than via an index signature: a
+   * `[key: string]: SensorReading | undefined` here would make every one of
+   * the six required channels above possibly-undefined at each of their ~30
+   * existing call sites (store.ts, the sensor cards, the alarm engine), which
+   * is a much larger and riskier change than naming the channels we support.
+   */
+  bushingTanDelta?: SensorReading
+  partialDischarge?: SensorReading
+  surgeArresterCurrent?: SensorReading
+  surgeCounter?: SensorReading
+  oltcMotorCurrent?: SensorReading
+  oltcOilTempDelta?: SensorReading
 }
 
 export interface SensorReading {

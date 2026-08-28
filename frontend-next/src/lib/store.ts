@@ -84,6 +84,11 @@ export const useAppStore = create<AppState>()(
           transformers: state.transformers.map((t) => {
             if (t.id !== transformerId) return t
             const sensor = t.sensors[sensorKey as keyof typeof t.sensors]
+            // Extended channels (bushing tan-delta, arrester leakage, OLTC) are
+            // optional on SensorData — absence means no instrument fitted — so a
+            // key that is not present on THIS unit must leave it untouched
+            // rather than throw on sensor.value.
+            if (!sensor) return t
             const delta = parseFloat((value - sensor.value).toFixed(2))
             const trend = Math.abs(delta) < 0.05 ? 'stable' : delta > 0 ? 'up' : 'down'
             const invertedSensors = ['oilLevel']

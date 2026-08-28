@@ -42,6 +42,7 @@ import {
   Download, Bot, FlaskConical, Battery,
 } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 import Link from 'next/link'
 import type { SensorData, SensorReading, TrendPoint, Transformer } from '@/types'
 import DgaDuvalTriangle from '@/components/transformer/DgaDuvalTriangle'
@@ -78,8 +79,14 @@ function NoPhotoPlaceholder() {
 // param keys from the ingest worker — and leaves the demo series untouched when
 // Live is off or the device has reported nothing yet.
 
-/** SensorData field ← canonical param key (see paramMap in backend/worker/main.go). */
-const LIVE_PARAM: Record<keyof SensorData, string> = {
+/**
+ * SensorData field ← canonical param key (see paramMap in backend/worker/main.go).
+ * Only the six channels every transformer reports — the newer optional
+ * extended channels (bushingTanDelta, partialDischarge, …) are surfaced by
+ * their own studios via transformer.sensors directly, not through this live-
+ * merge path, so Partial<> here rather than requiring an entry for each.
+ */
+const LIVE_PARAM: Partial<Record<keyof SensorData, string>> = {
   oilTemperature: 'oilTemp',
   hydrogen: 'hydrogen',
   moisture: 'moisture',
@@ -233,9 +240,17 @@ function useLiveTransformer(base: Transformer | undefined) {
 
     for (const field of Object.keys(LIVE_PARAM) as (keyof SensorData)[]) {
       const key = LIVE_PARAM[field]
+      // LIVE_PARAM is Partial<> in its TYPE (so callers don't have to name
+      // every optional extended channel), but this loop only ever iterates
+      // its OWN keys, all six of which really are set — this narrows back to
+      // that, rather than the field/key pair silently becoming a no-op.
+      if (!key) continue
       const v = values[key]
       if (v === undefined) continue
       const prev = sensors[field]
+      // Extended channels are optional on SensorData; a unit that does not
+      // publish this one has nothing to merge into.
+      if (!prev) continue
       const p = byKey[key]
       // A single point can't be drawn as a sparkline (the polyline divides by
       // length-1), so only swap in live history once there are at least two.
@@ -718,88 +733,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const orgNames = useAppStore((s) => s.orgNames)
   const orgId = orgIdProp ?? selectedOrgId
 
-  const currentOrgName = useMemo(() => {
-    return (transformer?.orgId && orgNames[transformer.orgId]) || orgNames[orgId] || 'Industrial Substation'
-  }, [transformer?.orgId, orgNames, orgId])
-
-  // Universal Multi-Tenant Telemetry Extraction (Resolves any sensor wire key format per org)
-  const liveTelemetry = useMemo(() => {
-    const s = transformer?.sensors || {}
-    const getVal = (keys: string[], fallback: number) => {
-      for (const k of keys) {
-        if (s[k]?.value != null) return Number(s[k].value)
-      }
-      return fallback
-    }
-
-    const h2 = getVal(['hydrogen', 'h2'], 65)
-    const ch4 = getVal(['methane', 'ch4'], 45)
-    const c2h2 = getVal(['acetylene', 'c2h2'], 3.2)
-    const c2h4 = getVal(['ethylene', 'c2h4'], 35)
-    const c2h6 = getVal(['ethane', 'c2h6'], 28)
-    const co = getVal(['carbonMonoxide', 'co'], 420)
-    const co2 = getVal(['carbonDioxide', 'co2'], 3200)
-    const oilTemp = getVal(['oilTemperature', 'oilTemp', 'topOilTemp'], 64)
-    const hotSpotTemp = getVal(['hotSpotTemp', 'windingTemperature', 'windingTemp'], oilTemp + 14)
-    const moisture = getVal(['moisture', 'moistureInOil', 'waterContent'], 22)
-    const loadPct = getVal(['load', 'loadPercentage', 'loadCurrent'], 74)
-    const ratedKva = nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500
-    const loadKva = Math.round((loadPct / 100) * ratedKva)
-    const voltageKv = parseFloat(nameplate?.voltageClass || transformer?.voltage || '115') || 115
-
-    return {
-      h2, ch4, c2h2, c2h4, c2h6, co, co2,
-      oilTemp, hotSpotTemp, moisture, loadPct,
-      ratedKva, loadKva, voltageKv,
-    }
-  }, [transformer?.sensors, nameplate, transformer?.voltage])
-
-  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'threats'>('dga')
-  const [dtrMode, setDtrMode] = useState<'ampacity' | 'bess'>('ampacity')
-  const [dossierExporting, setDossierExporting] = useState(false)
-  const [showCopilotDrawer, setShowCopilotDrawer] = useState(false)
-  const [showLabDgaModal, setShowLabDgaModal] = useState(false)
-  const [showFleetRiskModal, setShowFleetRiskModal] = useState(false)
-
-  const handleExportOfficialDossier = async () => {
-    setDossierExporting(true)
-    try {
-      await generateOfficialEngineeringDossier({
-        assetId: transformer.id || 'TR-01',
-        assetName: transformer.name || 'Main Substation TR-01',
-        orgId: transformer.orgId || orgId,
-        orgName: currentOrgName,
-        ratedKva: liveTelemetry.ratedKva,
-        voltageKv: liveTelemetry.voltageKv,
-        healthIndex: transformer.healthIndex ?? 88,
-        oilTemp: liveTelemetry.oilTemp,
-        hotSpotTemp: liveTelemetry.hotSpotTemp,
-        dtrCapacityKva: Math.round(liveTelemetry.ratedKva * 1.146),
-        dtrHeadroomKva: Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva),
-        duvalVerdict: 'T2 - Thermal Fault (300°C - 700°C)',
-        rttDays: 38,
-        bushingPhaseBStatus: 'Caution (tan δ = 0.82%)',
-        bushingTanDelta: 0.82,
-        dpAging: 590,
-        moisturePpm: liveTelemetry.moisture,
-        gases: {
-          h2: liveTelemetry.h2,
-          ch4: liveTelemetry.ch4,
-          c2h2: liveTelemetry.c2h2,
-          c2h4: liveTelemetry.c2h4,
-          c2h6: liveTelemetry.c2h6,
-          co: liveTelemetry.co,
-          co2: liveTelemetry.co2,
-        },
-      })
-      toast.success(`ดาวน์โหลดรายงานฉบับทางการ (${currentOrgName}) เรียบร้อยแล้ว!`)
-    } catch (err) {
-      toast.error('ไม่สามารถสร้างรายงาน PDF ได้: ' + (err as Error).message)
-    } finally {
-      setDossierExporting(false)
-    }
-  }
   // The Overview lists the roster from /api/fleet, but this page used to resolve
   // the device from the seeded `transformers` array only — so every real device
   // that is not one of the demo ids (a transformer an ESP32 registered itself)
@@ -854,6 +787,103 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // to '—'/0 placeholders because nothing ever wrote them. Overrides those
   // fields additively when a real nameplate has been entered.
   const { data: nameplate, refetch: refetchNameplate } = useNodeNameplate(id)
+  // Restored: the PdM refactor deleted this declaration but left both
+  // TRANSFORMER_CLASS_LABEL[sizeClass] render sites and the import in place.
+  const sizeClass = classifyByKva(nameplate?.ratedKva ?? undefined)
+
+  // NOTE: this block reads `transformer` and `nameplate`, so it must stay
+  // BELOW their declarations. It was inserted at the top of the component,
+  // above both, which is a use-before-declaration on two const bindings and
+  // a hard TS error (TS2448/TS2454), not a hoisting quirk that happens to work.
+  const currentOrgName = useMemo(() => {
+    return (transformer?.orgId && orgNames[transformer.orgId]) || orgNames[orgId] || 'Industrial Substation'
+  }, [transformer?.orgId, orgNames, orgId])
+
+  // Universal Multi-Tenant Telemetry Extraction (Resolves any sensor wire key format per org)
+  const liveTelemetry = useMemo(() => {
+    // Typed as a loose record on purpose: this reads RAW firmware wire keys via
+    // the alias lists below, which are deliberately wider than SensorData's
+    // named channels.
+    const s = (transformer?.sensors || {}) as Record<string, { value?: number } | undefined>
+    const getVal = (keys: string[], fallback: number) => {
+      for (const k of keys) {
+        if (s[k]?.value != null) return Number(s[k].value)
+      }
+      return fallback
+    }
+
+    const h2 = getVal(['hydrogen', 'h2'], 65)
+    const ch4 = getVal(['methane', 'ch4'], 45)
+    const c2h2 = getVal(['acetylene', 'c2h2'], 3.2)
+    const c2h4 = getVal(['ethylene', 'c2h4'], 35)
+    const c2h6 = getVal(['ethane', 'c2h6'], 28)
+    const co = getVal(['carbonMonoxide', 'co'], 420)
+    const co2 = getVal(['carbonDioxide', 'co2'], 3200)
+    const oilTemp = getVal(['oilTemperature', 'oilTemp', 'topOilTemp'], 64)
+    const hotSpotTemp = getVal(['hotSpotTemp', 'windingTemperature', 'windingTemp'], oilTemp + 14)
+    const moisture = getVal(['moisture', 'moistureInOil', 'waterContent'], 22)
+    const loadPct = getVal(['load', 'loadPercentage', 'loadCurrent'], 74)
+    const ratedKva = nameplate?.ratedKva ? Number(nameplate.ratedKva) : 2500
+    const loadKva = Math.round((loadPct / 100) * ratedKva)
+    const voltageKv = parseFloat(nameplate?.voltageClass || transformer?.voltage || '115') || 115
+
+    return {
+      h2, ch4, c2h2, c2h4, c2h6, co, co2,
+      oilTemp, hotSpotTemp, moisture, loadPct,
+      ratedKva, loadKva, voltageKv,
+    }
+  }, [transformer?.sensors, nameplate, transformer?.voltage])
+
+  const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'threats'>('dga')
+  const [dtrMode, setDtrMode] = useState<'ampacity' | 'bess'>('ampacity')
+  const [dossierExporting, setDossierExporting] = useState(false)
+  const [showCopilotDrawer, setShowCopilotDrawer] = useState(false)
+  const [showLabDgaModal, setShowLabDgaModal] = useState(false)
+  const [showFleetRiskModal, setShowFleetRiskModal] = useState(false)
+
+  const handleExportOfficialDossier = async () => {
+    // The export button renders inside the loaded view, but `transformer` is
+    // undefined until the fleet host resolves — an export fired during that
+    // window would throw on transformer.id rather than tell the user why.
+    if (!transformer) { toast.error('Asset is still loading — try again in a moment'); return }
+    setDossierExporting(true)
+    try {
+      await generateOfficialEngineeringDossier({
+        assetId: transformer.id || 'TR-01',
+        assetName: transformer.name || 'Main Substation TR-01',
+        orgId: transformer.orgId || orgId,
+        orgName: currentOrgName,
+        ratedKva: liveTelemetry.ratedKva,
+        voltageKv: liveTelemetry.voltageKv,
+        healthIndex: transformer.healthIndex ?? 88,
+        oilTemp: liveTelemetry.oilTemp,
+        hotSpotTemp: liveTelemetry.hotSpotTemp,
+        dtrCapacityKva: Math.round(liveTelemetry.ratedKva * 1.146),
+        dtrHeadroomKva: Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva),
+        duvalVerdict: 'T2 - Thermal Fault (300°C - 700°C)',
+        rttDays: 38,
+        bushingPhaseBStatus: 'Caution (tan δ = 0.82%)',
+        bushingTanDelta: 0.82,
+        dpAging: 590,
+        moisturePpm: liveTelemetry.moisture,
+        gases: {
+          h2: liveTelemetry.h2,
+          ch4: liveTelemetry.ch4,
+          c2h2: liveTelemetry.c2h2,
+          c2h4: liveTelemetry.c2h4,
+          c2h6: liveTelemetry.c2h6,
+          co: liveTelemetry.co,
+          co2: liveTelemetry.co2,
+        },
+      })
+      toast.success(`ดาวน์โหลดรายงานฉบับทางการ (${currentOrgName}) เรียบร้อยแล้ว!`)
+    } catch (err) {
+      toast.error('ไม่สามารถสร้างรายงาน PDF ได้: ' + (err as Error).message)
+    } finally {
+      setDossierExporting(false)
+    }
+  }
   // Admin-renamed parameters (migrate-v34). The six cards below used
   // hardcoded English strings and the extras list showed the raw wire key,
   // so a rename made on this very page changed nothing on it.
@@ -953,7 +983,9 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     // Demo / device has reported nothing yet: the seeded six.
     for (const [field, key] of Object.entries(LIVE_PARAM) as [keyof SensorData, string][]) {
       if (!isShown(key)) continue
-      out.push({ key, label: paramLabel(key), icon: cardIcon(key), layout: layoutOf(key), reading: transformer.sensors[field] })
+      const reading = transformer.sensors[field]
+      if (!reading) continue
+      out.push({ key, label: paramLabel(key), icon: cardIcon(key), layout: layoutOf(key), reading })
     }
     return out
   }, [live, values, series, schemaByKey, isShown, layoutOf, paramLabel, transformer])

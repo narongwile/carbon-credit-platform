@@ -63,6 +63,7 @@ export function useRealtimeData() {
       st.transformers.forEach((t) => {
         SENSOR_KEYS.forEach((key) => {
           const sensor = t.sensors[key as keyof typeof t.sensors]
+          if (!sensor) return
           st.updateTransformerSensor(t.id, key, fluctuate(sensor.value, VARIANCES[key] ?? 0.5, sensor.min, sensor.max))
         })
       })

@@ -291,7 +291,12 @@ export default function BessCoOptimization({
               <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" /> Shaved Load (kVA)
             </span>
             <span className="flex items-center gap-1 text-amber-400 font-medium">
-              <span className="w-2 h-0.5 bg-amber-400 inline-block" strokeDasharray="3 3" /> Shave Limit ({shaveThresholdKva.toLocaleString()} kVA)
+              {/* strokeDasharray is an SVG-only attribute — inert on a <span>
+                  and a TS error under React 18's DOM typings. The chart's
+                  actual dashed reference line is drawn by recharts; this is
+                  only the legend swatch, so a dashed border reproduces the
+                  look without a foreign SVG prop. */}
+              <span className="w-2.5 h-0 inline-block border-t border-dashed border-amber-400" /> Shave Limit ({shaveThresholdKva.toLocaleString()} kVA)
             </span>
           </div>
         </div>
