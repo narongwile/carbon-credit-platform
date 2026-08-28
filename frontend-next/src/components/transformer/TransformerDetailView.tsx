@@ -55,6 +55,7 @@ import GenAiDiagnosticsCopilot from '@/components/transformer/GenAiDiagnosticsCo
 import BessCoOptimization from '@/components/transformer/BessCoOptimization'
 import SubstationThreatsStudio from '@/components/transformer/SubstationThreatsStudio'
 import { generateOfficialEngineeringDossier } from '@/lib/officialDossierGenerator'
+import { conservativeDynamicRating } from '@/lib/dtrModel'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
 
@@ -811,6 +812,13 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       }
       return fallback
     }
+    // Which of these came from the device and which are catalogue fallbacks.
+    // Most transformers publish no DGA at all, so h2/ch4/c2h2/c2h4/c2h6/co/co2
+    // silently resolved to the same seven constants for every asset in every
+    // organization — and the studios and the exported PDF then labelled them
+    // "Measured Telemetry" / "Current (ppm)". Consumers can now tell the
+    // difference instead of having to assume.
+    const has = (keys: string[]) => keys.some((k) => s[k]?.value != null)
 
     const h2 = getVal(['hydrogen', 'h2'], 65)
     const ch4 = getVal(['methane', 'ch4'], 45)
@@ -831,6 +839,15 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       h2, ch4, c2h2, c2h4, c2h6, co, co2,
       oilTemp, hotSpotTemp, moisture, loadPct,
       ratedKva, loadKva, voltageKv,
+      measured: {
+        dga: has(['hydrogen', 'h2']) || has(['acetylene', 'c2h2']),
+        oilTemp: has(['oilTemperature', 'oilTemp', 'topOilTemp']),
+        // hotSpotTemp falls back to oilTemp + 14 — a fixed offset standing in
+        // for a load-dependent winding gradient, not a measurement.
+        hotSpotTemp: has(['hotSpotTemp', 'windingTemperature', 'windingTemp']),
+        moisture: has(['moisture', 'moistureInOil', 'waterContent']),
+        load: has(['load', 'loadPercentage', 'loadCurrent']),
+      },
     }
   }, [transformer?.sensors, nameplate, transformer?.voltage])
 
@@ -848,6 +865,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     // window would throw on transformer.id rather than tell the user why.
     if (!transformer) { toast.error('Asset is still loading — try again in a moment'); return }
     const bushingTanDeltaLive = transformer.sensors?.bushingTanDelta?.value ?? null
+    const dtr = conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value)
     setDossierExporting(true)
     try {
       await generateOfficialEngineeringDossier({
@@ -860,8 +878,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         healthIndex: transformer.healthIndex ?? 88,
         oilTemp: liveTelemetry.oilTemp,
         hotSpotTemp: liveTelemetry.hotSpotTemp,
-        dtrCapacityKva: Math.round(liveTelemetry.ratedKva * 1.146),
-        dtrHeadroomKva: Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva),
+        // Was nameplate * 1.146 — a constant, so this PDF claimed 114.6% of
+        // nameplate on a 40 degC windless day with natural cooling only, where
+        // the real model gives ~80%. Now the shared conservative model.
+        dtrCapacityKva: dtr.dynamicRatingKva,
+        dtrHeadroomKva: Math.max(0, dtr.dynamicRatingKva - liveTelemetry.loadKva),
         // These four were hardcoded literals, so EVERY asset in EVERY org
         // exported a PDF asserting the same T2 thermal fault, the same 38-day
         // time-to-trip, the same 0.82% bushing tan-delta and the same 590 DP —
@@ -876,7 +897,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         bushingTanDelta: bushingTanDeltaLive ?? 0,
         dpAging: 0,
         moisturePpm: liveTelemetry.moisture,
-        gases: {
+        // Only real gas readings reach the PDF; when the unit publishes no DGA
+        // the report prints zeros and its gas section says so, rather than
+        // certifying seven catalogue constants as this asset's measurements.
+        gases: liveTelemetry.measured.dga ? {
           h2: liveTelemetry.h2,
           ch4: liveTelemetry.ch4,
           c2h2: liveTelemetry.c2h2,
@@ -884,7 +908,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           c2h6: liveTelemetry.c2h6,
           co: liveTelemetry.co,
           co2: liveTelemetry.co2,
-        },
+        } : { h2: 0, ch4: 0, c2h2: 0, c2h4: 0, c2h6: 0, co: 0, co2: 0 },
+        gasesMeasured: liveTelemetry.measured.dga,
       })
       toast.success(`ดาวน์โหลดรายงานสรุปค่าที่วัดได้ (${currentOrgName}) เรียบร้อยแล้ว`)
     } catch (err) {
@@ -1672,7 +1697,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       nameplateKva={liveTelemetry.ratedKva}
                       currentLoadKva={liveTelemetry.loadKva}
                       hotSpotTemp={liveTelemetry.hotSpotTemp}
-                      dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
+                      dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
                     />
                   )}
                 </div>
@@ -1697,7 +1722,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   orgName={currentOrgName}
                   voltageKv={liveTelemetry.voltageKv}
                   mainOilTemp={liveTelemetry.oilTemp}
-                  bushingTanDelta={0.82}
+                  // was a literal 0.82 for every asset — real channel or 0
+                  bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
                   hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
                   hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
                 />
@@ -1869,11 +1895,13 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   co: liveTelemetry.co,
                   co2: liveTelemetry.co2,
                 }}
+                bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
+                partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
                 duvalVerdict="T2 - Thermal Fault (300°C - 700°C)"
                 rttDays={38}
                 oilTemp={liveTelemetry.oilTemp}
                 hotSpotTemp={liveTelemetry.hotSpotTemp}
-                dtrHeadroomKva={Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva)}
+                dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
                 bushingStatus="Phase B Warning (tan δ: 0.82%)"
                 dpAging={590}
                 moisturePpm={liveTelemetry.moisture}

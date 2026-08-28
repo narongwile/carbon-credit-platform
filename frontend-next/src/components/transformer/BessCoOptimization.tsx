@@ -60,8 +60,15 @@ export default function BessCoOptimization({
   // Real-time BESS Dispatch Metrics
   const dispatchMetrics = useMemo(() => {
     const isExceeding = currentLoadKva > shaveThresholdKva
+    // Math.max(0, …) is load-bearing: with manual injection on and the load
+    // BELOW the shave threshold this evaluated negative (e.g. 1850 kVA against
+    // a 2000 kVA threshold gave -142 kW). The negative then flowed into
+    // shavedLoadKva (raising the modelled load), hotSpotReliefC (rendered as
+    // "-{-5.7}°C", i.e. a temperature INCREASE shown as relief), and the
+    // revenue and carbon figures, which displayed negative kWh and tCO2e
+    // behind a "+" prefix.
     const dischargePowerKw = manualDischarging || (autoDispatchActive && isExceeding)
-      ? Math.min(maxDischargeKw, Math.round((currentLoadKva - shaveThresholdKva) * 0.95))
+      ? Math.max(0, Math.min(maxDischargeKw, Math.round((currentLoadKva - shaveThresholdKva) * 0.95)))
       : 0
 
     // Effective transformer load after BESS injection

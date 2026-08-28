@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import clsx from 'clsx'
+import { computeDynamicRating, type CoolingStage } from '@/lib/dtrModel'
 
 interface DynamicThermalRatingProps {
   nameplateKva?: number
@@ -116,18 +117,13 @@ export default function DynamicThermalRating({
 
   // ── 2. IEEE C57.115 & IEC 60076-7 Dynamic Ampacity Model ────────────────
   const dtrMetrics = useMemo(() => {
-    const tempHeadroom = 40 - ambientTemp
-    // Ambient correction factor: ~0.8% capacity per degree below 40°C
-    const ambientFactor = 1 + (tempHeadroom * 0.008)
-    // Wind convective cooling enhancement: ~1.2% per m/s above 1 m/s baseline
-    const windFactor = 1 + Math.max(0, windSpeed - 1) * 0.012
-    // Solar derating factor if sun is intense (>800 W/m2)
-    const solarFactor = solarIrradiance > 800 ? 0.985 : 1.0
-    // Cooling mode stage multiplier
-    const effectiveCooling = coolingDispatched ? 'ONAF2' : coolingStage
-    const coolingMultiplier = effectiveCooling === 'ONAN' ? 0.80 : effectiveCooling === 'ONAF1' ? 1.0 : 1.25
-
-    const dynamicRatingKva = Math.round(nameplateKva * ambientFactor * windFactor * solarFactor * (coolingMultiplier / 1.0))
+    // Model lives in lib/dtrModel so the PDF export, the BESS studio and this
+    // panel cannot report different capacities for the same asset — they used
+    // to, because those three used a flat nameplate * 1.146 instead.
+    const effectiveCooling: CoolingStage = coolingDispatched ? 'ONAF2' : coolingStage
+    const { dynamicRatingKva, ambientFactor, windFactor, solarFactor } = computeDynamicRating({
+      nameplateKva, ambientTemp, windSpeed, solarIrradiance, coolingStage: effectiveCooling,
+    })
     const dynamicRatingPct = ((dynamicRatingKva / nameplateKva) * 100).toFixed(1)
     const availableHeadroomKva = Math.max(0, dynamicRatingKva - currentLoadKva)
     const emergency2hKva = Math.round(dynamicRatingKva * 1.15)

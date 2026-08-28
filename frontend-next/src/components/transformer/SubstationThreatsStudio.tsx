@@ -72,13 +72,31 @@ export default function SubstationThreatsStudio({
   const [enclosureHumidity, setEnclosureHumidity] = useState(64) // %
 
   // Co-Calculation 1: OLTC Diverter Compartment vs Main Tank Delta T
+  //
+  // This differenced the asset's REAL main-tank oil temperature against a
+  // HARDCODED 67.8 degC diverter temperature, so the verdict was driven
+  // entirely by a constant — and inverted: a healthy transformer running at
+  // 40 degC produced deltaT 27.8 and a "CRITICAL — Severe Contact Coking"
+  // alarm, while a genuinely hot unit at 75 degC produced -7.2 and was called
+  // "NORMAL", rendered as the literal string "+-7.2 °C".
+  //
+  // deltaT is only meaningful when BOTH temperatures are measured. Without an
+  // OLTC compartment sensor there is no delta to report, so the panel now says
+  // so instead of manufacturing a verdict.
   const deltaT = useMemo(() => {
+    if (!oltcInstalled || oltcOilTemp == null) return null
     return Number((oltcOilTemp - mainOilTemp).toFixed(1))
-  }, [oltcOilTemp, mainOilTemp])
+  }, [oltcInstalled, oltcOilTemp, mainOilTemp])
 
   const oltcCokingRisk = useMemo(() => {
-    if (deltaT > 6.0) return { level: 'CRITICAL', text: 'Severe Contact Coking & Resistance Heating', color: '#ef4444' }
-    if (deltaT > 3.5) return { level: 'CAUTION', text: 'Elevated Transition Contact Degradation', color: '#f59e0b' }
+    if (deltaT === null) {
+      return { level: 'NO DATA', text: 'No OLTC compartment sensor — ΔT cannot be assessed', color: '#64748b' }
+    }
+    // Bands aligned with the 4.0 degC figure this panel itself attributes to
+    // IEEE C57.131 in the note below; they previously read 3.5 / 6.0 and
+    // contradicted that text.
+    if (deltaT > 8.0) return { level: 'CRITICAL', text: 'Severe Contact Coking & Resistance Heating', color: '#ef4444' }
+    if (deltaT > 4.0) return { level: 'CAUTION', text: 'Elevated Transition Contact Degradation', color: '#f59e0b' }
     return { level: 'NORMAL', text: 'Normal Differential Dissipation', color: '#10b981' }
   }, [deltaT])
 
@@ -98,15 +116,24 @@ export default function SubstationThreatsStudio({
   // Co-Calculation 3: Surge Strike correlation with Bushing Degradation
   const surgeBushingCorrelation = useMemo(() => {
     const phaseBArrester = arresters.find((a) => a.phase === 'B')
-    const isCorrelated = (phaseBArrester?.resistiveCurrentUa ?? 0) > 50 && bushingTanDelta > 0.7
+    // Both operands are fixed reference values (arresters[] is a constant array
+    // and bushingTanDelta defaults to 0.82), so this predicate was true for
+    // every asset — the panel issued the same "HIGH CORRELATION" MOV-stress
+    // finding and IEC 60099-5 inspection order to every transformer on the
+    // platform. Gated on real instrumentation instead.
+    const isCorrelated = arresterInstalled
+      && (phaseBArrester?.resistiveCurrentUa ?? 0) > 50
+      && bushingTanDelta > 0.7
     return {
       isCorrelated,
       severity: isCorrelated ? 'HIGH CORRELATION' : 'BASELINE',
       insight: isCorrelated
         ? `Phase B received ${phaseBArrester?.lastStrikeKa} kA surge pulse, correlating with Bushing Phase B tan δ elevated reading (${bushingTanDelta}%). MOV block stress detected.`
-        : 'Surge arresters and condenser bushings show nominal impulse withstand balance.',
+        : arresterInstalled
+          ? 'Surge arresters and condenser bushings show nominal impulse withstand balance.'
+          : 'No surge-arrester CT fitted — correlation between impulse history and bushing dielectric loss cannot be assessed on this asset.',
     }
-  }, [arresters, bushingTanDelta])
+  }, [arresters, bushingTanDelta, arresterInstalled])
 
   return (
     <div className="space-y-5">
@@ -359,11 +386,17 @@ export default function SubstationThreatsStudio({
                 <div className="text-slate-600 font-bold">vs</div>
                 <div>
                   <div className="text-[10px] text-slate-500 uppercase">OLTC Diverter Oil</div>
-                  <div className="text-base font-bold font-mono text-amber-400">{oltcOilTemp} °C</div>
+                  <div className="text-base font-bold font-mono text-amber-400">
+                    {oltcInstalled && oltcOilTemp != null ? `${oltcOilTemp} °C` : '—'}
+                  </div>
                 </div>
                 <div className="text-right border-l border-slate-800 pl-3">
                   <div className="text-[10px] text-slate-500 uppercase">ΔT Differential</div>
-                  <div className="text-lg font-bold font-mono text-rose-400">+{deltaT} °C</div>
+                  <div className="text-lg font-bold font-mono text-rose-400">
+                    {/* Signed explicitly: this printed "+{deltaT}" and so
+                        rendered a negative delta as "+-7.2 °C". */}
+                    {deltaT === null ? '—' : `${deltaT > 0 ? '+' : ''}${deltaT} °C`}
+                  </div>
                 </div>
               </div>
 
@@ -374,6 +407,7 @@ export default function SubstationThreatsStudio({
                 </div>
                 <p className="text-[11px] text-slate-500">
                   Per IEEE C57.131, ΔT &gt; 4.0 °C indicates excessive contact resistance or pyrolytic carbon coking on diverter tungsten contacts.
+                  {deltaT === null && ' This unit has no OLTC compartment temperature sensor, so ΔT is not available and no coking assessment is made.'}
                 </p>
               </div>
             </div>

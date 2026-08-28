@@ -19,6 +19,8 @@ export interface DossierData {
   bushingTanDelta: number
   dpAging: number
   moisturePpm: number
+  /** False when the unit publishes no DGA — the gas section then says so. */
+  gasesMeasured?: boolean
   gases: {
     h2: number
     ch4: number
@@ -187,7 +189,9 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   doc.setTextColor(51, 65, 85)
   const execSummary = [
     `Live telemetry snapshot for unit ${data.assetName} (${data.assetId}), captured ${generatedAt}.`,
-    `Dissolved gas concentrations: Acetylene (C2H2) ${data.gases.c2h2} ppm, Ethylene (C2H4) ${data.gases.c2h4} ppm — see Section 2 for the full gas table. A fault-zone classification (Duval Pentagon) is not computed by this report; use the live DGA diagnostics screen in-app for that.`,
+    data.gasesMeasured
+      ? `Dissolved gas concentrations: Acetylene (C2H2) ${data.gases.c2h2} ppm, Ethylene (C2H4) ${data.gases.c2h4} ppm — see Section 2 for the full gas table. A fault-zone classification (Duval Pentagon) is not computed by this report; use the live DGA diagnostics screen in-app for that.`
+      : `This asset does not publish dissolved gas concentrations — Section 2 carries no gas data. A DGA-based fault assessment requires a laboratory oil analysis, attached separately.`,
     `Dynamic Thermal Rating headroom: +${data.dtrHeadroomKva.toLocaleString()} kVA at current ambient conditions. Bushing dielectric loss: tan δ ${data.bushingTanDelta}% (${data.bushingPhaseBStatus}).`,
   ]
   doc.text(execSummary, 14, 98, { maxWidth: pageWidth - 28, lineHeightFactor: 1.4 })
@@ -237,9 +241,20 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
   doc.text('Dissolved Key Gas Concentrations (per IEEE C57.104-2019 gas list)', 14, 35)
 
+  if (!data.gasesMeasured) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(180, 83, 9)
+    doc.text('NO DISSOLVED-GAS SENSOR ON THIS ASSET — NO GAS DATA TO REPORT', 14, 44)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105)
+    doc.text(
+      'This transformer does not publish dissolved gas concentrations. Attach a laboratory oil analysis ' +
+      '(ASTM D3612) separately; the zeros below are placeholders, not measurements of zero gas.',
+      14, 51, { maxWidth: pageWidth - 28, lineHeightFactor: 1.4 }
+    )
+  }
+
   autoTable(doc, {
-    startY: 40,
-    head: [['Gas Species', 'Formula', 'Observed (ppm)']],
+    startY: data.gasesMeasured ? 40 : 62,
+    head: [['Gas Species', 'Formula', data.gasesMeasured ? 'Observed (ppm)' : 'Not measured']],
     body: [
       ['Hydrogen', 'H2', `${data.gases.h2}`],
       ['Methane', 'CH4', `${data.gases.ch4}`],

@@ -415,8 +415,12 @@ export default function BushingHealthStudio({
                 />
                 <ReferenceLine y={50} stroke="#22c55e" strokeDasharray="3 3" label={{ value: 'Normal (<50 pC)', fill: '#22c55e', fontSize: 9 }} />
                 <ReferenceLine y={150} stroke="#ef4444" strokeDasharray="3 3" label={{ value: 'Critical (>150 pC)', fill: '#ef4444', fontSize: 9 }} />
-                <Scatter name="PD Pulses" data={prpdData}>
-                  {prpdData.map((entry, index) => (
+                {/* filteredPoints, not prpdData: the refactor that split the
+                    filter out of this memo left the chart bound to the
+                    unfiltered set, so the corona/internal/surface filter
+                    buttons highlighted but changed nothing on the plot. */}
+                <Scatter name="PD Pulses" data={filteredPoints}>
+                  {filteredPoints.map((entry, index) => (
                     <Cell
                       key={`cell-${index}`}
                       fill={

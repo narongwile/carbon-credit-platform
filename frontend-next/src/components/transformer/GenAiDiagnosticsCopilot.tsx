@@ -30,6 +30,10 @@ interface GenAiDiagnosticsCopilotProps {
   bushingStatus?: string
   dpAging?: number
   moisturePpm?: number
+  /** Real bushing tan-delta (%) from the device, or null when none is fitted. */
+  bushingTanDeltaLive?: number | null
+  /** Real partial-discharge magnitude (pC) from the device, or null. */
+  partialDischargeLive?: number | null
 }
 
 interface ChatMessage {
@@ -56,7 +60,21 @@ export default function GenAiDiagnosticsCopilot({
   bushingStatus = 'Phase B Warning (tan δ: 0.82%)',
   dpAging = 590,
   moisturePpm = 22,
+  bushingTanDeltaLive = null,
+  partialDischargeLive = null,
 }: GenAiDiagnosticsCopilotProps) {
+  // The bushing answer below quoted tan δ = 0.82%, ΔC1 = +3.6% and PD = 195 pC
+  // as this transformer's readings, and concluded "ฉนวนระเบิดได้" (the
+  // insulation can explode) within 60 days. Those three numbers were string
+  // literals — identical for every asset on the platform, including units with
+  // no bushing instrumentation at all. An engineer reading it had no way to
+  // tell that their specific transformer was not, in fact, 60 days from a
+  // bushing failure. Real readings are used when the device publishes them;
+  // otherwise the answer is explicitly labelled as a worked example.
+  const tanDeltaKnown = bushingTanDeltaLive != null
+  const pdKnown = partialDischargeLive != null
+  const tanDeltaTxt = tanDeltaKnown ? `${bushingTanDeltaLive}%` : '0.82% (ตัวอย่างจำลอง)'
+  const pdTxt = pdKnown ? `${partialDischargeLive} pC` : '195 pC (ตัวอย่างจำลอง)'
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [inputQuery, setInputQuery] = useState('')
   const [isTyping, setIsTyping] = useState(false)
@@ -74,11 +92,11 @@ export default function GenAiDiagnosticsCopilot({
     const initialGreeting: ChatMessage = {
       id: 'msg-init',
       sender: 'ai',
-      text: `สวัสดีครับวิศวกรผู้ดูแลระบบ ผมคือ **Industrial GenAI Diagnostics Copilot** 🤖 พร้อมช่วยวินิจฉัยสภาพหม้อแปลง **${assetName} (${assetId})** แบบเรียลไทม์\n\n📌 **สรุปสถานะด่วนจาก Telemetry ปัจจุบัน:**\n- **DGA Diagnosis:** ตรวจพบก๊าซ C₂H₂ สะสม ${dgaGases.c2h2} ppm เข้าข่าย **${duvalVerdict}**\n- **พยากรณ์ Time-to-Trip (RTT):** คาดว่าจะแตะระดับขีดอันตรายในอีก **${rttDays} วัน** หากไม่มีการระบายก๊าซ\n- **Bushing Health:** ตรวจพบการเสื่อมของฉนวนที่ **${bushingStatus}**\n- **DTR Headroom:** ขณะนี้ยังมีขีดความสามารถรองรับโหลดได้อีก **+${dtrHeadroomKva.toLocaleString()} kVA** อย่างปลอดภัย\n\nคุณสามารถคลิกคำถามด่วนด้านล่าง หรือสอบถามเจาะจงได้เลยครับ!`,
+      text: `สวัสดีครับวิศวกรผู้ดูแลระบบ ผมคือ **Industrial GenAI Diagnostics Copilot** 🤖 พร้อมช่วยวินิจฉัยสภาพหม้อแปลง **${assetName} (${assetId})** แบบเรียลไทม์\n\n📌 **สรุปสถานะด่วนจาก Telemetry ปัจจุบัน:**\n- **DGA Diagnosis:** ตรวจพบก๊าซ C₂H₂ สะสม ${dgaGases.c2h2} ppm เข้าข่าย **${duvalVerdict}**\n- **พยากรณ์ Time-to-Trip (RTT):** คาดว่าจะแตะระดับขีดอันตรายในอีก **${rttDays} วัน** หากไม่มีการระบายก๊าซ\n- **Bushing Health:** ${tanDeltaKnown ? `tan δ = ${bushingTanDeltaLive}% (ค่าที่วัดได้)` : 'ยังไม่ได้ติดตั้งเซนเซอร์วัดบุชชิ่ง — ไม่มีค่าจริง'}\n- **DTR Headroom:** ขณะนี้ยังมีขีดความสามารถรองรับโหลดได้อีก **+${dtrHeadroomKva.toLocaleString()} kVA** อย่างปลอดภัย\n\nคุณสามารถคลิกคำถามด่วนด้านล่าง หรือสอบถามเจาะจงได้เลยครับ!`,
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
     }
     setMessages([initialGreeting])
-  }, [assetId, assetName, duvalVerdict, rttDays, bushingStatus, dtrHeadroomKva])
+  }, [assetId, assetName, duvalVerdict, rttDays, tanDeltaKnown, bushingTanDeltaLive, dtrHeadroomKva, dgaGases.c2h2])
 
   // Preset Question Suggestions
   const PRESET_QUERIES = [
@@ -95,7 +113,7 @@ export default function GenAiDiagnosticsCopilot({
     {
       id: 'bushing',
       title: '🔌 ประเมินความเสี่ยงบุชชิ่ง Phase B',
-      prompt: 'Bushing Phase B ที่มีค่า tan delta 0.82% และ PD 195 pC มีความเสี่ยงที่จะเกิด Flashover หรือไม่ และต้องแก้ไขอย่างไร?',
+      prompt: 'ค่า tan delta และ PD ของบุชชิ่ง มีความเสี่ยงที่จะเกิด Flashover หรือไม่ และต้องแก้ไขอย่างไร?',
     },
     {
       id: 'wo',
@@ -129,7 +147,9 @@ export default function GenAiDiagnosticsCopilot({
       } else if (text.includes('โหลด') || text.includes('DTR') || text.includes('overload')) {
         reply = `### ⚡ ผลการประเมินการจ่ายโหลดแบบไดนามิก (DTR Assessment)\n**อิงตามมาตรฐาน IEEE C57.115:**\n\n- **สถานะปัจจุบัน:** ขณะนี้หม้อแปลงมี Headroom ปลอดภัยเหลืออยู่ **+${dtrHeadroomKva.toLocaleString()} kVA**\n- **คำตอบ:** Headroom ที่คำนวณได้คือ **${dtrHeadroomKva.toLocaleString()} kVA** — ตัวเลขนี้มาจากแบบจำลอง DTR ไม่ใช่การอนุมัติให้จ่ายโหลดเพิ่ม กรุณายืนยันกับอุณหภูมิ Hot-Spot จริง (ปัจจุบัน ${hotSpotTemp}°C, ขีดจำกัด 120°C) และสภาพโหลดหน้างานก่อนตัดสินใจทุกครั้ง\n\n💰 **การวิเคราะห์ความคุ้มค่า (Economic Arbitrage):**\n- การรันโหลดเพิ่ม 300 kVA เป็นเวลา 4 ชั่วโมง จะสร้างมูลค่าพลังงานไฟฟ้าประมาณ **+$132 USD**\n- ในขณะที่ค่าเสื่อมราคาของฉนวนกระดาษ (Aging Loss) เพิ่มขึ้นเพียง **-$0.85 USD** เท่านั้น ถือว่าคุ้มค่าอย่างยิ่ง\n- **คำแนะนำ:** แนะนำให้เปิดระบบ **Auto-Dispatch ONAF-1 Pre-Cooling** ไว้ล่วงหน้า 30 นาที เพื่อหน่วงอุณหภูมิไม่ให้พุ่งเร็วเกินไปครับ`
       } else if (text.includes('Bushing') || text.includes('บุชชิ่ง') || text.includes('tan delta')) {
-        reply = `### 🔌 ผลการประเมินความเสี่ยงบุชชิ่ง Phase B\n**อ้างอิงมาตรฐาน IEEE C57.19.00 / IEC 60137:**\n\n1. **ระดับความรุนแรง:** 🟡 **ELEVATED RISK (เฝ้าระวังระดับสูง)**\n   - ค่า **tan δ = 0.82%** (เกณฑ์ปกติ < 0.5%, เริ่มเสื่อม 0.5–1.0%, อันตราย > 1.0%)\n   - ค่า **ΔC₁ Drift = +3.6%** บ่งชี้ว่าเริ่มมีการเจาะทะลุ (Puncture) เล็กน้อยระหว่างชั้นกระดาษฉนวน Condenser Foil ภายในบุชชิ่ง\n   - สัญญาณ Partial Discharge (PD) ที่ **195 pC** บนกราฟ PRPD ชี้ว่าเป็นชนิด **Void/Cavity Discharge** (มีโพรงอากาศในฉนวน)\n\n2. **ความเสี่ยง Flashover:**\n   - ยังไม่เกิดการระเบิดในทันที แต่ห้ามปล่อยทิ้งไว้เกิน 60 วัน เพราะความร้อนจะเร่งให้ค่า tan δ ทะลุ 1.0% จนฉนวนระเบิดได้\n   - แนะนำให้จัดซื้อบุชชิ่งอะไหล่สำรอง (P/N: BSH-115KV) และสลับตัวในการ Overhaul รอบหน้า`
+        reply = (tanDeltaKnown || pdKnown)
+          ? `### 🔌 การประเมินความเสี่ยงบุชชิ่ง\n**อ้างอิงเกณฑ์ IEEE C57.19.00 / IEC 60137:**\n\n1. **ค่าที่วัดได้จากหม้อแปลงเครื่องนี้:**\n   - tan δ = **${tanDeltaTxt}** (เกณฑ์: ปกติ < 0.5%, เริ่มเสื่อม 0.5–1.0%, อันตราย > 1.0%)\n   - Partial Discharge = **${pdTxt}**\n\n2. **ข้อควรระวัง:**\n   - ตัวเลขข้างต้นเป็นค่า ณ ขณะนี้เท่านั้น การประเมินความเสี่ยง Flashover ที่เชื่อถือได้ต้องดูแนวโน้มย้อนหลังและผลทดสอบ Doble ประจำปีประกอบด้วย\n   - หากค่า tan δ เกิน 1.0% หรือมีแนวโน้มเพิ่มเร็ว ให้ปรึกษาวิศวกรผู้รับผิดชอบเพื่อวางแผนทดสอบแบบ off-line`
+          : `### 🔌 การประเมินความเสี่ยงบุชชิ่ง\n\n⚠️ **หม้อแปลง ${assetName} (${assetId}) เครื่องนี้ยังไม่ได้ติดตั้งเซนเซอร์วัดบุชชิ่ง** จึงไม่มีค่า tan δ หรือ PD จริงให้ประเมิน\n\n**ด้านล่างนี้คือ **ตัวอย่างจำลอง (worked example)** เพื่ออธิบายเกณฑ์เท่านั้น — ไม่ใช่ค่าของหม้อแปลงเครื่องนี้:**\n\n- ตัวอย่าง: tan δ = 0.82% → อยู่ในช่วง "เริ่มเสื่อม" (เกณฑ์ปกติ < 0.5%, เริ่มเสื่อม 0.5–1.0%, อันตราย > 1.0%)\n- ตัวอย่าง: PD = 195 pC → บ่งชี้รูปแบบ Void/Cavity Discharge\n\n**สิ่งที่ควรทำจริง:** ใช้ผลทดสอบ Doble/tan δ ประจำปีของหม้อแปลงเครื่องนี้เป็นเกณฑ์ หรือติดตั้งชุด Online Bushing Adapter เพื่อให้ระบบประเมินจากค่าจริงได้`
       } else if (text.includes('CMMS') || text.includes('ใบสั่งงาน') || text.includes('Work Order')) {
         reply = `### 📋 ร่างใบสั่งงานซ่อมบำรุง (CMMS Work Order Generated)\nระบบได้สร้างร่างใบสั่งงานฉบับสมบูรณ์สำหรับหม้อแปลง **${assetName}** เรียบร้อยแล้วครับ:\n\n- **Work Order ID:** \`WO-2026-0828-TR01\`\n- **Priority:** 🔴 HIGH PRIORITY (Urgent Maintenance Window)\n- **ชื่องาน:** ตรวจสอบหน้าสัมผัสขดลวด, ไล่ก๊าซ C₂H₂ และทดสอบ Dielectric บุชชิ่ง Phase B\n- **Safety Protocol:** LOTO 115 kV + Arc-Flash Category 4 PPE Checklist พร้อมแล้ว\n\nท่านสามารถคลิกปุ่มด้านล่างเพื่อเปิดดูและส่งเข้าระบบ CMMS / SAP PM ได้ทันทีครับ!`
         actionSuggestion = {
