@@ -39,7 +39,7 @@ spec:
       containers:
       - name: frontend
         # Updated by go-live deployment sync — see infra/scripts/sync-nodered-flow.sh
-        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:2cdf0e13
+        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:9c993218
         ports:
         - containerPort: 80
         resources:
