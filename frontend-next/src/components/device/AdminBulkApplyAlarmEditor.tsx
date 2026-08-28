@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import AlarmParamConfig from '@/components/device/AlarmParamConfig'
-import { useManagedDevices, useFleetHosts } from '@/lib/useManagedDevices'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
@@ -31,7 +31,6 @@ export default function AdminBulkApplyAlarmEditor({
   domain, orgId = 'org-1', nodeId,
 }: { domain: SensorDomain; orgId?: string; nodeId?: string }) {
   const { devices } = useManagedDevices(orgId)
-  const { hosts } = useFleetHosts(orgId)
   const setRuleDB = useAlarmDB((s) => s.setRule)
 
   const domainDevices = useMemo(() => {
@@ -127,7 +126,7 @@ export default function AdminBulkApplyAlarmEditor({
       return new Set(selectedDeviceIds)
     }
     if (applyScope === 'org') {
-      return new Set(hosts.filter((h) => h.domain === domain).map((h) => h.id))
+      return new Set(devices.filter((d) => d.domain === domain).map((d) => d.id))
     }
     const targetDeptSet = new Set<string>()
     if (applyScope === 'department') {
@@ -143,7 +142,7 @@ export default function AdminBulkApplyAlarmEditor({
         .filter((d) => d.domain === domain && d.departmentIds?.some((deptId) => targetDeptSet.has(deptId)))
         .map((d) => d.id)
     )
-  }, [applyScope, selectedDeviceIds, domain, hosts, devices, selectedDeptIds, selectedUserIds, orgUsers])
+  }, [applyScope, selectedDeviceIds, domain, devices, devices, selectedDeptIds, selectedUserIds, orgUsers])
 
   const applyAllLabel = useMemo(() => {
     const platform = DOMAIN_META[domain]?.platform ?? domain
@@ -203,7 +202,7 @@ export default function AdminBulkApplyAlarmEditor({
     }
 
     if (applyScope === 'org') {
-      const targets = hosts.filter((h) => h.domain === domain)
+      const targets = devices.filter((h) => h.domain === domain)
       if (!window.confirm(`Apply these thresholds to all ${targets.length} ${platform} device(s) across your ENTIRE organization? This overwrites each device's current alarm rule and cannot be undone.`)) return
       targets.forEach((h) => setRuleDB(h.id, rule, orgId))
       if (isLive()) {
@@ -229,7 +228,7 @@ export default function AdminBulkApplyAlarmEditor({
 
     if (!window.confirm(`Apply these thresholds to ${targetDeviceIds.size} ${platform} device(s) across ${scopeDesc}? This overwrites each device's current alarm rule and cannot be undone.`)) return
 
-    hosts.filter((h) => h.domain === domain && targetDeviceIds.has(h.id)).forEach((h) => setRuleDB(h.id, rule, orgId))
+    devices.filter((h) => h.domain === domain && targetDeviceIds.has(h.id)).forEach((h) => setRuleDB(h.id, rule, orgId))
 
     if (!isLive()) {
       toast.success(`Applied to ${targetDeviceIds.size} device(s) across ${scopeDesc} (demo — not persisted)`)

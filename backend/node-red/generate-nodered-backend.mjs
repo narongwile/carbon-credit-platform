@@ -2002,6 +2002,27 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       } catch(err) { node.error('notify:'+c.channel+' '+err.message); }
     }
 
+    // --- Deduplication: track targets already dispatched via notification_channels
+    // to prevent double-alerting users who appear in BOTH notification_channels (user_id scoped)
+    // and user_prefs. A user configured in both gets one alert, not two.
+    const _sentEmails = new Set();
+    const _sentTgChats = new Set();
+    const _sentLineIds = new Set();
+    const _sentGchatUrls = new Set();
+    for (const _c of channels) {
+      if (!_c.user_id) continue;
+      if (_c.channel === 'email' && _c.target) _sentEmails.add(_c.target.toLowerCase());
+      if (_c.channel === 'telegram' && _c.target) {
+        const _at = _c.target.lastIndexOf('@');
+        _sentTgChats.add(_at > 0 ? _c.target.slice(_at + 1) : _c.target);
+      }
+      if (_c.channel === 'line' && _c.target) {
+        const _at = _c.target.lastIndexOf('@');
+        _sentLineIds.add(_at > 0 ? _c.target.slice(_at + 1) : _c.target);
+      }
+      if (_c.channel === 'googlechat' && _c.target) _sentGchatUrls.add(_c.target);
+    }
+
     // Per-user channels
     try {
       const [urows] = await controlPool.query("SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?", [e.orgId]);
@@ -2013,7 +2034,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
         const isAdmin = u.role === 'admin' || u.role === 'superadmin';
         if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;
 
-        if (sel.email && u.email) {
+        if (sel.email && u.email && !_sentEmails.has(u.email.toLowerCase())) {
           try {
             const mc = await global.get('mailConfig')();
             const link = __linkFor(u.role);
@@ -2042,7 +2063,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
                 }
               } catch(_) {}
             }
-            if (tok && chat) {
+            if (tok && chat && !_sentTgChats.has(String(chat))) {
               await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor(u.role)))});
             }
           } catch(err) { node.error('notify:user-telegram '+err.message); }
@@ -2077,9 +2098,11 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
                 }
               } catch(_) {}
             }
-            if (tok && to && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {
+            if (tok && to && !_sentLineIds.has(to) && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {
               await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});
-            } else if (tok) {
+            } else if (tok && to && !_sentLineIds.has(to)) {
+              await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
+            } else if (tok && !to) {
               await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
             }
           } catch(err) { node.error('notify:user-line '+err.message); }
@@ -2091,7 +2114,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             if (uCh.length && uCh[0].target) rawGchat = uCh[0].target.trim();
           } catch(_) {}
         }
-        if (sel.googlechat && rawGchat) {
+        if (sel.googlechat && rawGchat && !_sentGchatUrls.has(rawGchat)) {
           try {
             await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});
           } catch(err) { node.error('notify:user-googlechat '+err.message); }

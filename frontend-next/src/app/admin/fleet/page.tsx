@@ -175,7 +175,7 @@ export default function FleetPage() {
       </div>
 
       {fleetView === 'risk' ? (
-        <FleetRiskMatrix />
+        <FleetRiskMatrix hosts={hosts} sites={sites} />
       ) : (
         <>
           {!live && (

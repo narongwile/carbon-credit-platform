@@ -38,7 +38,8 @@ spec:
       #   - name: gitlab-registry
       containers:
       - name: frontend
-        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:0064d786
+        # Updated by go-live deployment sync — see infra/scripts/sync-nodered-flow.sh
+        image: registry.gitlab.com/narongwile/carbon-credit-platform/frontend-next:5bf36a45
         ports:
         - containerPort: 80
         resources:

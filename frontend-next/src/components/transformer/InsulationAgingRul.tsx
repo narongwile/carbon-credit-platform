@@ -56,9 +56,9 @@ export default function InsulationAgingRul({
     : { label: 'Critically Wet', color: '#ef4444', bg: 'rgba(239,68,68,0.1)', risk: 'Severe dielectric flashover risk; urgent dehydration required' }
 
   const handleDispatchWorkOrder = () => {
-    const woNumber = `WO-${Math.floor(1000 + Math.random() * 9000)}`
+    const woNumber = `WO-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 6)}-${Date.now().toString(36).toUpperCase().slice(-6)}`
     setDispatchedWo(woNumber)
-    toast.success(`Work Order ${woNumber} dispatched to CMMS (Priority: High · Dehydration & Degassing)`)
+    toast.success(`Work Order ${woNumber} queued — export to your CMMS manually (no direct integration configured)`)
   }
 
   // DP Gauge SVG calculations

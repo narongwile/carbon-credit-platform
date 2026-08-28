@@ -509,7 +509,7 @@ export default function AlarmParamConfig({
         const keys = new Set<string>()
         rows.forEach((r: any) => { if (r.param_key) keys.add(r.param_key) })
         if (keys.size > 0) {
-          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
         }
       }).catch(() => {})
 
@@ -535,7 +535,7 @@ export default function AlarmParamConfig({
           }
           if (keys.size > 0) {
             setLiveReadings((prev) => ({ ...prev, ...combined }))
-            setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+            setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
           }
         })
       }
@@ -552,7 +552,7 @@ export default function AlarmParamConfig({
           }
         }
         if (keys.size > 0) {
-          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
         }
       }).catch(() => {})
 
@@ -586,7 +586,7 @@ export default function AlarmParamConfig({
       }
     }
     if (keys.size > 0) {
-      setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+      setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
     }
   }, [nodeId, devices, domain])
 
@@ -746,7 +746,7 @@ export default function AlarmParamConfig({
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key))
       }
-      if (nodeId && domain === 'transformer') {
+      if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
       }
     }
@@ -762,7 +762,7 @@ export default function AlarmParamConfig({
         )
       }
       // Demo / fallback for single device when no live stream yet:
-      if (nodeId && domain === 'transformer') {
+      if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
       }
     }
@@ -778,7 +778,7 @@ export default function AlarmParamConfig({
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key)).length
       }
-      if (nodeId && domain === 'transformer') {
+      if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
       }
     }
@@ -788,7 +788,7 @@ export default function AlarmParamConfig({
         (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
       ).length
     }
-    if (nodeId && domain === 'transformer') {
+    if (!isLive() && nodeId && domain === 'transformer') {
       return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
     }
     return allParams.length

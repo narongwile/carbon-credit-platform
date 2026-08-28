@@ -1,8 +1,15 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet } from 'lucide-react'
 import clsx from 'clsx'
+import type { SensorHost } from '@/types/fleet'
+
+interface FleetRiskMatrixProps {
+  hosts?: SensorHost[]
+  sites?: Record<string, string>
+  currentAssetId?: string
+}
 
 interface FleetTransformerRisk {
   id: string
@@ -19,7 +26,7 @@ interface FleetTransformerRisk {
   status: 'CRITICAL' | 'WARNING' | 'NORMAL'
 }
 
-const FLEET_DATA: FleetTransformerRisk[] = [
+const FALLBACK_DATA: FleetTransformerRisk[] = [
   {
     id: 'tr-004',
     name: 'TR-004',
@@ -134,8 +141,57 @@ const FLEET_DATA: FleetTransformerRisk[] = [
   },
 ]
 
-export default function FleetRiskMatrix() {
-  const [selectedAsset, setSelectedAsset] = useState<FleetTransformerRisk | null>(FLEET_DATA[0])
+function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
+  const tHost = host as any
+  const hi = tHost.healthIndex ?? 85
+  const pof = hi < 50 ? 5 : hi < 65 ? 4 : hi < 75 ? 3 : hi < 85 ? 2 : 1
+  const kva = tHost.kva as number | undefined
+  const cof = kva == null ? 3 : kva >= 5000 ? 5 : kva >= 2500 ? 4 : kva >= 1000 ? 3 : kva >= 500 ? 2 : 1
+  const rulYears = parseFloat(Math.max(0.5, ((hi - 40) / 60) * 25).toFixed(1))
+  const riskScore = pof * cof
+  const capexAction =
+    riskScore >= 20 ? 'Emergency Replacement / Unit Overhaul'
+    : riskScore >= 12 ? 'Full Oil Reclamation & Tap Changer Service'
+    : riskScore >= 8  ? 'Online Vacuum Dehydration & Bushing Inspection'
+    : riskScore >= 4  ? 'Condition-Based Maintenance (CBM)'
+    : 'Routine DGA Oil Sampling (Annual)'
+  const budgetEstUsd =
+    riskScore >= 20 ? 150000
+    : riskScore >= 12 ? 45000
+    : riskScore >= 8  ? 18000
+    : riskScore >= 4  ? 5000
+    : 1500
+  const fiscalYear =
+    pof >= 4 ? 'FY2026' : pof === 3 ? 'FY2027' : pof === 2 ? 'FY2028' : 'FY2029+'
+  const status: 'CRITICAL'|'WARNING'|'NORMAL' =
+    pof >= 4 && cof >= 4 ? 'CRITICAL' : riskScore >= 9 ? 'WARNING' : 'NORMAL'
+  return {
+    id: host.id,
+    name: host.name || host.id,
+    site: siteName,
+    healthIndex: hi,
+    rulYears,
+    pof,
+    cof,
+    loadCriticality: kva ? `${kva.toLocaleString()} kVA transformer` : 'Capacity unknown',
+    capexAction,
+    budgetEstUsd,
+    fiscalYear,
+    status,
+  }
+}
+
+export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId }: FleetRiskMatrixProps) {
+  const hasRealData = hosts && hosts.length > 0
+  const FLEET_DATA: FleetTransformerRisk[] = useMemo(() => {
+    if (!hasRealData) return FALLBACK_DATA  // keep the old hardcoded array as fallback
+    return hosts
+      .filter(h => !h.domain || h.domain === 'transformer')
+      .map(h => deriveRisk(h, sites[h.siteId ?? ''] ?? h.siteId ?? '—'))
+      .sort((a, b) => (b.pof * b.cof) - (a.pof * a.cof))
+  }, [hosts, sites, hasRealData])
+  
+  const [selectedAsset, setSelectedAsset] = useState<FleetTransformerRisk | null>(FLEET_DATA[0] ?? null)
 
   const totalBudgetReqUsd = FLEET_DATA.reduce((acc, a) => acc + a.budgetEstUsd, 0)
   const criticalCount = FLEET_DATA.filter(a => a.status === 'CRITICAL').length
@@ -143,6 +199,13 @@ export default function FleetRiskMatrix() {
 
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      {!hasRealData && (
+        <div className="mb-3 px-3 py-2 rounded-lg text-xs text-amber-300 font-medium flex items-center gap-2"
+          style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
+          <AlertTriangle size={13} />
+          <span>Illustrative reference data — pass <code className="font-mono text-amber-200">hosts</code> prop to show your real fleet</span>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div>
@@ -358,7 +421,8 @@ export default function FleetRiskMatrix() {
                     onClick={() => setSelectedAsset(item)}
                     className={clsx(
                       'cursor-pointer transition-colors',
-                      selectedAsset?.id === item.id ? 'bg-slate-800/80 font-bold' : 'hover:bg-slate-900/50'
+                      selectedAsset?.id === item.id ? 'bg-slate-800/80 font-bold' : 'hover:bg-slate-900/50',
+                      item.id === currentAssetId ? 'ring-2 ring-indigo-500' : ''
                     )}
                   >
                     <td className="py-2 px-3 font-sans">

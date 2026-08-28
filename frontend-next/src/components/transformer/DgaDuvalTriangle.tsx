@@ -150,18 +150,29 @@ const METHODS: Record<MethodType, MethodConfig> = {
       { id: 'T3-H', name: 'Thermal > 700°C (Oil Only)', color: '#f97316', desc: 'Severe thermal fault in mineral oil without paper involvement', poly2D: [[140, 120], [105, 150], [56.3, 92.8], [75, 110]] },
       { id: 'D', name: 'Electrical Discharges (D1/D2)', color: '#ec4899', desc: 'High or low energy electrical breakdown', poly2D: [[140, 120], [75, 110], [56.3, 92.8], [122, 55]] },
     ],
+      // Pentagon 2 (IEC 60599 / IEEE C57.104): Thermal & Paper Carbonization focus.
+      // CH₄ (methane) and C₂H₆ (ethane) are the primary markers distinguishing
+      // low-temperature paper carbonization (zone C) from high-temperature oil-only
+      // thermal faults (zone T3-H). Ignoring CH₄ conflates these two fault types.
     diagnose: (h2, c2h6, ch4, c2h4, c2h2) => {
       const tot = h2 + c2h6 + ch4 + c2h4 + c2h2
       if (tot <= 0) return 'PD'
-      const pH2 = (h2 / tot) * 100
+      const pH2   = (h2   / tot) * 100
       const pC2H2 = (c2h2 / tot) * 100
       const pC2H4 = (c2h4 / tot) * 100
-      const pCH4 = (ch4 / tot) * 100
+      const pCH4  = (ch4  / tot) * 100
       const pC2H6 = (c2h6 / tot) * 100
-      if (pH2 >= 55) return 'PD'
-      if (pC2H2 >= 15) return 'D'
-      if (pC2H6 >= 35) return 'C'
-      if (pC2H4 >= 30) return 'T3-H'
+      // IEC 60599 / Duval Pentagon 2: PD = high hydrogen generation
+      if (pH2 >= 50) return 'PD'
+      // D = electrical discharges: high acetylene fraction
+      if (pC2H2 >= 14) return 'D'
+      // T3-H (>700°C oil thermal, no cellulose): high ethylene dominates
+      if (pC2H4 >= 30 && pC2H4 > (pCH4 + pC2H6)) return 'T3-H'
+      // C (paper carbonization): methane + ethane co-elevation marks cellulose decomposition
+      if ((pC2H6 >= 20 && pCH4 >= 15) || (pCH4 >= 35 && pC2H4 < 25)) return 'C'
+      // T3-H fallback: high ethylene without paper signal
+      if (pC2H4 >= 25) return 'T3-H'
+      // O (overheating < 250°C): low-energy thermal, methane/ethane dominant
       return 'O'
     },
   },

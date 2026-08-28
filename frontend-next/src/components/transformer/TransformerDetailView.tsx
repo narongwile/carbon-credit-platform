@@ -866,6 +866,51 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     }
   }, [transformer?.sensors, nameplate, transformer?.voltage])
 
+  // ── Dynamic Duval T1 verdict from live DGA gases ───────────────────────────────────────
+  const computedDuvalVerdict = useMemo(() => {
+    if (!liveTelemetry.measured.dga) return undefined
+    const tot = liveTelemetry.ch4 + liveTelemetry.c2h4 + liveTelemetry.c2h2
+    if (tot <= 0) return undefined
+    const pTop  = (liveTelemetry.ch4  / tot) * 100
+    const pRight = (liveTelemetry.c2h4 / tot) * 100
+    const pLeft  = (liveTelemetry.c2h2 / tot) * 100
+    if (pTop >= 98) return 'PD — Partial Discharge'
+    if (pLeft < 4 && pRight < 20) return 'T1 — Thermal Fault (< 300°C)'
+    if (pLeft < 4 && pRight >= 20 && pRight < 50) return 'T2 — Thermal Fault (300°C–700°C)'
+    if (pLeft < 15 && pRight >= 50) return 'T3 — Thermal Fault (> 700°C)'
+    if (pLeft >= 13 && pRight < 23) return 'D1 — Low Energy Discharge'
+    if (pLeft >= 13 && pRight >= 23) return 'D2 — High Energy Arcing'
+    return 'DT — Mixed Thermal & Electrical'
+  }, [liveTelemetry.ch4, liveTelemetry.c2h4, liveTelemetry.c2h2, liveTelemetry.measured.dga])
+
+  // ── Dynamic RTT (days to C2H2 threshold) ─────────────────────────────────────────
+  const computedRttDays = useMemo(() => {
+    if (!liveTelemetry.measured.dga) return undefined
+    const c2h2 = liveTelemetry.c2h2
+    if (c2h2 <= 0) return undefined
+    if (c2h2 >= 35) return 0
+    // Conservative estimate: 1.2% daily accumulation rate from current level
+    const ratePerDay = Math.max(0.05, c2h2 * 0.012)
+    return Math.min(365, Math.round((35 - c2h2) / ratePerDay))
+  }, [liveTelemetry.c2h2, liveTelemetry.measured.dga])
+
+  // ── Dynamic DP (Degree of Polymerization) via IEEE C57.91 Arrhenius ────────────────
+  const computedDpAging = useMemo(() => {
+    const measured = liveTelemetry.measured.hotSpotTemp || liveTelemetry.measured.oilTemp
+    if (!measured) return undefined
+    const faa = Math.exp(15000 / (110 + 273.15) - 15000 / (liveTelemetry.hotSpotTemp + 273.15))
+    return Math.round(Math.max(200, 1000 - ((52000 * faa) / 180000) * 800))
+  }, [liveTelemetry.hotSpotTemp, liveTelemetry.measured.hotSpotTemp, liveTelemetry.measured.oilTemp])
+
+  // ── Dynamic bushing status from live sensor ───────────────────────────────────
+  const computedBushingStatus = useMemo(() => {
+    const td = transformer?.sensors?.bushingTanDelta?.value ?? null
+    if (td == null) return 'Not Measured (No Bushing Sensor Installed)'
+    if (td > 1.0) return `CRITICAL — tan δ: ${td.toFixed(3)}% (exceeds 1.0% limit per IEEE C57.19)`
+    if (td > 0.5) return `WARNING — tan δ: ${td.toFixed(3)}% (elevated, monitor closely)`
+    return `Normal — tan δ: ${td.toFixed(3)}%`
+  }, [transformer?.sensors?.bushingTanDelta?.value])
+
   const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
   const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'threats'>('dga')
   const [dtrMode, setDtrMode] = useState<'ampacity' | 'bess'>('ampacity')
@@ -1696,8 +1741,12 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                         <Activity size={15} className="text-emerald-400" />
                         <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-500/40 font-bold uppercase tracking-wider">
-                        Overall: Condition 2 (Caution · RoG Monitored)
+                      <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
+                        style={liveTelemetry.measured.dga
+                          ? { background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }
+                          : { background: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' }
+                        }>
+                        {liveTelemetry.measured.dga ? 'Live DGA — Snapshot Reading' : 'No DGA Sensor — Rates Unavailable'}
                       </span>
                     </div>
 
@@ -1715,12 +1764,60 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
                           {[
-                            { gas: 'Hydrogen (H2)', val: liveTelemetry.h2, rog24: '+2.1', rog7d: '+1.4', limit: '80 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
-                            { gas: 'Methane (CH4)', val: liveTelemetry.ch4, rog24: '+3.5', rog7d: '+2.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
-                            { gas: 'Acetylene (C2H2)', val: liveTelemetry.c2h2, rog24: '+0.1', rog7d: '+0.05', limit: '2.0 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
-                            { gas: 'Ethylene (C2H4)', val: liveTelemetry.c2h4, rog24: '+4.2', rog7d: '+3.1', limit: '50 ppm', cond: 'Cond 2 (Caution)', color: '#fbbf24' },
-                            { gas: 'Ethane (C2H6)', val: liveTelemetry.c2h6, rog24: '+1.0', rog7d: '+0.8', limit: '90 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
-                            { gas: 'Carbon Monoxide (CO)', val: liveTelemetry.co, rog24: '+12.0', rog7d: '+8.5', limit: '900 ppm', cond: 'Cond 1 (Normal)', color: '#4ade80' },
+                            { 
+                              gas: 'Hydrogen (H2)', 
+                              val: liveTelemetry.h2, 
+                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              limit: '100 ppm',
+                              cond: liveTelemetry.h2 > 300 ? 'Cond 4 (Action)' : liveTelemetry.h2 > 100 ? 'Cond 3 (Warning)' : liveTelemetry.h2 > 10 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                              color: liveTelemetry.h2 > 300 ? '#ef4444' : liveTelemetry.h2 > 100 ? '#f97316' : liveTelemetry.h2 > 10 ? '#fbbf24' : '#4ade80',
+                            },
+                            { 
+                              gas: 'Methane (CH4)', 
+                              val: liveTelemetry.ch4, 
+                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              limit: '120 ppm',
+                              cond: liveTelemetry.ch4 > 400 ? 'Cond 4 (Action)' : liveTelemetry.ch4 > 120 ? 'Cond 3 (Warning)' : liveTelemetry.ch4 > 30 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                              color: liveTelemetry.ch4 > 400 ? '#ef4444' : liveTelemetry.ch4 > 120 ? '#f97316' : liveTelemetry.ch4 > 30 ? '#fbbf24' : '#4ade80',
+                            },
+                            { 
+                              gas: 'Acetylene (C2H2)', 
+                              val: liveTelemetry.c2h2, 
+                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              limit: '2 ppm',
+                              cond: liveTelemetry.c2h2 > 35 ? 'Cond 4 (Action)' : liveTelemetry.c2h2 > 9 ? 'Cond 3 (Warning)' : liveTelemetry.c2h2 > 1 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                              color: liveTelemetry.c2h2 > 35 ? '#ef4444' : liveTelemetry.c2h2 > 9 ? '#f97316' : liveTelemetry.c2h2 > 1 ? '#fbbf24' : '#4ade80',
+                            },
+                            { 
+                              gas: 'Ethylene (C2H4)', 
+                              val: liveTelemetry.c2h4, 
+                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              limit: '50 ppm',
+                              cond: liveTelemetry.c2h4 > 100 ? 'Cond 4 (Action)' : liveTelemetry.c2h4 > 50 ? 'Cond 3 (Warning)' : liveTelemetry.c2h4 > 12 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                              color: liveTelemetry.c2h4 > 100 ? '#ef4444' : liveTelemetry.c2h4 > 50 ? '#f97316' : liveTelemetry.c2h4 > 12 ? '#fbbf24' : '#4ade80',
+                            },
+                            { 
+                              gas: 'Ethane (C2H6)', 
+                              val: liveTelemetry.c2h6, 
+                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              limit: '90 ppm',
+                              cond: liveTelemetry.c2h6 > 280 ? 'Cond 4 (Action)' : liveTelemetry.c2h6 > 90 ? 'Cond 3 (Warning)' : liveTelemetry.c2h6 > 20 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                              color: liveTelemetry.c2h6 > 280 ? '#ef4444' : liveTelemetry.c2h6 > 90 ? '#f97316' : liveTelemetry.c2h6 > 20 ? '#fbbf24' : '#4ade80',
+                            },
+                            { 
+                              gas: 'Carbon Monoxide (CO)', 
+                              val: liveTelemetry.co, 
+                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                              limit: '900 ppm',
+                              cond: liveTelemetry.co > 2500 ? 'Cond 4 (Action)' : liveTelemetry.co > 900 ? 'Cond 3 (Warning)' : liveTelemetry.co > 350 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                              color: liveTelemetry.co > 2500 ? '#ef4444' : liveTelemetry.co > 900 ? '#f97316' : liveTelemetry.co > 350 ? '#fbbf24' : '#4ade80',
+                            },
                           ].map((row) => (
                             <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
                               <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
@@ -1992,13 +2089,13 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 }}
                 bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
                 partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
-                duvalVerdict="T2 - Thermal Fault (300°C - 700°C)"
-                rttDays={38}
+                duvalVerdict={computedDuvalVerdict}
+                rttDays={computedRttDays}
                 oilTemp={liveTelemetry.oilTemp}
                 hotSpotTemp={liveTelemetry.hotSpotTemp}
                 dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
-                bushingStatus="Phase B Warning (tan δ: 0.82%)"
-                dpAging={590}
+                bushingStatus={computedBushingStatus}
+                dpAging={computedDpAging}
                 moisturePpm={liveTelemetry.moisture}
               />
             </div>
@@ -2064,8 +2161,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 <X size={18} />
               </button>
             </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              <FleetRiskMatrix />
+            <div className="p-6">
+              <FleetRiskMatrix currentAssetId={transformer.id} />
             </div>
           </div>
         </div>
