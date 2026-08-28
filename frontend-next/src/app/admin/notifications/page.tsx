@@ -143,7 +143,6 @@ export default function AlarmNotificationPage() {
     return () => { cancelled = true }
   }, [live, orgId])
 
-  const [scope, setScope] = useState<'all' | string>('all')
 
   // Global Org Fallback channels
   const [orgChannels, setOrgChannels] = useState<NotificationChannelConfig[]>(defaultNotificationChannels)
@@ -709,26 +708,6 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          <div className="max-w-sm">
-            <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Apply to device</label>
-            <select
-              value={scope}
-              onChange={(e) => {
-                const val = e.target.value
-                setScope(val)
-                if (val !== 'all') {
-                  const dev = devices.find((d) => d.id === val)
-                  if (dev?.domain) setProduct(dev.domain)
-                }
-              }}
-              className="w-full rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-indigo-500"
-              style={inset}
-            >
-              <option value="all">All devices ({devices.length})</option>
-              {devices.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.id})</option>)}
-            </select>
-          </div>
-
           {/* Domain-aware product profile */}
           <div>
             <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-semibold">Product alarm profile</label>
@@ -746,7 +725,7 @@ export default function AlarmNotificationPage() {
             </div>
           </div>
 
-          <AdminBulkApplyAlarmEditor domain={product} orgId={orgId} nodeId={scope !== 'all' ? scope : undefined} />
+          <AdminBulkApplyAlarmEditor domain={product} orgId={orgId} />
         </div>
       )}
 

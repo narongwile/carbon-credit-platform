@@ -347,7 +347,16 @@ export const EXPECTED_PAYLOAD_CATALOG: Record<SensorDomain, ExtendedAlarmParam[]
  * 'load' has no alarm-catalog parameter at all (deliberately — see the
  * COMPOUND_ALARM_CATALOG note above); loading is alarmed via CurrentAVG/I3p.
  */
-const DEFAULT_TRANSFORMER_KEYS = ['oilTemp', 'windingTemp', 'hydrogen', 'moisture', 'oilLevel']
+const DEFAULT_TRANSFORMER_KEYS = [
+  'oilTemp', 'windingTemp', 'ambientTemp', 'bottomOilTemp', 'coreTemp',
+  'VoltAN', 'VoltBN', 'VoltCN', 'VoltUnbalanceAN', 'VoltUnbalanceBN', 'VoltUnbalanceCN',
+  'VoltAB', 'VoltBC', 'VoltCA', 'VoltLN_AVG',
+  'CurrentA', 'CurrentB', 'CurrentC', 'CurrentAVG',
+  'PFTotal', 'Hz',
+  'ActivepowerTotal',
+  'hydrogen', 'methane', 'acetylene', 'ethylene', 'ethane', 'co', 'co2',
+  'moisture', 'oilLevel', 'pressure', 'vibration',
+]
 
 /** Categorize any parameter key into one of the standard tabs */
 export function classifyParam(key: string, domain?: SensorDomain): ParamCategory {
@@ -468,35 +477,93 @@ export default function AlarmParamConfig({
   // Fetch Real Live Telemetry & Discovered Parameters
   // -------------------------------------------------------------------------
   useEffect(() => {
-    if (!live || !nodeId) {
-      setLiveReadings({})
-      return
-    }
+    if (!live) return
     let cancelled = false
-    const fetchLatest = () => {
-      api.latest(nodeId).then((r) => {
-        if (cancelled || !r?.values) return
-        setLiveReadings(r.values)
-        setDiscoveredWireKeys(Object.keys(r.values))
-      })
-    }
-    fetchLatest()
-    const pollId = setInterval(fetchLatest, 5000)
 
-    // Telemetry WS stream
-    const unsubscribe = subscribeTelemetry((frame) => {
-      if (frame.id === nodeId && frame.values && Object.keys(frame.values).length > 0) {
-        setLiveReadings((prev) => ({ ...prev, ...frame.values }))
-        setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
+    const targetNodeIds = nodeId
+      ? [nodeId]
+      : (targetDeviceIds && targetDeviceIds.size > 0 ? Array.from(targetDeviceIds) : [])
+
+    if (nodeId) {
+      const fetchLatest = () => {
+        api.latest(nodeId).then((r) => {
+          if (cancelled || !r?.values) return
+          setLiveReadings(r.values)
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(r.values)])))
+        })
       }
-    })
+      fetchLatest()
+      const pollId = setInterval(fetchLatest, 5000)
 
-    return () => {
-      cancelled = true
-      clearInterval(pollId)
-      unsubscribe()
+      // Telemetry WS stream
+      const unsubscribe = subscribeTelemetry((frame) => {
+        if (frame.id === nodeId && frame.values && Object.keys(frame.values).length > 0) {
+          setLiveReadings((prev) => ({ ...prev, ...frame.values }))
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
+        }
+      })
+
+      // Discover historical parameters from api.readings
+      api.readings(nodeId, 720, 3600).then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return
+        const keys = new Set<string>()
+        rows.forEach((r: any) => { if (r.param_key) keys.add(r.param_key) })
+        if (keys.size > 0) {
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+        }
+      }).catch(() => {})
+
+      return () => {
+        cancelled = true
+        clearInterval(pollId)
+        unsubscribe()
+      }
+    } else if (targetNodeIds.length > 0) {
+      // Discover parameters across multiple selected devices
+      const fetchMulti = () => {
+        Promise.allSettled(targetNodeIds.slice(0, 10).map((id) => api.latest(id))).then((results) => {
+          if (cancelled) return
+          const combined: Record<string, number> = {}
+          const keys = new Set<string>()
+          for (const res of results) {
+            if (res.status === 'fulfilled' && res.value?.values) {
+              Object.entries(res.value.values).forEach(([k, v]) => {
+                keys.add(k)
+                if (typeof v === 'number' && combined[k] === undefined) combined[k] = v
+              })
+            }
+          }
+          if (keys.size > 0) {
+            setLiveReadings((prev) => ({ ...prev, ...combined }))
+            setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+          }
+        })
+      }
+      fetchMulti()
+      const pollId = setInterval(fetchMulti, 8000)
+
+      // Also discover history from readings across selected devices
+      Promise.allSettled(targetNodeIds.slice(0, 5).map((id) => api.readings(id, 720, 3600))).then((results) => {
+        if (cancelled) return
+        const keys = new Set<string>()
+        for (const res of results) {
+          if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+            res.value.forEach((r: any) => { if (r.param_key) keys.add(r.param_key) })
+          }
+        }
+        if (keys.size > 0) {
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+        }
+      }).catch(() => {})
+
+      return () => {
+        cancelled = true
+        clearInterval(pollId)
+      }
+    } else {
+      setLiveReadings({})
     }
-  }, [live, nodeId])
+  }, [live, nodeId, targetDeviceIds])
 
   // Fetch configured display parameters from SENSOR READINGS
   useEffect(() => {
@@ -519,7 +586,7 @@ export default function AlarmParamConfig({
       }
     }
     if (keys.size > 0) {
-      setDiscoveredWireKeys(Array.from(keys))
+      setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
     }
   }, [nodeId, devices, domain])
 
@@ -540,8 +607,9 @@ export default function AlarmParamConfig({
   // Active keys reported across the active target scope (union of all reporting devices in scope)
   const activeKeysAcrossScope = useMemo(() => {
     const s = new Set<string>()
+    Object.keys(liveReadings).forEach((k) => s.add(k))
+    discoveredWireKeys.forEach((k) => s.add(k))
     if (nodeId) {
-      Object.keys(liveReadings).forEach((k) => s.add(k))
       const dev = devices.find((d) => d.id === nodeId) as { lastSample?: Record<string, unknown> } | undefined
       if (dev?.lastSample) Object.keys(dev.lastSample).forEach((k) => s.add(k))
     } else {
@@ -552,20 +620,21 @@ export default function AlarmParamConfig({
       }
     }
     return s
-  }, [nodeId, liveReadings, devices, scopedDevices])
+  }, [nodeId, liveReadings, discoveredWireKeys, devices, scopedDevices])
 
   /**
    * Keys THIS device has actually reported — the same evidence SENSOR READINGS
-   * is built from (api.latest + the fleet row's lastSample). null on the
-   * org-level editor, where there is no single device to scope to.
+   * is built from (api.latest + the fleet row's lastSample + readings history).
+   * null on the org-level editor, where there is no single device to scope to.
    */
   const reportedKeys = useMemo(() => {
     if (!nodeId) return null
     const s = new Set<string>(Object.keys(liveReadings))
+    discoveredWireKeys.forEach((k) => s.add(k))
     const dev = devices.find((d) => d.id === nodeId) as { lastSample?: Record<string, unknown> } | undefined
     if (dev?.lastSample) for (const k of Object.keys(dev.lastSample)) s.add(k)
     return s
-  }, [nodeId, liveReadings, devices])
+  }, [nodeId, liveReadings, discoveredWireKeys, devices])
 
   const allParams: ExtendedAlarmParam[] = useMemo(() => {
     const map = new Map<string, ExtendedAlarmParam>()

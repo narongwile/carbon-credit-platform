@@ -21,7 +21,7 @@ import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
-import { Check, Users, Building2, Globe, Search } from 'lucide-react'
+import { Check, Users, Building2, Globe, Search, Sliders, Cpu } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 
@@ -33,6 +33,10 @@ export default function AdminBulkApplyAlarmEditor({
   const { devices } = useManagedDevices(orgId)
   const { hosts } = useFleetHosts(orgId)
   const setRuleDB = useAlarmDB((s) => s.setRule)
+
+  const domainDevices = useMemo(() => {
+    return devices.filter((d) => d.domain === domain)
+  }, [devices, domain])
 
   const [orgDepts, setOrgDepts] = useState<{ id: string; name: string }[]>([])
   const [orgUsers, setOrgUsers] = useState<{ id: string; name: string; departmentId?: string }[]>([])
@@ -48,10 +52,25 @@ export default function AdminBulkApplyAlarmEditor({
     return () => { cancelled = true }
   }, [orgId])
 
-  const [applyScope, setApplyScope] = useState<'org' | 'department' | 'user'>('org')
+  const [applyScope, setApplyScope] = useState<'devices' | 'org' | 'department' | 'user'>('devices')
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>(() => {
+    if (nodeId) return [nodeId]
+    return []
+  })
+  const [deviceSearch, setDeviceSearch] = useState('')
   const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>([])
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [userSearch, setUserSearch] = useState('')
+
+  // Sync selected devices when domain or nodeId changes
+  useEffect(() => {
+    if (nodeId) {
+      setSelectedDeviceIds([nodeId])
+      setApplyScope('devices')
+    } else if (domainDevices.length && selectedDeviceIds.length === 0) {
+      setSelectedDeviceIds(domainDevices.map((d) => d.id))
+    }
+  }, [nodeId, domain, domainDevices.length])
 
   // Seed default selections when lists load
   useEffect(() => {
@@ -65,6 +84,14 @@ export default function AdminBulkApplyAlarmEditor({
       setSelectedUserIds([orgUsers[0].id])
     }
   }, [orgUsers, selectedUserIds.length])
+
+  const toggleDevice = (id: string) => {
+    setSelectedDeviceIds((prev) =>
+      prev.includes(id) ? (prev.length > 1 ? prev.filter((d) => d !== id) : prev) : [...prev, id]
+    )
+  }
+  const selectAllDevices = () => setSelectedDeviceIds(domainDevices.map((d) => d.id))
+  const clearDevices = () => { if (domainDevices.length) setSelectedDeviceIds([domainDevices[0].id]) }
 
   const toggleDept = (id: string) => {
     setSelectedDeptIds((prev) =>
@@ -84,8 +111,21 @@ export default function AdminBulkApplyAlarmEditor({
   const selectAllUsers = () => setSelectedUserIds(orgUsers.map((u) => u.id))
   const clearUsers = () => { if (orgUsers.length) setSelectedUserIds([orgUsers[0].id]) }
 
+  const filteredDevices = useMemo(() => {
+    if (!deviceSearch.trim()) return domainDevices
+    const q = deviceSearch.toLowerCase()
+    return domainDevices.filter((d) =>
+      d.name.toLowerCase().includes(q) ||
+      d.id.toLowerCase().includes(q) ||
+      (d.location && d.location.toLowerCase().includes(q))
+    )
+  }, [domainDevices, deviceSearch])
+
   // Target device resolution
   const targetDeviceIds = useMemo(() => {
+    if (applyScope === 'devices') {
+      return new Set(selectedDeviceIds)
+    }
     if (applyScope === 'org') {
       return new Set(hosts.filter((h) => h.domain === domain).map((h) => h.id))
     }
@@ -103,11 +143,20 @@ export default function AdminBulkApplyAlarmEditor({
         .filter((d) => d.domain === domain && d.departmentIds?.some((deptId) => targetDeptSet.has(deptId)))
         .map((d) => d.id)
     )
-  }, [applyScope, domain, hosts, devices, selectedDeptIds, selectedUserIds, orgUsers])
+  }, [applyScope, selectedDeviceIds, domain, hosts, devices, selectedDeptIds, selectedUserIds, orgUsers])
 
   const applyAllLabel = useMemo(() => {
     const platform = DOMAIN_META[domain]?.platform ?? domain
     const count = targetDeviceIds.size
+    if (applyScope === 'devices') {
+      if (selectedDeviceIds.length === 1) {
+        const devName = domainDevices.find((d) => d.id === selectedDeviceIds[0])?.name || selectedDeviceIds[0]
+        return `Apply Baseline to ${devName} (${selectedDeviceIds[0]})`
+      }
+      const names = selectedDeviceIds.map((id) => domainDevices.find((d) => d.id === id)?.name || id).join(', ')
+      const truncated = names.length > 35 ? `${names.slice(0, 32)}…` : names
+      return `Apply Baseline to ${selectedDeviceIds.length} Selected ${platform} Devices (${truncated})`
+    }
     if (applyScope === 'org') {
       return `Apply Baseline to All ${platform} Devices (${count} Devices, Org-Wide)`
     }
@@ -121,11 +170,38 @@ export default function AdminBulkApplyAlarmEditor({
       ? (orgUsers.find((u) => u.id === selectedUserIds[0])?.name ?? '1 User')
       : `${selectedUserIds.length} Users`
     return `Apply Baseline to ${userLabel}'s Teams (${count} ${platform} Devices)`
-  }, [applyScope, domain, targetDeviceIds.size, selectedDeptIds, orgDepts, selectedUserIds, orgUsers])
+  }, [applyScope, domain, targetDeviceIds.size, selectedDeviceIds, domainDevices, selectedDeptIds, orgDepts, selectedUserIds, orgUsers])
 
   // window.confirm before bulk write
   const applyRule = async (rule: NodeAlarmRule) => {
     const platform = DOMAIN_META[domain]?.platform ?? domain
+
+    if (applyScope === 'devices') {
+      if (selectedDeviceIds.length === 0) {
+        toast.error('Please select at least one device')
+        return
+      }
+      const names = selectedDeviceIds.map((id) => domainDevices.find((d) => d.id === id)?.name || id).join(', ')
+      if (!window.confirm(`Apply these alarm thresholds to ${selectedDeviceIds.length} ${platform} device(s) (${names})? This overwrites each device's current alarm rule and cannot be undone.`)) return
+
+      selectedDeviceIds.forEach((id) => setRuleDB(id, rule, orgId))
+
+      if (!isLive()) {
+        toast.success(`Applied to ${selectedDeviceIds.length} device(s) (demo — not persisted)`)
+        return
+      }
+
+      const results = await Promise.allSettled(
+        selectedDeviceIds.map((id) => api.putRule(id, { orgId, rule }))
+      )
+      const successCount = results.filter((r) => r.status === 'fulfilled' && (r as any).value).length
+      if (selectedDeviceIds.length === domainDevices.length) {
+        await api.putOrgRule(orgId, { rule }).catch(() => {})
+      }
+      toast.success(`Applied alarm thresholds to ${successCount} ${platform} device(s) successfully!`)
+      return
+    }
+
     if (applyScope === 'org') {
       const targets = hosts.filter((h) => h.domain === domain)
       if (!window.confirm(`Apply these thresholds to all ${targets.length} ${platform} device(s) across your ENTIRE organization? This overwrites each device's current alarm rule and cannot be undone.`)) return
@@ -184,8 +260,9 @@ export default function AdminBulkApplyAlarmEditor({
         <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-medium">
           Apply baseline to
         </label>
-        <div className="flex gap-2 mb-2.5">
+        <div className="flex flex-wrap gap-2 mb-2.5">
           {[
+            { id: 'devices', label: 'Select Devices', icon: Sliders },
             { id: 'org', label: 'Whole organization', icon: Globe },
             { id: 'department', label: 'Departments', icon: Building2 },
             { id: 'user', label: 'Users', icon: Users },
@@ -195,7 +272,7 @@ export default function AdminBulkApplyAlarmEditor({
               type="button"
               onClick={() => setApplyScope(id as any)}
               className={clsx(
-                'flex-1 py-2 px-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all',
+                'flex-1 min-w-[120px] py-2 px-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all',
                 applyScope === id ? 'text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
               )}
               style={applyScope === id ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1' } : inset}
@@ -205,6 +282,84 @@ export default function AdminBulkApplyAlarmEditor({
             </button>
           ))}
         </div>
+
+        {/* Multi-Device Picker */}
+        {applyScope === 'devices' && (
+          <div className="p-3.5 rounded-xl border border-slate-800/90 space-y-3" style={{ background: '#0a0e1a' }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-white flex items-center gap-2">
+                <Sliders size={13} className="text-indigo-400" />
+                Select Target {DOMAIN_META[domain]?.platform || 'Devices'} ({selectedDeviceIds.length} of {domainDevices.length} selected)
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={selectAllDevices}
+                  className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium underline"
+                >
+                  Select All ({domainDevices.length})
+                </button>
+                <span className="text-slate-600">·</span>
+                <button
+                  type="button"
+                  onClick={clearDevices}
+                  className="text-[11px] text-slate-400 hover:text-slate-300 underline"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {/* Search Filter */}
+            {domainDevices.length > 3 && (
+              <div className="relative">
+                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                <input
+                  type="text"
+                  value={deviceSearch}
+                  onChange={(e) => setDeviceSearch(e.target.value)}
+                  placeholder={`Search ${domain} devices by name, ID, or site…`}
+                  className="w-full pl-7 pr-3 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                  style={inset}
+                />
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+              {filteredDevices.map((d) => {
+                const isSelected = selectedDeviceIds.includes(d.id)
+                const isOnline = d.status === 'online'
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => toggleDevice(d.id)}
+                    className={clsx(
+                      'flex items-center justify-between p-2.5 rounded-lg text-xs font-medium transition-all border text-left',
+                      isSelected
+                        ? 'bg-indigo-950/40 border-indigo-500/80 text-white shadow-sm'
+                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                    )}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={clsx('w-4 h-4 rounded flex items-center justify-center text-[9px] border shrink-0', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
+                        {isSelected && <Check size={10} />}
+                      </div>
+                      <div className="min-w-0 truncate">
+                        <span className="font-semibold block truncate text-slate-200">{d.name}</span>
+                        <span className="text-[10px] text-slate-500 font-mono block truncate">{d.id}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                      <span className={clsx('w-1.5 h-1.5 rounded-full', isOnline ? 'bg-emerald-400' : 'bg-slate-500')} />
+                      <span className="text-[10px] text-slate-400 uppercase">{d.status}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Multi-Department Picker */}
         {applyScope === 'department' && (
@@ -334,7 +489,7 @@ export default function AdminBulkApplyAlarmEditor({
 
       <AlarmParamConfig
         domain={domain}
-        nodeId={nodeId}
+        nodeId={applyScope === 'devices' ? (selectedDeviceIds.length === 1 ? selectedDeviceIds[0] : undefined) : nodeId}
         orgId={orgId}
         onApplyAll={applyRule}
         applyAllLabel={applyAllLabel}
