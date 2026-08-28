@@ -2,8 +2,11 @@
 
 import React, { useState } from 'react'
 import clsx from 'clsx'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 interface DgaDuvalTriangleProps {
+  /** true only when this asset really publishes dissolved-gas values. */
+  gasesMeasured?: boolean
   ch4?: number // ppm
   c2h4?: number // ppm
   c2h2?: number // ppm
@@ -168,6 +171,7 @@ const METHODS: Record<MethodType, MethodConfig> = {
 }
 
 export default function DgaDuvalTriangle({
+  gasesMeasured = false,
   ch4 = 45,
   c2h4 = 35,
   c2h2 = 3.2,
@@ -257,6 +261,19 @@ export default function DgaDuvalTriangle({
 
   return (
     <div className="flex flex-col gap-4 text-white">
+      {/* Duval places a fault into a named zone from the gas RATIOS, so it
+          always produces a confident-looking verdict — including from the
+          catalogue fallbacks (H2 65, CH4 45, C2H2 3.2, ...) that
+          liveTelemetry substitutes when the asset has no online DGA monitor,
+          which is most of them. Those constants are identical for every asset
+          in every org, so without this the same "T2 - Thermal Fault" verdict
+          renders fleet-wide as if each unit had been sampled. */}
+      {!gasesMeasured && (
+        <DemoDataBanner
+          title="หม้อแปลงเครื่องนี้ไม่มีเซนเซอร์ DGA ออนไลน์ — ค่าก๊าซด้านล่างเป็นค่าตัวอย่าง"
+          detail="ผลวินิจฉัย Duval ทั้งหมดในหน้านี้คำนวณจากค่าก๊าซตัวอย่างมาตรฐาน ไม่ใช่ค่าที่วัดจากหม้อแปลงเครื่องนี้ จึงไม่สามารถใช้ระบุชนิดฟอลต์ของเครื่องนี้ได้ กรุณาใช้ผลตรวจ DGA จากห้องปฏิบัติการ หรือติดตั้งเครื่องวิเคราะห์ก๊าซออนไลน์"
+        />
+      )}
       {/* Header with Multi-Method Switcher (Triangles & Pentagons) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
         <div>

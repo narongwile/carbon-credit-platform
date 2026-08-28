@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet } from 'lucide-react'
 import clsx from 'clsx'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 interface FleetTransformerRisk {
   id: string
@@ -143,6 +144,10 @@ export default function FleetRiskMatrix() {
 
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      <DemoDataBanner
+        title="หน้าจอนี้ไม่ได้ดึงข้อมูลจากฟลีทจริงขององค์กรคุณ"
+        detail="หม้อแปลงทุกเครื่องในตาราง (TR-004, TR-101, ...) ค่า Health Index, RUL, ตำแหน่ง PoF/CoF และโดยเฉพาะ 'งบประมาณที่ต้องใช้' ทั้งหมด เป็นชุดข้อมูลตัวอย่างที่ฝังอยู่ในโค้ด — ทุกองค์กรที่เปิดหน้านี้จะเห็นตัวเลขชุดเดียวกัน ห้ามนำยอดงบประมาณรวมนี้ไปใช้ตั้งงบหรือจัดลำดับการเปลี่ยนหม้อแปลงจริง"
+      />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div>

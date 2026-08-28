@@ -101,6 +101,12 @@ test_proofs_and_integrity:
     # one — it was doing the opposite, showing a critical reading emptier
     # than a healthy one.
     - node e2e/proofs/test-range-bar-direction.mjs
+    # The PdM studios show engineering verdicts (fault type, remaining life,
+    # replacement budget) computed from constants baked into the component
+    # whenever the asset does not publish that channel. Each such panel must
+    # carry a DemoDataBanner, and no fabricated record may be attributed to a
+    # real named laboratory or utility.
+    - node e2e/proofs/test-studio-data-provenance.mjs
     # The alarm editor's no-data fallback row set must name CATALOG keys
     # ('oilTemp'), not the telemetry payload names realtime.ts maps them to
     # ('oilTemperature'). It named the payload ones, so both temperature

@@ -1670,6 +1670,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   <div className="flex flex-col 2xl:flex-row gap-8">
                     <div className="flex-1 min-w-[320px]">
                       <DgaDuvalTriangle
+                        gasesMeasured={liveTelemetry.measured.dga}
                         h2={liveTelemetry.h2}
                         ch4={liveTelemetry.ch4}
                         c2h4={liveTelemetry.c2h4}
@@ -1680,6 +1681,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     <div className="hidden 2xl:block w-px bg-[#1e2433]" />
                     <div className="flex-1 min-w-[320px]">
                       <InsulationAgingRul 
+                        inputsMeasured={false}
                         hotSpotTemp={liveTelemetry.hotSpotTemp} 
                         hoursInService={52000} 
                         oilTemp={liveTelemetry.oilTemp}
