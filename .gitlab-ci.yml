@@ -124,6 +124,11 @@ test_proofs_and_integrity:
     # how the org-level Telegram send was lost: `tok`/`chat` computed, the
     # `await fetch` gone). Verified to fail on that specific regression.
     - node backend/node-red/handler-deadcode.test.mjs
+    # PERSONAL alarm delivery (notifypersonal), the third delivery path. Added
+    # with the personal email/LINE/Telegram/GChat coverage work but, like both
+    # notify tests before it, not wired into CI — this list is explicit, not a
+    # glob, so a new test file here runs nowhere until it is named.
+    - node backend/node-red/notify-personal.test.mjs
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"

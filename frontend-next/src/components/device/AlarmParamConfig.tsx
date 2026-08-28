@@ -509,7 +509,7 @@ export default function AlarmParamConfig({
         const keys = new Set<string>()
         rows.forEach((r: any) => { if (r.param_key) keys.add(r.param_key) })
         if (keys.size > 0) {
-          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
         }
       }).catch(() => {})
 
@@ -535,7 +535,7 @@ export default function AlarmParamConfig({
           }
           if (keys.size > 0) {
             setLiveReadings((prev) => ({ ...prev, ...combined }))
-            setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+            setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
           }
         })
       }
@@ -552,7 +552,7 @@ export default function AlarmParamConfig({
           }
         }
         if (keys.size > 0) {
-          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
         }
       }).catch(() => {})
 
@@ -586,7 +586,7 @@ export default function AlarmParamConfig({
       }
     }
     if (keys.size > 0) {
-      setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...keys])))
+      setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
     }
   }, [nodeId, devices, domain])
 
