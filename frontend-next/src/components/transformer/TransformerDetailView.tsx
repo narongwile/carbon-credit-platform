@@ -918,6 +918,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   const [showCopilotDrawer, setShowCopilotDrawer] = useState(false)
   const [showLabDgaModal, setShowLabDgaModal] = useState(false)
   const [showFleetRiskModal, setShowFleetRiskModal] = useState(false)
+  const [showPdmStudioModal, setShowPdmStudioModal] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPdmStudioModal(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const handleExportOfficialDossier = async () => {
     // The export button renders inside the loaded view, but `transformer` is
@@ -1283,6 +1294,229 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }
   const sc = statusColors[transformer.status]
 
+  const renderPdmStudioBody = (isFullscreen = false) => (
+    <div className="space-y-6">
+      {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
+      {pdmSubTab === 'dga' && (
+        <div className="space-y-6">
+          <div className={clsx(
+            'flex flex-col gap-6',
+            isFullscreen ? 'xl:grid xl:grid-cols-2 xl:gap-8' : '2xl:flex-row 2xl:gap-8'
+          )}>
+            <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
+              <DgaDuvalTriangle
+                h2={liveTelemetry.h2}
+                ch4={liveTelemetry.ch4}
+                c2h4={liveTelemetry.c2h4}
+                c2h2={liveTelemetry.c2h2}
+                c2h6={liveTelemetry.c2h6}
+              />
+            </div>
+            {!isFullscreen && <div className="hidden 2xl:block w-px bg-[#1e2433]" />}
+            <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
+              <InsulationAgingRul 
+                hotSpotTemp={liveTelemetry.hotSpotTemp} 
+                hoursInService={52000} 
+                oilTemp={liveTelemetry.oilTemp}
+                moistureInOil={liveTelemetry.moisture}
+                assetId={transformer.id || 'TRF-01'}
+              />
+            </div>
+          </div>
+
+          {/* IEEE C57.104-2019 DGA Gas Generation Rate (RoG) Matrix */}
+          <div className={clsx('pt-4 border-t border-slate-800 space-y-3', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Activity size={15} className="text-emerald-400" />
+                <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
+                style={liveTelemetry.measured.dga
+                  ? { background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }
+                  : { background: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' }
+                }>
+                {liveTelemetry.measured.dga ? 'Live DGA — Snapshot Reading' : 'No DGA Sensor — Rates Unavailable'}
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
+                    <th className="py-2 px-2.5">Gas Species</th>
+                    <th className="py-2 px-2.5">Current (ppm)</th>
+                    <th className="py-2 px-2.5">24h Rate (Δppm/day)</th>
+                    <th className="py-2 px-2.5">7d Rate (Δppm/day)</th>
+                    <th className="py-2 px-2.5">90th %ile Limit</th>
+                    <th className="py-2 px-2.5">Condition Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                  {[
+                    { 
+                      gas: 'Hydrogen (H2)', 
+                      val: liveTelemetry.h2, 
+                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      limit: '100 ppm',
+                      cond: liveTelemetry.h2 > 300 ? 'Cond 4 (Action)' : liveTelemetry.h2 > 100 ? 'Cond 3 (Warning)' : liveTelemetry.h2 > 10 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                      color: liveTelemetry.h2 > 300 ? '#ef4444' : liveTelemetry.h2 > 100 ? '#f97316' : liveTelemetry.h2 > 10 ? '#fbbf24' : '#4ade80',
+                    },
+                    { 
+                      gas: 'Methane (CH4)', 
+                      val: liveTelemetry.ch4, 
+                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      limit: '120 ppm',
+                      cond: liveTelemetry.ch4 > 400 ? 'Cond 4 (Action)' : liveTelemetry.ch4 > 120 ? 'Cond 3 (Warning)' : liveTelemetry.ch4 > 30 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                      color: liveTelemetry.ch4 > 400 ? '#ef4444' : liveTelemetry.ch4 > 120 ? '#f97316' : liveTelemetry.ch4 > 30 ? '#fbbf24' : '#4ade80',
+                    },
+                    { 
+                      gas: 'Acetylene (C2H2)', 
+                      val: liveTelemetry.c2h2, 
+                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      limit: '2 ppm',
+                      cond: liveTelemetry.c2h2 > 35 ? 'Cond 4 (Action)' : liveTelemetry.c2h2 > 9 ? 'Cond 3 (Warning)' : liveTelemetry.c2h2 > 1 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                      color: liveTelemetry.c2h2 > 35 ? '#ef4444' : liveTelemetry.c2h2 > 9 ? '#f97316' : liveTelemetry.c2h2 > 1 ? '#fbbf24' : '#4ade80',
+                    },
+                    { 
+                      gas: 'Ethylene (C2H4)', 
+                      val: liveTelemetry.c2h4, 
+                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      limit: '50 ppm',
+                      cond: liveTelemetry.c2h4 > 100 ? 'Cond 4 (Action)' : liveTelemetry.c2h4 > 50 ? 'Cond 3 (Warning)' : liveTelemetry.c2h4 > 12 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                      color: liveTelemetry.c2h4 > 100 ? '#ef4444' : liveTelemetry.c2h4 > 50 ? '#f97316' : liveTelemetry.c2h4 > 12 ? '#fbbf24' : '#4ade80',
+                    },
+                    { 
+                      gas: 'Ethane (C2H6)', 
+                      val: liveTelemetry.c2h6, 
+                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      limit: '90 ppm',
+                      cond: liveTelemetry.c2h6 > 280 ? 'Cond 4 (Action)' : liveTelemetry.c2h6 > 90 ? 'Cond 3 (Warning)' : liveTelemetry.c2h6 > 20 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                      color: liveTelemetry.c2h6 > 280 ? '#ef4444' : liveTelemetry.c2h6 > 90 ? '#f97316' : liveTelemetry.c2h6 > 20 ? '#fbbf24' : '#4ade80',
+                    },
+                    { 
+                      gas: 'Carbon Monoxide (CO)', 
+                      val: liveTelemetry.co, 
+                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
+                      limit: '900 ppm',
+                      cond: liveTelemetry.co > 2500 ? 'Cond 4 (Action)' : liveTelemetry.co > 900 ? 'Cond 3 (Warning)' : liveTelemetry.co > 350 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
+                      color: liveTelemetry.co > 2500 ? '#ef4444' : liveTelemetry.co > 900 ? '#f97316' : liveTelemetry.co > 350 ? '#fbbf24' : '#4ade80',
+                    },
+                  ].map((row) => (
+                    <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
+                      <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
+                      <td className="py-2 px-2.5 font-bold text-white">{row.val}</td>
+                      <td className="py-2 px-2.5 text-cyan-300">{row.rog24}</td>
+                      <td className="py-2 px-2.5 text-slate-300">{row.rog7d}</td>
+                      <td className="py-2 px-2.5 text-slate-400">{row.limit}</td>
+                      <td className="py-2 px-2.5">
+                        <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{ color: row.color, backgroundColor: `${row.color}15`, border: `1px solid ${row.color}30` }}>
+                          {row.cond}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) & BESS Co-Optimization */}
+      {pdmSubTab === 'dtr' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-800/60">
+            <span className="text-xs font-semibold text-slate-300">
+              Co-Optimizing Dynamic Line/Transformer Ampacity with Substation Energy Storage
+            </span>
+            <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800">
+              <button
+                onClick={() => setDtrMode('ampacity')}
+                className={clsx(
+                  'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
+                  dtrMode === 'ampacity' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                )}
+              >
+                <Zap size={13} />
+                <span>⚡ Live DTR Ampacity</span>
+              </button>
+              <button
+                onClick={() => setDtrMode('bess')}
+                className={clsx(
+                  'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
+                  dtrMode === 'bess' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                )}
+              >
+                <Battery size={13} />
+                <span>🔋 BESS Peak Shaving</span>
+              </button>
+            </div>
+          </div>
+
+          {dtrMode === 'ampacity' ? (
+            <DynamicThermalRating
+              nameplateKva={liveTelemetry.ratedKva}
+              currentLoadKva={liveTelemetry.loadKva}
+              oilTemp={liveTelemetry.oilTemp}
+              hotSpotTemp={liveTelemetry.hotSpotTemp}
+              lat={transformer.lat ?? 13.7563}
+              lng={transformer.lng ?? 100.5018}
+              assetId={transformer.id}
+              assetName={transformer.name}
+            />
+          ) : (
+            <BessCoOptimization
+              transformerName={transformer.name}
+              orgName={currentOrgName}
+              nameplateKva={liveTelemetry.ratedKva}
+              currentLoadKva={liveTelemetry.loadKva}
+              hotSpotTemp={liveTelemetry.hotSpotTemp}
+              dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
+      {pdmSubTab === 'bushing' && (
+        <BushingHealthStudio
+          voltageKv={liveTelemetry.voltageKv}
+          assetId={transformer.id}
+          assetName={transformer.name}
+          orgName={currentOrgName}
+          isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
+          bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
+          partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
+        />
+      )}
+
+      {/* Sub-Tab 4: 5-Threats & OLTC Multi-Hazard Studio */}
+      {pdmSubTab === 'threats' && (
+        <SubstationThreatsStudio
+          assetId={transformer.id}
+          assetName={transformer.name}
+          orgName={currentOrgName}
+          voltageKv={liveTelemetry.voltageKv}
+          mainOilTemp={liveTelemetry.oilTemp}
+          bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
+          hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
+          hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
+          surgeArresterCurrentLive={transformer.sensors?.surgeArresterCurrent?.value ?? null}
+          surgeCounterLive={transformer.sensors?.surgeCounter?.value ?? null}
+          oltcMotorCurrentLive={transformer.sensors?.oltcMotorCurrent?.value ?? null}
+          oltcOilTempDeltaLive={transformer.sensors?.oltcOilTempDelta?.value ?? null}
+        />
+      )}
+    </div>
+  )
+
   return (
     <div className="h-full flex flex-col overflow-y-auto" style={{ background: '#0a0e1a' }}>
       {/* Sticky Header Group: Top bar + Mobile Tab Switcher */}
@@ -1328,7 +1562,11 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               style={{ background: '#0a0e1a', border: '1px solid #1e2433' }}>
               <Share2 size={12} /> <span className="hidden xs:inline">Export</span>
             </button>
-            <button className="p-1.5 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-colors">
+            <button
+              onClick={() => setShowPdmStudioModal(true)}
+              title="Open Fullscreen PdM Studio Workspace (เต็มจอ)"
+              className="p-1.5 rounded-lg hover:bg-indigo-600/20 text-slate-400 hover:text-indigo-300 border border-transparent hover:border-indigo-500/30 transition-colors"
+            >
               <Maximize2 size={14} />
             </button>
           </div>
@@ -1450,7 +1688,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         {/* Center - 3D model + charts + custom charts */}
         <div className={clsx(
           'flex-1 flex flex-col overflow-y-auto min-w-0',
-          (mobileTab === 'visuals' || mobileTab === 'charts') ? 'flex' : 'hidden lg:flex'
+          (mobileTab === 'visuals' || mobileTab === 'charts' || mobileTab === 'diagnostics') ? 'flex' : 'hidden lg:flex'
         )}>
           {/* 3D / Photo Gallery (Visible on Desktop OR when mobileTab === 'visuals') */}
           <div className={clsx(
@@ -1622,7 +1860,46 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 </div>
               )}
 
-              {/* PdM Advanced Studio Sub-Tabs */}
+              {/* Executive PdM Summary Hero Card */}
+              <div className="p-4 rounded-xl border border-indigo-500/30 bg-gradient-to-r from-indigo-950/40 via-slate-900/80 to-[#0a0e1a] shadow-sm mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="p-1.5 rounded-lg bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                        <ShieldCheck size={16} />
+                      </span>
+                      <span className="text-xs font-bold text-white">PdM Asset Intelligence Executive Summary</span>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-500/30 font-mono font-bold">
+                        IEEE C57.104
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-300 flex-wrap">
+                      <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono">
+                        Duval: <strong className="text-amber-300">{computedDuvalVerdict ? computedDuvalVerdict.split('—')[0].trim() : 'Active'}</strong>
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono">
+                        RTT: <strong className="text-cyan-300">{computedRttDays != null ? `${computedRttDays}d` : '—'}</strong>
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono">
+                        DP: <strong className="text-emerald-300">{computedDpAging ?? 'Healthy'}</strong>
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono truncate max-w-[210px]" title={computedBushingStatus}>
+                        Bushing: <strong className="text-purple-300">{computedBushingStatus.split('—')[0].trim()}</strong>
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setShowPdmStudioModal(true)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center justify-center gap-1.5 shadow-md border border-indigo-400/40 cursor-pointer shrink-0"
+                  >
+                    <Maximize2 size={13} />
+                    <span>เปิด PdM Studio เต็มจอ (Fullscreen) ↗</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* PdM Advanced Studio Sub-Tabs Header */}
               <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={18} className="text-indigo-400" />
@@ -1632,17 +1909,25 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   </span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <button
+                      onClick={() => setShowPdmStudioModal(true)}
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                      title="Open Fullscreen PdM Studio Workspace"
+                    >
+                      <Maximize2 size={12} />
+                      <span>⛶ เต็มจอ</span>
+                    </button>
+                    <button
                       onClick={handleExportOfficialDossier}
                       disabled={dossierExporting}
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm"
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                       title="Export a 5-page PDF summary of this asset's current telemetry and platform-computed estimates. Not a certified inspection record."
                     >
                       <Download size={12} className={dossierExporting ? 'animate-bounce' : ''} />
-                      <span>{dossierExporting ? 'Generating Summary...' : '📑 Export Telemetry Summary'}</span>
+                      <span>{dossierExporting ? 'Generating Summary...' : '📑 Export Summary'}</span>
                     </button>
                     <button
                       onClick={() => setShowCopilotDrawer(true)}
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                       title="Open Ask AI Diagnostics"
                     >
                       <Bot size={13} />
@@ -1650,7 +1935,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     </button>
                     <button
                       onClick={() => setShowLabDgaModal(true)}
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                       title="Import certified ASTM D3612 oil syringe test results"
                     >
                       <FlaskConical size={13} />
@@ -1658,7 +1943,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     </button>
                     <button
                       onClick={() => setShowFleetRiskModal(true)}
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm"
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                       title="Open Fleet Risk Matrix (ISO 55000)"
                     >
                       <Building2 size={13} />
@@ -1697,7 +1982,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       key={sub.id}
                       onClick={() => setPdmSubTab(sub.id)}
                       className={clsx(
-                        'text-xs px-3.5 py-1.5 rounded-md font-semibold transition-all whitespace-nowrap',
+                        'text-xs px-3.5 py-1.5 rounded-md font-semibold transition-all whitespace-nowrap cursor-pointer',
                         pdmSubTab === sub.id
                           ? 'bg-indigo-600 text-white shadow-sm'
                           : 'text-slate-400 hover:text-slate-200'
@@ -1709,221 +1994,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 </div>
               </div>
 
-              {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
-              {pdmSubTab === 'dga' && (
-                <div className="space-y-6">
-                  <div className="flex flex-col 2xl:flex-row gap-8">
-                    <div className="flex-1 min-w-[320px]">
-                      <DgaDuvalTriangle
-                        h2={liveTelemetry.h2}
-                        ch4={liveTelemetry.ch4}
-                        c2h4={liveTelemetry.c2h4}
-                        c2h2={liveTelemetry.c2h2}
-                        c2h6={liveTelemetry.c2h6}
-                      />
-                    </div>
-                    <div className="hidden 2xl:block w-px bg-[#1e2433]" />
-                    <div className="flex-1 min-w-[320px]">
-                      <InsulationAgingRul 
-                        hotSpotTemp={liveTelemetry.hotSpotTemp} 
-                        hoursInService={52000} 
-                        oilTemp={liveTelemetry.oilTemp}
-                        moistureInOil={liveTelemetry.moisture}
-                        assetId={transformer.id || 'TRF-01'}
-                      />
-                    </div>
-                  </div>
-
-                  {/* IEEE C57.104-2019 DGA Gas Generation Rate (RoG) Matrix */}
-                  <div className="pt-4 border-t border-slate-800 space-y-3">
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex items-center gap-2">
-                        <Activity size={15} className="text-emerald-400" />
-                        <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
-                      </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
-                        style={liveTelemetry.measured.dga
-                          ? { background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }
-                          : { background: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' }
-                        }>
-                        {liveTelemetry.measured.dga ? 'Live DGA — Snapshot Reading' : 'No DGA Sensor — Rates Unavailable'}
-                      </span>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
-                            <th className="py-2 px-2.5">Gas Species</th>
-                            <th className="py-2 px-2.5">Current (ppm)</th>
-                            <th className="py-2 px-2.5">24h Rate (Δppm/day)</th>
-                            <th className="py-2 px-2.5">7d Rate (Δppm/day)</th>
-                            <th className="py-2 px-2.5">90th %ile Limit</th>
-                            <th className="py-2 px-2.5">Condition Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                          {[
-                            { 
-                              gas: 'Hydrogen (H2)', 
-                              val: liveTelemetry.h2, 
-                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              limit: '100 ppm',
-                              cond: liveTelemetry.h2 > 300 ? 'Cond 4 (Action)' : liveTelemetry.h2 > 100 ? 'Cond 3 (Warning)' : liveTelemetry.h2 > 10 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                              color: liveTelemetry.h2 > 300 ? '#ef4444' : liveTelemetry.h2 > 100 ? '#f97316' : liveTelemetry.h2 > 10 ? '#fbbf24' : '#4ade80',
-                            },
-                            { 
-                              gas: 'Methane (CH4)', 
-                              val: liveTelemetry.ch4, 
-                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              limit: '120 ppm',
-                              cond: liveTelemetry.ch4 > 400 ? 'Cond 4 (Action)' : liveTelemetry.ch4 > 120 ? 'Cond 3 (Warning)' : liveTelemetry.ch4 > 30 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                              color: liveTelemetry.ch4 > 400 ? '#ef4444' : liveTelemetry.ch4 > 120 ? '#f97316' : liveTelemetry.ch4 > 30 ? '#fbbf24' : '#4ade80',
-                            },
-                            { 
-                              gas: 'Acetylene (C2H2)', 
-                              val: liveTelemetry.c2h2, 
-                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              limit: '2 ppm',
-                              cond: liveTelemetry.c2h2 > 35 ? 'Cond 4 (Action)' : liveTelemetry.c2h2 > 9 ? 'Cond 3 (Warning)' : liveTelemetry.c2h2 > 1 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                              color: liveTelemetry.c2h2 > 35 ? '#ef4444' : liveTelemetry.c2h2 > 9 ? '#f97316' : liveTelemetry.c2h2 > 1 ? '#fbbf24' : '#4ade80',
-                            },
-                            { 
-                              gas: 'Ethylene (C2H4)', 
-                              val: liveTelemetry.c2h4, 
-                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              limit: '50 ppm',
-                              cond: liveTelemetry.c2h4 > 100 ? 'Cond 4 (Action)' : liveTelemetry.c2h4 > 50 ? 'Cond 3 (Warning)' : liveTelemetry.c2h4 > 12 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                              color: liveTelemetry.c2h4 > 100 ? '#ef4444' : liveTelemetry.c2h4 > 50 ? '#f97316' : liveTelemetry.c2h4 > 12 ? '#fbbf24' : '#4ade80',
-                            },
-                            { 
-                              gas: 'Ethane (C2H6)', 
-                              val: liveTelemetry.c2h6, 
-                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              limit: '90 ppm',
-                              cond: liveTelemetry.c2h6 > 280 ? 'Cond 4 (Action)' : liveTelemetry.c2h6 > 90 ? 'Cond 3 (Warning)' : liveTelemetry.c2h6 > 20 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                              color: liveTelemetry.c2h6 > 280 ? '#ef4444' : liveTelemetry.c2h6 > 90 ? '#f97316' : liveTelemetry.c2h6 > 20 ? '#fbbf24' : '#4ade80',
-                            },
-                            { 
-                              gas: 'Carbon Monoxide (CO)', 
-                              val: liveTelemetry.co, 
-                              rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                              limit: '900 ppm',
-                              cond: liveTelemetry.co > 2500 ? 'Cond 4 (Action)' : liveTelemetry.co > 900 ? 'Cond 3 (Warning)' : liveTelemetry.co > 350 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                              color: liveTelemetry.co > 2500 ? '#ef4444' : liveTelemetry.co > 900 ? '#f97316' : liveTelemetry.co > 350 ? '#fbbf24' : '#4ade80',
-                            },
-                          ].map((row) => (
-                            <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
-                              <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
-                              <td className="py-2 px-2.5 font-bold text-white">{row.val}</td>
-                              <td className="py-2 px-2.5 text-cyan-300">{row.rog24}</td>
-                              <td className="py-2 px-2.5 text-slate-300">{row.rog7d}</td>
-                              <td className="py-2 px-2.5 text-slate-400">{row.limit}</td>
-                              <td className="py-2 px-2.5">
-                                <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{ color: row.color, backgroundColor: `${row.color}15`, border: `1px solid ${row.color}30` }}>
-                                  {row.cond}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) & BESS Co-Optimization */}
-              {pdmSubTab === 'dtr' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-800/60">
-                    <span className="text-xs font-semibold text-slate-300">
-                      Co-Optimizing Dynamic Line/Transformer Ampacity with Substation Energy Storage
-                    </span>
-                    <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800">
-                      <button
-                        onClick={() => setDtrMode('ampacity')}
-                        className={clsx(
-                          'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
-                          dtrMode === 'ampacity' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                        )}
-                      >
-                        <Zap size={13} />
-                        <span>⚡ Live DTR Ampacity</span>
-                      </button>
-                      <button
-                        onClick={() => setDtrMode('bess')}
-                        className={clsx(
-                          'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
-                          dtrMode === 'bess' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                        )}
-                      >
-                        <Battery size={13} />
-                        <span>🔋 BESS Peak Shaving</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {dtrMode === 'ampacity' ? (
-                    <DynamicThermalRating
-                      nameplateKva={liveTelemetry.ratedKva}
-                      currentLoadKva={liveTelemetry.loadKva}
-                      oilTemp={liveTelemetry.oilTemp}
-                      hotSpotTemp={liveTelemetry.hotSpotTemp}
-                      lat={transformer.lat ?? 13.7563}
-                      lng={transformer.lng ?? 100.5018}
-                      assetId={transformer.id}
-                      assetName={transformer.name}
-                    />
-                  ) : (
-                    <BessCoOptimization
-                      transformerName={transformer.name}
-                      orgName={currentOrgName}
-                      nameplateKva={liveTelemetry.ratedKva}
-                      currentLoadKva={liveTelemetry.loadKva}
-                      hotSpotTemp={liveTelemetry.hotSpotTemp}
-                      dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
-                    />
-                  )}
-                </div>
-              )}
-
-              {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
-              {pdmSubTab === 'bushing' && (
-                <BushingHealthStudio
-                  voltageKv={liveTelemetry.voltageKv}
-                  assetId={transformer.id}
-                  assetName={transformer.name}
-                  orgName={currentOrgName}
-                  isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
-                  bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
-                  partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
-                />
-              )}
-
-              {/* Sub-Tab 4: 5-Threats & OLTC Multi-Hazard Studio */}
-              {pdmSubTab === 'threats' && (
-                <SubstationThreatsStudio
-                  assetId={transformer.id}
-                  assetName={transformer.name}
-                  orgName={currentOrgName}
-                  voltageKv={liveTelemetry.voltageKv}
-                  mainOilTemp={liveTelemetry.oilTemp}
-                  bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
-                  hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
-                  hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
-                  surgeArresterCurrentLive={transformer.sensors?.surgeArresterCurrent?.value ?? null}
-                  surgeCounterLive={transformer.sensors?.surgeCounter?.value ?? null}
-                  oltcMotorCurrentLive={transformer.sensors?.oltcMotorCurrent?.value ?? null}
-                  oltcOilTempDeltaLive={transformer.sensors?.oltcOilTempDelta?.value ?? null}
-                />
-              )}
+              {/* Render the Studio Body Inline */}
+              {renderPdmStudioBody(false)}
             </div>
           </div>
         </div>
@@ -2168,6 +2240,105 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             </div>
             <div className="p-6">
               <FleetRiskMatrix currentAssetId={transformer.id} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fullscreen PdM Studio Workspace Modal */}
+      {showPdmStudioModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 md:p-6 bg-black/85 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-[1600px] h-[94vh] flex flex-col rounded-2xl overflow-hidden shadow-2xl border border-indigo-500/40 bg-[#0d1117]">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between flex-wrap gap-3 bg-[#0a0e1a]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+                  <ShieldCheck size={24} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-base sm:text-lg font-bold text-white">
+                      Predictive Maintenance &amp; Asset Intelligence Studio
+                    </h2>
+                    <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-indigo-950/60 text-indigo-300 border border-indigo-500/30">
+                      IEEE C57.104 · ISO 55000
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                      Asset: {transformer.name}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Deep-dive diagnostic workspace — Dissolved gas analysis, Arrhenius RUL, dynamic ampacity, bushing vectors, and threats.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={handleExportOfficialDossier}
+                  disabled={dossierExporting}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Download size={13} className={dossierExporting ? 'animate-bounce' : ''} />
+                  <span>{dossierExporting ? 'Generating...' : '📑 Export Dossier'}</span>
+                </button>
+                <button
+                  onClick={() => setShowCopilotDrawer(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Bot size={13} />
+                  <span>🤖 Ask AI</span>
+                </button>
+                <button
+                  onClick={() => setShowLabDgaModal(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <FlaskConical size={13} />
+                  <span>🧪 Lab DGA</span>
+                </button>
+                <button
+                  onClick={() => setShowFleetRiskModal(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Building2 size={13} />
+                  <span>🏢 Fleet Risk</span>
+                </button>
+                <button
+                  onClick={() => setShowPdmStudioModal(false)}
+                  className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors border border-slate-800 cursor-pointer ml-1"
+                  title="Close Studio (ESC)"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Subtab Navigation Bar */}
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-[#0a0e1a] border-b border-slate-800 overflow-x-auto">
+              {[
+                { id: 'dga' as const, label: '🔬 DGA, RUL & RoG Matrix' },
+                { id: 'dtr' as const, label: '⚡ Dynamic Thermal Rating & BESS' },
+                { id: 'bushing' as const, label: '🔌 Bushing Health (tan δ & PD)' },
+                { id: 'threats' as const, label: '🛡️ 5-Threats & OLTC Tap Changer' },
+              ].map((sub) => (
+                <button
+                  key={sub.id}
+                  onClick={() => setPdmSubTab(sub.id)}
+                  className={clsx(
+                    'text-xs px-4 py-2 rounded-lg font-semibold transition-all whitespace-nowrap cursor-pointer',
+                    pdmSubTab === sub.id
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                  )}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Modal Body: Spacious, Scrollable */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+              {renderPdmStudioBody(true)}
             </div>
           </div>
         </div>
