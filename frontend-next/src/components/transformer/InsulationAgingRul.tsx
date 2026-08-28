@@ -4,8 +4,11 @@ import React, { useState } from 'react'
 import { Droplets, Wrench, CheckCircle2, AlertTriangle, ShieldAlert, Clock } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 interface InsulationAgingRulProps {
+  /** true only when hot-spot AND service hours are real for this asset. */
+  inputsMeasured?: boolean
   hotSpotTemp: number
   hoursInService: number
   oilTemp: number
@@ -14,6 +17,7 @@ interface InsulationAgingRulProps {
 }
 
 export default function InsulationAgingRul({
+  inputsMeasured = false,
   hotSpotTemp,
   hoursInService,
   oilTemp,
@@ -80,6 +84,20 @@ export default function InsulationAgingRul({
 
   return (
     <div className="flex flex-col gap-5 text-white">
+      {/* Arrhenius aging is exponential in hot-spot, so this panel turns two
+          numbers into a remaining-life-in-years figure. Both are usually
+          stand-ins: hoursInService is passed as a literal 52000, and
+          hotSpotTemp falls back to oilTemp + 14 — a fixed offset standing in
+          for a load-dependent winding gradient — on any unit without a real
+          winding sensor. A wrong hot-spot of a few degrees moves RUL by
+          years, so an unlabelled figure here is a maintenance-budget decision
+          made on a guess. */}
+      {!inputsMeasured && (
+        <DemoDataBanner
+          title="ค่าอายุคงเหลือ (RUL) ด้านล่างคำนวณจากค่าตั้งต้นตัวอย่าง"
+          detail="ชั่วโมงใช้งานสะสมถูกกำหนดเป็นค่าคงที่ (52,000 ชม.) และอุณหภูมิ Hot-Spot ประมาณจาก 'อุณหภูมิน้ำมัน + 14°C' เมื่อไม่มีเซนเซอร์วัดขดลวดจริง เนื่องจากสมการ Arrhenius เป็นเอ็กซ์โพเนนเชียล ความคลาดเคลื่อนของ Hot-Spot เพียงไม่กี่องศาทำให้ RUL เปลี่ยนเป็นปี ห้ามใช้ตัวเลขนี้ตั้งงบเปลี่ยนหม้อแปลง"
+        />
+      )}
       <div>
         <h3 className="text-sm font-semibold">Insulation Aging & RUL</h3>
         <p className="text-xs text-slate-400">IEEE C57.91 Thermal Degradation Model</p>

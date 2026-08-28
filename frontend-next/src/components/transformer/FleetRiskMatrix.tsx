@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react'
 import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet } from 'lucide-react'
 import clsx from 'clsx'
 import type { SensorHost } from '@/types/fleet'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 interface FleetRiskMatrixProps {
   hosts?: SensorHost[]
@@ -200,11 +201,10 @@ export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId }: F
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
       {!hasRealData && (
-        <div className="mb-3 px-3 py-2 rounded-lg text-xs text-amber-300 font-medium flex items-center gap-2"
-          style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.2)' }}>
-          <AlertTriangle size={13} />
-          <span>Illustrative reference data — pass <code className="font-mono text-amber-200">hosts</code> prop to show your real fleet</span>
-        </div>
+        <DemoDataBanner
+          title="หน้าจอนี้ไม่ได้ดึงข้อมูลจากฟลีทจริงขององค์กรคุณ"
+          detail="หม้อแปลงทุกเครื่องในตาราง (TR-004, TR-101, ...) ค่า Health Index, RUL, ตำแหน่ง PoF/CoF และโดยเฉพาะ 'งบประมาณที่ต้องใช้' ทั้งหมด เป็นชุดข้อมูลตัวอย่างที่ฝังอยู่ในโค้ด — ส่ง prop hosts เพื่อแสดงผลจากฟลีทจริงของคุณ"
+        />
       )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">

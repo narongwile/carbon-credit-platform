@@ -39,7 +39,7 @@ import {
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
   BarChart2, FileText, GripVertical, X, TrendingUp, ShieldCheck,
-  Download, Bot, FlaskConical, Battery, Volume2, VolumeX,
+  Download, Bot, FlaskConical, Battery, Sliders, Volume2, VolumeX,
 } from 'lucide-react'
 import { useAudioChimeStore } from '@/lib/audioChimeStore'
 import clsx from 'clsx'
@@ -57,6 +57,7 @@ import BessCoOptimization from '@/components/transformer/BessCoOptimization'
 import SubstationThreatsStudio from '@/components/transformer/SubstationThreatsStudio'
 import { generateOfficialEngineeringDossier } from '@/lib/officialDossierGenerator'
 import { conservativeDynamicRating } from '@/lib/dtrModel'
+import StudyModal from '@/components/transformer/StudyModal'
 
 const Transformer3D = dynamic(() => import('@/components/transformer/Transformer3D'), { ssr: false })
 
@@ -912,13 +913,16 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }, [transformer?.sensors?.bushingTanDelta?.value])
 
   const [mobileTab, setMobileTab] = useState<'overview' | 'visuals' | 'charts' | 'logs' | 'diagnostics'>('overview')
-  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr' | 'bushing' | 'threats'>('dga')
-  const [dtrMode, setDtrMode] = useState<'ampacity' | 'bess'>('ampacity')
+  // Inline tabs are the two panels an operator reads while deciding something
+  // now: the dissolved-gas verdict and the live dynamic rating. Everything
+  // else is a periodic study and opens as a modal — see StudyModal's header.
+  const [pdmSubTab, setPdmSubTab] = useState<'dga' | 'dtr'>('dga')
+  type StudyId = 'rul' | 'bess' | 'bushing' | 'threats' | 'labdga' | 'fleetrisk'
+  const [activeStudy, setActiveStudy] = useState<StudyId | null>(null)
   const [dossierExporting, setDossierExporting] = useState(false)
   const [showCopilotDrawer, setShowCopilotDrawer] = useState(false)
-  const [showLabDgaModal, setShowLabDgaModal] = useState(false)
-  const [showFleetRiskModal, setShowFleetRiskModal] = useState(false)
   const [showPdmStudioModal, setShowPdmStudioModal] = useState(false)
+  const [fullscreenPdmTab, setFullscreenPdmTab] = useState<'dga' | 'dtr' | 'bushing' | 'threats'>('dga')
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1294,228 +1298,143 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   }
   const sc = statusColors[transformer.status]
 
-  const renderPdmStudioBody = (isFullscreen = false) => (
-    <div className="space-y-6">
-      {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
-      {pdmSubTab === 'dga' && (
-        <div className="space-y-6">
-          <div className={clsx(
-            'flex flex-col gap-6',
-            isFullscreen ? 'xl:grid xl:grid-cols-2 xl:gap-8' : '2xl:flex-row 2xl:gap-8'
-          )}>
-            <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
-              <DgaDuvalTriangle
-                h2={liveTelemetry.h2}
-                ch4={liveTelemetry.ch4}
-                c2h4={liveTelemetry.c2h4}
-                c2h2={liveTelemetry.c2h2}
-                c2h6={liveTelemetry.c2h6}
-              />
-            </div>
-            {!isFullscreen && <div className="hidden 2xl:block w-px bg-[#1e2433]" />}
-            <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
-              <InsulationAgingRul 
-                hotSpotTemp={liveTelemetry.hotSpotTemp} 
-                hoursInService={52000} 
-                oilTemp={liveTelemetry.oilTemp}
-                moistureInOil={liveTelemetry.moisture}
-                assetId={transformer.id || 'TRF-01'}
-              />
-            </div>
-          </div>
-
-          {/* IEEE C57.104-2019 DGA Gas Generation Rate (RoG) Matrix */}
-          <div className={clsx('pt-4 border-t border-slate-800 space-y-3', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <Activity size={15} className="text-emerald-400" />
-                <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
+  const renderPdmStudioBody = (isFullscreen = false) => {
+    const currentTab = isFullscreen ? fullscreenPdmTab : pdmSubTab
+    return (
+      <div className="space-y-6">
+        {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
+        {currentTab === 'dga' && (
+          <div className="space-y-6">
+            <div className={clsx(
+              'flex flex-col gap-6',
+              isFullscreen ? 'xl:grid xl:grid-cols-2 xl:gap-8' : '2xl:flex-row 2xl:gap-8'
+            )}>
+              <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
+                <DgaDuvalTriangle
+                  gasesMeasured={liveTelemetry.measured.dga}
+                  h2={liveTelemetry.h2}
+                  ch4={liveTelemetry.ch4}
+                  c2h4={liveTelemetry.c2h4}
+                  c2h2={liveTelemetry.c2h2}
+                  c2h6={liveTelemetry.c2h6}
+                />
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
-                style={liveTelemetry.measured.dga
-                  ? { background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }
-                  : { background: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' }
-                }>
-                {liveTelemetry.measured.dga ? 'Live DGA — Snapshot Reading' : 'No DGA Sensor — Rates Unavailable'}
-              </span>
+              {!isFullscreen && <div className="hidden 2xl:block w-px bg-[#1e2433]" />}
+              <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
+                <InsulationAgingRul 
+                  hotSpotTemp={liveTelemetry.hotSpotTemp} 
+                  hoursInService={52000} 
+                  oilTemp={liveTelemetry.oilTemp}
+                  moistureInOil={liveTelemetry.moisture}
+                  assetId={transformer.id || 'TRF-01'}
+                />
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
-                    <th className="py-2 px-2.5">Gas Species</th>
-                    <th className="py-2 px-2.5">Current (ppm)</th>
-                    <th className="py-2 px-2.5">24h Rate (Δppm/day)</th>
-                    <th className="py-2 px-2.5">7d Rate (Δppm/day)</th>
-                    <th className="py-2 px-2.5">90th %ile Limit</th>
-                    <th className="py-2 px-2.5">Condition Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
-                  {[
-                    { 
-                      gas: 'Hydrogen (H2)', 
-                      val: liveTelemetry.h2, 
-                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      limit: '100 ppm',
-                      cond: liveTelemetry.h2 > 300 ? 'Cond 4 (Action)' : liveTelemetry.h2 > 100 ? 'Cond 3 (Warning)' : liveTelemetry.h2 > 10 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                      color: liveTelemetry.h2 > 300 ? '#ef4444' : liveTelemetry.h2 > 100 ? '#f97316' : liveTelemetry.h2 > 10 ? '#fbbf24' : '#4ade80',
-                    },
-                    { 
-                      gas: 'Methane (CH4)', 
-                      val: liveTelemetry.ch4, 
-                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      limit: '120 ppm',
-                      cond: liveTelemetry.ch4 > 400 ? 'Cond 4 (Action)' : liveTelemetry.ch4 > 120 ? 'Cond 3 (Warning)' : liveTelemetry.ch4 > 30 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                      color: liveTelemetry.ch4 > 400 ? '#ef4444' : liveTelemetry.ch4 > 120 ? '#f97316' : liveTelemetry.ch4 > 30 ? '#fbbf24' : '#4ade80',
-                    },
-                    { 
-                      gas: 'Acetylene (C2H2)', 
-                      val: liveTelemetry.c2h2, 
-                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      limit: '2 ppm',
-                      cond: liveTelemetry.c2h2 > 35 ? 'Cond 4 (Action)' : liveTelemetry.c2h2 > 9 ? 'Cond 3 (Warning)' : liveTelemetry.c2h2 > 1 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                      color: liveTelemetry.c2h2 > 35 ? '#ef4444' : liveTelemetry.c2h2 > 9 ? '#f97316' : liveTelemetry.c2h2 > 1 ? '#fbbf24' : '#4ade80',
-                    },
-                    { 
-                      gas: 'Ethylene (C2H4)', 
-                      val: liveTelemetry.c2h4, 
-                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      limit: '50 ppm',
-                      cond: liveTelemetry.c2h4 > 100 ? 'Cond 4 (Action)' : liveTelemetry.c2h4 > 50 ? 'Cond 3 (Warning)' : liveTelemetry.c2h4 > 12 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                      color: liveTelemetry.c2h4 > 100 ? '#ef4444' : liveTelemetry.c2h4 > 50 ? '#f97316' : liveTelemetry.c2h4 > 12 ? '#fbbf24' : '#4ade80',
-                    },
-                    { 
-                      gas: 'Ethane (C2H6)', 
-                      val: liveTelemetry.c2h6, 
-                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      limit: '90 ppm',
-                      cond: liveTelemetry.c2h6 > 280 ? 'Cond 4 (Action)' : liveTelemetry.c2h6 > 90 ? 'Cond 3 (Warning)' : liveTelemetry.c2h6 > 20 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                      color: liveTelemetry.c2h6 > 280 ? '#ef4444' : liveTelemetry.c2h6 > 90 ? '#f97316' : liveTelemetry.c2h6 > 20 ? '#fbbf24' : '#4ade80',
-                    },
-                    { 
-                      gas: 'Carbon Monoxide (CO)', 
-                      val: liveTelemetry.co, 
-                      rog24: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      rog7d: liveTelemetry.measured.dga ? 'history req.' : '—',
-                      limit: '900 ppm',
-                      cond: liveTelemetry.co > 2500 ? 'Cond 4 (Action)' : liveTelemetry.co > 900 ? 'Cond 3 (Warning)' : liveTelemetry.co > 350 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)',
-                      color: liveTelemetry.co > 2500 ? '#ef4444' : liveTelemetry.co > 900 ? '#f97316' : liveTelemetry.co > 350 ? '#fbbf24' : '#4ade80',
-                    },
-                  ].map((row) => (
-                    <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
-                      <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
-                      <td className="py-2 px-2.5 font-bold text-white">{row.val}</td>
-                      <td className="py-2 px-2.5 text-cyan-300">{row.rog24}</td>
-                      <td className="py-2 px-2.5 text-slate-300">{row.rog7d}</td>
-                      <td className="py-2 px-2.5 text-slate-400">{row.limit}</td>
-                      <td className="py-2 px-2.5">
-                        <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{ color: row.color, backgroundColor: `${row.color}15`, border: `1px solid ${row.color}30` }}>
-                          {row.cond}
-                        </span>
-                      </td>
+            {/* IEEE C57.104-2019 DGA Gas Generation Rate (RoG) Matrix */}
+            <div className={clsx('pt-4 border-t border-slate-800 space-y-3', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <Activity size={15} className="text-emerald-400" />
+                  <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
+                  style={liveTelemetry.measured.dga
+                    ? { background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }
+                    : { background: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' }
+                  }>
+                  {liveTelemetry.measured.dga ? 'Live DGA — Snapshot Reading' : 'No DGA Sensor — Rates Unavailable'}
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
+                      <th className="py-2 px-2.5">Gas Species</th>
+                      <th className="py-2 px-2.5">Current (ppm)</th>
+                      <th className="py-2 px-2.5">24h Rate (Δppm/day)</th>
+                      <th className="py-2 px-2.5">7d Rate (Δppm/day)</th>
+                      <th className="py-2 px-2.5">90th %ile Limit</th>
+                      <th className="py-2 px-2.5">Condition Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                    {[
+                      { gas: 'Hydrogen (H2)', val: liveTelemetry.h2, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '100 ppm', cond: liveTelemetry.h2 > 300 ? 'Cond 4 (Action)' : liveTelemetry.h2 > 100 ? 'Cond 3 (Warning)' : liveTelemetry.h2 > 10 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.h2 > 300 ? '#ef4444' : liveTelemetry.h2 > 100 ? '#f97316' : liveTelemetry.h2 > 10 ? '#fbbf24' : '#4ade80' },
+                      { gas: 'Methane (CH4)', val: liveTelemetry.ch4, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '120 ppm', cond: liveTelemetry.ch4 > 400 ? 'Cond 4 (Action)' : liveTelemetry.ch4 > 120 ? 'Cond 3 (Warning)' : liveTelemetry.ch4 > 30 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.ch4 > 400 ? '#ef4444' : liveTelemetry.ch4 > 120 ? '#f97316' : liveTelemetry.ch4 > 30 ? '#fbbf24' : '#4ade80' },
+                      { gas: 'Acetylene (C2H2)', val: liveTelemetry.c2h2, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '2 ppm', cond: liveTelemetry.c2h2 > 35 ? 'Cond 4 (Action)' : liveTelemetry.c2h2 > 9 ? 'Cond 3 (Warning)' : liveTelemetry.c2h2 > 1 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.c2h2 > 35 ? '#ef4444' : liveTelemetry.c2h2 > 9 ? '#f97316' : liveTelemetry.c2h2 > 1 ? '#fbbf24' : '#4ade80' },
+                      { gas: 'Ethylene (C2H4)', val: liveTelemetry.c2h4, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '50 ppm', cond: liveTelemetry.c2h4 > 100 ? 'Cond 4 (Action)' : liveTelemetry.c2h4 > 50 ? 'Cond 3 (Warning)' : liveTelemetry.c2h4 > 12 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.c2h4 > 100 ? '#ef4444' : liveTelemetry.c2h4 > 50 ? '#f97316' : liveTelemetry.c2h4 > 12 ? '#fbbf24' : '#4ade80' },
+                      { gas: 'Ethane (C2H6)', val: liveTelemetry.c2h6, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '90 ppm', cond: liveTelemetry.c2h6 > 280 ? 'Cond 4 (Action)' : liveTelemetry.c2h6 > 90 ? 'Cond 3 (Warning)' : liveTelemetry.c2h6 > 20 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.c2h6 > 280 ? '#ef4444' : liveTelemetry.c2h6 > 90 ? '#f97316' : liveTelemetry.c2h6 > 20 ? '#fbbf24' : '#4ade80' },
+                      { gas: 'Carbon Monoxide (CO)', val: liveTelemetry.co, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '900 ppm', cond: liveTelemetry.co > 2500 ? 'Cond 4 (Action)' : liveTelemetry.co > 900 ? 'Cond 3 (Warning)' : liveTelemetry.co > 350 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.co > 2500 ? '#ef4444' : liveTelemetry.co > 900 ? '#f97316' : liveTelemetry.co > 350 ? '#fbbf24' : '#4ade80' },
+                    ].map((row) => (
+                      <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
+                        <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
+                        <td className="py-2 px-2.5 font-bold text-white">{row.val}</td>
+                        <td className="py-2 px-2.5 text-cyan-300">{row.rog24}</td>
+                        <td className="py-2 px-2.5 text-slate-300">{row.rog7d}</td>
+                        <td className="py-2 px-2.5 text-slate-400">{row.limit}</td>
+                        <td className="py-2 px-2.5">
+                          <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{ color: row.color, backgroundColor: `${row.color}15`, border: `1px solid ${row.color}30` }}>
+                            {row.cond}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) & BESS Co-Optimization */}
-      {pdmSubTab === 'dtr' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2 pb-2 border-b border-slate-800/60">
-            <span className="text-xs font-semibold text-slate-300">
-              Co-Optimizing Dynamic Line/Transformer Ampacity with Substation Energy Storage
-            </span>
-            <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800">
-              <button
-                onClick={() => setDtrMode('ampacity')}
-                className={clsx(
-                  'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
-                  dtrMode === 'ampacity' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                )}
-              >
-                <Zap size={13} />
-                <span>⚡ Live DTR Ampacity</span>
-              </button>
-              <button
-                onClick={() => setDtrMode('bess')}
-                className={clsx(
-                  'text-xs px-3 py-1 rounded font-semibold transition-all flex items-center gap-1.5',
-                  dtrMode === 'bess' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                )}
-              >
-                <Battery size={13} />
-                <span>🔋 BESS Peak Shaving</span>
-              </button>
-            </div>
-          </div>
+        {/* Sub-Tab 2: Dynamic Thermal Rating */}
+        {currentTab === 'dtr' && (
+          <DynamicThermalRating
+            nameplateKva={liveTelemetry.ratedKva}
+            currentLoadKva={liveTelemetry.loadKva}
+            oilTemp={liveTelemetry.oilTemp}
+            hotSpotTemp={liveTelemetry.hotSpotTemp}
+            lat={transformer.lat ?? 13.7563}
+            lng={transformer.lng ?? 100.5018}
+            assetId={transformer.id}
+            assetName={transformer.name}
+          />
+        )}
 
-          {dtrMode === 'ampacity' ? (
-            <DynamicThermalRating
-              nameplateKva={liveTelemetry.ratedKva}
-              currentLoadKva={liveTelemetry.loadKva}
-              oilTemp={liveTelemetry.oilTemp}
-              hotSpotTemp={liveTelemetry.hotSpotTemp}
-              lat={transformer.lat ?? 13.7563}
-              lng={transformer.lng ?? 100.5018}
-              assetId={transformer.id}
-              assetName={transformer.name}
-            />
-          ) : (
-            <BessCoOptimization
-              transformerName={transformer.name}
-              orgName={currentOrgName}
-              nameplateKva={liveTelemetry.ratedKva}
-              currentLoadKva={liveTelemetry.loadKva}
-              hotSpotTemp={liveTelemetry.hotSpotTemp}
-              dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
-            />
-          )}
-        </div>
-      )}
+        {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
+        {currentTab === 'bushing' && (
+          <BushingHealthStudio
+            voltageKv={liveTelemetry.voltageKv}
+            assetId={transformer.id}
+            assetName={transformer.name}
+            orgName={currentOrgName}
+            isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
+            bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
+            partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
+          />
+        )}
 
-      {/* Sub-Tab 3: Bushing Health & Tan-Delta (tan δ) */}
-      {pdmSubTab === 'bushing' && (
-        <BushingHealthStudio
-          voltageKv={liveTelemetry.voltageKv}
-          assetId={transformer.id}
-          assetName={transformer.name}
-          orgName={currentOrgName}
-          isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
-          bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
-          partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
-        />
-      )}
-
-      {/* Sub-Tab 4: 5-Threats & OLTC Multi-Hazard Studio */}
-      {pdmSubTab === 'threats' && (
-        <SubstationThreatsStudio
-          assetId={transformer.id}
-          assetName={transformer.name}
-          orgName={currentOrgName}
-          voltageKv={liveTelemetry.voltageKv}
-          mainOilTemp={liveTelemetry.oilTemp}
-          bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
-          hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
-          hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
-          surgeArresterCurrentLive={transformer.sensors?.surgeArresterCurrent?.value ?? null}
-          surgeCounterLive={transformer.sensors?.surgeCounter?.value ?? null}
-          oltcMotorCurrentLive={transformer.sensors?.oltcMotorCurrent?.value ?? null}
-          oltcOilTempDeltaLive={transformer.sensors?.oltcOilTempDelta?.value ?? null}
-        />
-      )}
-    </div>
-  )
+        {/* Sub-Tab 4: 5-Threats & OLTC Multi-Hazard Studio */}
+        {currentTab === 'threats' && (
+          <SubstationThreatsStudio
+            assetId={transformer.id}
+            assetName={transformer.name}
+            orgName={currentOrgName}
+            voltageKv={liveTelemetry.voltageKv}
+            mainOilTemp={liveTelemetry.oilTemp}
+            bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
+            hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
+            hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
+            surgeArresterCurrentLive={transformer.sensors?.surgeArresterCurrent?.value ?? null}
+            surgeCounterLive={transformer.sensors?.surgeCounter?.value ?? null}
+            oltcMotorCurrentLive={transformer.sensors?.oltcMotorCurrent?.value ?? null}
+            oltcOilTempDeltaLive={transformer.sensors?.oltcOilTempDelta?.value ?? null}
+          />
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="h-full flex flex-col overflow-y-auto" style={{ background: '#0a0e1a' }}>
@@ -1934,7 +1853,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       <span>🤖 Ask AI</span>
                     </button>
                     <button
-                      onClick={() => setShowLabDgaModal(true)}
+                      onClick={() => setActiveStudy('labdga')}
                       className="px-2.5 py-1 rounded-lg text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                       title="Import certified ASTM D3612 oil syringe test results"
                     >
@@ -1942,7 +1861,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       <span>🧪 Lab DGA</span>
                     </button>
                     <button
-                      onClick={() => setShowFleetRiskModal(true)}
+                      onClick={() => setActiveStudy('fleetrisk')}
                       className="px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                       title="Open Fleet Risk Matrix (ISO 55000)"
                     >
@@ -1971,12 +1890,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 overflow-x-auto">
+                <div data-pdm-tabs className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 overflow-x-auto">
                   {[
-                    { id: 'dga' as const, label: '🔬 DGA, RUL & RoG' },
-                    { id: 'dtr' as const, label: '⚡ Dynamic Rating & BESS' },
-                    { id: 'bushing' as const, label: '🔌 Bushing (tan δ)' },
-                    { id: 'threats' as const, label: '🛡️ 5-Threats & OLTC' },
+                    { id: 'dga' as const, label: '🔬 Dissolved Gas (Duval)' },
+                    { id: 'dtr' as const, label: '⚡ Live Dynamic Rating' },
                   ].map((sub) => (
                     <button
                       key={sub.id}
@@ -1994,8 +1911,117 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 </div>
               </div>
 
-              {/* Render the Studio Body Inline */}
-              {renderPdmStudioBody(false)}
+              {/* Sub-Tab 1: DGA, RUL, Trajectory, and IEEE C57.104 RoG */}
+              {pdmSubTab === 'dga' && (
+                <div className="space-y-6">
+                  <DgaDuvalTriangle
+                    gasesMeasured={liveTelemetry.measured.dga}
+                    h2={liveTelemetry.h2}
+                    ch4={liveTelemetry.ch4}
+                    c2h4={liveTelemetry.c2h4}
+                    c2h2={liveTelemetry.c2h2}
+                    c2h6={liveTelemetry.c2h6}
+                  />
+
+                  {/* IEEE C57.104-2019 DGA Gas Generation Rate (RoG) Matrix */}
+                  <div className="pt-4 border-t border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Activity size={15} className="text-emerald-400" />
+                        <h4 className="text-xs font-bold text-white">Dissolved Gas Generation Rates (IEEE C57.104-2019)</h4>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
+                        style={liveTelemetry.measured.dga
+                          ? { background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.4)' }
+                          : { background: 'rgba(100,116,139,0.1)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' }
+                        }>
+                        {liveTelemetry.measured.dga ? 'Live DGA — Snapshot Reading' : 'No DGA Sensor — Rates Unavailable'}
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-[10px] text-slate-500 uppercase tracking-wider">
+                            <th className="py-2 px-2.5">Gas Species</th>
+                            <th className="py-2 px-2.5">Current (ppm)</th>
+                            <th className="py-2 px-2.5">24h Rate (Δppm/day)</th>
+                            <th className="py-2 px-2.5">7d Rate (Δppm/day)</th>
+                            <th className="py-2 px-2.5">90th %ile Limit</th>
+                            <th className="py-2 px-2.5">Condition Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                          {[
+                            { gas: 'Hydrogen (H2)', val: liveTelemetry.h2, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '100 ppm', cond: liveTelemetry.h2 > 300 ? 'Cond 4 (Action)' : liveTelemetry.h2 > 100 ? 'Cond 3 (Warning)' : liveTelemetry.h2 > 10 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.h2 > 300 ? '#ef4444' : liveTelemetry.h2 > 100 ? '#f97316' : liveTelemetry.h2 > 10 ? '#fbbf24' : '#4ade80' },
+                            { gas: 'Methane (CH4)', val: liveTelemetry.ch4, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '120 ppm', cond: liveTelemetry.ch4 > 400 ? 'Cond 4 (Action)' : liveTelemetry.ch4 > 120 ? 'Cond 3 (Warning)' : liveTelemetry.ch4 > 30 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.ch4 > 400 ? '#ef4444' : liveTelemetry.ch4 > 120 ? '#f97316' : liveTelemetry.ch4 > 30 ? '#fbbf24' : '#4ade80' },
+                            { gas: 'Acetylene (C2H2)', val: liveTelemetry.c2h2, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '2 ppm', cond: liveTelemetry.c2h2 > 35 ? 'Cond 4 (Action)' : liveTelemetry.c2h2 > 9 ? 'Cond 3 (Warning)' : liveTelemetry.c2h2 > 1 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.c2h2 > 35 ? '#ef4444' : liveTelemetry.c2h2 > 9 ? '#f97316' : liveTelemetry.c2h2 > 1 ? '#fbbf24' : '#4ade80' },
+                            { gas: 'Ethylene (C2H4)', val: liveTelemetry.c2h4, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '50 ppm', cond: liveTelemetry.c2h4 > 100 ? 'Cond 4 (Action)' : liveTelemetry.c2h4 > 50 ? 'Cond 3 (Warning)' : liveTelemetry.c2h4 > 12 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.c2h4 > 100 ? '#ef4444' : liveTelemetry.c2h4 > 50 ? '#f97316' : liveTelemetry.c2h4 > 12 ? '#fbbf24' : '#4ade80' },
+                            { gas: 'Ethane (C2H6)', val: liveTelemetry.c2h6, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '90 ppm', cond: liveTelemetry.c2h6 > 280 ? 'Cond 4 (Action)' : liveTelemetry.c2h6 > 90 ? 'Cond 3 (Warning)' : liveTelemetry.c2h6 > 20 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.c2h6 > 280 ? '#ef4444' : liveTelemetry.c2h6 > 90 ? '#f97316' : liveTelemetry.c2h6 > 20 ? '#fbbf24' : '#4ade80' },
+                            { gas: 'Carbon Monoxide (CO)', val: liveTelemetry.co, rog24: liveTelemetry.measured.dga ? 'history req.' : '—', rog7d: liveTelemetry.measured.dga ? 'history req.' : '—', limit: '900 ppm', cond: liveTelemetry.co > 2500 ? 'Cond 4 (Action)' : liveTelemetry.co > 900 ? 'Cond 3 (Warning)' : liveTelemetry.co > 350 ? 'Cond 2 (Caution)' : 'Cond 1 (Normal)', color: liveTelemetry.co > 2500 ? '#ef4444' : liveTelemetry.co > 900 ? '#f97316' : liveTelemetry.co > 350 ? '#fbbf24' : '#4ade80' },
+                          ].map((row) => (
+                            <tr key={row.gas} className="hover:bg-slate-900/40 transition-colors">
+                              <td className="py-2 px-2.5 font-sans font-medium text-slate-200">{row.gas}</td>
+                              <td className="py-2 px-2.5 font-bold text-white">{row.val}</td>
+                              <td className="py-2 px-2.5 text-cyan-300">{row.rog24}</td>
+                              <td className="py-2 px-2.5 text-slate-300">{row.rog7d}</td>
+                              <td className="py-2 px-2.5 text-slate-400">{row.limit}</td>
+                              <td className="py-2 px-2.5">
+                                <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{ color: row.color, backgroundColor: `${row.color}15`, border: `1px solid ${row.color}30` }}>
+                                  {row.cond}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-Tab 2: Dynamic Thermal Rating (DTR) & BESS Co-Optimization */}
+              {pdmSubTab === 'dtr' && (
+                <DynamicThermalRating
+                  nameplateKva={liveTelemetry.ratedKva}
+                  currentLoadKva={liveTelemetry.loadKva}
+                  oilTemp={liveTelemetry.oilTemp}
+                  hotSpotTemp={liveTelemetry.hotSpotTemp}
+                  lat={transformer.lat ?? 13.7563}
+                  lng={transformer.lng ?? 100.5018}
+                  assetId={transformer.id}
+                  assetName={transformer.name}
+                />
+              )}
+
+              {/* Engineering studies — periodic / planning work, opened on
+                  demand rather than occupying the live monitoring surface. */}
+              <div className="pt-4 mt-4 border-t border-slate-800 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Sliders size={13} className="text-slate-400" />
+                  <h4 className="text-xs font-bold text-white">Engineering Studies</h4>
+                  <span className="text-[10px] text-slate-500">opened on demand — not live monitoring</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {([
+                    { id: 'rul' as const, label: 'Insulation Aging & RUL', hint: 'IEEE C57.91' },
+                    { id: 'bushing' as const, label: 'Bushing Health (tan δ)', hint: 'IEEE C57.19' },
+                    { id: 'threats' as const, label: '5-Threats & OLTC', hint: 'IEC 60099-5 · C57.131' },
+                    { id: 'bess' as const, label: 'BESS Peak Shaving', hint: 'what-if study' },
+                    { id: 'labdga' as const, label: 'Laboratory DGA', hint: 'ASTM D3612' },
+                    { id: 'fleetrisk' as const, label: 'Fleet Risk Matrix', hint: 'ISO 55000' },
+                  ]).map((st) => (
+                    <button
+                      key={st.id}
+                      onClick={() => setActiveStudy(st.id)}
+                      className="text-left px-3 py-2 rounded-lg border border-slate-800 bg-[#0a0e1a] hover:border-indigo-500/50 hover:bg-slate-900/60 transition-all"
+                    >
+                      <div className="text-xs font-semibold text-slate-200">{st.label}</div>
+                      <div className="text-[10px] text-slate-500">{st.hint}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -2180,70 +2206,115 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         </div>
       )}
 
-      {/* Hybrid Lab DGA Ingestion Modal */}
-      {showLabDgaModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-4xl max-h-[90vh] bg-[#0d1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-[#0a0e1a]">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-cyan-600/20 text-cyan-400">
-                  <FlaskConical size={20} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Hybrid Laboratory DGA Ingestion (ASTM D3612)</h3>
-                  <p className="text-[11px] text-slate-400">Upload certified lab oil test report for {transformer.name}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowLabDgaModal(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              <LabDgaIngestion
-                onlineGases={{
-                  h2: liveTelemetry.h2,
-                  ch4: liveTelemetry.ch4,
-                  c2h2: liveTelemetry.c2h2,
-                  c2h4: liveTelemetry.c2h4,
-                  c2h6: liveTelemetry.c2h6,
-                }}
-                assetId={transformer.id || 'TRF-01'}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Engineering studies ────────────────────────────────────────
+          Each of these is periodic or planning work rather than something an
+          operator watches, so they open on demand instead of taking up the
+          live monitoring surface. StudyModal supplies Escape/backdrop close,
+          focus handling and scroll lock, which the two hand-rolled dialogs
+          this replaced did not have. */}
+      <StudyModal
+        open={activeStudy === 'rul'}
+        onClose={() => setActiveStudy(null)}
+        title="Insulation Aging & Remaining Life (IEEE C57.91)"
+        subtitle={`Arrhenius aging estimate · ${transformer.name}`}
+        icon={<Activity size={20} />}
+        accent="amber"
+      >
+        <InsulationAgingRul
+          inputsMeasured={false}
+          hotSpotTemp={liveTelemetry.hotSpotTemp}
+          hoursInService={52000}
+          oilTemp={liveTelemetry.oilTemp}
+          moistureInOil={liveTelemetry.moisture}
+          assetId={transformer.id || 'TRF-01'}
+        />
+      </StudyModal>
 
-      {/* Fleet Risk Matrix Modal */}
-      {showFleetRiskModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-5xl max-h-[90vh] bg-[#0d1117] border border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-[#0a0e1a]">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-lg bg-amber-600/20 text-amber-400">
-                  <Building2 size={20} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Fleet Risk Matrix & Criticality Index (ISO 55000)</h3>
-                  <p className="text-[11px] text-slate-400">Fleet-wide asset risk profile · {currentOrgName}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowFleetRiskModal(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="p-6">
-              <FleetRiskMatrix currentAssetId={transformer.id} />
-            </div>
-          </div>
-        </div>
-      )}
+      <StudyModal
+        open={activeStudy === 'bushing'}
+        onClose={() => setActiveStudy(null)}
+        title="Bushing Health & Tan-Delta (IEEE C57.19)"
+        subtitle={`Periodic offline test review · ${transformer.name}`}
+        icon={<Zap size={20} />}
+        accent="indigo"
+      >
+        <BushingHealthStudio
+          voltageKv={liveTelemetry.voltageKv}
+          assetId={transformer.id}
+          assetName={transformer.name}
+          orgName={currentOrgName}
+          isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
+        />
+      </StudyModal>
+
+      <StudyModal
+        open={activeStudy === 'threats'}
+        onClose={() => setActiveStudy(null)}
+        title="5-Threats & OLTC (IEC 60099-5 · IEEE C57.131)"
+        subtitle={`Surge arrester, tap changer and site hazards · ${transformer.name}`}
+        icon={<AlertTriangle size={20} />}
+        accent="rose"
+      >
+        <SubstationThreatsStudio
+          assetId={transformer.id}
+          assetName={transformer.name}
+          orgName={currentOrgName}
+          voltageKv={liveTelemetry.voltageKv}
+          mainOilTemp={liveTelemetry.oilTemp}
+          bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
+          hasArresterSensor={Boolean(transformer.sensors?.surgeArresterCurrent || transformer.sensors?.surgeCounter)}
+          hasOltcSensor={Boolean(transformer.sensors?.oltcMotorCurrent || transformer.sensors?.oltcOilTempDelta)}
+        />
+      </StudyModal>
+
+      <StudyModal
+        open={activeStudy === 'bess'}
+        onClose={() => setActiveStudy(null)}
+        title="BESS Peak Shaving Co-Optimization"
+        subtitle={`What-if study · ${transformer.name}`}
+        icon={<Battery size={20} />}
+        accent="emerald"
+      >
+        <BessCoOptimization
+          transformerName={transformer.name}
+          orgName={currentOrgName}
+          nameplateKva={liveTelemetry.ratedKva}
+          currentLoadKva={liveTelemetry.loadKva}
+          hotSpotTemp={liveTelemetry.hotSpotTemp}
+          dtrHeadroomKva={Math.max(0, conservativeDynamicRating(liveTelemetry.ratedKva, transformer.sensors?.ambientTemperature?.value).dynamicRatingKva - liveTelemetry.loadKva)}
+        />
+      </StudyModal>
+
+      <StudyModal
+        open={activeStudy === 'labdga'}
+        onClose={() => setActiveStudy(null)}
+        title="Hybrid Laboratory DGA Ingestion (ASTM D3612)"
+        subtitle={`Upload a laboratory oil test report for ${transformer.name}`}
+        icon={<FlaskConical size={20} />}
+        accent="cyan"
+      >
+        <LabDgaIngestion
+          onlineGases={{
+            h2: liveTelemetry.h2,
+            ch4: liveTelemetry.ch4,
+            c2h2: liveTelemetry.c2h2,
+            c2h4: liveTelemetry.c2h4,
+            c2h6: liveTelemetry.c2h6,
+          }}
+          assetId={transformer.id || 'TRF-01'}
+        />
+      </StudyModal>
+
+      <StudyModal
+        open={activeStudy === 'fleetrisk'}
+        onClose={() => setActiveStudy(null)}
+        title="Fleet Risk Matrix & Criticality Index (ISO 55000)"
+        subtitle={`Fleet-wide asset risk profile · ${currentOrgName}`}
+        icon={<Building2 size={20} />}
+        accent="amber"
+      >
+        <FleetRiskMatrix currentAssetId={transformer.id} />
+      </StudyModal>
 
       {/* Fullscreen PdM Studio Workspace Modal */}
       {showPdmStudioModal && (
@@ -2290,14 +2361,14 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                   <span>🤖 Ask AI</span>
                 </button>
                 <button
-                  onClick={() => setShowLabDgaModal(true)}
+                  onClick={() => setActiveStudy('labdga')}
                   className="px-3 py-1.5 rounded-lg text-xs font-bold bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <FlaskConical size={13} />
                   <span>🧪 Lab DGA</span>
                 </button>
                 <button
-                  onClick={() => setShowFleetRiskModal(true)}
+                  onClick={() => setActiveStudy('fleetrisk')}
                   className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
                 >
                   <Building2 size={13} />
@@ -2317,16 +2388,16 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             <div className="flex items-center gap-2 px-4 py-2.5 bg-[#0a0e1a] border-b border-slate-800 overflow-x-auto">
               {[
                 { id: 'dga' as const, label: '🔬 DGA, RUL & RoG Matrix' },
-                { id: 'dtr' as const, label: '⚡ Dynamic Thermal Rating & BESS' },
+                { id: 'dtr' as const, label: '⚡ Dynamic Thermal Rating' },
                 { id: 'bushing' as const, label: '🔌 Bushing Health (tan δ & PD)' },
                 { id: 'threats' as const, label: '🛡️ 5-Threats & OLTC Tap Changer' },
               ].map((sub) => (
                 <button
                   key={sub.id}
-                  onClick={() => setPdmSubTab(sub.id)}
+                  onClick={() => setFullscreenPdmTab(sub.id)}
                   className={clsx(
                     'text-xs px-4 py-2 rounded-lg font-semibold transition-all whitespace-nowrap cursor-pointer',
-                    pdmSubTab === sub.id
+                    fullscreenPdmTab === sub.id
                       ? 'bg-indigo-600 text-white shadow-sm'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
                   )}

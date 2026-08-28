@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import { FlaskConical, FileCheck, UploadCloud, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, FileText } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 interface LabDgaRecord {
   id: string
@@ -33,7 +34,7 @@ const SAMPLE_RECORDS: LabDgaRecord[] = [
   {
     id: 'LAB-2026-0815',
     date: '2026-08-15',
-    labName: 'SGS Substation Chemistry Laboratory (ISO 17025)',
+    labName: 'Example Laboratory A (sample record)',
     syringeId: 'SYR-8821',
     status: 'CERTIFIED',
     gases: { h2: 62, ch4: 44, c2h2: 3.0, c2h4: 34, c2h6: 27, co: 295, co2: 2450 },
@@ -42,7 +43,7 @@ const SAMPLE_RECORDS: LabDgaRecord[] = [
   {
     id: 'LAB-2026-0210',
     date: '2026-02-10',
-    labName: 'MEA Central High-Voltage Testing Bureau',
+    labName: 'Example Laboratory B (sample record)',
     syringeId: 'SYR-7419',
     status: 'CERTIFIED',
     gases: { h2: 55, ch4: 38, c2h2: 2.6, c2h4: 29, c2h6: 24, co: 260, co2: 2180 },
@@ -92,7 +93,7 @@ export default function LabDgaIngestion({
     const newRecord: LabDgaRecord = {
       id: `LAB-2026-${Math.floor(1000 + Math.random() * 9000)}`,
       date: new Date().toISOString().slice(0, 10),
-      labName: 'PEA High-Voltage Testing Lab (ASTM D3612 Certified)',
+      labName: 'Example Laboratory C (sample record)',
       syringeId: `SYR-${Math.floor(1000 + Math.random() * 9000)}`,
       status: 'CERTIFIED',
       gases: {
@@ -119,6 +120,10 @@ export default function LabDgaIngestion({
 
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      <DemoDataBanner
+        title="รายการผลแล็บด้านล่างเป็นตัวอย่างจำลอง ไม่ใช่ผลตรวจของหม้อแปลงเครื่องนี้"
+        detail="ระบบยังไม่ได้เชื่อมต่อกับห้องปฏิบัติการใดๆ — เลขที่ใบรายงาน ชื่อแล็บ หมายเลข syringe สถานะ CERTIFIED และค่าคุณภาพน้ำมัน (BDV / IFT / Acidity / Furan) ทั้งหมดเป็นข้อมูลตัวอย่างที่ฝังไว้ในหน้าจอ ห้ามใช้อ้างอิงแทนใบรายงานผลจริง กรุณาอัปโหลดผลตรวจฉบับจริงของหม้อแปลงเครื่องนี้ก่อนนำไปตัดสินใจ"
+      />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div>
@@ -269,13 +274,13 @@ export default function LabDgaIngestion({
                 <UploadCloud size={24} className="text-cyan-400" />
                 <div>
                   <div className="font-semibold text-white">Drag & drop lab certificate PDF / CSV</div>
-                  <div className="text-[10px] text-slate-500 mt-0.5">Supports SGS, MEA, PEA, Doble laboratory test reports</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5">Accepts standard laboratory DGA test reports (ASTM D3612 / IEC 60567)</div>
                 </div>
               </div>
 
               <div className="p-3 rounded-lg bg-[#0a0e1a] border border-slate-800 text-[11px] text-slate-300 space-y-1">
                 <div className="font-semibold text-white">AI OCR Auto-Extraction Preview:</div>
-                <div>• Laboratory: SGS Thailand Substation Chemistry (ISO 17025)</div>
+                <div>• Laboratory: taken from the uploaded report</div>
                 <div>• Sampling Point: Main Tank Bottom Drain Valve (ASTM D923)</div>
                 <div>• Furan, Dielectric Breakdown, Acidity, and 7-Gas DGA parsed automatically</div>
               </div>

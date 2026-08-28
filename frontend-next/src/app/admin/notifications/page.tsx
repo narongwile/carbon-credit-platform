@@ -420,7 +420,6 @@ export default function AlarmNotificationPage() {
   // Escalation Matrix State (ISA-18.2 §11)
   const [escalationEnabled, setEscalationEnabled] = useState(true)
   const [escalationTimeoutMins, setEscalationTimeoutMins] = useState(30)
-  const [escalationTargetOrg, setEscalationTargetOrg] = useState(true)
   const [escalationCustomNote, setEscalationCustomNote] = useState(
     'ESCALATION ALERT: Critical incident on asset has remained unacknowledged past timeout threshold. Paging duty supervisor.'
   )

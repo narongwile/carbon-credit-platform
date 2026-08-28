@@ -101,6 +101,20 @@ test_proofs_and_integrity:
     # one — it was doing the opposite, showing a critical reading emptier
     # than a healthy one.
     - node e2e/proofs/test-range-bar-direction.mjs
+    # The PdM studios show engineering verdicts (fault type, remaining life,
+    # replacement budget) computed from constants baked into the component
+    # whenever the asset does not publish that channel. Each such panel must
+    # carry a DemoDataBanner, and no fabricated record may be attributed to a
+    # real named laboratory or utility.
+    - node e2e/proofs/test-studio-data-provenance.mjs
+    # The frontend has NO unused-variable detection: .eslintrc extends only
+    # next/core-web-vitals, which does not enable no-unused-vars for TS
+    # (verified by probe). That is the same blind spot that hid the org-level
+    # Telegram regression in the Node-RED strings, and in this range it also
+    # hid a dead useRouter on admin/reports (one-way deep links) and an
+    # unreachable enable-all control in AlarmParamConfig. Baseline gate: fails
+    # only on NEW computed-but-unused values.
+    - node e2e/proofs/test-frontend-deadcode.mjs
     # The alarm editor's no-data fallback row set must name CATALOG keys
     # ('oilTemp'), not the telemetry payload names realtime.ts maps them to
     # ('oilTemperature'). It named the payload ones, so both temperature
@@ -124,6 +138,11 @@ test_proofs_and_integrity:
     # how the org-level Telegram send was lost: `tok`/`chat` computed, the
     # `await fetch` gone). Verified to fail on that specific regression.
     - node backend/node-red/handler-deadcode.test.mjs
+    # PERSONAL alarm delivery (notifypersonal), the third delivery path. Added
+    # with the personal email/LINE/Telegram/GChat coverage work but, like both
+    # notify tests before it, not wired into CI — this list is explicit, not a
+    # glob, so a new test file here runs nowhere until it is named.
+    - node backend/node-red/notify-personal.test.mjs
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
     - if: $CI_PIPELINE_SOURCE == "web"

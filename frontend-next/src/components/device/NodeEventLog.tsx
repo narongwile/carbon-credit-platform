@@ -50,7 +50,6 @@ export default function NodeEventLog({ nodeId, domain, baseValue, by = 'admin' }
   const [shelveHours, setShelveHours] = useState<number>(8)
   const [shelveReason, setShelveReason] = useState<string>('')
   const [isOffline, setIsOffline] = useState(false)
-  const [quickNotes, setQuickNotes] = useState<Record<string, string>>({})
 
   useEffect(() => {
     const handleOnline = () => setIsOffline(false)

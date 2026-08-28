@@ -114,4 +114,72 @@ const fn = flows.find(n => n.id === 'notifypersonal').func
   console.log('PASS - Case 2: All 4 channels fallback to notification_channels works')
 }
 
+// Test Case 3: min_severity must gate personal delivery, the same way it gates
+// the org/department loop ("if (c.min_severity === 'CRITICAL' && topSeverity
+// !== 'CRITICAL') continue").
+//
+// It was SELECTed by the user-channel query and then never read, so a channel
+// an admin had deliberately set to CRITICAL-only on admin/notifications still
+// delivered this user's personal WARNING alarms — the same row, on the same
+// screen, filtering correctly for org alarms and silently not for personal
+// ones. The user only finds out by being paged for things they asked not to
+// be paged for, which is how people learn to ignore the channel.
+{
+  const posts = [], mails = []
+  const userNoPrefs = [{ id: 'u-3', email: null, role: 'viewer', prefs: null }]
+  // Every channel is CRITICAL-only. The alarm below is a WARNING.
+  const dbChannels = [
+    { channel: 'email',      target: 'crit-only@example.com',                    min_severity: 'CRITICAL', enabled: 1 },
+    { channel: 'googlechat', target: 'https://chat.googleapis.com/v1/spaces/c3', min_severity: 'CRITICAL', enabled: 1 },
+    { channel: 'telegram',   target: '5551234',                                  min_severity: 'CRITICAL', enabled: 1 },
+    { channel: 'line',       target: 'LINE_RAW_TOKEN_C3',                        min_severity: 'CRITICAL', enabled: 1 },
+  ]
+  const pool = { query: async (sql) => {
+    if (sql.includes('FROM users u LEFT JOIN user_prefs')) return [userNoPrefs]
+    if (sql.includes('FROM notification_channels WHERE user_id=?')) return [dbChannels]
+    return [[]]
+  }}
+  const globalCtx = { get: (k) => ({
+    pool: pool,
+    resolvePool: () => pool,
+    mailConfig: async () => ({ from: 'noreply@x', transport: { sendMail: async (m) => { mails.push(m) } } }),
+    notifyConfig: async () => ({ telegramToken: 'GLOBTOK', telegramChatId: '', lineToken: 'GLOBLINE' }),
+  }[k]) }
+  const node = { warn: () => {}, error: () => {} }
+  const fetchMock = async (url, opt) => { posts.push({ url, body: opt?.body }); return { ok: true } }
+
+  const warn = { payload: [{
+    nodeId: 'tr-001', orgId: 'org-1', personalUserId: 'u-3', paramKey: 'oilTemp',
+    paramLabel: 'Oil Temperature', value: 89, unit: '\u00b0C', threshold: 85, severity: 'WARNING', time: new Date(0).toISOString()
+  }]}
+  new Function('env', 'node', 'global', 'msg', 'fetch', fn)({ get: () => '' }, node, globalCtx, warn, fetchMock)
+  await new Promise(r => setTimeout(r, 200))
+
+  if (mails.length || posts.length) {
+    console.error('FAIL - Case 3: CRITICAL-only channels delivered a WARNING personal alarm')
+    console.error('  mails:', mails.map(m => m.to), ' posts:', posts.map(p => p.url))
+    process.exit(1)
+  }
+  console.log('PASS - Case 3: CRITICAL-only channels stay silent on a WARNING personal alarm')
+
+  // ...and the same channels MUST still fire on an actual CRITICAL, so the
+  // gate above is a filter and not just "personal delivery is broken".
+  const crit = { payload: [{
+    nodeId: 'tr-001', orgId: 'org-1', personalUserId: 'u-3', paramKey: 'oilTemp',
+    paramLabel: 'Oil Temperature', value: 95, unit: '\u00b0C', threshold: 90, severity: 'CRITICAL', time: new Date(0).toISOString()
+  }]}
+  new Function('env', 'node', 'global', 'msg', 'fetch', fn)({ get: () => '' }, node, globalCtx, crit, fetchMock)
+  await new Promise(r => setTimeout(r, 200))
+
+  if (!mails.some(m => m.to === 'crit-only@example.com')) {
+    console.error('FAIL - Case 3: CRITICAL-only email did not fire on an actual CRITICAL')
+    process.exit(1)
+  }
+  if (!posts.some(p => p.url === 'https://chat.googleapis.com/v1/spaces/c3')) {
+    console.error('FAIL - Case 3: CRITICAL-only Google Chat did not fire on an actual CRITICAL')
+    process.exit(1)
+  }
+  console.log('PASS - Case 3: the same channels do fire on a genuine CRITICAL')
+}
+
 console.log('All Personal Alarm coverage tests (Email, Telegram, LINE, Google Chat) passed!')

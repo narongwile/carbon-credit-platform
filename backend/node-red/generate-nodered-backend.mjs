@@ -2055,7 +2055,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
             if (!tok && e.orgId) {
               try {
-                const [orgTg] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+                const [orgTg] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1", [e.orgId]);
                 if (orgTg.length && orgTg[0].target) {
                   const ot = orgTg[0].target;
                   const oAt = ot.lastIndexOf('@');
@@ -2090,7 +2090,7 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             }
             if (!tok && e.orgId) {
               try {
-                const [orgLine] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+                const [orgLine] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1", [e.orgId]);
                 if (orgLine.length && orgLine[0].target) {
                   const ot = orgLine[0].target;
                   const oAt = ot.lastIndexOf('@');
@@ -2287,14 +2287,24 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     const dbWebhook = userChannelsFromDb.find(c => c.channel === 'webhook');
 
     // Re-checked at delivery time: either explicitly enabled for this node in alertChannels,
-    // or enabled in user-level notification_channels
+    // or enabled in user-level notification_channels.
+    //
+    // min_severity is honoured here the same way the org/department loop does
+    // it ("if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL')
+    // continue"). It was SELECTed and then never read, so a channel an admin
+    // had deliberately set to CRITICAL-only on admin/notifications still
+    // delivered this user's personal WARNING alarms — the same row, on the
+    // same screen, filtering correctly for org alarms and silently not for
+    // personal ones. Applied per channel, because each notification_channels
+    // row carries its own threshold.
+    const __sevOK = (c) => !c || c.min_severity !== 'CRITICAL' || topSeverity === 'CRITICAL';
     const nodeChannels = (pf.alertChannels || {})[e.nodeId];
     const sel = {
-      email: nodeChannels && nodeChannels.email !== undefined ? !!nodeChannels.email : (dbEmail ? !!dbEmail.enabled : false),
-      telegram: nodeChannels && nodeChannels.telegram !== undefined ? !!nodeChannels.telegram : (dbTg ? !!dbTg.enabled : false),
-      line: nodeChannels && nodeChannels.line !== undefined ? !!nodeChannels.line : (dbLine ? !!dbLine.enabled : false),
-      googlechat: nodeChannels && nodeChannels.googlechat !== undefined ? !!nodeChannels.googlechat : (dbGchat ? !!dbGchat.enabled : false),
-      webhook: nodeChannels && nodeChannels.webhook !== undefined ? !!nodeChannels.webhook : (dbWebhook ? !!dbWebhook.enabled : false),
+      email: nodeChannels && nodeChannels.email !== undefined ? !!nodeChannels.email : (dbEmail ? !!dbEmail.enabled && __sevOK(dbEmail) : false),
+      telegram: nodeChannels && nodeChannels.telegram !== undefined ? !!nodeChannels.telegram : (dbTg ? !!dbTg.enabled && __sevOK(dbTg) : false),
+      line: nodeChannels && nodeChannels.line !== undefined ? !!nodeChannels.line : (dbLine ? !!dbLine.enabled && __sevOK(dbLine) : false),
+      googlechat: nodeChannels && nodeChannels.googlechat !== undefined ? !!nodeChannels.googlechat : (dbGchat ? !!dbGchat.enabled && __sevOK(dbGchat) : false),
+      webhook: nodeChannels && nodeChannels.webhook !== undefined ? !!nodeChannels.webhook : (dbWebhook ? !!dbWebhook.enabled && __sevOK(dbWebhook) : false),
     };
     if (!sel.email && !sel.telegram && !sel.line && !sel.googlechat && !sel.webhook) return;
 
@@ -2347,7 +2357,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
         if (!tok && e.orgId) {
           try {
-            const [orgTg] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+            const [orgTg] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1", [e.orgId]);
             if (orgTg.length && orgTg[0].target) {
               const ot = orgTg[0].target;
               const oAt = ot.lastIndexOf('@');
@@ -2385,7 +2395,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         }
         if (!tok && e.orgId) {
           try {
-            const [orgLine] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+            const [orgLine] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1", [e.orgId]);
             if (orgLine.length && orgLine[0].target) {
               const ot = orgLine[0].target;
               const oAt = ot.lastIndexOf('@');
