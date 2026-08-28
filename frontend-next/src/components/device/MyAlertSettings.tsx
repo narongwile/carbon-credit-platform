@@ -45,6 +45,7 @@ export default function MyAlertSettings({
   const isAdmin = session?.role === 'admin' || session?.role === 'superadmin'
 
   const [prefs, setPrefs] = useState<Record<string, unknown> | null>(null)
+  const [dbUserChannels, setDbUserChannels] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>(DEFAULT_ENABLED)
   const [showAdminThresholds, setShowAdminThresholds] = useState(false)
   const [showPersonalThresholds, setShowPersonalThresholds] = useState(false)
@@ -61,8 +62,20 @@ export default function MyAlertSettings({
       const perNodeChannels = (p.alertChannels ?? {}) as Record<string, Partial<Record<ChannelId, boolean>>>
       setEnabled({ ...DEFAULT_ENABLED, ...(perNodeChannels[nodeId] ?? {}) })
     })
+    if (orgId) {
+      api.orgChannels(orgId, undefined, session.id).then((rows) => {
+        if (cancelled || !Array.isArray(rows)) return
+        const map: Record<string, string> = {}
+        rows.forEach((r) => {
+          if (r.channel && r.target && r.enabled) {
+            map[r.channel] = r.target
+          }
+        })
+        setDbUserChannels(map)
+      }).catch(() => {})
+    }
     return () => { cancelled = true }
-  }, [session?.id, nodeId])
+  }, [session?.id, nodeId, orgId])
 
   const save = useCallback(async () => {
     if (!session?.id) { toast.error('Sign in to save your alert settings'); return }
@@ -83,7 +96,7 @@ export default function MyAlertSettings({
     }
   }, [session?.id, prefs, enabled, nodeId])
 
-  const missing = CHANNELS.filter((c) => c.prefsKey && enabled[c.id] && !prefs?.[c.prefsKey])
+  const missing = CHANNELS.filter((c) => c.prefsKey && enabled[c.id] && !prefs?.[c.prefsKey] && !dbUserChannels[c.id])
 
   return (
     <div className="rounded-xl p-5 space-y-4" style={surface}>
@@ -109,7 +122,9 @@ export default function MyAlertSettings({
         </label>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {CHANNELS.map((ch) => {
-            const configured = !ch.prefsKey || !!prefs?.[ch.prefsKey]
+            const hasPref = ch.prefsKey ? !!prefs?.[ch.prefsKey] : true
+            const hasDb = !!dbUserChannels[ch.id]
+            const configured = !ch.prefsKey || hasPref || hasDb
             const isChEnabled = enabled[ch.id]
             return (
               <div key={ch.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={inset}>
@@ -117,6 +132,9 @@ export default function MyAlertSettings({
                   <span className="text-xs font-medium text-slate-200 block">{ch.name}</span>
                   {ch.prefsKey && !configured && (
                     <span className="text-[10px] text-amber-500/80">not configured in profile</span>
+                  )}
+                  {ch.prefsKey && configured && !hasPref && hasDb && (
+                    <span className="text-[10px] text-emerald-400/80">linked via notifications</span>
                   )}
                 </div>
                 <button
@@ -137,7 +155,7 @@ export default function MyAlertSettings({
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
           <span>
             {missing.map((m) => m.name).join(', ')} {missing.length === 1 ? 'has' : 'have'} no credential saved in your account.{' '}
-            <Link href={profileHref} className="underline font-medium hover:text-amber-300">Set up credentials in your Profile</Link>.
+            <Link href={profileHref} className="underline font-medium hover:text-amber-300">Set up credentials in your Profile</Link> or Notification Settings.
           </span>
         </p>
       )}
