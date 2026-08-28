@@ -252,7 +252,8 @@ export default function SettingsPage() {
       return
     }
     if (isLive()) {
-      const ok = await api.putMyConfig(user.id, { emailAlerts })
+      const current = (await api.getMyConfig(user.id))?.prefs ?? {}
+      const ok = await api.putMyConfig(user.id, { ...current, emailAlerts })
       if (!ok) {
         toast.error('Could not save user preferences')
         return

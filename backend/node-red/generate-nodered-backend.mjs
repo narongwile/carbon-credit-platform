@@ -2020,18 +2020,40 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(link) });
           } catch(err) { node.error('notify:user-email '+err.message); }
         }
-        const rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();
+        let rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();
+        if (!rawTg && u.id) {
+          try {
+            const [uCh] = await controlPool.query("SELECT target FROM notification_channels WHERE user_id=? AND channel='telegram' AND enabled=1 LIMIT 1", [u.id]);
+            if (uCh.length && uCh[0].target) rawTg = uCh[0].target.trim();
+          } catch(_) {}
+        }
         if (sel.telegram && rawTg) {
           try {
             const at = rawTg.lastIndexOf('@');
-            const tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
+            let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
             const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
+            if (!tok && e.orgId) {
+              try {
+                const [orgTg] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+                if (orgTg.length && orgTg[0].target) {
+                  const ot = orgTg[0].target;
+                  const oAt = ot.lastIndexOf('@');
+                  if (oAt > 0) tok = ot.slice(0, oAt);
+                }
+              } catch(_) {}
+            }
             if (tok && chat) {
               await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor(u.role)))});
             }
           } catch(err) { node.error('notify:user-telegram '+err.message); }
         }
-        const rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();
+        let rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();
+        if (!rawLine && u.id) {
+          try {
+            const [uCh] = await controlPool.query("SELECT target FROM notification_channels WHERE user_id=? AND channel='line' AND enabled=1 LIMIT 1", [u.id]);
+            if (uCh.length && uCh[0].target) rawLine = uCh[0].target.trim();
+          } catch(_) {}
+        }
         if (sel.line && rawLine) {
           try {
             const at = rawLine.lastIndexOf('@');
@@ -2041,7 +2063,13 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
             else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
           } catch(err) { node.error('notify:user-line '+err.message); }
         }
-        const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
+        let rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
+        if (!rawGchat && u.id) {
+          try {
+            const [uCh] = await controlPool.query("SELECT target FROM notification_channels WHERE user_id=? AND channel='googlechat' AND enabled=1 LIMIT 1", [u.id]);
+            if (uCh.length && uCh[0].target) rawGchat = uCh[0].target.trim();
+          } catch(_) {}
+        }
         if (sel.googlechat && rawGchat) {
           try {
             await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});
@@ -2194,15 +2222,36 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
 
 (async () => {
   try {
-    const [urows] = await controlPool.query("SELECT u.id,u.email,u.role,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.id=?", [e.personalUserId]);
+    const [urows] = await controlPool.query("SELECT u.id,u.email,u.role,p.prefs FROM users u LEFT JOIN user_prefs p ON p.user_id=u.id WHERE u.id=?", [e.personalUserId]);
     if (!urows.length) return;
     const u = urows[0];
     let pf = {};
     try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { return; }
-    // Re-checked at delivery time, not just at rule-save time: the user may
-    // have turned this channel off since the personal rule was created.
-    const sel = (pf.alertChannels || {})[e.nodeId];
-    if (!sel) return;
+
+    // Read user-specific channels configured under 'admin/notifications'
+    let userChannelsFromDb = [];
+    try {
+      const [ncRows] = await controlPool.query("SELECT channel, target, min_severity, enabled FROM notification_channels WHERE user_id=? AND enabled=1", [e.personalUserId]);
+      userChannelsFromDb = ncRows;
+    } catch(_) {}
+
+    const dbGchat = userChannelsFromDb.find(c => c.channel === 'googlechat');
+    const dbTg = userChannelsFromDb.find(c => c.channel === 'telegram');
+    const dbLine = userChannelsFromDb.find(c => c.channel === 'line');
+    const dbEmail = userChannelsFromDb.find(c => c.channel === 'email');
+    const dbWebhook = userChannelsFromDb.find(c => c.channel === 'webhook');
+
+    // Re-checked at delivery time: either explicitly enabled for this node in alertChannels,
+    // or enabled in user-level notification_channels
+    const nodeChannels = (pf.alertChannels || {})[e.nodeId];
+    const sel = {
+      email: nodeChannels && nodeChannels.email !== undefined ? !!nodeChannels.email : (dbEmail ? !!dbEmail.enabled : false),
+      telegram: nodeChannels && nodeChannels.telegram !== undefined ? !!nodeChannels.telegram : (dbTg ? !!dbTg.enabled : false),
+      line: nodeChannels && nodeChannels.line !== undefined ? !!nodeChannels.line : (dbLine ? !!dbLine.enabled : false),
+      googlechat: nodeChannels && nodeChannels.googlechat !== undefined ? !!nodeChannels.googlechat : (dbGchat ? !!dbGchat.enabled : false),
+      webhook: nodeChannels && nodeChannels.webhook !== undefined ? !!nodeChannels.webhook : (dbWebhook ? !!dbWebhook.enabled : false),
+    };
+    if (!sel.email && !sel.telegram && !sel.line && !sel.googlechat && !sel.webhook) return;
 
     const viewer = u.role === 'viewer' || u.role === 'customer';
     const dom = e.domain || 'transformer';
@@ -2222,19 +2271,30 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     const link = base ? (base + path + '?id=' + encodeURIComponent(e.nodeId)) : '';
     const linkLine = link ? '\\n🔗 ' + link : '';
 
-    if (sel.email && u.email) {
+    const targetEmail = u.email || (dbEmail ? dbEmail.target : '');
+    if (sel.email && targetEmail) {
       try {
         const mc = await global.get('mailConfig')();
-        if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject, text: text + linkLine });
+        if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: targetEmail, subject, text: text + linkLine });
       } catch(err) { node.error('notifyPersonal:email ' + err.message); }
     }
-    const rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();
+    const rawTg = String(pf.telegramChatId || pf.telegramBotApi || (dbTg ? dbTg.target : '') || '').trim();
     if (sel.telegram && rawTg) {
       try {
         const nc = await global.get('notifyConfig')();
         const at = rawTg.lastIndexOf('@');
-        const tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
+        let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
         const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
+        if (!tok && e.orgId) {
+          try {
+            const [orgTg] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+            if (orgTg.length && orgTg[0].target) {
+              const ot = orgTg[0].target;
+              const oAt = ot.lastIndexOf('@');
+              if (oAt > 0) tok = ot.slice(0, oAt);
+            }
+          } catch(_) {}
+        }
         if (tok && chat) {
           await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{
             method:'POST',
@@ -2249,7 +2309,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         }
       } catch(err) { node.error('notifyPersonal:telegram ' + err.message); }
     }
-    const rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();
+    const rawLine = String(pf.lineUserId || pf.lineMsgApi || (dbLine ? dbLine.target : '') || '').trim();
     if (sel.line && rawLine) {
       try {
         const nc = await global.get('notifyConfig')();
@@ -2261,7 +2321,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         }
       } catch(err) { node.error('notifyPersonal:line ' + err.message); }
     }
-    const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
+    const rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || (dbGchat ? dbGchat.target : '') || '').trim();
     if (sel.googlechat && rawGchat) {
       try {
         const personalGchat = {

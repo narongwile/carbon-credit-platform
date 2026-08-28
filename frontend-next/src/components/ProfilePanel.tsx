@@ -21,18 +21,21 @@ export default function ProfilePanel({ portal }: { portal: string }) {
   const [savedProfile, setSavedProfile] = useState(false)
   const [savedPwd, setSavedPwd] = useState(false)
 
+  const [rawPrefs, setRawPrefs] = useState<Record<string, unknown>>({})
+
   useEffect(() => {
     const s = getSession()
     if (!s) return
     setProfile({ name: s.name, username: s.username, email: s.email, phone: '' })
     if (apiEnabled) api.getMyConfig(s.id).then((r) => {
-      const p = (r?.prefs ?? {}) as { phone?: string; telegramBotApi?: string; lineMsgApi?: string; googleChatApi?: string; webhookApi?: string }
+      const p = (r?.prefs ?? {}) as Record<string, unknown>
+      setRawPrefs(p)
       if (p.phone) setProfile((cur) => ({ ...cur, phone: p.phone as string }))
       setChannels({
-        telegramBotApi: p.telegramBotApi ?? '',
-        lineMsgApi: p.lineMsgApi ?? '',
-        googleChatApi: p.googleChatApi ?? '',
-        webhookApi: p.webhookApi ?? '',
+        telegramBotApi: (p.telegramBotApi ?? p.telegramChatId ?? '') as string,
+        lineMsgApi: (p.lineMsgApi ?? p.lineUserId ?? '') as string,
+        googleChatApi: (p.googleChatApi ?? p.googleChatWebhook ?? '') as string,
+        webhookApi: (p.webhookApi ?? p.webhookUrl ?? '') as string,
       })
     })
   }, [])
@@ -41,9 +44,14 @@ export default function ProfilePanel({ portal }: { portal: string }) {
     const s = getSession()
     if (s) {
       try {
-        // putMyConfig REPLACES prefs, so every field must ride along — posting
-        // only the profile part would wipe the saved notification channels.
-        const res = await api.putMyConfig(s.id, { phone: profile.phone, name: profile.name, ...channels })
+        // Fetch freshest prefs to ensure alertChannels and other device settings are never wiped
+        const fresh = (await api.getMyConfig(s.id))?.prefs ?? rawPrefs
+        const res = await api.putMyConfig(s.id, {
+          ...fresh,
+          phone: profile.phone,
+          name: profile.name,
+          ...channels
+        })
         if (!res) throw new Error('Failed to update profile')
         setSavedProfile(true); setTimeout(() => setSavedProfile(false), 2000)
       } catch (e: any) { toast.error('Failed to update profile') }
