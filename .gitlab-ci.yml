@@ -96,6 +96,11 @@ test_proofs_and_integrity:
     # Fails if an auto-armed alarm ever again names a key the fleet does not
     # publish, or if a published parameter becomes unreachable by any rule.
     - node e2e/proofs/audit-catalog-vs-device.mjs
+    # SensorDetailsModal's ISA-101 range bar must grow toward danger for a
+    # 'low'-direction param (lower is worse) the same as a 'high'-direction
+    # one — it was doing the opposite, showing a critical reading emptier
+    # than a healthy one.
+    - node e2e/proofs/test-range-bar-direction.mjs
     # The alarm editor's no-data fallback row set must name CATALOG keys
     # ('oilTemp'), not the telemetry payload names realtime.ts maps them to
     # ('oilTemperature'). It named the payload ones, so both temperature

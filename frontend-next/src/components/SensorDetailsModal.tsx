@@ -225,16 +225,23 @@ export default function SensorDetailsModal({
       `Status: ${online ? 'ONLINE' : 'OFFLINE'} | Transport: ${presence?.transport || 'MQTT'}`,
       `Signal: ${rssi != null ? `${rssi} dBm` : 'N/A'} | Battery: ${batt != null ? `${batt}%` : 'N/A'} | Uptime: ${formatUptime(presence?.last_uptime)}`,
       `Last Seen: ${presence?.last_seen ? fmtDateTime(presence.last_seen) : 'never'} | Last Telemetry: ${lastReadingAt ? fmtDateTime(lastReadingAt) : '—'}`,
-      hasConflict ? `⚠️ CRITICAL: Hardware Identity Collision detected at ${fmtDateTime(presence?.identity_conflict_at)}` : '',
+      hasConflict ? `⚠️ CRITICAL: Hardware Identity Collision detected at ${presence?.identity_conflict_at ? fmtDateTime(presence.identity_conflict_at) : 'unknown time'}` : '',
       alarms.length > 0
         ? `\n🚨 Active Alarms (${alarms.length}):\n` + alarms.map((a) => ` - ${a.label} (${a.key}): ${a.val} ${a.unit} [${a.status}]`).join('\n')
         : '\n✅ All monitored telemetry within safe operational limits.',
       `\nReport generated: ${new Date().toISOString()} via ONEOPS Platform`,
     ].filter(Boolean).join('\n')
 
+    // No .catch(): clipboard access can be denied (insecure context, no
+    // permission, Safari's user-gesture window having closed) and the promise
+    // then just rejects — the SOP handover button did nothing with no
+    // feedback, on a "did the copy actually work" affordance whose whole
+    // point is that feedback.
     navigator.clipboard.writeText(summary).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }).catch(() => {
+      window.alert('Could not copy to clipboard — your browser blocked clipboard access.')
     })
   }
 
@@ -366,7 +373,7 @@ export default function SensorDetailsModal({
                   </span>
                 </div>
                 <p className="text-slate-300 leading-relaxed">
-                  ระบบตรวจพบว่ามีอุปกรณ์ฮาร์ดแวร์มากกว่า 1 เครื่อง หรือมีสตรีมข้อมูลคู่ขนานที่แย่งกันส่งข้อมูลภายใต้ Node ID <strong className="text-white font-mono">{nodeId}</strong> นี้ (ตรวจพบความผิดปกติเมื่อ {fmtDateTime(presence?.identity_conflict_at)})
+                  ระบบตรวจพบว่ามีอุปกรณ์ฮาร์ดแวร์มากกว่า 1 เครื่อง หรือมีสตรีมข้อมูลคู่ขนานที่แย่งกันส่งข้อมูลภายใต้ Node ID <strong className="text-white font-mono">{nodeId}</strong> นี้ (ตรวจพบความผิดปกติเมื่อ {presence?.identity_conflict_at ? fmtDateTime(presence.identity_conflict_at) : 'ไม่ทราบเวลา'})
                 </p>
                 <div className="text-[11px] text-rose-200/80 font-mono pt-1">
                   คำแนะนำ: ตรวจสอบหมายเลข MAC Address ของบอร์ด ESP32 หรือกดเข้าไปที่หน้า APM Studio เพื่อดูแบนเนอร์และเลือกโหมด Stream Arbitration (Max-Select หรือ Dual-Redundant Mean)
@@ -468,10 +475,23 @@ export default function SensorDetailsModal({
                 <div className="rounded-xl border border-slate-800/80 overflow-hidden" style={inset}>
                   <div className="max-h-64 overflow-y-auto divide-y divide-slate-800/60 text-xs">
                     {filteredTelemetry.map((p) => {
-                      // Calculate percentage for visual range bar if threshold is known
+                      // Calculate percentage for visual range bar if threshold is known.
+                      //
+                      // For a 'low'-direction param (e.g. oilLevel: warn 70,
+                      // critical 60 — lower is worse), val/critLimit grows
+                      // WITH the reading: a healthy 90 gave 90/60*85 = 127%
+                      // (clamped to a FULL bar) while an actual critical
+                      // reading of 55 gave 55/60*85 = 78% (mostly empty) — the
+                      // opposite of every 'high'-direction row in this same
+                      // list, where a longer bar means closer to danger.
+                      // critLimit/val keeps that invariant either way: pct
+                      // hits 85% exactly at the critical threshold and grows
+                      // as the reading approaches it, in both directions.
                       let pct = 50
                       if (p.critLimit != null && p.critLimit > 0) {
-                        pct = Math.min(100, Math.max(5, (p.val / p.critLimit) * 85))
+                        pct = p.direction === 'low'
+                          ? (p.val > 0 ? Math.min(100, Math.max(5, (p.critLimit / p.val) * 85)) : 100)
+                          : Math.min(100, Math.max(5, (p.val / p.critLimit) * 85))
                       }
 
                       return (
