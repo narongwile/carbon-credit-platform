@@ -10,6 +10,7 @@ import { AlertTriangle, XCircle, Info, CheckCircle, Clock, Filter, Download, Fil
 import type { Alarm } from '@/types'
 import { fmtDateTime, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import toast from 'react-hot-toast'
+import { recordAuditAction } from '@/lib/auditStore'
 
 // Only id/label are ever read (the ack picker); department_id/domain came
 // along in the API response but nothing here scopes by them — this page is
@@ -174,11 +175,25 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
           return
         }
         toast.success('Alarm acknowledged')
+        recordAuditAction({
+          action: 'ALARM_SHELVE',
+          target: { assetId: id, assetName: `Alarm #${id}` },
+          before: 'Alarm State: Active Unacknowledged',
+          after: 'Alarm State: Acknowledged & Shelved',
+          justification: problems.find((p) => p.id === problemId)?.label || 'Operator manual acknowledgement in Alarm Console',
+        }).catch(() => {})
         refetchAlarms()
         return
       }
       acknowledgeAlarm(id, 'admin')
       toast.success('Alarm acknowledged')
+      recordAuditAction({
+        action: 'ALARM_SHELVE',
+        target: { assetId: id, assetName: `Alarm #${id}` },
+        before: 'Alarm State: Active Unacknowledged',
+        after: 'Alarm State: Acknowledged & Shelved',
+        justification: problems.find((p) => p.id === problemId)?.label || 'Operator manual acknowledgement in Alarm Console',
+      }).catch(() => {})
     } catch {
       toast.error('Failed to acknowledge alarm')
     }

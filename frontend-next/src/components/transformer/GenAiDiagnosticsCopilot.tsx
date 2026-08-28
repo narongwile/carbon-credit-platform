@@ -9,7 +9,7 @@ import {
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { useSession } from '@/lib/auth'
-import { useAuditStore } from '@/lib/auditStore'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface GenAiDiagnosticsCopilotProps {
   assetId?: string
@@ -511,24 +511,16 @@ export default function GenAiDiagnosticsCopilot({
               {canDispatchWorkOrder ? (
                 <button
                   onClick={() => {
-                    useAuditStore.getState().addRecord({
-                      id: `AUD-${Date.now()}`,
-                      timestamp: new Date().toISOString(),
-                      actor: {
-                        name: session?.name || 'Authorized Engineer',
-                        email: session?.email || 'engineer@substation.local',
-                        role: userRole.toUpperCase(),
-                      },
-                      ipAddress: '127.0.0.1',
+                    const woId = `WO-${Date.now().toString(36).toUpperCase().slice(-6)}`
+                    recordAuditAction({
                       action: 'CONFIG_CHANGE',
                       target: { assetId, assetName },
                       before: 'Pending Maintenance',
-                      after: 'Dispatched to CMMS (WO-2026-0828-TR01)',
+                      after: `Dispatched to CMMS (${woId})`,
                       justification: `AI Copilot RCA Recommendation: Degas C2H2 and dielectric sweep on Bushing Phase B`,
-                      workOrderId: 'WO-2026-0828-TR01',
-                      checksum: Math.random().toString(16).substring(2) + Math.random().toString(16).substring(2),
-                    })
-                    toast.success('🚀 ส่งใบสั่งงาน WO-2026-0828-TR01 เข้าสู่ระบบ SAP PM / Maximo และบันทึก 21 CFR Part 11 Audit Trail เรียบร้อยแล้ว!')
+                      workOrderId: woId,
+                    }).catch(() => {})
+                    toast.success(`ส่งใบสั่งงาน ${woId} บันทึก 21 CFR Part 11 Audit Trail เรียบร้อยแล้ว (Export สู่ CMMS ด้วยตนเอง)`)
                     setShowWorkOrderModal(false)
                   }}
                   className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"

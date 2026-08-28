@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import type { SensorDomain } from '@/types/fleet'
+import { recordAuditAction } from '@/lib/auditStore'
 
 const DOMAIN_LABEL: Record<SensorDomain, string> = {
   transformer: 'Transformer',
@@ -255,6 +256,13 @@ export default function OTAManagementPage() {
         })
         if (res?.ok) {
           toast.success(`Canary OTA update dispatched to device ${nodeId}`)
+          recordAuditAction({
+            action: 'OTA_DEPLOY',
+            target: { assetId: nodeId, assetName: `Canary Device ${nodeId}` },
+            before: 'Target device current firmware',
+            after: `Dispatched OTA firmware v${release.version}`,
+            justification: release.release_notes || 'Targeted Canary OTA verification deployment',
+          }).catch(() => {})
           setDeployTarget(null)
           load()
         } else {
@@ -274,6 +282,13 @@ export default function OTAManagementPage() {
         setDeployTarget(null)
         if (res?.applied !== undefined) {
           toast.success(`Fleet deployment initiated for ${res.applied} devices`)
+          recordAuditAction({
+            action: 'OTA_FLEET_DEPLOY',
+            target: { assetId: selectedOrgId, assetName: `Fleet Rollout (${release.product})` },
+            before: 'Fleet baseline firmware versions',
+            after: `Dispatched fleet OTA firmware v${release.version} (${res.applied} devices)`,
+            justification: release.release_notes || 'Fleet-wide production firmware update',
+          }).catch(() => {})
           load()
         } else {
           toast.error('Failed to deploy to fleet')

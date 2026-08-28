@@ -24,6 +24,7 @@ import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import { Check, Users, Building2, Globe, Search, Sliders, Cpu } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import { recordAuditAction } from '@/lib/auditStore'
 
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
@@ -197,6 +198,16 @@ export default function AdminBulkApplyAlarmEditor({
       if (selectedDeviceIds.length === domainDevices.length) {
         await api.putOrgRule(orgId, { rule }).catch(() => {})
       }
+      recordAuditAction({
+        action: 'THRESHOLD_CHANGE',
+        target: {
+          assetId: selectedDeviceIds.join(', '),
+          assetName: `${selectedDeviceIds.length} ${platform} device(s) (${names})`,
+        },
+        before: 'Previous baseline threshold limits',
+        after: `Applied baseline rule (${rule.params?.length ?? 0} parameters configured)`,
+        justification: `Operator applied thresholds via Alarm Setting Engine (${selectedDeviceIds.length} devices)`,
+      }).catch(() => {})
       toast.success(`Applied alarm thresholds to ${successCount} ${platform} device(s) successfully!`)
       return
     }
@@ -209,6 +220,16 @@ export default function AdminBulkApplyAlarmEditor({
         const r = await api.putOrgRule(orgId, { rule })
         if (!r) { toast.error('Could not apply the rule across your organization'); return }
       }
+      recordAuditAction({
+        action: 'THRESHOLD_CHANGE',
+        target: {
+          assetId: orgId,
+          assetName: `Entire Org (${targets.length} ${platform} devices)`,
+        },
+        before: 'Previous org baseline limits',
+        after: `Org-wide rule applied (${rule.params?.length ?? 0} parameters configured)`,
+        justification: 'Admin applied org-wide alarm thresholds',
+      }).catch(() => {})
       toast.success(`Applied to ${targets.length} ${platform} node(s) across your org`)
       return
     }
@@ -241,6 +262,16 @@ export default function AdminBulkApplyAlarmEditor({
       userIds: applyScope === 'user' ? selectedUserIds : undefined,
     })
     if (!r) { toast.error(`Could not apply the rule to ${scopeDesc}`); return }
+    recordAuditAction({
+      action: 'THRESHOLD_CHANGE',
+      target: {
+        assetId: orgId,
+        assetName: `${targetDeviceIds.size} ${platform} device(s) (${scopeDesc})`,
+      },
+      before: 'Previous departmental limits',
+      after: `Department rule applied (${rule.params?.length ?? 0} parameters configured)`,
+      justification: `Admin applied thresholds for ${scopeDesc}`,
+    }).catch(() => {})
     toast.success(`Applied to ${r.applied} ${platform} node(s) across ${scopeDesc}`)
   }
 
