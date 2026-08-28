@@ -69,13 +69,27 @@ export default function GenAiDiagnosticsCopilot({
 }: GenAiDiagnosticsCopilotProps) {
   const session = useSession()
   const userRole = session?.role || 'customer'
-  const userId = session?.id || session?.email || 'guest'
-  const effectiveOrgId = orgId || session?.orgId || 'org-1'
+  // useSession() is null on the first render and fills in from an effect, so
+  // anything keyed off it must wait. Persistence below is gated on this rather
+  // than falling back to placeholders: the previous key resolved to
+  // `copilot_chat_org-1_<asset>_guest` before the session arrived, which meant
+  // a signed-in engineer's Copilot opened showing whatever the shared "guest"
+  // bucket held, and wrote their own conversation into it — on a shared
+  // substation workstation that is one operator reading another's diagnostic
+  // session. The 'org-1' fallback is the same hardcoded-tenant default already
+  // fixed elsewhere in this codebase.
+  const sessionReady = session !== null
+  const effectiveOrgId = orgId || session?.orgId || ''
   const canDispatchWorkOrder = userRole === 'admin' || userRole === 'superadmin'
 
-  // Strict Triple-Namespace Isolation: orgId + assetId + userId
-  // Guarantees zero cross-talk between different users, organizations, or assets!
-  const storageKey = `copilot_chat_${effectiveOrgId}_${assetId}_${userId}`
+  // Namespaced by orgId + assetId + userId. Note this is localStorage, so it is
+  // per-BROWSER: it keeps two signed-in users on the same machine apart, and it
+  // survives sign-out (only the Clear button removes it). It is not a
+  // server-side access control.
+  // Empty until the session resolves — no key, no read, no write.
+  const storageKey = sessionReady && effectiveOrgId && session?.id
+    ? `copilot_chat_${effectiveOrgId}_${assetId}_${session.id}`
+    : ''
 
   // The bushing answer below quoted tan δ = 0.82%, ΔC1 = +3.6% and PD = 195 pC
   // as this transformer's readings, and concluded "ฉนวนระเบิดได้" (the
@@ -109,7 +123,7 @@ export default function GenAiDiagnosticsCopilot({
 
   // Load chat session strictly isolated by (orgId + assetId + userId)
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (typeof window === 'undefined' || !storageKey) return
     try {
       const saved = localStorage.getItem(storageKey)
       if (saved) {
@@ -130,11 +144,17 @@ export default function GenAiDiagnosticsCopilot({
     }
     setMessages([initialGreeting])
     setHasLoadedPersisted(true)
-  }, [assetId, assetName, storageKey, orgName, session?.name, tanDeltaKnown, bushingTanDeltaLive, dgaGases.c2h2, duvalVerdict, rttDays, dtrHeadroomKva])
+    // Deps are the IDENTITY of the conversation only. Including live telemetry
+    // (dtrHeadroomKva, c2h2, the bushing reading) re-ran this on every poll,
+    // and the no-saved-history branch calls setMessages([greeting]) — wiping
+    // the conversation each time a sample arrived. The greeting is a snapshot
+    // taken when the chat opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetId, storageKey])
 
   // Persist messages whenever they change
   useEffect(() => {
-    if (!hasLoadedPersisted || typeof window === 'undefined') return
+    if (!hasLoadedPersisted || typeof window === 'undefined' || !storageKey) return
     try {
       if (messages.length > 0) {
         localStorage.setItem(storageKey, JSON.stringify(messages))
@@ -143,7 +163,7 @@ export default function GenAiDiagnosticsCopilot({
   }, [messages, storageKey, hasLoadedPersisted])
 
   const handleClearHistory = () => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && storageKey) {
       localStorage.removeItem(storageKey)
     }
     const resetGreeting: ChatMessage = {

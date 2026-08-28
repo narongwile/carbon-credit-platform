@@ -16,7 +16,34 @@ export interface OrgAudioSettings {
   cooldownSec: number // minimum seconds between chimes to prevent spam
 }
 
-export const DEFAULT_AUDIO_SETTINGS: OrgAudioSettings = {
+export /**
+ * One AudioContext for the whole tab, created on first chime.
+ *
+ * This used to be `new AudioCtx()` on every single chime, with nothing ever
+ * calling close(). An AudioContext holds a real audio-hardware connection and
+ * browsers cap how many a document may have open (Chrome has long capped it
+ * around six); past the cap the constructor throws. The throw landed in the
+ * catch below, which returns false silently — so after a handful of alarms the
+ * audible annunciator simply stopped working for the rest of the session, with
+ * no error surfaced and no way for the operator to know the sound they were
+ * relying on had gone away. Reusing one context also keeps the browser's
+ * autoplay unlock (the resume() below) rather than needing it per context.
+ */
+let __sharedAudioCtx: AudioContext | null = null
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  if (__sharedAudioCtx && __sharedAudioCtx.state !== 'closed') return __sharedAudioCtx
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+  if (!AudioCtx) return null
+  try {
+    __sharedAudioCtx = new AudioCtx()
+  } catch {
+    return null
+  }
+  return __sharedAudioCtx
+}
+
+const DEFAULT_AUDIO_SETTINGS: OrgAudioSettings = {
   enabled: true,
   volume: 0.35,
   alertOnConflict: true,
@@ -96,9 +123,8 @@ export const useAudioChimeStore = create<AudioChimeState>()(
         }
 
         try {
-          const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-          if (!AudioCtx) return false
-          const ctx = new AudioCtx()
+          const ctx = getAudioContext()
+          if (!ctx) return false
           if (ctx.state === 'suspended') {
             ctx.resume()
           }

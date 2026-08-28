@@ -146,6 +146,12 @@ test_worker_proofs:
     - go run e2e/proofs/go-fieldnames-proof.go
     # Payload-vs-topic identity, and duplicate-device detection via uptime.
     - go run e2e/proofs/go-identity-proof.go
+    # The MAC-suffix relaxation of that identity check must not become a way for
+    # one device to publish as another. The EMQX ACL pins publishes to
+    # ${clientid}, so the TOPIC id is broker-authorised and the payload id is
+    # not; the org is resolved from whichever id survives, so a bad rewrite here
+    # is a cross-tenant write. Verified to fail on the unguarded version.
+    - go run e2e/proofs/go-mac-identity-proof.go
     # Device clock sanity: a bad timestamp must not silently vanish a reading
     # into 1970 (retention then deletes it) nor permanently kill rate-of-rise.
     - go run e2e/proofs/go-clock-proof.go

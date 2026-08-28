@@ -1802,12 +1802,44 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	// own id, and it is that pairing the broker authorised.
 	if claimed := topicNodeID(msg.Topic()); claimed != "" && claimed != t.NodeID {
 		baseClaimed, macFromTopic := stripMacSuffix(claimed)
-		basePayload, _ := stripMacSuffix(t.NodeID)
-		if baseClaimed != "" && (baseClaimed == t.NodeID || baseClaimed == basePayload) {
-			// Topic appended a compact MAC suffix (e.g. topic "tr-221_246F28A1B2C3" vs payload "tr-221")
-			claimed = t.NodeID
-			if t.MAC == "" && macFromTopic != "" {
-				t.MAC, _ = normalizeMAC(macFromTopic)
+		// The TOPIC id is the only trustworthy half of this comparison: the EMQX
+		// ACL pins publish to "telemetry/+/+/${clientid}", so the broker
+		// authorised it. The payload id is whatever the frame says. Rewriting
+		// identity to the payload therefore has to be justified, not assumed.
+		//
+		// Two guards on the MAC-suffix case:
+		//
+		//  1. Only topic-suffixed/payload-bare ("tr-221_246F28A1B2C3" publishing
+		//     as "tr-221"), which is the case the suffix support exists for.
+		//     The sibling case (topic "tr-221_MAC1", payload "tr-221_MAC2" —
+		//     both stripping to "tr-221") let one provisioned device publish
+		//     under a DIFFERENT provisioned device's id. That is impersonation
+		//     between two real assets with no legitimate use, and it is exactly
+		//     the "two devices on one nodeId" collision the slew-rate guard
+		//     added in this same change exists to detect — accepting it here
+		//     would have the worker authorising the condition it then alarms on.
+		//
+		//  2. The suffixed id must not itself be a REGISTERED node. If
+		//     "tr-221_246F28A1B2C3" is an asset in its own right, it publishes
+		//     as itself; letting it write into the separate asset "tr-221" is a
+		//     cross-asset — and, since nodeInfo resolves the org from the id,
+		//     potentially cross-TENANT — write by a legitimately provisioned
+		//     device. nodeInfo is cached (2 min), so this costs no query on the
+		//     hot path once warm.
+		if baseClaimed != "" && baseClaimed == t.NodeID {
+			if topicOrg, _, _, _ := nodeInfo(claimed); topicOrg != "" {
+				statIdentityRejected.Add(1)
+				log.Printf("Identity REJECTED: topic %q is a registered node in org %s and may not publish as %q",
+					claimed, topicOrg, t.NodeID)
+				if identityEnforced() {
+					return
+				}
+			} else {
+				// Topic appended a compact MAC suffix (e.g. topic "tr-221_246F28A1B2C3" vs payload "tr-221")
+				claimed = t.NodeID
+				if t.MAC == "" && macFromTopic != "" {
+					t.MAC, _ = normalizeMAC(macFromTopic)
+				}
 			}
 		} else {
 			statIdentityRejected.Add(1)
