@@ -481,6 +481,29 @@ export default function SubstationThreatsStudio({
       {/* SECTION 3: Wildlife Intrusion & Optical Arc-Flash Protection */}
       {activeSection === 'wildlife' && (
         <div className="space-y-4">
+          {/* This section asserted "ARMED (< 2 ms)", 99.8% fiber continuity,
+              a live lux level, "SEALED (IP56)" and four barrier checks all
+              PASS — every one a constant, with no sensor behind any of them
+              and, unlike the arrester and OLTC sections, no disclosure at all.
+              Telling an engineer that optical arc-flash protection is armed
+              and will trip in under 2 ms, when nothing is monitored, is a
+              personnel-safety claim this platform cannot make. */}
+          <div className="rounded-xl p-3.5 bg-rose-950/20 border border-rose-500/40 flex items-start gap-3">
+            <div className="p-1.5 rounded-md bg-rose-500/20 text-rose-300 mt-0.5 flex-shrink-0">
+              <ShieldAlert size={15} />
+            </div>
+            <div className="text-xs space-y-1">
+              <div className="font-bold text-rose-300">
+                ⚠️ ส่วนนี้ทั้งหมดเป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> — ระบบยังไม่ได้เชื่อมต่อกับอุปกรณ์ป้องกัน Arc-Flash หรือเซนเซอร์ใดๆ จริง
+              </div>
+              <p className="text-slate-300 leading-relaxed">
+                สถานะ &quot;ARMED&quot;, ความต่อเนื่องของสาย Fiber, ระดับแสง, สถานะซีล IP56 และผลตรวจแนวป้องกันสัตว์ทั้งหมดด้านล่าง
+                เป็นข้อความตัวอย่างคงที่ <strong>ห้ามใช้เป็นหลักฐานว่าระบบป้องกัน Arc-Flash พร้อมทำงาน</strong>
+                กรุณาตรวจสอบกับรีเลย์ป้องกันและผลตรวจหน้างานจริงก่อนเข้าปฏิบัติงานใกล้อุปกรณ์แรงสูงทุกครั้ง
+              </p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Optical Arc Flash Loop */}
             <div className="rounded-xl p-4 bg-[#0d1117] border border-slate-800 space-y-3">
@@ -489,8 +512,8 @@ export default function SubstationThreatsStudio({
                   <Zap size={16} className="text-amber-400" />
                   <h4 className="text-xs font-bold text-white">Optical Arc-Flash Fiber Loop</h4>
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
-                  ARMED (&lt; 2 ms)
+                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-bold">
+                  EXAMPLE — NOT MONITORED
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -519,8 +542,8 @@ export default function SubstationThreatsStudio({
                   <ShieldCheck size={16} className="text-indigo-400" />
                   <h4 className="text-xs font-bold text-white">Enclosure Microclimate & Seals</h4>
                 </div>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
-                  SEALED (IP56)
+                <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 font-bold">
+                  EXAMPLE — NOT MONITORED
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -553,7 +576,7 @@ export default function SubstationThreatsStudio({
                 ].map((item, idx) => (
                   <div key={idx} className="flex items-center justify-between p-2 rounded-md bg-[#0a0e1a] border border-slate-800/80">
                     <span className="text-slate-300">{item.name}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold">PASS</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-bold">EXAMPLE</span>
                   </div>
                 ))}
               </div>

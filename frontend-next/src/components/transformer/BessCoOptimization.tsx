@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   Battery, BatteryCharging, Zap, Leaf, DollarSign, TrendingDown,
   Clock, ShieldCheck, ArrowDownRight, RefreshCw, CheckCircle2,
@@ -46,6 +46,18 @@ export default function BessCoOptimization({
   const defaultCapacity = clamp(Math.round(nameplateKva * 0.2), capacityMin, capacityMax)
   const defaultThreshold = clamp(Math.round(nameplateKva * 0.8), thresholdMin, thresholdMax)
   const [bessCapacityKwh, setBessCapacityKwh] = useState(defaultCapacity)
+  // The detail page does not remount when ?id= changes, so these two seeded
+  // once and then kept the PREVIOUS asset's numbers — and since the slider
+  // bounds are derived from nameplate, the retained value could land outside
+  // the new asset's range, reproducing the out-of-range bug this component
+  // just had. Re-seed whenever the nameplate changes.
+  const seededFor = useRef(nameplateKva)
+  useEffect(() => {
+    if (seededFor.current === nameplateKva) return
+    seededFor.current = nameplateKva
+    setBessCapacityKwh(defaultCapacity)
+    setShaveThresholdKva(defaultThreshold)
+  }, [nameplateKva, defaultCapacity, defaultThreshold])
   // No BESS telemetry reaches this platform, so state-of-charge is a assumed
   // planning figure, not a battery reading. Kept as a constant (its setter was
   // never called anyway) and labelled as assumed in the KPI card below.

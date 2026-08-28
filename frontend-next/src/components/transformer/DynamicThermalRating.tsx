@@ -44,7 +44,15 @@ export default function DynamicThermalRating({
 
   // Auto-Dispatch & Overload Duration States
   const [overloadHours, setOverloadHours] = useState(2) // hours for LOL calculation
-  const [autoDispatchCooling, setAutoDispatchCooling] = useState(true)
+  // This panel has NO downlink: it imports no api client and its only network
+  // call is the weather feed. It cannot command a fan. `coolingDispatched`
+  // therefore means "model what ONAF-2 would give", never "ONAF-2 was
+  // commanded" — it used to default to auto-firing and then render
+  // "Auxiliary cooling stage dispatched ... ONAF-2 ACTIVE" while also feeding
+  // the 1.25x ONAF-2 multiplier and a 12 degC hot-spot reduction into the
+  // rating, so the capacity shown was inflated ~25% on the strength of a
+  // command that was never sent.
+  const [autoDispatchCooling, setAutoDispatchCooling] = useState(false)
   const [coolingDispatched, setCoolingDispatched] = useState(false)
 
   // Fetch Live Weather Feed
@@ -197,7 +205,9 @@ export default function DynamicThermalRating({
     }
   }, [dtrMetrics.availableHeadroomKva, dtrMetrics.dynamicHotSpot, dtrMetrics.effectiveCooling, nameplateKva, lolTradeOff.assetDepreciationCost])
 
-  // Auto-trigger cooling if enabled
+  // Opt-in only, and it applies the ONAF-2 case to the MODEL — it does not
+  // dispatch anything. Defaulting this on meant a page load could silently
+  // switch the displayed capacity to the boosted-cooling case.
   useEffect(() => {
     if (autoDispatchCooling && coolingAdvisory.needPreCooling && !coolingDispatched) {
       setCoolingDispatched(true)
@@ -528,20 +538,20 @@ export default function DynamicThermalRating({
           <div className="flex items-center gap-2">
             <Fan size={16} className={clsx('text-cyan-400', coolingDispatched ? 'animate-spin' : '')} />
             <h4 className="font-bold text-cyan-200">
-              Automated Cooling Dispatch &amp; Pre-Cooling Advisory
+              Pre-Cooling Advisory (what-if model)
             </h4>
             {coolingDispatched && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-900/80 text-cyan-300 border border-cyan-500/40 font-mono font-bold animate-pulse">
-                ONAF-2 ACTIVE
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-900/80 text-amber-300 border border-amber-500/40 font-mono font-bold">
+                ONAF-2 MODELLED — NOT COMMANDED
               </span>
             )}
           </div>
           <p className="text-[11px] text-slate-300">
             {coolingDispatched
-              ? `Auxiliary cooling stage dispatched. Oil temp reduced by ~12°C, preserving 35% of cellulose life.`
+              ? `Figures above now model the ONAF-2 case (~12°C lower hot-spot). This platform cannot command fans — start ONAF-2 on the transformer's own control before relying on this capacity.`
               : coolingAdvisory.needPreCooling
-              ? `Advisory: Headroom approaching thermal boundary. Recommend pre-cooling to prevent winding hot-spot overshoot.`
-              : `Cooling is optimal under current load and wind conditions. No immediate fan override required.`}
+              ? `Advisory: Headroom approaching thermal boundary. Consider pre-cooling to prevent winding hot-spot overshoot.`
+              : `Cooling is adequate under current load and wind conditions. No fan override indicated.`}
           </p>
           <div className="text-[10px] text-slate-400 font-mono">
             Fan Power Cost: ~${coolingAdvisory.fanCost2h} vs Avoided Loss-of-Life: +${coolingAdvisory.avoidedAgingSavings} USD

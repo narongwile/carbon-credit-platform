@@ -81,6 +81,11 @@ export default function GenAiDiagnosticsCopilot({
   const [showWorkOrderModal, setShowWorkOrderModal] = useState(false)
   const [activeTab, setActiveTab] = useState<'copilot' | 'rca' | 'workorder'>('copilot')
   const chatEndRef = useRef<HTMLDivElement>(null)
+  // The reply timer must be cancellable: this component lives in a drawer that
+  // unmounts on close, and the pending setTimeout would otherwise fire its
+  // setState afterwards.
+  const replyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (replyTimer.current) clearTimeout(replyTimer.current) }, [])
 
   // Auto-scroll to bottom of chat
   useEffect(() => {
@@ -96,7 +101,13 @@ export default function GenAiDiagnosticsCopilot({
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
     }
     setMessages([initialGreeting])
-  }, [assetId, assetName, duvalVerdict, rttDays, tanDeltaKnown, bushingTanDeltaLive, dtrHeadroomKva, dgaGases.c2h2])
+    // Keyed on the ASSET only. This depended on dtrHeadroomKva, c2h2 and the
+    // bushing reading as well — all of which change on every telemetry poll —
+    // and the body REPLACES the array, so a user mid-conversation had their
+    // entire chat history wiped every time a new sample arrived. The greeting
+    // is a snapshot at open time; it does not need to track live values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetId, assetName])
 
   // Preset Question Suggestions
   const PRESET_QUERIES = [
@@ -138,7 +149,7 @@ export default function GenAiDiagnosticsCopilot({
     setInputQuery('')
     setIsTyping(true)
 
-    setTimeout(() => {
+    replyTimer.current = setTimeout(() => {
       let reply = ''
       let actionSuggestion = undefined
 
