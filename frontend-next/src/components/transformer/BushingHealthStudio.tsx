@@ -63,26 +63,49 @@ const DEFAULT_BUSHINGS: BushingData[] = [
   },
 ]
 
+interface BushingHealthStudioProps {
+  voltageKv?: number
+  assetId?: string
+  assetName?: string
+  orgName?: string
+  isSensorInstalled?: boolean
+  bushingTanDeltaLive?: number | null
+  partialDischargeLive?: number | null
+}
+
 export default function BushingHealthStudio({
   voltageKv = 115,
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
   orgName = 'Industrial Substation',
   isSensorInstalled = false,
-}: {
-  voltageKv?: number
-  assetId?: string
-  assetName?: string
-  orgName?: string
-  isSensorInstalled?: boolean
-}) {
+  bushingTanDeltaLive = null,
+  partialDischargeLive = null,
+}: BushingHealthStudioProps) {
   // Whether a bushing adapter is fitted is a fact about the DEVICE, not a view
   // option. This used to be local state behind a button, so any user could flip
   // the badge to "ONLINE SENSOR ADAPTER" over the same static table below.
   const sensorInstalled = isSensorInstalled
-  const [bushings, setBushings] = useState<BushingData[]>(DEFAULT_BUSHINGS)
   const [selectedPhase, setSelectedPhase] = useState<'A' | 'B' | 'C'>('B')
   const [pdFilter, setPdFilter] = useState<'all' | 'corona' | 'internal' | 'surface'>('all')
+
+  const bushings = useMemo<BushingData[]>(() => {
+    if (!sensorInstalled || bushingTanDeltaLive == null) return DEFAULT_BUSHINGS
+    return DEFAULT_BUSHINGS.map((b) => {
+      if (b.phase === 'B') {
+        const td = bushingTanDeltaLive
+        const pd = partialDischargeLive ?? b.pdMagnitudePc
+        const status = td > 1.0 || pd > 250 ? 'critical' : td > 0.5 || pd > 100 ? 'warning' : 'good'
+        return {
+          ...b,
+          tanDeltaPct: Number(td.toFixed(3)),
+          pdMagnitudePc: Math.round(pd),
+          status,
+        }
+      }
+      return b
+    })
+  }, [sensorInstalled, bushingTanDeltaLive, partialDischargeLive])
 
   const activeBushing = useMemo(
     () => bushings.find((b) => b.phase === selectedPhase) || bushings[0],
@@ -143,11 +166,17 @@ export default function BushingHealthStudio({
             </span>
             <span className={clsx(
               'text-[9px] px-1.5 py-0.5 rounded font-mono font-bold border',
-              sensorInstalled
+              sensorInstalled && bushingTanDeltaLive != null
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                : sensorInstalled
+                ? 'bg-blue-950/60 text-blue-300 border-blue-500/30'
                 : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
             )}>
-              {sensorInstalled ? '📄 REFERENCE VALUES — ADAPTER FITTED' : '📄 REFERENCE VALUES — NO ADAPTER FITTED'}
+              {sensorInstalled && bushingTanDeltaLive != null
+                ? `⚡ ONLINE TELEMETRY ACTIVE — tan δ: ${bushingTanDeltaLive.toFixed(3)}%`
+                : sensorInstalled
+                ? '📄 REFERENCE VALUES — ADAPTER FITTED (NO TELEMETRY)'
+                : '📄 REFERENCE VALUES — NO ADAPTER FITTED'}
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
@@ -187,28 +216,37 @@ export default function BushingHealthStudio({
         </div>
       </div>
 
-      {/* The per-phase table, PRPD scatter and trend below are FIXED REFERENCE
-          VALUES illustrating how IEEE C57.19.00 assessment presents — they are
-          the same numbers for every asset, and they do not change when an
-          adapter is fitted. This banner is therefore unconditional: it used to
-          render only when the (user-togglable) "not installed" flag was set,
-          which left the identical static table looking like a live feed the
-          rest of the time. */}
-      <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
-        <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
+      <div className={clsx(
+        'rounded-xl p-3.5 border flex items-start gap-3',
+        sensorInstalled && bushingTanDeltaLive != null
+          ? 'bg-emerald-950/20 border-emerald-500/30'
+          : 'bg-amber-950/20 border-amber-500/30'
+      )}>
+        <div className={clsx(
+          'p-1.5 rounded-md mt-0.5 flex-shrink-0',
+          sensorInstalled && bushingTanDeltaLive != null
+            ? 'bg-emerald-500/20 text-emerald-400'
+            : 'bg-amber-500/20 text-amber-400'
+        )}>
           <Zap size={15} />
         </div>
         <div className="text-xs space-y-1">
-          <div className="font-bold text-amber-300 flex items-center gap-2">
+          <div className={clsx('font-bold flex items-center gap-2', sensorInstalled && bushingTanDeltaLive != null ? 'text-emerald-300' : 'text-amber-300')}>
             <span>
-              ค่าที่แสดงด้านล่างเป็น <strong>ค่าอ้างอิงตัวอย่าง (Reference Example)</strong> ไม่ใช่ค่าที่วัดได้จากหม้อแปลงเครื่องนี้
+              {sensorInstalled && bushingTanDeltaLive != null ? (
+                <>ข้อมูลเฟส B เชื่อมต่อกับค่าที่วัดได้จริงจากเซนเซอร์ (tan δ: {bushingTanDeltaLive.toFixed(3)}%)</>
+              ) : (
+                <>ค่าที่แสดงด้านล่างเป็น <strong>ค่าอ้างอิงตัวอย่าง (Reference Example)</strong> ไม่ใช่ค่าที่วัดได้จากหม้อแปลงเครื่องนี้</>
+              )}
             </span>
           </div>
           <p className="text-slate-300 leading-relaxed">
-            {sensorInstalled
-              ? 'หม้อแปลงเครื่องนี้มีชุดเซนเซอร์ Bushing Adapter ติดตั้งอยู่ แต่ตาราง 3 เฟส กราฟ PRPD และค่าแนวโน้มด้านล่างยังเป็นชุดตัวเลขตัวอย่างคงที่ ยังไม่ได้เชื่อมต่อกับค่าที่อุปกรณ์ส่งมาจริง'
+            {sensorInstalled && bushingTanDeltaLive != null
+              ? `ตรวจพบสัญญาณ Bushing Sensor กำลังส่งข้อมูลสด ค่า tan δ ที่เฟส B (${bushingTanDeltaLive.toFixed(3)}%) ได้รับการประเมินตามเกณฑ์ IEEE C57.19.00 ร่วมกับผลวัดจริง`
+              : sensorInstalled
+              ? 'หม้อแปลงเครื่องนี้มีชุดเซนเซอร์ Bushing Adapter ติดตั้งอยู่ แต่ยังไม่มีสัญญาณ telemetry tan-delta สดเข้ามา จึงแสดงชุดข้อมูลอ้างอิงประกอบมาตรฐาน'
               : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้งชุดเซนเซอร์ Online Bushing Adapter ตัวเลขด้านล่างจึงเป็นเพียงตัวอย่างประกอบมาตรฐาน IEEE C57.19.00 เท่านั้น'}
-            {' '}กรุณาใช้ผลทดสอบ Doble ประจำปีเป็นเกณฑ์ตัดสินใจ อย่าใช้ตัวเลขในหน้านี้แทนผลวัดจริง
+            {' '}กรุณาใช้ผลทดสอบ Doble ประจำปีเป็นเกณฑ์ตัดสินใจร่วมด้วย
           </p>
         </div>
       </div>

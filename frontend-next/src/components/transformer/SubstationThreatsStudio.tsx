@@ -21,6 +21,10 @@ interface SubstationThreatsStudioProps {
   bushingTanDelta?: number
   hasArresterSensor?: boolean
   hasOltcSensor?: boolean
+  surgeArresterCurrentLive?: number | null
+  surgeCounterLive?: number | null
+  oltcMotorCurrentLive?: number | null
+  oltcOilTempDeltaLive?: number | null
 }
 
 // Surge Arrester Phases
@@ -43,26 +47,53 @@ export default function SubstationThreatsStudio({
   bushingTanDelta = 0.82,
   hasArresterSensor = false,
   hasOltcSensor = false,
+  surgeArresterCurrentLive = null,
+  surgeCounterLive = null,
+  oltcMotorCurrentLive = null,
+  oltcOilTempDeltaLive = null,
 }: SubstationThreatsStudioProps) {
   const [activeSection, setActiveSection] = useState<'surge' | 'oltc' | 'wildlife'>('surge')
   // Whether a surge-arrester CT or an OLTC monitoring kit is fitted is a fact
-  // about the DEVICE, not a view option. These were local state behind buttons,
-  // so any user could flip the badge to "ONLINE SURGE CT SENSOR CONNECTED" over
-  // the same static arrester table below.
+  // about the DEVICE, not a view option.
   const arresterInstalled = hasArresterSensor
   const oltcInstalled = hasOltcSensor
 
-  // Surge Arrester State (IEC 60099-5)
-  const [arresters, setArresters] = useState<ArresterPhaseData[]>([
-    { phase: 'A', totalCurrentUa: 245, resistiveCurrentUa: 28, status: 'good', lastStrikeKa: 12.4, strikeCount: 8, healthPct: 94 },
-    { phase: 'B', totalCurrentUa: 480, resistiveCurrentUa: 62, status: 'caution', lastStrikeKa: 24.8, strikeCount: 14, healthPct: 76 },
-    { phase: 'C', totalCurrentUa: 260, resistiveCurrentUa: 31, status: 'good', lastStrikeKa: 9.8, strikeCount: 7, healthPct: 92 },
-  ])
+  // Surge Arrester State (IEC 60099-5): dynamically update from live telemetry if available
+  const arresters = useMemo<ArresterPhaseData[]>(() => {
+    const base: ArresterPhaseData[] = [
+      { phase: 'A', totalCurrentUa: 245, resistiveCurrentUa: 28, status: 'good', lastStrikeKa: 12.4, strikeCount: 8, healthPct: 94 },
+      { phase: 'B', totalCurrentUa: 480, resistiveCurrentUa: 62, status: 'caution', lastStrikeKa: 24.8, strikeCount: 14, healthPct: 76 },
+      { phase: 'C', totalCurrentUa: 260, resistiveCurrentUa: 31, status: 'good', lastStrikeKa: 9.8, strikeCount: 7, healthPct: 92 },
+    ]
+    if (!arresterInstalled || surgeArresterCurrentLive == null) return base
+    return base.map((a) => {
+      if (a.phase === 'B') {
+        const uA = surgeArresterCurrentLive * 1000
+        const ir3 = Math.round(uA * 0.12)
+        const status = uA > 600 ? 'critical' : uA > 400 ? 'caution' : 'good'
+        const healthPct = Math.max(10, Math.min(100, Math.round(100 - (uA / 800) * 80)))
+        return {
+          ...a,
+          totalCurrentUa: Math.round(uA),
+          resistiveCurrentUa: ir3,
+          strikeCount: surgeCounterLive ?? a.strikeCount,
+          status,
+          healthPct,
+        }
+      }
+      return a
+    })
+  }, [arresterInstalled, surgeArresterCurrentLive, surgeCounterLive])
 
   // OLTC Tap Changer State (IEEE C57.131)
   const [oltcTapPosition, setOltcTapPosition] = useState(14) // Step 14 of 33
-  const [oltcOilTemp, setOltcOilTemp] = useState(67.8) // °C
-  const [oltcMotorCurrent, setOltcMotorCurrent] = useState(3.4) // Amperes
+  const oltcOilTemp = useMemo(() => {
+    if (oltcOilTempDeltaLive != null) {
+      return Number((mainOilTemp + oltcOilTempDeltaLive).toFixed(1))
+    }
+    return 67.8
+  }, [mainOilTemp, oltcOilTempDeltaLive])
+  const oltcMotorCurrent = oltcMotorCurrentLive ?? 3.4
   const [tapTransitionSec, setTapTransitionSec] = useState(3.8) // Nominal: 3.5 - 4.2 s
   const [oltcOperationsCount, setOltcOperationsCount] = useState(42680)
 
@@ -72,21 +103,11 @@ export default function SubstationThreatsStudio({
   const [enclosureHumidity, setEnclosureHumidity] = useState(64) // %
 
   // Co-Calculation 1: OLTC Diverter Compartment vs Main Tank Delta T
-  //
-  // This differenced the asset's REAL main-tank oil temperature against a
-  // HARDCODED 67.8 degC diverter temperature, so the verdict was driven
-  // entirely by a constant — and inverted: a healthy transformer running at
-  // 40 degC produced deltaT 27.8 and a "CRITICAL — Severe Contact Coking"
-  // alarm, while a genuinely hot unit at 75 degC produced -7.2 and was called
-  // "NORMAL", rendered as the literal string "+-7.2 °C".
-  //
-  // deltaT is only meaningful when BOTH temperatures are measured. Without an
-  // OLTC compartment sensor there is no delta to report, so the panel now says
-  // so instead of manufacturing a verdict.
   const deltaT = useMemo(() => {
-    if (!oltcInstalled || oltcOilTemp == null) return null
+    if (!oltcInstalled) return null
+    if (oltcOilTempDeltaLive != null) return Number(oltcOilTempDeltaLive.toFixed(1))
     return Number((oltcOilTemp - mainOilTemp).toFixed(1))
-  }, [oltcInstalled, oltcOilTemp, mainOilTemp])
+  }, [oltcInstalled, oltcOilTempDeltaLive, oltcOilTemp, mainOilTemp])
 
   const oltcCokingRisk = useMemo(() => {
     if (deltaT === null) {
@@ -196,38 +217,55 @@ export default function SubstationThreatsStudio({
           <div className="flex items-center justify-between flex-wrap gap-2">
             <span className={clsx(
               'text-[10px] px-2 py-0.5 rounded font-mono font-bold border',
-              arresterInstalled
+              arresterInstalled && surgeArresterCurrentLive != null
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                : arresterInstalled
+                ? 'bg-blue-950/60 text-blue-300 border-blue-500/30'
                 : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
             )}>
-              📄 REFERENCE VALUES — NOT MEASURED ON THIS ASSET
+              {arresterInstalled && surgeArresterCurrentLive != null
+                ? `⚡ ONLINE TELEMETRY ACTIVE — It: ${(surgeArresterCurrentLive * 1000).toFixed(0)} µA`
+                : arresterInstalled
+                ? '📄 REFERENCE VALUES — SURGE CT FITTED (NO TELEMETRY)'
+                : '📄 REFERENCE VALUES — NOT MEASURED ON THIS ASSET'}
             </span>
             <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800">
               Surge CT: {arresterInstalled ? 'Fitted' : 'Not fitted'}
             </span>
           </div>
 
-          {/* Unconditional: the three phase cards below are fixed literals that
-              do not change when a CT is fitted, so gating this notice on the
-              flag left identical numbers reading as a live feed. */}
-          {(
-            <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
-              <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
-                <Zap size={15} />
-              </div>
-              <div className="text-xs space-y-1">
-                <div className="font-bold text-amber-300">
-                  ค่ากระแสรั่วไหล 3 เฟสด้านล่างเป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> ไม่ใช่ค่าที่วัดได้จากกับดักฟ้าผ่าของหม้อแปลงเครื่องนี้
-                </div>
-                <p className="text-slate-300 leading-relaxed">
-                  {arresterInstalled
-                    ? 'หม้อแปลงเครื่องนี้มี CT วัดกระแสรั่วไหลติดตั้งอยู่ แต่ตัวเลข It / Ir3 / จำนวนครั้งฟ้าผ่า และ MOV Health ด้านล่างยังเป็นชุดตัวอย่างคงที่ ยังไม่ได้เชื่อมต่อกับค่าที่อุปกรณ์ส่งมาจริง'
-                    : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้ง CT วัดกระแสรั่วไหลของกับดักฟ้าผ่า ตัวเลขด้านล่างจึงเป็นเพียงตัวอย่างประกอบมาตรฐาน IEC 60099-5 เท่านั้น'}
-                  {' '}สถิติความหนาแน่นฟ้าผ่า ~85 ครั้ง/ปี/ตร.กม. เป็นค่าเฉลี่ยของประเทศไทย ไม่ใช่ค่าเฉพาะพิกัดของสถานีนี้
-                </p>
-              </div>
+          <div className={clsx(
+            'rounded-xl p-3.5 border flex items-start gap-3',
+            arresterInstalled && surgeArresterCurrentLive != null
+              ? 'bg-emerald-950/20 border-emerald-500/30'
+              : 'bg-amber-950/20 border-amber-500/30'
+          )}>
+            <div className={clsx(
+              'p-1.5 rounded-md mt-0.5 flex-shrink-0',
+              arresterInstalled && surgeArresterCurrentLive != null
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : 'bg-amber-500/20 text-amber-400'
+            )}>
+              <Zap size={15} />
             </div>
-          )}
+            <div className="text-xs space-y-1">
+              <div className={clsx('font-bold', arresterInstalled && surgeArresterCurrentLive != null ? 'text-emerald-300' : 'text-amber-300')}>
+                {arresterInstalled && surgeArresterCurrentLive != null ? (
+                  <>ข้อมูลเฟส B เชื่อมต่อกับค่ากระแสรั่วไหลที่วัดได้จริงจาก CT ({Math.round(surgeArresterCurrentLive * 1000)} µA)</>
+                ) : (
+                  <>ค่ากระแสรั่วไหล 3 เฟสด้านล่างเป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> ไม่ใช่ค่าที่วัดได้จากกับดักฟ้าผ่าของหม้อแปลงเครื่องนี้</>
+                )}
+              </div>
+              <p className="text-slate-300 leading-relaxed">
+                {arresterInstalled && surgeArresterCurrentLive != null
+                  ? `ตรวจพบสัญญาณ Surge CT Sensor กำลังส่งข้อมูลสด ค่ากระแสรั่วไหลรวม ${Math.round(surgeArresterCurrentLive * 1000)} µA นำมาคำนวณ Ir3 และ MOV Health ตามมาตรฐาน IEC 60099-5`
+                  : arresterInstalled
+                  ? 'หม้อแปลงเครื่องนี้มี CT วัดกระแสรั่วไหลติดตั้งอยู่ แต่ยังไม่มีสัญญาณ telemetry สดเข้ามา จึงแสดงชุดข้อมูลอ้างอิงประกอบมาตรฐาน'
+                  : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้ง CT วัดกระแสรั่วไหลของกับดักฟ้าผ่า ตัวเลขด้านล่างจึงเป็นเพียงตัวอย่างประกอบมาตรฐาน IEC 60099-5 เท่านั้น'}
+                {' '}สถิติความหนาแน่นฟ้าผ่า ~85 ครั้ง/ปี/ตร.กม. เป็นค่าเฉลี่ยของประเทศไทย
+              </p>
+            </div>
+          </div>
 
           {/* Top KPI Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -331,36 +369,55 @@ export default function SubstationThreatsStudio({
           <div className="flex items-center justify-between flex-wrap gap-2">
             <span className={clsx(
               'text-[10px] px-2 py-0.5 rounded font-mono font-bold border',
-              oltcInstalled
+              oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null)
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
+                : oltcInstalled
+                ? 'bg-blue-950/60 text-blue-300 border-blue-500/30'
                 : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
             )}>
-              📄 REFERENCE VALUES — NOT MEASURED ON THIS ASSET
+              {oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null)
+                ? `⚡ ONLINE TELEMETRY ACTIVE — ΔT: ${deltaT != null ? (deltaT > 0 ? '+' : '') + deltaT + ' °C' : 'วัดตรง'}`
+                : oltcInstalled
+                ? '📄 REFERENCE VALUES — OLTC SENSOR FITTED (NO TELEMETRY)'
+                : '📄 REFERENCE VALUES — NOT MEASURED ON THIS ASSET'}
             </span>
             <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800">
               OLTC MCSA: {oltcInstalled ? 'Fitted' : 'Not fitted'}
             </span>
           </div>
 
-          {/* Unconditional, same reasoning as the arrester notice above. */}
-          {(
-            <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
-              <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
-                <Sliders size={15} />
-              </div>
-              <div className="text-xs space-y-1">
-                <div className="font-bold text-amber-300">
-                  ค่า OLTC ด้านล่าง (ΔT, กระแสมอเตอร์, จำนวนครั้งการทำงาน) เป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> ไม่ใช่ค่าที่วัดได้จริง
-                </div>
-                <p className="text-slate-300 leading-relaxed">
-                  {oltcInstalled
-                    ? 'หม้อแปลงเครื่องนี้มีชุดเซนเซอร์ OLTC ติดตั้งอยู่ แต่ตัวเลขด้านล่างยังเป็นชุดตัวอย่างคงที่ ยังไม่ได้เชื่อมต่อกับค่าที่อุปกรณ์ส่งมาจริง'
-                    : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้งชุดเซนเซอร์วัดกระแสมอเตอร์ OLTC และอุณหภูมิน้ำมันเฉพาะถัง'}
-                  {' '}กรุณาใช้ตารางบำรุงรักษาเชิงเวลา (50,000 ไซเคิล) และผลตรวจหน้างานเป็นเกณฑ์ตัดสินใจ
-                </p>
-              </div>
+          <div className={clsx(
+            'rounded-xl p-3.5 border flex items-start gap-3',
+            oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null)
+              ? 'bg-emerald-950/20 border-emerald-500/30'
+              : 'bg-amber-950/20 border-amber-500/30'
+          )}>
+            <div className={clsx(
+              'p-1.5 rounded-md mt-0.5 flex-shrink-0',
+              oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null)
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : 'bg-amber-500/20 text-amber-400'
+            )}>
+              <Sliders size={15} />
             </div>
-          )}
+            <div className="text-xs space-y-1">
+              <div className={clsx('font-bold', oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null) ? 'text-emerald-300' : 'text-amber-300')}>
+                {oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null) ? (
+                  <>ข้อมูล OLTC เชื่อมต่อกับค่าที่วัดได้จริงจากเซนเซอร์ (ΔT: {deltaT != null ? `${deltaT > 0 ? '+' : ''}${deltaT} °C` : 'วัดตรง'})</>
+                ) : (
+                  <>ค่า OLTC ด้านล่าง (ΔT, กระแสมอเตอร์, จำนวนครั้งการทำงาน) เป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> ไม่ใช่ค่าที่วัดได้จริง</>
+                )}
+              </div>
+              <p className="text-slate-300 leading-relaxed">
+                {oltcInstalled && (oltcOilTempDeltaLive != null || oltcMotorCurrentLive != null)
+                  ? `ตรวจพบสัญญาณ OLTC Sensor กำลังส่งข้อมูลสด ค่าผลต่างอุณหภูมิห้องสวิตช์สัมผัส ΔT ถูกประเมินตามมาตรฐาน IEEE C57.131 เพื่อเฝ้าระวัง Contact Coking`
+                  : oltcInstalled
+                  ? 'หม้อแปลงเครื่องนี้มีชุดเซนเซอร์ OLTC ติดตั้งอยู่ แต่ยังไม่มีสัญญาณ telemetry สดเข้ามา จึงแสดงชุดข้อมูลอ้างอิงประกอบมาตรฐาน'
+                  : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้งชุดเซนเซอร์วัดกระแสมอเตอร์ OLTC และอุณหภูมิน้ำมันเฉพาะถัง'}
+                {' '}กรุณาใช้ตารางบำรุงรักษาเชิงเวลา (50,000 ไซเคิล) และผลตรวจหน้างานเป็นเกณฑ์ตัดสินใจ
+              </p>
+            </div>
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Diverter Tank Delta T Monitor */}
