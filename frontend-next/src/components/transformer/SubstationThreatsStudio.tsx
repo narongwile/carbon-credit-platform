@@ -45,8 +45,12 @@ export default function SubstationThreatsStudio({
   hasOltcSensor = false,
 }: SubstationThreatsStudioProps) {
   const [activeSection, setActiveSection] = useState<'surge' | 'oltc' | 'wildlife'>('surge')
-  const [arresterInstalled, setArresterInstalled] = useState(hasArresterSensor)
-  const [oltcInstalled, setOltcInstalled] = useState(hasOltcSensor)
+  // Whether a surge-arrester CT or an OLTC monitoring kit is fitted is a fact
+  // about the DEVICE, not a view option. These were local state behind buttons,
+  // so any user could flip the badge to "ONLINE SURGE CT SENSOR CONNECTED" over
+  // the same static arrester table below.
+  const arresterInstalled = hasArresterSensor
+  const oltcInstalled = hasOltcSensor
 
   // Surge Arrester State (IEC 60099-5)
   const [arresters, setArresters] = useState<ArresterPhaseData[]>([
@@ -169,27 +173,30 @@ export default function SubstationThreatsStudio({
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
                 : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
             )}>
-              {arresterInstalled ? '🟢 ONLINE SURGE CT SENSOR CONNECTED' : '📡 THUNDERSTORM STATS / MOV BASELINE'}
+              📄 REFERENCE VALUES — NOT MEASURED ON THIS ASSET
             </span>
-            <button
-              onClick={() => setArresterInstalled(!arresterInstalled)}
-              className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
-            >
-              Hardware CT: {arresterInstalled ? 'Installed' : 'Not Installed (Estimate)'}
-            </button>
+            <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800">
+              Surge CT: {arresterInstalled ? 'Fitted' : 'Not fitted'}
+            </span>
           </div>
 
-          {!arresterInstalled && (
+          {/* Unconditional: the three phase cards below are fixed literals that
+              do not change when a CT is fitted, so gating this notice on the
+              flag left identical numbers reading as a live feed. */}
+          {(
             <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
               <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
                 <Zap size={15} />
               </div>
               <div className="text-xs space-y-1">
                 <div className="font-bold text-amber-300">
-                  สถานะฮาร์ดแวร์: ยังไม่ได้ติดตั้งเซนเซอร์ Surge Arrester CT (อุปกรณ์ตรวจวัดกระแสรั่วไหลแบบ Online)
+                  ค่ากระแสรั่วไหล 3 เฟสด้านล่างเป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> ไม่ใช่ค่าที่วัดได้จากกับดักฟ้าผ่าของหม้อแปลงเครื่องนี้
                 </div>
                 <p className="text-slate-300 leading-relaxed">
-                  ระบบกำลังประเมินความเสี่ยงฟ้าผ่าตาม <strong>สถิติความหนาแน่นฟ้าผ่าเชิงพื้นที่ (Thailand Ground Flash Density: ~85 ครั้ง/ปี/ตร.กม.)</strong> และแบบจำลองการรับกระแสเสิร์จสะสมของแท่ง Metal Oxide Varistor (MOV) หากมีการติดตั้ง CT กับดักฟ้าผ่าเพิ่มในอนาคต สัญญาณกระแสรั่วไหลสดจะเชื่อมต่อเข้าสู่ระบบอัตโนมัติทันที
+                  {arresterInstalled
+                    ? 'หม้อแปลงเครื่องนี้มี CT วัดกระแสรั่วไหลติดตั้งอยู่ แต่ตัวเลข It / Ir3 / จำนวนครั้งฟ้าผ่า และ MOV Health ด้านล่างยังเป็นชุดตัวอย่างคงที่ ยังไม่ได้เชื่อมต่อกับค่าที่อุปกรณ์ส่งมาจริง'
+                    : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้ง CT วัดกระแสรั่วไหลของกับดักฟ้าผ่า ตัวเลขด้านล่างจึงเป็นเพียงตัวอย่างประกอบมาตรฐาน IEC 60099-5 เท่านั้น'}
+                  {' '}สถิติความหนาแน่นฟ้าผ่า ~85 ครั้ง/ปี/ตร.กม. เป็นค่าเฉลี่ยของประเทศไทย ไม่ใช่ค่าเฉพาะพิกัดของสถานีนี้
                 </p>
               </div>
             </div>
@@ -301,27 +308,28 @@ export default function SubstationThreatsStudio({
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
                 : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
             )}>
-              {oltcInstalled ? '🟢 ONLINE OLTC TELEMETRY ACTIVE' : '📡 TIME-BASED PREVENTIVE SCHEDULE'}
+              📄 REFERENCE VALUES — NOT MEASURED ON THIS ASSET
             </span>
-            <button
-              onClick={() => setOltcInstalled(!oltcInstalled)}
-              className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors"
-            >
-              Hardware MCSA: {oltcInstalled ? 'Installed' : 'Not Installed (Estimate)'}
-            </button>
+            <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800">
+              OLTC MCSA: {oltcInstalled ? 'Fitted' : 'Not fitted'}
+            </span>
           </div>
 
-          {!oltcInstalled && (
+          {/* Unconditional, same reasoning as the arrester notice above. */}
+          {(
             <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
               <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
                 <Sliders size={15} />
               </div>
               <div className="text-xs space-y-1">
                 <div className="font-bold text-amber-300">
-                  สถานะฮาร์ดแวร์: ยังไม่ได้ติดตั้งเซนเซอร์ตรวจจับกระแสมอเตอร์ OLTC และอุณหภูมิน้ำมันเฉพาะถัง
+                  ค่า OLTC ด้านล่าง (ΔT, กระแสมอเตอร์, จำนวนครั้งการทำงาน) เป็น <strong>ค่าอ้างอิงตัวอย่าง</strong> ไม่ใช่ค่าที่วัดได้จริง
                 </div>
                 <p className="text-slate-300 leading-relaxed">
-                  ระบบกำลังติดตามรอบอายุการใช้งานตาม <strong>ตารางการบำรุงรักษาเชิงเวลา (Time-based Preventive Maintenance: 50,000 ไซเคิล)</strong> และค่าประมาณการจากประวัติการทำงาน หากติดตั้งชุดเซนเซอร์ OLTC Monitoring สัญญาณวิเคราะห์ MCSA และ ΔT จะเชื่อมต่อเข้าสู่ระบบอัตโนมัติทันที
+                  {oltcInstalled
+                    ? 'หม้อแปลงเครื่องนี้มีชุดเซนเซอร์ OLTC ติดตั้งอยู่ แต่ตัวเลขด้านล่างยังเป็นชุดตัวอย่างคงที่ ยังไม่ได้เชื่อมต่อกับค่าที่อุปกรณ์ส่งมาจริง'
+                    : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้งชุดเซนเซอร์วัดกระแสมอเตอร์ OLTC และอุณหภูมิน้ำมันเฉพาะถัง'}
+                  {' '}กรุณาใช้ตารางบำรุงรักษาเชิงเวลา (50,000 ไซเคิล) และผลตรวจหน้างานเป็นเกณฑ์ตัดสินใจ
                 </p>
               </div>
             </div>

@@ -30,10 +30,26 @@ export default function BessCoOptimization({
   dtrHeadroomKva = 1015,
 }: BessCoOptimizationProps) {
   const [bessMode, setBessMode] = useState<'peak-shave' | 'tou-arbitrage' | 'preservation'>('peak-shave')
-  const defaultCapacity = Math.max(100, Math.round(nameplateKva * 0.2))
-  const defaultThreshold = Math.max(200, Math.round(nameplateKva * 0.8))
+  // Slider RANGES have to scale with the asset too, not just the seeded value.
+  // They were fixed at 250–1000 kWh and 1500–2400 kVA while the seeds were
+  // derived from nameplate, so for any transformer under 1,875 kVA the seeded
+  // threshold fell below the slider's own minimum (a 500 kVA unit seeded 400
+  // kVA against a 1500 kVA floor) and under 1,250 kVA the capacity did too.
+  // The readout showed the real seed while the thumb sat pinned at the floor,
+  // and the first drag snapped the value up by a factor of three — on the
+  // control that decides when the battery discharges.
+  const capacityMin = Math.max(50, Math.round(nameplateKva * 0.05 / 50) * 50)
+  const capacityMax = Math.max(capacityMin + 200, Math.round(nameplateKva * 0.4 / 50) * 50)
+  const thresholdMin = Math.max(50, Math.round(nameplateKva * 0.5 / 50) * 50)
+  const thresholdMax = Math.max(thresholdMin + 100, Math.round(nameplateKva * 0.96 / 50) * 50)
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+  const defaultCapacity = clamp(Math.round(nameplateKva * 0.2), capacityMin, capacityMax)
+  const defaultThreshold = clamp(Math.round(nameplateKva * 0.8), thresholdMin, thresholdMax)
   const [bessCapacityKwh, setBessCapacityKwh] = useState(defaultCapacity)
-  const [batterySocPct, setBatterySocPct] = useState(82)
+  // No BESS telemetry reaches this platform, so state-of-charge is a assumed
+  // planning figure, not a battery reading. Kept as a constant (its setter was
+  // never called anyway) and labelled as assumed in the KPI card below.
+  const batterySocPct = 82
   const [shaveThresholdKva, setShaveThresholdKva] = useState(defaultThreshold)
   const [autoDispatchActive, setAutoDispatchActive] = useState(true)
   const [manualDischarging, setManualDischarging] = useState(false)
@@ -75,18 +91,26 @@ export default function BessCoOptimization({
     }
   }, [currentLoadKva, shaveThresholdKva, manualDischarging, autoDispatchActive, maxDischargeKw, hotSpotTemp])
 
-  // 24-Hour Diurnal Load vs BESS Shaved Profile
+  // 24-Hour Diurnal Load vs BESS Shaved Profile.
+  //
+  // This is a TYPICAL diurnal SHAPE, not this transformer's recorded history —
+  // the platform does not feed 24h load history into this component. The raw
+  // kVA figures were previously absolute literals (1,320–2,450 kVA), so a
+  // 500 kVA unit rendered a chart peaking at five times its own nameplate. The
+  // shape is now expressed as a fraction of THIS asset's nameplate so the axis
+  // is at least dimensionally sane, and the heading says it is a model.
   const profile24h = useMemo(() => {
-    const hours = [
-      { t: '00:00', raw: 1450, soc: 45 },
-      { t: '03:00', raw: 1320, soc: 60 },
-      { t: '06:00', raw: 1680, soc: 75 },
-      { t: '09:00', raw: 2150, soc: 90 }, // Solar charging window
-      { t: '12:00', raw: 2320, soc: 95 }, // Midday solar peak
-      { t: '15:00', raw: 2280, soc: 85 },
-      { t: '18:00', raw: 2450, soc: 55 }, // Evening peak discharge
-      { t: '21:00', raw: 1980, soc: 40 },
+    const shape = [
+      { t: '00:00', frac: 0.58, soc: 45 },
+      { t: '03:00', frac: 0.53, soc: 60 },
+      { t: '06:00', frac: 0.67, soc: 75 },
+      { t: '09:00', frac: 0.86, soc: 90 }, // Solar charging window
+      { t: '12:00', frac: 0.93, soc: 95 }, // Midday solar peak
+      { t: '15:00', frac: 0.91, soc: 85 },
+      { t: '18:00', frac: 0.98, soc: 55 }, // Evening peak discharge
+      { t: '21:00', frac: 0.79, soc: 40 },
     ]
+    const hours = shape.map((h) => ({ t: h.t, raw: Math.round(nameplateKva * h.frac), soc: h.soc }))
 
     return hours.map((pt) => {
       const excess = Math.max(0, pt.raw - shaveThresholdKva)
@@ -121,7 +145,8 @@ export default function BessCoOptimization({
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Dynamic transformer peak load relief, thermal hot-spot mitigation &amp; Time-of-Use carbon credit arbitrage
+            Planning model for peak load relief, hot-spot mitigation &amp; Time-of-Use arbitrage. No BESS is connected to this
+            platform — the controls below size a hypothetical battery and do not dispatch hardware.
           </p>
         </div>
 
@@ -154,7 +179,7 @@ export default function BessCoOptimization({
           <div className="text-[10px] text-emerald-300 uppercase font-semibold flex items-center justify-between">
             <span>BESS Discharge Active</span>
             <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-900/60 text-emerald-200 font-mono font-bold">
-              SOC {batterySocPct}%
+              SOC {batterySocPct}% (assumed)
             </span>
           </div>
           <div className="text-xl font-black text-emerald-400 font-mono">
@@ -208,16 +233,16 @@ export default function BessCoOptimization({
           </div>
           <input
             type="range"
-            min={1500}
-            max={2400}
+            min={thresholdMin}
+            max={thresholdMax}
             step={50}
             value={shaveThresholdKva}
             onChange={(e) => setShaveThresholdKva(Number(e.target.value))}
             className="w-full accent-amber-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
           />
           <div className="flex justify-between text-[9px] text-slate-500 font-mono">
-            <span>1,500 kVA (Aggressive Shave)</span>
-            <span>2,400 kVA (DTR Limit)</span>
+            <span>{thresholdMin.toLocaleString()} kVA (Aggressive Shave)</span>
+            <span>{thresholdMax.toLocaleString()} kVA (DTR Limit)</span>
           </div>
         </div>
 
@@ -231,16 +256,16 @@ export default function BessCoOptimization({
           </div>
           <input
             type="range"
-            min={250}
-            max={1000}
+            min={capacityMin}
+            max={capacityMax}
             step={50}
             value={bessCapacityKwh}
             onChange={(e) => setBessCapacityKwh(Number(e.target.value))}
             className="w-full accent-emerald-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
           />
           <div className="flex justify-between text-[9px] text-slate-500 font-mono">
-            <span>250 kWh (Compact)</span>
-            <span>1,000 kWh (Utility 1 MWh)</span>
+            <span>{capacityMin.toLocaleString()} kWh (Compact)</span>
+            <span>{capacityMax.toLocaleString()} kWh (Utility Scale)</span>
           </div>
         </div>
 
@@ -272,7 +297,7 @@ export default function BessCoOptimization({
             )}
           >
             <Zap size={13} />
-            <span>{manualDischarging ? 'Stop Manual BESS Injection' : '⚡ Force BESS Peak Injection'}</span>
+            <span>{manualDischarging ? 'Stop Simulated Injection' : '⚡ Simulate BESS Peak Injection'}</span>
           </button>
         </div>
       </div>
@@ -281,7 +306,8 @@ export default function BessCoOptimization({
       <div className="space-y-2">
         <div className="flex items-center justify-between text-xs">
           <div className="font-semibold text-slate-200">
-            24-Hour Diurnal Profile: Raw Transformer Load vs BESS Shaved Peak
+            24-Hour Diurnal Profile: Modelled Load Shape vs BESS Shaved Peak
+            <span className="ml-2 font-normal text-[10px] text-amber-400/90">typical shape scaled to nameplate — not this asset&apos;s recorded history</span>
           </div>
           <div className="flex items-center gap-3 text-[10px]">
             <span className="flex items-center gap-1 text-slate-400 font-medium">
@@ -316,7 +342,7 @@ export default function BessCoOptimization({
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e2433" />
               <XAxis dataKey="time" stroke="#475569" fontSize={10} tickLine={false} />
-              <YAxis stroke="#475569" fontSize={10} domain={[1000, 2800]} tickLine={false} />
+              <YAxis stroke="#475569" fontSize={10} domain={[Math.round(nameplateKva * 0.4), Math.round(nameplateKva * 1.12)]} tickLine={false} />
               <Tooltip
                 contentStyle={{ background: '#0a0e1a', border: '1px solid #1e2433', borderRadius: '8px', fontSize: '11px' }}
                 labelStyle={{ color: '#fff', fontWeight: 'bold' }}

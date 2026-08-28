@@ -30,9 +30,42 @@ export interface DossierData {
   }
 }
 
+/** SHA-256 of the exact snapshot this document was built from, hex-encoded. */
+async function digestSnapshot(data: DossierData): Promise<string> {
+  try {
+    const bytes = new TextEncoder().encode(JSON.stringify(data))
+    const hash = await crypto.subtle.digest('SHA-256', bytes)
+    return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return '(hash unavailable in this browser)'
+  }
+}
+
 /**
- * Generate formal 5-Page IEEE/IEC Engineering Inspection Dossier in PDF
- * Compliant with IEEE C57.104, IEEE C57.115, IEEE C57.19, ISO 55000 & 21 CFR Part 11
+ * Generate a 5-page engineering summary report from live telemetry.
+ *
+ * IMPORTANT — what this document is and is not:
+ * This exports what the platform has actually measured or computed for this
+ * asset right now. It is NOT a certified inspection, is NOT digitally signed
+ * by anyone, and does NOT constitute a compliance instrument under any
+ * standard it cites. Earlier revisions of this generator asserted the
+ * opposite: named individuals marked "Digitally Signed", a hardcoded string
+ * presented as a computed SHA-256 checksum, a fabricated maker/checker
+ * authorization log with biometric verification that never occurred, and a
+ * disclaimer claiming suitability for insurance underwriting and 21 CFR Part
+ * 11 electronic-signature compliance. None of that was backed by anything —
+ * the "checksum" did not change between runs or assets, the named signers
+ * never touched this document, and several tables (lab calibration variance,
+ * per-phase bushing serials/capacitance, a 24-hour dispatch profile, Duval
+ * Pentagon coordinates) rendered fixed literals for every asset in every
+ * organization regardless of what was actually passed in. A document that
+ * gets saved and handed to a third party is exactly the wrong place for that.
+ *
+ * This version only prints a value it was actually given. Where the platform
+ * has not (yet) computed something — a fault-zone classification from the
+ * gas trajectory, a laboratory cross-check, a per-phase PD magnitude — the
+ * report says so instead of inventing a plausible-looking number, and directs
+ * the reader to the live in-app tool that DOES compute it interactively.
  */
 export async function generateOfficialEngineeringDossier(data: DossierData) {
   const { jsPDF } = await import('jspdf')
@@ -41,30 +74,39 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
+  const generatedAt = fmtDateTime(new Date().toISOString())
+  const snapshotHash = await digestSnapshot(data)
 
-  const primaryColor = [30, 41, 59] // slate-800
-  const accentColor = [99, 102, 241] // indigo-500
-  const amberColor = [217, 119, 6] // amber-600
-  const successColor = [22, 163, 74] // emerald-600
+  // Real Arrhenius relative-aging factor from the real hot-spot temperature —
+  // same formula and 110°C/15000 constants DynamicThermalRating.tsx already
+  // uses, so this document and the live DTR panel cannot disagree.
+  const thetaH = data.hotSpotTemp
+  const faa = Math.exp(15000 / (110 + 273.15) - 15000 / (thetaH + 273.15))
+  const overloadHours = 2
+  const equivalentHoursLost = Number((faa * overloadHours).toFixed(2))
+  const assetReplacementCostUsd = 85000
+  const designLifeHours = 180000
+  const costPerLifeHour = assetReplacementCostUsd / designLifeHours
+  const assetDepreciationCost = Number((equivalentHoursLost * costPerLifeHour).toFixed(2))
+  const incrementalPowerKwh = data.dtrHeadroomKva * 0.95 * overloadHours
+  const powerDeliveryRevenueUsd = Number((incrementalPowerKwh * 0.11).toFixed(2))
+  const netEconomicBenefitUsd = Number((powerDeliveryRevenueUsd - assetDepreciationCost).toFixed(2))
 
-  // Helper for formal page header
+  // Header/footer helpers
   const addHeader = (pageNum: number, title: string) => {
-    doc.setFillColor(15, 23, 42) // slate-900
+    doc.setFillColor(15, 23, 42)
     doc.rect(0, 0, pageWidth, 20, 'F')
-
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(10)
     doc.setTextColor(255, 255, 255)
-    doc.text(`${(data.orgName || 'SUBSTATION').toUpperCase()} — ASSET INSPECTION DOSSIER`, 14, 12)
-
+    doc.text(`${(data.orgName || 'SUBSTATION').toUpperCase()} — ASSET TELEMETRY SUMMARY`, 14, 12)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.setTextColor(148, 163, 184) // slate-400
-    doc.text(`Doc Ref: DOS-IEEE-${data.assetId}-${new Date().getFullYear()}`, 14, 17)
+    doc.setTextColor(148, 163, 184)
+    doc.text(`Doc Ref: RPT-${data.assetId}-${new Date().getFullYear()}`, 14, 17)
     doc.text(`Page ${pageNum} of 5`, pageWidth - 28, 14)
 
-    // Sub-title bar
-    doc.setFillColor(241, 245, 249) // slate-100
+    doc.setFillColor(241, 245, 249)
     doc.rect(0, 20, pageWidth, 9, 'F')
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
@@ -72,27 +114,24 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
     doc.text(title.toUpperCase(), 14, 26)
   }
 
-  // Helper for formal page footer
   const addFooter = (pageNum: number) => {
     doc.setDrawColor(226, 232, 240)
     doc.setLineWidth(0.4)
     doc.line(14, pageHeight - 14, pageWidth - 14, pageHeight - 14)
-
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7)
     doc.setTextColor(148, 163, 184)
-    doc.text(`Confidential — Issued for ${data.orgName || 'Enterprise Asset'} by OneOps Platform`, 14, pageHeight - 9)
-    doc.text(`Verified against IEEE C57.104, IEEE C57.115, IEC 60599 Standards`, 14, pageHeight - 5)
-    doc.text(`Timestamp: ${fmtDateTime(new Date().toISOString())} UTC+07:00`, pageWidth - 70, pageHeight - 9)
-    doc.text(`Security Checksum: SHA-256 e8f4...b912`, pageWidth - 70, pageHeight - 5)
+    doc.text(`Auto-generated for ${data.orgName || 'Enterprise Asset'} by the OneOps Platform — not a certified instrument`, 14, pageHeight - 9)
+    doc.text(`Reference standards: IEEE C57.104, IEEE C57.115, IEC 60599 (cited for context, not attested compliance)`, 14, pageHeight - 5)
+    doc.text(`Generated: ${generatedAt} UTC+07:00`, pageWidth - 70, pageHeight - 9)
+    doc.text(`Snapshot SHA-256: ${snapshotHash.slice(0, 16)}…`, pageWidth - 70, pageHeight - 5)
   }
 
   // =========================================================================
-  // PAGE 1: Substation Asset Health Certificate & Executive Summary
+  // PAGE 1: Asset Summary & Health Index
   // =========================================================================
-  addHeader(1, 'Section 1: Asset Identification & Overall Health Certificate')
+  addHeader(1, 'Section 1: Asset Identification & Health Index')
 
-  // Certificate Badge
   doc.setDrawColor(99, 102, 241)
   doc.setLineWidth(0.8)
   doc.roundedRect(14, 34, pageWidth - 28, 49, 3, 3)
@@ -100,14 +139,13 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
   doc.setTextColor(30, 41, 59)
-  doc.text('SUBSTATION ASSET HEALTH CERTIFICATION', 20, 42)
+  doc.text('SUBSTATION ASSET TELEMETRY SUMMARY', 20, 42)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(7.5)
   doc.setTextColor(100, 116, 139)
-  doc.text('Authorized per ISO 55000 Asset Management Standard & IEEE Comprehensive Transformer Guide', 20, 47)
+  doc.text('Snapshot of platform-computed values at the time stated below. Not an inspection record.', 20, 47)
 
-  // Dynamic Corporate / Organization Logo
   if (data.orgId) {
     try {
       const orgLogo = await getOrgLogoDataUrl(data.orgId, data.orgName || 'Industrial Substation')
@@ -120,7 +158,6 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
     } catch {}
   }
 
-  // Health Index Score Callout
   doc.setFillColor(238, 242, 255)
   doc.roundedRect(pageWidth - 62, 44, 42, 36, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
@@ -131,337 +168,257 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   doc.text(`${data.healthIndex}`, pageWidth - 56, 61)
   doc.setFontSize(7.5)
   doc.setTextColor(71, 85, 105)
-  doc.text('Status: CONDITION B', pageWidth - 56, 68)
-  doc.text('Good (Monitor RoG)', pageWidth - 56, 73)
+  doc.text('/ 100', pageWidth - 56, 68)
 
-  // Nameplate Table inside Card
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(71, 85, 105)
   doc.text(`Organization: ${data.orgName || 'Industrial Substation'}`, 20, 54)
   doc.text(`Asset Name: ${data.assetName}`, 20, 60)
   doc.text(`Asset Identifier: ${data.assetId}`, 20, 66)
   doc.text(`Rated Power: ${data.ratedKva.toLocaleString()} kVA`, 20, 72)
-  doc.text(`Operating Voltage: ${data.voltageKv} kV / 22 kV Class`, 20, 78)
+  doc.text(`Operating Voltage: ${data.voltageKv} kV`, 20, 78)
 
-  // Executive Summary Narrative
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
   doc.setTextColor(30, 41, 59)
-  doc.text('Executive Engineering Diagnostic Summary', 14, 91)
+  doc.text('Summary', 14, 91)
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8.5)
   doc.setTextColor(51, 65, 85)
   const execSummary = [
-    `This official engineering dossier presents a comprehensive multi-parameter health appraisal for unit ${data.assetName} (${data.assetId}).`,
-    `Real-time Dissolved Gas Analysis (DGA) confirms localized elevated gas accumulation with Acetylene (C2H2 = ${data.gases.c2h2} ppm) and Ethylene (C2H4 = ${data.gases.c2h4} ppm), matching the Duval Pentagon T2 Thermal Fault classification (300°C - 700°C). Multi-gas trajectory forecasting calculates a Remaining Time-to-Trip (RTT) of ${data.rttDays} days under present gas velocity.`,
-    `Dynamic Thermal Rating (DTR) indicates ample ambient convective cooling with available headroom of +${data.dtrHeadroomKva.toLocaleString()} kVA. However, Phase B high-voltage bushing displays elevated dielectric loss (tan δ = ${data.bushingTanDelta}%) requiring off-line C1/C2 sweep dielectric verification during the upcoming scheduled outage window.`,
+    `Live telemetry snapshot for unit ${data.assetName} (${data.assetId}), captured ${generatedAt}.`,
+    `Dissolved gas concentrations: Acetylene (C2H2) ${data.gases.c2h2} ppm, Ethylene (C2H4) ${data.gases.c2h4} ppm — see Section 2 for the full gas table. A fault-zone classification (Duval Pentagon) is not computed by this report; use the live DGA diagnostics screen in-app for that.`,
+    `Dynamic Thermal Rating headroom: +${data.dtrHeadroomKva.toLocaleString()} kVA at current ambient conditions. Bushing dielectric loss: tan δ ${data.bushingTanDelta}% (${data.bushingPhaseBStatus}).`,
   ]
   doc.text(execSummary, 14, 98, { maxWidth: pageWidth - 28, lineHeightFactor: 1.4 })
 
-  // Summary Metrics Table
   autoTable(doc, {
-    startY: 135,
-    head: [['Diagnostic Dimension', 'Standard / Reference', 'Measured Telemetry', 'Risk Classification']],
+    startY: 130,
+    head: [['Dimension', 'Reference Standard', 'Value at Snapshot Time', 'Source']],
     body: [
-      ['DGA Fault Classification', 'IEEE C57.104 / IEC 60599', `${data.duvalVerdict}`, 'CONDITION 2 (Caution)'],
-      ['Time-to-Trip (RTT)', 'Kalman Multi-Gas Vector', `${data.rttDays} Days to Boundary`, 'WATCHLIST (Action in 30d)'],
-      ['Dynamic Thermal Rating (DTR)', 'IEEE C57.115 Dynamic Loading', `${data.dtrCapacityKva} kVA (+${data.dtrHeadroomKva} kVA)`, 'OPTIMAL HEADROOM (115%)'],
-      ['Bushing Dielectric Loss', 'IEEE C57.19.00 / IEC 60137', `Phase B tan δ = ${data.bushingTanDelta}%`, 'ELEVATED LOSS (0.5-1.0%)'],
-      ['Cellulose Insulation DP', 'IEEE C57.91 Arrhenius Model', `${data.dpAging} DP (59% remaining)`, 'SERVICEABLE (End-of-life: 200)'],
-      ['Moisture Equilibrium', 'Oommen Equilibrium Curve', `${data.moisturePpm} ppm (1.6% Water in Paper)`, 'DRY TO MODERATE'],
+      ['Composite Health Index', '—', `${data.healthIndex} / 100`, 'Platform-computed'],
+      ['Dynamic Thermal Rating', 'IEEE C57.115', `${data.dtrCapacityKva.toLocaleString()} kVA (+${data.dtrHeadroomKva.toLocaleString()} kVA headroom)`, 'Platform-computed'],
+      ['Bushing Dielectric Loss', 'IEEE C57.19.00', `tan δ = ${data.bushingTanDelta}%`, data.bushingPhaseBStatus],
+      ['Oil / Hot-Spot Temperature', 'IEEE C57.91', `${data.oilTemp}°C / ${data.hotSpotTemp}°C`, 'Live telemetry'],
+      ['Moisture in Oil', 'Oommen Equilibrium', `${data.moisturePpm} ppm`, 'Live telemetry'],
     ],
     theme: 'striped',
     headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
     bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
   })
 
-  // Executive Sign-Off Signature Blocks
-  const signY = 220
+  // Honest sign-off area — blank fields for a real reviewer to fill in, not a
+  // pre-populated claim that anyone has already reviewed this.
+  const signY = 195
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(30, 41, 59)
-  doc.text('Authorized Engineering & Operational Endorsements:', 14, signY)
+  doc.text('Engineering Review (not yet completed — for manual sign-off):', 14, signY)
 
-  const colW = (pageWidth - 28) / 3
-  const signers = [
-    { title: 'Substation Lead Engineer', name: 'Somchai Prasert, PE', role: 'Chief Electrical Inspector' },
-    { title: 'Asset Reliability Director', name: 'Narongwile K., M.Eng', role: 'Head of Industrial Assets' },
-    { title: 'Insurance Risk Underwriter', name: 'Authorized Signatory', role: 'Grid Asset Compliance' },
-  ]
-
-  signers.forEach((s, idx) => {
+  const colW = (pageWidth - 28) / 2
+  const reviewers = ['Reviewed By', 'Approved By']
+  reviewers.forEach((label, idx) => {
     const x = 14 + idx * colW
     doc.setDrawColor(203, 213, 225)
-    doc.rect(x, signY + 5, colW - 4, 38)
+    doc.rect(x, signY + 5, colW - 4, 32)
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(100, 116, 139)
-    doc.text(s.title, x + 4, signY + 11)
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(30, 41, 59)
-    doc.text(s.name, x + 4, signY + 28)
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139)
-    doc.text(s.role, x + 4, signY + 34)
-    doc.text('Digitally Signed ✓', x + 4, signY + 40)
+    doc.text(label, x + 4, signY + 11)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(148, 163, 184)
+    doc.text('Name: ________________________', x + 4, signY + 22)
+    doc.text('Date: ________________________', x + 4, signY + 30)
   })
 
   addFooter(1)
 
   // =========================================================================
-  // PAGE 2: DGA Concentrations, RoG Matrix & Duval Pentagon
+  // PAGE 2: Dissolved Gas Analysis — measured concentrations only
   // =========================================================================
   doc.addPage()
-  addHeader(2, 'Section 2: Dissolved Gas Analysis (DGA) & Duval Diagnostic Matrix')
+  addHeader(2, 'Section 2: Dissolved Gas Analysis — Measured Concentrations')
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Dissolved Key Gas Concentrations & Generation Rates (IEEE C57.104-2019)', 14, 35)
+  doc.text('Dissolved Key Gas Concentrations (per IEEE C57.104-2019 gas list)', 14, 35)
 
   autoTable(doc, {
     startY: 40,
-    head: [['Gas Species', 'Chemical Formula', 'Observed (ppm)', '90th %ile Limit', 'RoG (Δppm/day)', 'IEEE Status']],
+    head: [['Gas Species', 'Formula', 'Observed (ppm)']],
     body: [
-      ['Hydrogen', 'H2', `${data.gases.h2}`, '80 ppm', '+2.1 ppm/day', 'Condition 1 (Normal)'],
-      ['Methane', 'CH4', `${data.gases.ch4}`, '90 ppm', '+3.5 ppm/day', 'Condition 1 (Normal)'],
-      ['Acetylene', 'C2H2', `${data.gases.c2h2}`, '2.0 ppm', '+0.10 ppm/day', 'Condition 2 (Caution)'],
-      ['Ethylene', 'C2H4', `${data.gases.c2h4}`, '50 ppm', '+4.2 ppm/day', 'Condition 2 (Caution)'],
-      ['Ethane', 'C2H6', `${data.gases.c2h6}`, '90 ppm', '+1.0 ppm/day', 'Condition 1 (Normal)'],
-      ['Carbon Monoxide', 'CO', `${data.gases.co}`, '900 ppm', '+12.0 ppm/day', 'Condition 1 (Normal)'],
-      ['Carbon Dioxide', 'CO2', `${data.gases.co2}`, '9000 ppm', '+45.0 ppm/day', 'Condition 1 (Normal)'],
+      ['Hydrogen', 'H2', `${data.gases.h2}`],
+      ['Methane', 'CH4', `${data.gases.ch4}`],
+      ['Acetylene', 'C2H2', `${data.gases.c2h2}`],
+      ['Ethylene', 'C2H4', `${data.gases.c2h4}`],
+      ['Ethane', 'C2H6', `${data.gases.c2h6}`],
+      ['Carbon Monoxide', 'CO', `${data.gases.co}`],
+      ['Carbon Dioxide', 'CO2', `${data.gases.co2}`],
     ],
     theme: 'grid',
     headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
     bodyStyles: { fontSize: 8 },
   })
 
-  // Duval Pentagon Centroid & Trajectory Narrative Box
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Duval Pentagon 1 & 2 Multi-Gas Vector Trajectory', 14, 115)
-
+  // What this report deliberately does NOT claim.
   doc.setDrawColor(203, 213, 225)
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(14, 120, pageWidth - 28, 62, 2, 2, 'FD')
-
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(99, 102, 241)
-  doc.text('DUVAL PENTAGON 1 UNIVERSAL COORDINATES: X = 2.45%, Y = 38.10%', 20, 128)
-
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(51, 65, 85)
-  const duvalNotes = [
-    `• Primary Fault Zone: T2 — Thermal Fault of medium temperature (300°C to 700°C).`,
-    `• Pentagon 2 Paper Confirmation: Ratio of (CH4 + C2H4) / (CO + CO2) indicates thermal fault predominantly in oil circulating channels rather than severe paper carbonization.`,
-    `• Multi-Gas Trajectory Drift Velocity: Moving towards T3 boundary at +0.42% per day.`,
-    `• Projected Time-to-Trip (RTT): 38 Days remaining before exceeding safety trip threshold.`,
-    `• Recommended Action: Schedule vacuum oil degassing procedure within 21 days to arrest C2H2 rise.`,
-  ]
-  doc.text(duvalNotes, 20, 136, { lineHeightFactor: 1.4 })
-
-  // Lab vs IoT Sensor Calibration Drift Table
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Certified Laboratory vs Online IoT Sensor Drift Calibration (ASTM D3612)', 14, 192)
-
-  autoTable(doc, {
-    startY: 197,
-    head: [['Parameter', 'Online IoT Sensor', 'Certified Lab Syringe (SGS)', 'Variance (Δ)', 'Calibration Status']],
-    body: [
-      ['Hydrogen (H2)', `${data.gases.h2} ppm`, '62 ppm', '+4.8%', 'Within Tolerance (±10%)'],
-      ['Acetylene (C2H2)', `${data.gases.c2h2} ppm`, '3.0 ppm', '+6.6%', 'Within Tolerance (±10%)'],
-      ['Dielectric Breakdown', '—', '54.2 kV', 'ASTM D877', 'Exceeds Minimum (40 kV)'],
-      ['Interfacial Tension', '—', '36.5 mN/m', 'ASTM D971', 'Good Quality (>30 mN/m)'],
-      ['Total Acid Number', '—', '0.042 mg KOH/g', 'ASTM D974', 'Low Acidity (<0.10)'],
-      ['Furan 2-FAL', '—', '0.42 mg/kg', 'ASTM D5837', 'Correlates to 590 DP'],
-    ],
-    theme: 'striped',
-    headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-  })
+  const noteY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+  doc.roundedRect(14, noteY, pageWidth - 28, 42, 2, 2, 'FD')
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105)
+  doc.text('Not included in this snapshot:', 20, noteY + 8)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105)
+  doc.text([
+    '• Rate-of-gas-generation (ppm/day) — requires two or more historical samples; use the live Trends view.',
+    '• Duval Triangle/Pentagon fault-zone classification — use the live DGA Diagnostics screen, which computes this interactively from the gas ratios above.',
+    '• Laboratory cross-check (syringe sample vs. this sensor) — attach separately if a lab result exists for this date.',
+  ], 20, noteY + 15, { lineHeightFactor: 1.5 })
 
   addFooter(2)
 
   // =========================================================================
-  // PAGE 3: High-Voltage Bushing Health & PRPD Partial Discharge
+  // PAGE 3: Bushing Dielectric — only the figure actually measured
   // =========================================================================
   doc.addPage()
-  addHeader(3, 'Section 3: High-Voltage Bushing Dielectrics & Partial Discharge')
+  addHeader(3, 'Section 3: High-Voltage Bushing Dielectric Loss')
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text(`High-Voltage Bushing Health Appraisal (${data.voltageKv} kV Class — IEEE C57.19.00)`, 14, 35)
+  doc.text(`Bushing Dielectric Loss (${data.voltageKv} kV Class — ref. IEEE C57.19.00)`, 14, 35)
 
   autoTable(doc, {
     startY: 40,
-    head: [['Bushing Phase', 'Serial Number', 'C1 Nominal', 'C1 Measured', 'ΔC1 Drift', 'tan δ (Loss Factor)', 'PD Level', 'Condition']],
+    head: [['Measured Value', 'Assessment', 'Threshold Reference (IEEE C57.19.00)']],
     body: [
-      ['Phase A (H1)', 'BSH-115KV-A921', '382.0 pF', '384.2 pF', '+0.58%', '0.38%', '42 pC', 'Good (Normal)'],
-      ['Phase B (H2)', 'BSH-115KV-B922', '380.0 pF', '393.8 pF', '+3.63%', '0.82%', '195 pC', 'Caution (Deteriorated)'],
-      ['Phase C (H3)', 'BSH-115KV-C923', '381.5 pF', '383.1 pF', '+0.42%', '0.35%', '38 pC', 'Good (Normal)'],
+      [`tan δ = ${data.bushingTanDelta}%`, data.bushingPhaseBStatus, 'Normal < 0.5% · Elevated 0.5–1.0% · Alarm > 1.0%'],
     ],
     theme: 'grid',
     headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
     bodyStyles: { fontSize: 8 },
   })
 
-  // PRPD Findings Callout
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Phase-Resolved Partial Discharge (PRPD) 360° Pattern Analysis', 14, 85)
-
-  doc.setDrawColor(217, 119, 6)
-  doc.setFillColor(254, 243, 199)
-  doc.roundedRect(14, 90, pageWidth - 28, 55, 2, 2, 'FD')
-
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(180, 83, 9)
-  doc.text('CRITICAL WARNING: PHASE B CONDENSER VOID ACTIVITY DETECTED', 20, 98)
-
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(69, 26, 3)
-  const prpdNotes = [
-    `• Partial Discharge Magnitude: Peak pulses recorded at 195 pC (IEEE C57.19 threshold < 50 pC).`,
-    `• Phase Alignment: High density of discharge pulses centered at 45°-90° and 225°-270° AC grid wave.`,
-    `• Signature Classification: Classic Cavity/Void discharge within oil-impregnated paper (OIP) condenser layers.`,
-    `• Physical Mechanism: Indicates microscopic moisture ingress or delamination of grading foils.`,
-    `• Recommended Action: Schedule off-line C1/C2 sweep frequency testing and infrared thermography check.`,
-  ]
-  doc.text(prpdNotes, 20, 106, { lineHeightFactor: 1.4 })
-
-  // Bushing Replacement Planning Table
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Bushing Maintenance & Replacement Pipeline (ISO 55000)', 14, 155)
-
-  autoTable(doc, {
-    startY: 160,
-    head: [['Component', 'Urgency', 'Estimated Lead Time', 'CapEx Budget', 'Recommended Action']],
-    body: [
-      ['Phase B 115 kV Bushing', 'High (Within 60d)', '4 Weeks', '$14,500 USD', 'Replace during Q3 scheduled outage'],
-      ['Phase A 115 kV Bushing', 'Routine', 'Available in Stock', '$0 USD', 'Annual dielectric sweep testing'],
-      ['Phase C 115 kV Bushing', 'Routine', 'Available in Stock', '$0 USD', 'Annual dielectric sweep testing'],
-      ['Bushing CT Secondary Harness', 'Routine', '2 Weeks', '$850 USD', 'Terminal torque inspection'],
-    ],
-    theme: 'striped',
-    headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-  })
+  doc.setDrawColor(203, 213, 225)
+  doc.setFillColor(248, 250, 252)
+  const bushNoteY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10
+  doc.roundedRect(14, bushNoteY, pageWidth - 28, 48, 2, 2, 'FD')
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105)
+  doc.text('Scope of this section:', 20, bushNoteY + 8)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(71, 85, 105)
+  doc.text([
+    'This snapshot carries one dielectric-loss reading for this asset. It does not include per-phase',
+    'capacitance drift, partial-discharge magnitude/phase angle, or bushing serial numbers — none of',
+    'that is measured by the sensors currently configured on this unit. If a Doble/PRPD test has been',
+    'performed, attach the laboratory report separately rather than relying on this summary for it.',
+  ], 20, bushNoteY + 15, { lineHeightFactor: 1.5 })
 
   addFooter(3)
 
   // =========================================================================
-  // PAGE 4: Dynamic Thermal Rating (DTR) & Loss-of-Life Balance Sheet
+  // PAGE 4: Dynamic Thermal Rating & Loss-of-Life (real formula, real inputs)
   // =========================================================================
   doc.addPage()
-  addHeader(4, 'Section 4: Dynamic Thermal Rating (DTR) & Economic Arbitrage')
+  addHeader(4, 'Section 4: Dynamic Thermal Rating & Loss-of-Life Estimate')
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Environmental Dynamic Ampacity Evaluation (IEEE C57.115 / IEC 60076-7)', 14, 35)
+  doc.text('Dynamic Thermal Rating Snapshot (ref. IEEE C57.115 / IEC 60076-7)', 14, 35)
 
   autoTable(doc, {
     startY: 40,
-    head: [['Environmental Variable', 'Sensor Value', 'Ampacity Impact Factor', 'Thermal Benefit']],
+    head: [['Metric', 'Value']],
     body: [
-      ['Ambient Air Temperature', '28.4°C (Weather Station)', '+0.8% capacity per °C < 40°C', '+9.28% Capacity Boost'],
-      ['Wind Velocity (Convective)', '3.8 m/s (10m Met Mast)', '+1.2% capacity per m/s > 1.0', '+3.36% Fin Dissipation'],
-      ['Direct Solar Irradiance', '680 W/m²', '-1.5% derating if > 800 W/m²', 'Neutral (Below Peak Sun)'],
-      ['Radiator Cooling Stage', 'ONAF-1 (Forced Air Active)', 'Base Multiplier: 1.00x', '100% Forced Air Ready'],
-      ['Real-Time Dynamic Capacity', `${data.dtrCapacityKva.toLocaleString()} kVA`, '114.6% of Nameplate', `+${data.dtrHeadroomKva.toLocaleString()} kVA Safe Headroom`],
+      ['Oil Temperature', `${data.oilTemp}°C`],
+      ['Hot-Spot Temperature', `${data.hotSpotTemp}°C (safety ceiling: 120°C)`],
+      ['Dynamic Capacity', `${data.dtrCapacityKva.toLocaleString()} kVA`],
+      ['Available Headroom', `+${data.dtrHeadroomKva.toLocaleString()} kVA`],
     ],
     theme: 'grid',
     headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
     bodyStyles: { fontSize: 8 },
   })
 
-  // Loss of Life Balance Sheet
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('IEEE C57.91 Loss-of-Life (LOL) & Economic Balance Sheet', 14, 105)
+  doc.text('Loss-of-Life Estimate for a 2-Hour Use of Available Headroom (IEEE C57.91)', 14, 100)
 
-  doc.setDrawColor(22, 163, 74)
-  doc.setFillColor(240, 253, 244)
-  doc.roundedRect(14, 110, pageWidth - 28, 52, 2, 2, 'FD')
+  doc.setDrawColor(148, 163, 184)
+  doc.setFillColor(248, 250, 252)
+  doc.roundedRect(14, 105, pageWidth - 28, 52, 2, 2, 'FD')
 
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(22, 101, 52)
-  doc.text('ECONOMIC ARBITRAGE VERDICT: ROI POSITIVE (HIGH MARGIN)', 20, 118)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(51, 65, 85)
+  doc.text('MODELLED ESTIMATE — verify against the live DTR panel before acting', 20, 113)
 
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(20, 83, 45)
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(51, 65, 85)
   const lolNotes = [
-    `• Hot-Spot Temperature under Peak Load: ${data.hotSpotTemp}°C (Safety ceiling: 120°C).`,
-    `• Relative Aging Acceleration Factor (F_AA): 0.62x (Aging is slower than normal 110°C baseline).`,
-    `• Equivalent Insulation Hours Consumed: Running at +${data.dtrHeadroomKva} kVA for 2 hours consumes only 1.24 hrs of paper life.`,
-    `• Incremental Energy Revenue: Delivering +${data.dtrHeadroomKva} kVA creates +$212.18 USD in power revenue.`,
-    `• Asset Depreciation Wear Cost: Calculated at -$0.59 USD based on $85,000 replacement CapEx.`,
-    `• Net Economic Benefit: +$211.59 USD per 2-hour overload cycle.`,
+    `• Relative Aging Factor (F_AA) at ${thetaH}°C hot-spot: ${faa.toFixed(3)}x (IEEE C57.91, 110°C baseline).`,
+    `• Equivalent insulation life consumed over 2 hours at this hot-spot: ${equivalentHoursLost} hours.`,
+    `• Asset depreciation cost (@ $${assetReplacementCostUsd.toLocaleString()} replacement / ${designLifeHours.toLocaleString()}h design life): $${assetDepreciationCost}.`,
+    `• Indicative energy value of using the +${data.dtrHeadroomKva.toLocaleString()} kVA headroom for 2 hours (@ $0.11/kWh): $${powerDeliveryRevenueUsd}.`,
+    `• Net figure: ${netEconomicBenefitUsd >= 0 ? '+' : ''}$${netEconomicBenefitUsd}. This is an economic MODEL, not a recommendation — a real overload`,
+    `  decision also needs load duration, ambient trend, and operational context this snapshot does not carry.`,
   ]
-  doc.text(lolNotes, 20, 126, { lineHeightFactor: 1.35 })
-
-  // 24-Hour Diurnal Dispatch Profile Summary
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('24-Hour Diurnal Dispatch & Auxiliary Cooling Power Summary', 14, 172)
-
-  autoTable(doc, {
-    startY: 177,
-    head: [['Time Window', 'Ambient Air', 'Actual Load', 'DTR Capacity', 'Headroom (Margin)', 'Cooling Stage']],
-    body: [
-      ['00:00 - 06:00', '23.0°C', '1,450 kVA', '2,920 kVA', '+1,470 kVA', 'ONAN (Natural)'],
-      ['06:00 - 12:00', '28.0°C', '2,150 kVA', '2,840 kVA', '+690 kVA', 'ONAF-1 (Stage 1)'],
-      ['12:00 - 18:00', '34.0°C', '2,340 kVA', '2,750 kVA', '+410 kVA', 'ONAF-2 (Pre-Cooling)'],
-      ['18:00 - 24:00', '28.5°C', '1,950 kVA', '2,850 kVA', '+900 kVA', 'ONAF-1 (Stage 1)'],
-    ],
-    theme: 'striped',
-    headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-  })
+  doc.text(lolNotes, 20, 121, { lineHeightFactor: 1.4 })
 
   addFooter(4)
 
   // =========================================================================
-  // PAGE 5: 21 CFR Part 11 Electronic Records, Cryptographic Audit & Stamp
+  // PAGE 5: Snapshot Integrity — a real, verifiable hash of the real data
   // =========================================================================
   doc.addPage()
-  addHeader(5, 'Section 5: 21 CFR Part 11 Electronic Records & Tamper-Evident Signatures')
+  addHeader(5, 'Section 5: Snapshot Data & Integrity')
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Cryptographic Audit Record & Tamper-Evident Hash Digest', 14, 35)
+  doc.text('Snapshot Integrity Hash', 14, 35)
 
-  // Cryptographic Box
   doc.setFillColor(15, 23, 42)
   doc.roundedRect(14, 40, pageWidth - 28, 48, 2, 2, 'F')
 
   doc.setFont('courier', 'bold'); doc.setFontSize(8); doc.setTextColor(56, 189, 248)
-  doc.text('HASH ALGORITHM: SHA-256 (FIPS 180-4 SECURE CHECKSUM)', 20, 48)
+  doc.text('SHA-256 OF THE EXACT DATA THIS REPORT WAS BUILT FROM:', 20, 48)
 
   doc.setFont('courier', 'normal'); doc.setFontSize(7); doc.setTextColor(226, 232, 240)
-  doc.text('3f8b92c10a4e76d912e5f39841ab7c9201f84523d4e891c2b5f7e6a109348c21', 20, 56)
-  doc.text('TELEMETRY DIGEST: H2:65|CH4:45|C2H2:3.2|C2H4:35|C2H6:28|CO:420|CO2:3200|DP:590', 20, 64)
-  doc.text(`RECORD TIMESTAMP: ${fmtDateTime(new Date().toISOString())} GMT+0700 (Bangkok Standard Time)`, 20, 72)
-  doc.text('ELECTRONIC SIGNATURE COMPLIANCE: 21 CFR PART 11 §11.50 (VALIDATED)', 20, 80)
+  const hashLines = doc.splitTextToSize(snapshotHash, pageWidth - 48)
+  doc.text(hashLines, 20, 56)
+  doc.text(
+    `TELEMETRY: H2:${data.gases.h2}|CH4:${data.gases.ch4}|C2H2:${data.gases.c2h2}|C2H4:${data.gases.c2h4}|` +
+    `C2H6:${data.gases.c2h6}|CO:${data.gases.co}|CO2:${data.gases.co2}`,
+    20, 68
+  )
+  doc.text(`GENERATED: ${generatedAt} UTC+07:00`, 20, 76)
+  doc.setFont('courier', 'normal'); doc.setFontSize(6.5); doc.setTextColor(148, 163, 184)
+  doc.text('Recompute this hash from the JSON payload above to confirm the document matches its source data.', 20, 84)
 
-  // Four-Eyes Dual Authorization Log Table
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
-  doc.text('Four-Eyes Dual Engineering Authorization Log', 14, 98)
+  doc.text('Review Status', 14, 100)
 
   autoTable(doc, {
-    startY: 103,
-    head: [['Role', 'Authorized Identity', 'IP / Device ID', 'Action Taken', 'Verification Status']],
+    startY: 105,
+    head: [['Step', 'Status']],
     body: [
-      ['Maker (Field Engineer)', 'P. Somchai (PE #38102)', '192.168.4.12 (TLS v1.3)', 'Telemetry Validation & RoG Check', 'APPROVED (2-Factor OTP)'],
-      ['Checker (Lead Assessor)', 'K. Narongwile (Chief PE)', '192.168.1.55 (Biometric)', 'Inspection Dossier Release', 'VERIFIED & CERTIFIED'],
-      ['CMMS System Bridge', 'SAP PM Gateway #04', '10.0.12.8 (Internal MTLS)', 'Work Order WO-2026-0828-TR01 Sync', 'ACKNOWLEDGED (200 OK)'],
+      ['Automated telemetry snapshot', 'COMPLETE — this document'],
+      ['Engineering review', 'PENDING — see Page 1 sign-off block'],
+      ['Laboratory cross-check (if applicable)', 'NOT ATTACHED'],
     ],
     theme: 'grid',
     headStyles: { fillColor: [30, 41, 59], fontSize: 8 },
     bodyStyles: { fontSize: 8 },
   })
 
-  // Official Stamp and Watermark Simulation Box
-  doc.setDrawColor(99, 102, 241)
+  // Honest framing box — replaces the fabricated "OFFICIALLY CERTIFIED" stamp.
+  doc.setDrawColor(148, 163, 184)
   doc.setLineWidth(1)
-  doc.roundedRect(pageWidth / 2 - 40, 160, 80, 50, 4, 4)
+  doc.roundedRect(pageWidth / 2 - 45, 160, 90, 40, 4, 4)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(71, 85, 105)
+  doc.text('AUTO-GENERATED TELEMETRY SUMMARY', pageWidth / 2 - 40, 172)
+  doc.setFontSize(7.5)
+  doc.text('Not a certified inspection or signed instrument', pageWidth / 2 - 40, 179)
+  doc.text('until the review block on Page 1 is completed.', pageWidth / 2 - 40, 185)
+  doc.text(`Generated: ${generatedAt.slice(0, 10)}`, pageWidth / 2 - 40, 192)
 
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(99, 102, 241)
-  doc.text('ONEOPS SUBSTATION AUDIT', pageWidth / 2 - 32, 172)
-  doc.setFontSize(14)
-  doc.text('OFFICIALLY CERTIFIED', pageWidth / 2 - 36, 185)
-  doc.setFontSize(7.5); doc.setTextColor(71, 85, 105)
-  doc.text(`INSPECTION DATE: ${fmtDateTime(new Date().toISOString()).slice(0, 10)}`, pageWidth / 2 - 28, 195)
-  doc.text('VALID UNTIL: NEXT SCHEDULED QUARTER', pageWidth / 2 - 34, 202)
-
-  // Legal Disclaimer
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(148, 163, 184)
   const disclaimer = [
-    'LEGAL NOTICE & WARRANTY DISCLAIMER: This official technical dossier is generated autonomously based on real-time SCADA/IoT telemetry, IEEE/IEC numerical algorithms, and laboratory oil syringe tests. It constitutes a certified condition assessment report for asset health tracking, preventive maintenance planning, and insurance underwriting. Any tampering with this digital document invalidates the embedded cryptographic checksum.',
+    'This document is an automated summary of platform telemetry and platform-computed estimates at the ' +
+    'stated time. It is not digitally signed, has not been reviewed by a qualified engineer unless the sign-off ' +
+    'block on Page 1 has been completed by hand, and is not a certified laboratory report. It does not attest ' +
+    'compliance with any cited standard and is not intended for insurance, regulatory, or legal use without ' +
+    'independent professional verification. Reference standards are cited to describe the methods behind the ' +
+    'figures shown, not to claim certification against them.',
   ]
-  doc.text(disclaimer, 14, 235, { maxWidth: pageWidth - 28, lineHeightFactor: 1.3 })
+  doc.text(disclaimer, 14, 215, { maxWidth: pageWidth - 28, lineHeightFactor: 1.3 })
 
   addFooter(5)
 
-  // Trigger download
-  const filename = `Official_Inspection_Dossier_${data.assetId}_${new Date().toISOString().slice(0, 10)}.pdf`
+  const filename = `Telemetry_Summary_${data.assetId}_${new Date().toISOString().slice(0, 10)}.pdf`
   doc.save(filename)
 }

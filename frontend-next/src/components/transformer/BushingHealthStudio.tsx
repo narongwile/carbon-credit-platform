@@ -76,7 +76,10 @@ export default function BushingHealthStudio({
   orgName?: string
   isSensorInstalled?: boolean
 }) {
-  const [sensorInstalled, setSensorInstalled] = useState(isSensorInstalled)
+  // Whether a bushing adapter is fitted is a fact about the DEVICE, not a view
+  // option. This used to be local state behind a button, so any user could flip
+  // the badge to "ONLINE SENSOR ADAPTER" over the same static table below.
+  const sensorInstalled = isSensorInstalled
   const [bushings, setBushings] = useState<BushingData[]>(DEFAULT_BUSHINGS)
   const [selectedPhase, setSelectedPhase] = useState<'A' | 'B' | 'C'>('B')
   const [pdFilter, setPdFilter] = useState<'all' | 'corona' | 'internal' | 'surface'>('all')
@@ -144,7 +147,7 @@ export default function BushingHealthStudio({
                 ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/30'
                 : 'bg-amber-950/60 text-amber-300 border-amber-500/30'
             )}>
-              {sensorInstalled ? '🟢 ONLINE SENSOR ADAPTER' : '📡 OFFLINE LAB / IEEE BASELINE'}
+              {sensorInstalled ? '📄 REFERENCE VALUES — ADAPTER FITTED' : '📄 REFERENCE VALUES — NO ADAPTER FITTED'}
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
@@ -152,17 +155,12 @@ export default function BushingHealthStudio({
           </p>
         </div>
 
-        {/* Hardware Status Toggle & Phase Selector */}
+        {/* Phase Selector */}
         <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => setSensorInstalled(!sensorInstalled)}
-            className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 transition-colors flex items-center gap-1.5 font-medium"
-            title="Toggle between physical online sensor and offline/annual test baseline"
-          >
-            <span>Hardware: {sensorInstalled ? 'Installed' : 'Not Installed (Estimate)'}</span>
-          </button>
+          <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 font-medium">
+            Adapter: {sensorInstalled ? 'Fitted' : 'Not fitted'}
+          </span>
 
-          {/* Phase Selector */}
           <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 self-start lg:self-auto">
             {(['A', 'B', 'C'] as const).map((p) => {
               const b = bushings.find((item) => item.phase === p)
@@ -189,22 +187,31 @@ export default function BushingHealthStudio({
         </div>
       </div>
 
-      {/* Uninstalled Notice Banner */}
-      {!sensorInstalled && (
-        <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
-          <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
-            <Zap size={15} />
-          </div>
-          <div className="text-xs space-y-1">
-            <div className="font-bold text-amber-300 flex items-center gap-2">
-              <span>สถานะฮาร์ดแวร์: ยังไม่ได้ติดตั้งชุดเซนเซอร์ Online Bushing Adapter (อุปกรณ์ตรวจจับเรียลไทม์)</span>
-            </div>
-            <p className="text-slate-300 leading-relaxed">
-              ระบบกำลังแสดงผลประเมินตาม <strong>เกณฑ์แบบจำลองการเสื่อมอายุตามมาตรฐาน IEEE C57.19.00</strong> ร่วมกับ <strong>ผลการทดสอบประจำปี (Annual Maintenance Doble Test)</strong> เมื่อมีการติดตั้งชุดหัววัด Online Bushing Adapter เพิ่มเติมในอนาคต สัญญาณสดจะเชื่อมต่อเข้าสู่กราฟ PRPD อัตโนมัติทันที
-            </p>
-          </div>
+      {/* The per-phase table, PRPD scatter and trend below are FIXED REFERENCE
+          VALUES illustrating how IEEE C57.19.00 assessment presents — they are
+          the same numbers for every asset, and they do not change when an
+          adapter is fitted. This banner is therefore unconditional: it used to
+          render only when the (user-togglable) "not installed" flag was set,
+          which left the identical static table looking like a live feed the
+          rest of the time. */}
+      <div className="rounded-xl p-3.5 bg-amber-950/20 border border-amber-500/30 flex items-start gap-3">
+        <div className="p-1.5 rounded-md bg-amber-500/20 text-amber-400 mt-0.5 flex-shrink-0">
+          <Zap size={15} />
         </div>
-      )}
+        <div className="text-xs space-y-1">
+          <div className="font-bold text-amber-300 flex items-center gap-2">
+            <span>
+              ค่าที่แสดงด้านล่างเป็น <strong>ค่าอ้างอิงตัวอย่าง (Reference Example)</strong> ไม่ใช่ค่าที่วัดได้จากหม้อแปลงเครื่องนี้
+            </span>
+          </div>
+          <p className="text-slate-300 leading-relaxed">
+            {sensorInstalled
+              ? 'หม้อแปลงเครื่องนี้มีชุดเซนเซอร์ Bushing Adapter ติดตั้งอยู่ แต่ตาราง 3 เฟส กราฟ PRPD และค่าแนวโน้มด้านล่างยังเป็นชุดตัวเลขตัวอย่างคงที่ ยังไม่ได้เชื่อมต่อกับค่าที่อุปกรณ์ส่งมาจริง'
+              : 'หม้อแปลงเครื่องนี้ยังไม่ได้ติดตั้งชุดเซนเซอร์ Online Bushing Adapter ตัวเลขด้านล่างจึงเป็นเพียงตัวอย่างประกอบมาตรฐาน IEEE C57.19.00 เท่านั้น'}
+            {' '}กรุณาใช้ผลทดสอบ Doble ประจำปีเป็นเกณฑ์ตัดสินใจ อย่าใช้ตัวเลขในหน้านี้แทนผลวัดจริง
+          </p>
+        </div>
+      </div>
 
       {/* 3-Phase Bushing Health Summary Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

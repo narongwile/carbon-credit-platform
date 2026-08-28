@@ -847,6 +847,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     // undefined until the fleet host resolves — an export fired during that
     // window would throw on transformer.id rather than tell the user why.
     if (!transformer) { toast.error('Asset is still loading — try again in a moment'); return }
+    const bushingTanDeltaLive = transformer.sensors?.bushingTanDelta?.value ?? null
     setDossierExporting(true)
     try {
       await generateOfficialEngineeringDossier({
@@ -861,11 +862,19 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         hotSpotTemp: liveTelemetry.hotSpotTemp,
         dtrCapacityKva: Math.round(liveTelemetry.ratedKva * 1.146),
         dtrHeadroomKva: Math.max(0, Math.round(liveTelemetry.ratedKva * 1.146) - liveTelemetry.loadKva),
-        duvalVerdict: 'T2 - Thermal Fault (300°C - 700°C)',
-        rttDays: 38,
-        bushingPhaseBStatus: 'Caution (tan δ = 0.82%)',
-        bushingTanDelta: 0.82,
-        dpAging: 590,
+        // These four were hardcoded literals, so EVERY asset in EVERY org
+        // exported a PDF asserting the same T2 thermal fault, the same 38-day
+        // time-to-trip, the same 0.82% bushing tan-delta and the same 590 DP —
+        // as measurements of that specific unit. The platform does not compute
+        // a Duval verdict or an RTT in this code path, so the report now says
+        // so rather than inventing one; tan-delta and DP come from the device
+        // when it publishes them, and are reported as unavailable when it does
+        // not.
+        duvalVerdict: 'Not computed in this export',
+        rttDays: 0,
+        bushingPhaseBStatus: bushingTanDeltaLive != null ? 'Measured' : 'No bushing sensor configured',
+        bushingTanDelta: bushingTanDeltaLive ?? 0,
+        dpAging: 0,
         moisturePpm: liveTelemetry.moisture,
         gases: {
           h2: liveTelemetry.h2,
@@ -877,7 +886,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           co2: liveTelemetry.co2,
         },
       })
-      toast.success(`ดาวน์โหลดรายงานฉบับทางการ (${currentOrgName}) เรียบร้อยแล้ว!`)
+      toast.success(`ดาวน์โหลดรายงานสรุปค่าที่วัดได้ (${currentOrgName}) เรียบร้อยแล้ว`)
     } catch (err) {
       toast.error('ไม่สามารถสร้างรายงาน PDF ได้: ' + (err as Error).message)
     } finally {
@@ -1481,10 +1490,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                       onClick={handleExportOfficialDossier}
                       disabled={dossierExporting}
                       className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm"
-                      title="Generate formal 5-page IEEE/IEC engineering inspection dossier"
+                      title="Export a 5-page PDF summary of this asset's current telemetry and platform-computed estimates. Not a certified inspection record."
                     >
                       <Download size={12} className={dossierExporting ? 'animate-bounce' : ''} />
-                      <span>{dossierExporting ? 'Generating Dossier...' : '📑 Export IEEE/IEC Dossier'}</span>
+                      <span>{dossierExporting ? 'Generating Summary...' : '📑 Export Telemetry Summary'}</span>
                     </button>
                     <button
                       onClick={() => setShowCopilotDrawer(true)}
