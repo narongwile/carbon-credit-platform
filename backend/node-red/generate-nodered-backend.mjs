@@ -2057,10 +2057,31 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
         if (sel.line && rawLine) {
           try {
             const at = rawLine.lastIndexOf('@');
-            const tok = at > 0 ? rawLine.slice(0, at) : (nc.lineToken || '');
-            const to  = at > 0 ? rawLine.slice(at + 1) : rawLine;
-            if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});
-            else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
+            let tok = at > 0 ? rawLine.slice(0, at) : '';
+            let to  = at > 0 ? rawLine.slice(at + 1) : '';
+            if (at <= 0) {
+              if (rawLine.startsWith('U') || rawLine.startsWith('C') || rawLine.startsWith('R')) {
+                to = rawLine;
+                tok = nc.lineToken || '';
+              } else {
+                tok = rawLine;
+              }
+            }
+            if (!tok && e.orgId) {
+              try {
+                const [orgLine] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+                if (orgLine.length && orgLine[0].target) {
+                  const ot = orgLine[0].target;
+                  const oAt = ot.lastIndexOf('@');
+                  if (oAt > 0) tok = ot.slice(0, oAt);
+                }
+              } catch(_) {}
+            }
+            if (tok && to && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {
+              await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});
+            } else if (tok) {
+              await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
+            }
           } catch(err) { node.error('notify:user-line '+err.message); }
         }
         let rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();
@@ -2227,6 +2248,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     const u = urows[0];
     let pf = {};
     try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { return; }
+    const nc = await global.get('notifyConfig')();
 
     // Read user-specific channels configured under 'admin/notifications'
     let userChannelsFromDb = [];
@@ -2275,13 +2297,28 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     if (sel.email && targetEmail) {
       try {
         const mc = await global.get('mailConfig')();
-        if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: targetEmail, subject, text: text + linkLine });
+        if (mc.transport) {
+          const emailHtml = '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;max-width:600px;margin:0 auto;background:#0f172a;color:#f8fafc;padding:24px;border-radius:12px;border:1px solid #1e293b;">'
+            + '<div style="display:flex;align-items:center;margin-bottom:16px;">'
+            + '<span style="font-size:24px;margin-right:8px;">' + __sevEmoji + '</span>'
+            + '<h2 style="margin:0;font-size:18px;color:' + (topSeverity==='CRITICAL' ? '#ef4444' : '#f59e0b') + ';">[Personal Alert · ' + topSeverity + ']</h2>'
+            + '</div>'
+            + '<p style="color:#94a3b8;font-size:14px;margin-top:0;">Device: <strong style="color:#f8fafc;font-family:monospace;">' + __esc(e.nodeId) + '</strong></p>'
+            + '<p style="color:#cbd5e1;font-size:13px;background:#1e293b;padding:10px 14px;border-radius:8px;border-left:3px solid #6366f1;">This is your own personal threshold set on this device\\\'s dashboard — it does not alter the device\\\'s official alarm state that others see.</p>'
+            + '<table style="width:100%;border-collapse:collapse;margin:16px 0;background:#1e293b;border-radius:8px;overflow:hidden;font-size:13px;">'
+            + alarms.map(a => '<tr><td style="padding:10px 14px;border-bottom:1px solid #334155;color:#94a3b8;">' + __esc(a.paramLabel || 'Alert') + ' (' + a.severity + ')</td>'
+              + '<td style="padding:10px 14px;border-bottom:1px solid #334155;font-weight:bold;color:#f8fafc;">Value: ' + __esc(a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))) + '<br/><span style="font-size:11px;color:#94a3b8;font-weight:normal;">Your Limit: ' + __esc(a.kind==='offline' ? '—' : (a.threshold+(a.unit||''))) + '</span></td></tr>').join('')
+            + '</table>'
+            + (link ? '<div style="text-align:center;margin-top:20px;"><a href="' + link + '" style="background:#6366f1;color:#ffffff;padding:10px 20px;text-decoration:none;border-radius:6px;font-size:13px;font-weight:bold;display:inline-block;">Open Device in Platform</a></div>' : '')
+            + '</div>';
+
+          await mc.transport.sendMail({ from: mc.from, to: targetEmail, subject, text: text + linkLine, html: emailHtml });
+        }
       } catch(err) { node.error('notifyPersonal:email ' + err.message); }
     }
     const rawTg = String(pf.telegramChatId || pf.telegramBotApi || (dbTg ? dbTg.target : '') || '').trim();
     if (sel.telegram && rawTg) {
       try {
-        const nc = await global.get('notifyConfig')();
         const at = rawTg.lastIndexOf('@');
         let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
         const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
@@ -2312,12 +2349,71 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     const rawLine = String(pf.lineUserId || pf.lineMsgApi || (dbLine ? dbLine.target : '') || '').trim();
     if (sel.line && rawLine) {
       try {
-        const nc = await global.get('notifyConfig')();
         const at = rawLine.lastIndexOf('@');
-        const tok = at > 0 ? rawLine.slice(0, at) : (nc.lineToken || '');
-        const to  = at > 0 ? rawLine.slice(at + 1) : rawLine;
-        if (tok && to) {
-          await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[{type:'text',text:subject+'\\n\\n'+text+linkLine}]})});
+        let tok = at > 0 ? rawLine.slice(0, at) : '';
+        let to  = at > 0 ? rawLine.slice(at + 1) : '';
+        if (at <= 0) {
+          if (rawLine.startsWith('U') || rawLine.startsWith('C') || rawLine.startsWith('R')) {
+            to = rawLine;
+            tok = nc.lineToken || '';
+          } else {
+            tok = rawLine;
+          }
+        }
+        if (!tok && e.orgId) {
+          try {
+            const [orgLine] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND target LIKE '%@%' LIMIT 1", [e.orgId]);
+            if (orgLine.length && orgLine[0].target) {
+              const ot = orgLine[0].target;
+              const oAt = ot.lastIndexOf('@');
+              if (oAt > 0) tok = ot.slice(0, oAt);
+            }
+          } catch(_) {}
+        }
+        if (tok && to && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {
+          const personalFlex = {
+            type: 'flex',
+            altText: subject,
+            contents: {
+              type: 'bubble',
+              header: {
+                type: 'box', layout: 'vertical', backgroundColor: topSeverity === 'CRITICAL' ? '#EF4444' : '#F59E0B', paddingAll: '14px',
+                contents: [
+                  { type: 'text', text: 'PERSONAL ALERT · ' + topSeverity, color: '#FFFFFF', size: 'xs', weight: 'bold' },
+                  { type: 'text', text: String(e.nodeId), color: '#FFFFFF', size: 'lg', weight: 'bold', wrap: true }
+                ]
+              },
+              body: {
+                type: 'box', layout: 'vertical', spacing: 'md',
+                contents: alarms.map(a => ({
+                  type: 'box', layout: 'vertical', spacing: 'xs',
+                  contents: [
+                    { type: 'text', text: (a.paramLabel || 'Alert') + ' (' + a.severity + ')', weight: 'bold', size: 'sm' },
+                    { type: 'text', text: 'Value: ' + (a.kind === 'offline' ? 'Offline' : (a.value + (a.unit || ''))), size: 'xs', color: '#64748B' },
+                    { type: 'text', text: 'Your Limit: ' + (a.kind === 'offline' ? '—' : (a.threshold + (a.unit || ''))), size: 'xs', color: '#EF4444' },
+                    { type: 'text', text: '🕒 ' + formatTime(a.ts || a.time || e.time), size: 'xxs', color: '#94A3B8' }
+                  ]
+                }))
+              },
+              footer: link ? {
+                type: 'box', layout: 'vertical',
+                contents: [
+                  { type: 'button', style: 'primary', color: '#6366F1', height: 'sm', action: { type: 'uri', label: 'Open device', uri: link } }
+                ]
+              } : undefined
+            }
+          };
+          await fetch('https://api.line.me/v2/bot/message/push',{
+            method:'POST',
+            headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},
+            body:JSON.stringify({to,messages:[personalFlex]})
+          });
+        } else if (tok) {
+          await fetch('https://notify-api.line.me/api/notify',{
+            method:'POST',
+            headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},
+            body:'message='+encodeURIComponent(' '+subject+'\\n\\n'+text+linkLine)
+          });
         }
       } catch(err) { node.error('notifyPersonal:line ' + err.message); }
     }
