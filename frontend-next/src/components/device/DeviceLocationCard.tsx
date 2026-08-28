@@ -197,6 +197,8 @@ export default function DeviceLocationCard({
           height={pickerHeight}
           zoom={shown ? 14 : 6}
           showSearch={true}
+          showAddressBadge={true}
+          markerLabel={target === 'device' ? 'พิกัดหม้อแปลง (Transformer Location)' : `พิกัดไซต์งาน ${site?.name ?? ''} (Site Location)`}
           onChange={(lat, lng) => triggerCoordConfirm(target, lat, lng)}
         />
         {saving && (
@@ -244,19 +246,31 @@ export default function DeviceLocationCard({
       ) : shown ? (
         <div className="space-y-2">
           <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #1e2433' }}>
-            <LocationPicker key={`${shown.lat},${shown.lng}`} lat={shown.lat} lng={shown.lng} height="120px" zoom={14} interactive={false} showLayerSwitcher={false} showMyLocation={false} onChange={() => {}} />
+            <LocationPicker
+              key={`${shown.lat},${shown.lng}`}
+              lat={shown.lat}
+              lng={shown.lng}
+              height="120px"
+              zoom={14}
+              interactive={false}
+              showLayerSwitcher={false}
+              showMyLocation={false}
+              showAddressBadge={false}
+              markerLabel={shown.source === 'device' ? 'พิกัดหม้อแปลง (Transformer Location)' : `พิกัดไซต์งาน ${site?.name ?? ''} (Site Location)`}
+              onChange={() => {}}
+            />
           </div>
           <div className="flex items-start gap-2">
             <MapPin size={11} className="text-slate-500 mt-0.5 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-[11px] text-slate-300 font-mono">{shown.lat.toFixed(5)}, {shown.lng.toFixed(5)}</div>
-              {computedAddress && (
-                <div className="text-[10px] text-slate-400 mt-0.5 leading-snug line-clamp-2" title={computedAddress}>
-                  {computedAddress}
-                </div>
-              )}
-              {shown.source === 'site' && (
+              {shown.source === 'site' ? (
                 <div className="text-[10px] text-amber-400 mt-0.5">Approximate — {site?.name}&apos;s location, not this device&apos;s own.</div>
+              ) : (
+                <div className="text-[10px] text-emerald-400 mt-0.5 flex items-center gap-1 font-medium">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  <span>พิกัดหม้อแปลง (Device GPS Pinned)</span>
+                </div>
               )}
             </div>
           </div>
@@ -298,7 +312,7 @@ export default function DeviceLocationCard({
               <div>
                 <div className="text-sm font-semibold text-white flex items-center gap-2">
                   <MapPin size={14} className="text-indigo-400" />
-                  {editing === 'device' ? 'Adjust Device Position' : editing === 'site' ? `Set ${site?.name ?? 'Site'} Location` : 'Device Geographic Location'}
+                  {editing === 'device' ? 'Adjust Transformer Position (ปรับพิกัดหม้อแปลง)' : editing === 'site' ? `Set ${site?.name ?? 'Site'} Location` : shown?.source === 'device' ? 'Transformer Geographic Location (พิกัดหม้อแปลง)' : 'Site Geographic Location (พิกัดไซต์งาน)'}
                 </div>
                 {shown && (
                   <div className="text-[11px] text-slate-400 mt-0.5 flex items-center gap-2">
@@ -335,6 +349,8 @@ export default function DeviceLocationCard({
                     showSearch={true}
                     showLayerSwitcher={true}
                     showMyLocation={true}
+                    showAddressBadge={true}
+                    markerLabel={shown.source === 'device' ? 'พิกัดหม้อแปลง (Transformer Location)' : `พิกัดไซต์งาน ${site?.name ?? ''} (Site Location)`}
                     onChange={() => {}}
                   />
                 </div>

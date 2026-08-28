@@ -998,7 +998,14 @@ export const api = {
     req<{ ok: boolean }>(`/api/platform/mqtt`, { method: 'PUT', body: JSON.stringify(body) }),
 
   // ---- Tenancy / provisioning (superadmin: orgs/entitlements/nodes; admin: depts/users/access)
-  orgs: () => req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number; lng?: number; show_3d_fallback?: number }[]>(`/api/orgs`),
+  orgs: () =>
+    req<{ id: string; name: string; status?: string; logo_url?: string | null; lat?: number | string | null; lng?: number | string | null; show_3d_fallback?: number }[]>(`/api/orgs`).then((rows) =>
+      rows?.map((r) => ({
+        ...r,
+        lat: r.lat != null && !isNaN(Number(r.lat)) ? Number(r.lat) : undefined,
+        lng: r.lng != null && !isNaN(Number(r.lng)) ? Number(r.lng) : undefined,
+      })) ?? []
+    ),
 
   // Schema migrations (superadmin). Which databases are behind the .sql files
   // in the image running right now, and the button that brings tenants up.

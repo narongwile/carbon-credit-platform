@@ -37,6 +37,7 @@ import { useKindCatalog } from '@/lib/useKindCatalog'
 import { useReverseAddress } from '@/lib/geoAddress'
 import { defaultNotificationChannels } from '@/lib/orgData'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
+import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
 import type { KindScope } from '@/lib/api'
 import type { NotificationChannelConfig } from '@/types/org'
 
@@ -60,8 +61,38 @@ export default function SettingsPage() {
   // Tab State
   const [activeTab, setActiveTab] = useState<'branding' | 'alarms' | 'notifications' | 'catalogs'>('branding')
 
-  // Domain selection for alarm baseline
+  // Domain selection for alarm baseline - filtered by org product license
   const [alarmDomain, setAlarmDomain] = useState<SensorDomain>('transformer')
+  const storeEntitlements = useAppStore((s) => s.orgEntitlements[selectedOrgId])
+  const [orgDomains, setOrgDomains] = useState<SensorDomain[]>(() => {
+    const lic = licensedDomains(selectedOrgId)
+    return lic.length > 0 ? lic : ['transformer']
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    if (!isLive()) {
+      const lic = licensedDomains(selectedOrgId)
+      setOrgDomains(lic.length > 0 ? lic : ['transformer'])
+      return
+    }
+    api.entitlements(selectedOrgId).then((ents) => {
+      if (cancelled || !ents) return
+      const filtered = (['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[]).filter((d) =>
+        ents.includes(DOMAIN_TO_PLATFORM[d])
+      )
+      setOrgDomains(filtered.length > 0 ? filtered : licensedDomains(selectedOrgId))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedOrgId, storeEntitlements])
+
+  useEffect(() => {
+    if (orgDomains.length > 0 && !orgDomains.includes(alarmDomain)) {
+      setAlarmDomain(orgDomains[0])
+    }
+  }, [orgDomains, alarmDomain])
 
   // Photo/document type catalogs (migrate-v40)
   const [managingScope, setManagingScope] = useState<KindScope | null>(null)
@@ -96,8 +127,12 @@ export default function SettingsPage() {
       if (!org) return
       if (org.name) setBrandName(org.name)
       if (org.lat != null && org.lng != null) {
-        setOrgLat(org.lat)
-        setOrgLng(org.lng)
+        const parsedLat = Number(org.lat)
+        const parsedLng = Number(org.lng)
+        if (Number.isFinite(parsedLat) && Number.isFinite(parsedLng)) {
+          setOrgLat(parsedLat)
+          setOrgLng(parsedLng)
+        }
       }
     })
   }, [selectedOrgId])
@@ -219,12 +254,16 @@ export default function SettingsPage() {
     if (orgLat == null || orgLng == null) {
       toast.success('Factory location cleared')
     } else {
-      const lat = orgLat, lng = orgLng
-      toast.success(
-        factoryAddress
-          ? `Factory location saved: ${factoryAddress.split(',')[0]} (${lat.toFixed(4)}, ${lng.toFixed(4)})`
-          : `Factory location saved (${lat.toFixed(4)}, ${lng.toFixed(4)})`
-      )
+      const lat = Number(orgLat), lng = Number(orgLng)
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        toast.success(
+          factoryAddress
+            ? `Factory location saved: ${factoryAddress.split(',')[0]} (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+            : `Factory location saved (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+        )
+      } else {
+        toast.success('Factory location saved')
+      }
     }
   }
 
@@ -420,9 +459,9 @@ export default function SettingsPage() {
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <h3 className="text-sm font-bold text-white">Factory &amp; Facility Location</h3>
-                    {orgLat != null && orgLng != null ? (
+                    {orgLat != null && orgLng != null && Number.isFinite(Number(orgLat)) && Number.isFinite(Number(orgLng)) ? (
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800 font-mono">
-                        {orgLat.toFixed(5)}, {orgLng.toFixed(5)}
+                        {Number(orgLat).toFixed(5)}, {Number(orgLng).toFixed(5)}
                       </span>
                     ) : (
                       <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/60 font-medium">
@@ -478,6 +517,8 @@ export default function SettingsPage() {
               showSearch={true}
               showMyLocation={true}
               showLayerSwitcher={true}
+              showAddressBadge={true}
+              markerLabel="พิกัดโรงงาน (Factory Location)"
               defaultLayer="streets"
             />
 
@@ -521,7 +562,7 @@ export default function SettingsPage() {
             </div>
 
             {/* Real-time Location Verification Box */}
-            {orgLat != null && orgLng != null && (
+            {orgLat != null && orgLng != null && Number.isFinite(Number(orgLat)) && Number.isFinite(Number(orgLng)) && (
               <div className="mt-4 p-4 rounded-xl border border-indigo-500/30 bg-indigo-950/20 space-y-2.5">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
@@ -529,7 +570,7 @@ export default function SettingsPage() {
                     <span className="text-xs font-bold text-white">ข้อมูลสถานที่ที่ปักหมุด (Pinned Location Details)</span>
                   </div>
                   <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-slate-300 font-mono">
-                    {orgLat.toFixed(6)}, {orgLng.toFixed(6)}
+                    {Number(orgLat).toFixed(6)}, {Number(orgLng).toFixed(6)}
                   </span>
                 </div>
 
@@ -553,7 +594,7 @@ export default function SettingsPage() {
                       </>
                     ) : (
                       <div className="text-slate-400 text-xs">
-                        <span>พิกัด {orgLat.toFixed(6)}, {orgLng.toFixed(6)} (ไม่มีข้อมูลชื่อสถานที่จากฐานข้อมูลแผนที่สาธารณะ)</span>
+                        <span>พิกัด {Number(orgLat).toFixed(6)}, {Number(orgLng).toFixed(6)} (ไม่มีข้อมูลชื่อสถานที่จากฐานข้อมูลแผนที่สาธารณะ)</span>
                       </div>
                     )}
                   </div>
@@ -598,25 +639,29 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            {/* Domain Tabs */}
-            <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800">
-              {(['transformer', 'carbonNode', 'bloodBox', 'automobile'] as const).map((d) => {
-                const meta = DOMAIN_META[d]
-                const active = alarmDomain === d
-                return (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => setAlarmDomain(d)}
-                    className={clsx(
-                      'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap',
-                      active ? 'bg-indigo-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-white'
-                    )}
-                  >
-                    {meta?.platform || d}
-                  </button>
-                )
-              })}
+            {/* Domain Tabs - filtered by org product license */}
+            <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-950 border border-slate-800 overflow-x-auto">
+              {orgDomains.length > 0 ? (
+                orgDomains.map((d) => {
+                  const meta = DOMAIN_META[d]
+                  const active = alarmDomain === d
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setAlarmDomain(d)}
+                      className={clsx(
+                        'px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap',
+                        active ? 'bg-indigo-600 text-white font-bold shadow-sm' : 'text-slate-400 hover:text-white'
+                      )}
+                    >
+                      {meta?.platform || d}
+                    </button>
+                  )
+                })
+              ) : (
+                <div className="px-3 py-1.5 text-xs text-slate-500 italic">No licensed product domains found</div>
+              )}
             </div>
           </div>
 

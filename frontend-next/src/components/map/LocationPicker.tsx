@@ -39,10 +39,12 @@ export default function LocationPicker({
   showSearch = false,
   showLayerSwitcher = true,
   showMyLocation = false,
+  showAddressBadge = false,
+  markerLabel = 'พิกัดโรงงาน (Factory Location)',
   defaultLayer = 'streets',
 }: {
-  lat: number | null
-  lng: number | null
+  lat: number | string | null
+  lng: number | string | null
   onChange: (lat: number, lng: number) => void
   height?: string
   interactive?: boolean
@@ -50,6 +52,8 @@ export default function LocationPicker({
   showSearch?: boolean
   showLayerSwitcher?: boolean
   showMyLocation?: boolean
+  showAddressBadge?: boolean
+  markerLabel?: string
   defaultLayer?: LayerKey
 }) {
   const elRef = useRef<HTMLDivElement>(null)
@@ -62,30 +66,33 @@ export default function LocationPicker({
   const [currentLayer, setCurrentLayer] = useState<LayerKey>(defaultLayer)
   const [locating, setLocating] = useState(false)
 
+  const safeLat = lat != null && Number.isFinite(Number(lat)) ? Number(lat) : null
+  const safeLng = lng != null && Number.isFinite(Number(lng)) ? Number(lng) : null
+
   useEffect(() => {
     onChangeRef.current = onChange
   }, [onChange])
 
-  const { address: currentPinAddress, loading: addressLoading } = useReverseAddress(lat, lng)
+  const { address: currentPinAddress, loading: addressLoading } = useReverseAddress(safeLat, safeLng)
 
-  const updateFactoryMarkerPopup = async (marker: any, targetLat: number, targetLng: number) => {
+  const updateMarkerPopup = async (marker: any, targetLat: number, targetLng: number) => {
     if (!marker) return
     marker.bindPopup(`
       <div style="font-family:sans-serif; min-width:180px; padding:2px;">
-        <div style="font-size:12px; font-weight:700; color:#0f172a;">🏭 พิกัดโรงงาน (Factory Location)</div>
+        <div style="font-size:12px; font-weight:700; color:#0f172a;">📍 ${markerLabel}</div>
         <div style="font-size:10px; color:#64748b; font-family:monospace; margin-top:2px;">${targetLat.toFixed(6)}, ${targetLng.toFixed(6)}</div>
         <div style="font-size:10px; color:#6366f1; margin-top:4px; font-style:italic;">กำลังระบุชื่อสถานที่...</div>
-        <div style="font-size:9px; color:#94a3b8; margin-top:4px;">(ลากหมุดเพื่อปรับตำแหน่งได้)</div>
+        ${interactive ? '<div style="font-size:9px; color:#94a3b8; margin-top:4px;">(ลากหมุดเพื่อปรับตำแหน่งได้)</div>' : ''}
       </div>
     `)
     const addr = await reverseGeocode(targetLat, targetLng)
     if (addr) {
       marker.bindPopup(`
         <div style="font-family:sans-serif; min-width:200px; padding:3px;">
-          <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:2px;">🏭 พิกัดโรงงาน (Factory Location)</div>
+          <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:2px;">📍 ${markerLabel}</div>
           <div style="font-size:11px; color:#1e293b; font-weight:600; line-height:1.35; margin-bottom:4px;">📍 ${addr}</div>
           <div style="font-size:10px; color:#64748b; font-family:monospace;">${targetLat.toFixed(6)}, ${targetLng.toFixed(6)}</div>
-          <div style="font-size:9px; color:#6366f1; margin-top:5px; border-top:1px solid #e2e8f0; padding-top:2px;">✓ ยืนยันตำแหน่งแล้ว (ลากหมุดเพื่อปรับได้)</div>
+          ${interactive ? '<div style="font-size:9px; color:#6366f1; margin-top:5px; border-top:1px solid #e2e8f0; padding-top:2px;">✓ ยืนยันตำแหน่งแล้ว (ลากหมุดเพื่อปรับได้)</div>' : ''}
         </div>
       `)
       if (marker.isPopupOpen?.()) {
@@ -128,8 +135,8 @@ export default function LocationPicker({
           <div style="font-size: 12px; font-weight: 700; color: #0f172a; margin-bottom: 2px;">📍 ตำแหน่งปัจจุบันของคุณ</div>
           ${addr ? `<div style="font-size: 11px; color: #1e293b; font-weight: 600; margin-bottom: 4px; line-height: 1.35;">📍 ${addr}</div>` : ''}
           <div style="font-size: 10px; color: #64748b; font-family: monospace; margin-bottom: 6px;">${latitude.toFixed(6)}, ${longitude.toFixed(6)}</div>
-          <button type="button" id="btn-pin-factory-here" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; background: #4f46e5; color: #ffffff; border: none; border-radius: 6px; padding: 5px 8px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.2s;">
-            📌 ปักหมุดที่นี่เป็นพิกัดโรงงาน
+          <button type="button" id="btn-pin-here" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; background: #4f46e5; color: #ffffff; border: none; border-radius: 6px; padding: 5px 8px; font-size: 11px; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+            📌 ปักหมุดที่นี่เป็น${markerLabel.split(' ')[0]}
           </button>
         `
 
@@ -139,7 +146,7 @@ export default function LocationPicker({
           .openPopup()
         userMarkerRef.current = m
 
-        const btn = popupDiv.querySelector('#btn-pin-factory-here') as HTMLElement | null
+        const btn = popupDiv.querySelector('#btn-pin-here') as HTMLElement | null
         if (btn) {
           btn.onclick = () => {
             handlePlaceSelect(latitude, longitude)
@@ -167,8 +174,8 @@ export default function LocationPicker({
         shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
       })
 
-      const defaultLat = lat ?? 13.7
-      const defaultLng = lng ?? 100.9
+      const defaultLat = safeLat ?? 13.7
+      const defaultLng = safeLng ?? 100.9
       
       map = L.map(elRef.current, { scrollWheelZoom: true, dragging: true }).setView([defaultLat, defaultLng], zoom)
       mapRef.current = map
@@ -182,12 +189,13 @@ export default function LocationPicker({
       tileLayerRef.current = tileLayer
 
       // Initial marker
-      if (lat != null && lng != null) {
-        markerRef.current = L.marker([lat, lng], { draggable: interactive }).addTo(map)
-        markerRef.current.bindPopup('<b style="color:#0f172a">🏭 พิกัดโรงงาน (Factory Location)</b>')
+      if (safeLat != null && safeLng != null) {
+        markerRef.current = L.marker([safeLat, safeLng], { draggable: interactive }).addTo(map)
+        updateMarkerPopup(markerRef.current, safeLat, safeLng)
         if (interactive) {
           markerRef.current.on('dragend', (e: any) => {
             const pos = e.target.getLatLng()
+            updateMarkerPopup(markerRef.current, pos.lat, pos.lng)
             onChangeRef.current(pos.lat, pos.lng)
           })
         }
@@ -196,18 +204,20 @@ export default function LocationPicker({
       // Click to place/move marker — view mode leaves the map itself pannable
       if (interactive) {
         map.on('click', (e: any) => {
-          const { lat, lng } = e.latlng
+          const { lat: clickLat, lng: clickLng } = e.latlng
           if (markerRef.current) {
-            markerRef.current.setLatLng([lat, lng])
+            markerRef.current.setLatLng([clickLat, clickLng])
+            updateMarkerPopup(markerRef.current, clickLat, clickLng)
           } else {
-            markerRef.current = L.marker([lat, lng], { draggable: true }).addTo(map)
-            markerRef.current.bindPopup('<b style="color:#0f172a">🏭 พิกัดโรงงาน (Factory Location)</b>')
+            markerRef.current = L.marker([clickLat, clickLng], { draggable: true }).addTo(map)
+            updateMarkerPopup(markerRef.current, clickLat, clickLng)
             markerRef.current.on('dragend', (ev: any) => {
               const pos = ev.target.getLatLng()
+              updateMarkerPopup(markerRef.current, pos.lat, pos.lng)
               onChangeRef.current(pos.lat, pos.lng)
             })
           }
-          onChangeRef.current(lat, lng)
+          onChangeRef.current(clickLat, clickLng)
         })
       }
     })()
@@ -228,30 +238,32 @@ export default function LocationPicker({
     const L = LRef.current
     if (!map || !L) return
 
-    if (lat != null && lng != null) {
+    if (safeLat != null && safeLng != null) {
       if (markerRef.current) {
         const cur = markerRef.current.getLatLng()
-        if (Math.abs(cur.lat - lat) > 0.000001 || Math.abs(cur.lng - lng) > 0.000001) {
-          markerRef.current.setLatLng([lat, lng])
-          map.flyTo([lat, lng], Math.max(map.getZoom(), 14), { duration: 0.8 })
+        if (Math.abs(cur.lat - safeLat) > 0.000001 || Math.abs(cur.lng - safeLng) > 0.000001) {
+          markerRef.current.setLatLng([safeLat, safeLng])
+          updateMarkerPopup(markerRef.current, safeLat, safeLng)
+          map.flyTo([safeLat, safeLng], Math.max(map.getZoom(), 14), { duration: 0.8 })
         }
       } else {
-        const m = L.marker([lat, lng], { draggable: interactive }).addTo(map)
-        m.bindPopup('<b style="color:#0f172a">🏭 พิกัดโรงงาน (Factory Location)</b>')
+        const m = L.marker([safeLat, safeLng], { draggable: interactive }).addTo(map)
+        updateMarkerPopup(m, safeLat, safeLng)
         if (interactive) {
           m.on('dragend', (e: any) => {
             const pos = e.target.getLatLng()
+            updateMarkerPopup(m, pos.lat, pos.lng)
             onChangeRef.current(pos.lat, pos.lng)
           })
         }
         markerRef.current = m
-        map.flyTo([lat, lng], Math.max(map.getZoom(), 14), { duration: 0.8 })
+        map.flyTo([safeLat, safeLng], Math.max(map.getZoom(), 14), { duration: 0.8 })
       }
     } else if (markerRef.current) {
       map.removeLayer(markerRef.current)
       markerRef.current = null
     }
-  }, [lat, lng, interactive])
+  }, [safeLat, safeLng, interactive])
 
   const switchLayer = (layerKey: LayerKey) => {
     setCurrentLayer(layerKey)
@@ -266,10 +278,13 @@ export default function LocationPicker({
     if (interactive) {
       if (markerRef.current) {
         markerRef.current.setLatLng([targetLat, targetLng])
+        updateMarkerPopup(markerRef.current, targetLat, targetLng)
       } else if (LRef.current) {
         markerRef.current = LRef.current.marker([targetLat, targetLng], { draggable: true }).addTo(mapRef.current)
+        updateMarkerPopup(markerRef.current, targetLat, targetLng)
         markerRef.current.on('dragend', (ev: any) => {
           const pos = ev.target.getLatLng()
+          updateMarkerPopup(markerRef.current, pos.lat, pos.lng)
           onChangeRef.current(pos.lat, pos.lng)
         })
       }
@@ -338,8 +353,8 @@ export default function LocationPicker({
         )}
       </div>
 
-      {/* Floating Bottom Status Pill with Address Confirmation */}
-      {lat != null && lng != null && (
+      {/* Floating Bottom Status Pill with Address Confirmation - only shown when showAddressBadge is enabled */}
+      {showAddressBadge && safeLat != null && safeLng != null && (
         <div
           className="absolute bottom-2 left-2 z-[500] max-w-[calc(100%-1rem)] sm:max-w-md px-3 py-1.5 rounded-lg shadow-xl text-[11px] flex items-center gap-2 border border-slate-700/80"
           style={{ background: 'rgba(10, 14, 26, 0.94)', backdropFilter: 'blur(10px)' }}
@@ -357,12 +372,12 @@ export default function LocationPicker({
               </span>
             ) : (
               <span className="text-slate-400 font-mono">
-                {lat.toFixed(5)}, {lng.toFixed(5)}
+                {safeLat.toFixed(5)}, {safeLng.toFixed(5)}
               </span>
             )}
           </div>
           <span className="text-[10px] font-mono text-indigo-300 shrink-0 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800">
-            {lat.toFixed(4)}, {lng.toFixed(4)}
+            {safeLat.toFixed(4)}, {safeLng.toFixed(4)}
           </span>
         </div>
       )}

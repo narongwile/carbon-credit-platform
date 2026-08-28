@@ -5,8 +5,11 @@ import { useEffect, useState } from 'react'
 // In-memory cache for fast lookups across re-renders
 const memoryCache = new Map<string, string>()
 
-function cacheKey(lat: number, lng: number): string {
-  return `${lat.toFixed(4)},${lng.toFixed(4)}`
+function cacheKey(lat: number | string, lng: number | string): string {
+  const nLat = Number(lat)
+  const nLng = Number(lng)
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return ''
+  return `${nLat.toFixed(4)},${nLng.toFixed(4)}`
 }
 
 /**
@@ -47,9 +50,12 @@ function formatAddress(data: any): string {
 /**
  * Reverse geocode [lat, lng] into human-readable address with multi-layer caching.
  */
-export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-  const key = cacheKey(lat, lng)
+export async function reverseGeocode(lat: number | string, lng: number | string): Promise<string | null> {
+  const nLat = Number(lat)
+  const nLng = Number(lng)
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return null
+  const key = cacheKey(nLat, nLng)
+  if (!key) return null
 
   if (memoryCache.has(key)) {
     return memoryCache.get(key) || null
@@ -160,25 +166,31 @@ export function formatDistance(meters: number): string {
 /**
  * React Hook to get readable address from coordinates.
  */
-export function useReverseAddress(lat?: number | null, lng?: number | null) {
+export function useReverseAddress(lat?: number | string | null, lng?: number | string | null) {
   const [address, setAddress] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    const nLat = lat != null ? Number(lat) : null
+    const nLng = lng != null ? Number(lng) : null
+    if (nLat == null || nLng == null || !Number.isFinite(nLat) || !Number.isFinite(nLng)) {
       setAddress(null)
       return
     }
 
     let cancelled = false
-    const key = cacheKey(lat, lng)
+    const key = cacheKey(nLat, nLng)
+    if (!key) {
+      setAddress(null)
+      return
+    }
     if (memoryCache.has(key)) {
       setAddress(memoryCache.get(key) || null)
       return
     }
 
     setLoading(true)
-    reverseGeocode(lat, lng)
+    reverseGeocode(nLat, nLng)
       .then((addr) => {
         if (cancelled) return
         setAddress(addr)
