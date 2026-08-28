@@ -222,8 +222,15 @@ export default function FleetPage() {
                   <div className="text-xs text-slate-500 font-mono truncate">{active.id}</div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <button onClick={() => setShowDiag(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
+                  <button
+                    onClick={() => setShowDiag(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white shadow-sm relative group hover:brightness-110 transition-all"
+                    style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
+                  >
                     <Stethoscope size={13} /> Diagnostics
+                    {presence?.identity_conflict_at && (
+                      <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping absolute -top-0.5 -right-0.5" title="Hardware Collision Active" />
+                    )}
                   </button>
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase" style={online ? { color: '#4ade80', background: 'rgba(74,222,128,0.12)' } : { color: '#94a3b8', background: 'rgba(148,163,184,0.12)' }}>
                     {detailLoading ? '…' : online ? 'online' : 'offline'}
