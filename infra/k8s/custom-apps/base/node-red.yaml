@@ -52,12 +52,7 @@ spec:
       annotations:
         # sha256 of flows.nodered-backend.json — changes on every flow update, so
         # the pod template changes → ArgoCD rolls the pod → load-flow re-copies the
-        # new flow. Maintained by infra/scripts/sync-nodered-flow.sh (do not hand-edit).
-<<<<<<< HEAD
         checksum/flow: "f60d958ecbeeb24b"
-=======
-        checksum/flow: "f60d958ecbeeb24b"
->>>>>>> gitlab/feature/deploy-ingest-worker
     spec:
       securityContext:
         fsGroup: 1000
