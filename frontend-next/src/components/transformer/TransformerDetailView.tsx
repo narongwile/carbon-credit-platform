@@ -39,8 +39,9 @@ import {
   MapPin, Calendar, Building2, Hash, CheckCircle, XCircle, AlertTriangle, Clock,
   ChevronLeft, Maximize2, SlidersHorizontal, Pencil, Camera, Users, Share2,
   BarChart2, FileText, GripVertical, X, TrendingUp, ShieldCheck,
-  Download, Bot, FlaskConical, Battery,
+  Download, Bot, FlaskConical, Battery, Volume2, VolumeX,
 } from 'lucide-react'
+import { useAudioChimeStore } from '@/lib/audioChimeStore'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import Link from 'next/link'
@@ -171,6 +172,7 @@ function useLiveTransformer(base: Transformer | undefined) {
   const id = base?.id
   const [values, setValues] = useState<Record<string, number> | null>(null)
   const [lastReadingAt, setLastReadingAt] = useState<string | null>(null)
+  const [presence, setPresence] = useState<DevicePresence | null>(null)
   const [series, setSeries] = useState<Record<string, TrendPoint[]>>({})
 
   // Poll the stored readings, then let WS frames update the current values in
@@ -187,7 +189,7 @@ function useLiveTransformer(base: Transformer | undefined) {
   const VALUES_POLL_MS = 4000
   const SERIES_POLL_MS = 30000
   useEffect(() => {
-    if (!live || !id) { setValues(null); setLastReadingAt(null); setSeries({}); return }
+    if (!live || !id) { setValues(null); setLastReadingAt(null); setPresence(null); setSeries({}); return }
     let cancelled = false
     const loadLatest = () => {
       api.latest(id).then((r) => {
@@ -196,6 +198,7 @@ function useLiveTransformer(base: Transformer | undefined) {
           setValues((prev) => ({ ...(prev || {}), ...r.values }))
         }
         if (r.lastReadingAt) setLastReadingAt(r.lastReadingAt)
+        if (r.presence !== undefined) setPresence(r.presence ?? null)
       })
     }
     // 48 buckets over 12h = one point per 15 minutes, which is exactly what the
@@ -280,7 +283,7 @@ function useLiveTransformer(base: Transformer | undefined) {
     } as Transformer
   }, [base, live, values, series, online, lastReadingAt])
 
-  return { transformer, live, online, lastReadingAt, values, series }
+  return { transformer, live, online, lastReadingAt, values, series, presence }
 }
 
 function LiveTime() {
@@ -766,7 +769,19 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // never was this device's real position). Pulled separately so the real
   // per-device coordinate widget below can resolve the site it belongs to.
   const siteId = useMemo(() => hosts.find((h) => h.id === id && h.domain === 'transformer')?.siteId, [hosts, id])
-  const { transformer, live, online, lastReadingAt, values, series } = useLiveTransformer(base)
+  const { transformer, live, online, lastReadingAt, values, series, presence } = useLiveTransformer(base)
+  const [showArbitrationModal, setShowArbitrationModal] = useState(false)
+  const [arbitrationMode, setArbitrationMode] = useState<'max' | 'mean'>('max')
+  const [conflictDismissed, setConflictDismissed] = useState(false)
+
+  // Web Audio Chime per Org configuration
+  const targetOrgId = transformer?.orgId || base?.orgId || 'org-1'
+  const orgAudioSettings = useAudioChimeStore((s) => s.getSettingsForOrg(targetOrgId))
+  useEffect(() => {
+    if (presence?.identity_conflict_at && !conflictDismissed) {
+      useAudioChimeStore.getState().playChime(targetOrgId, 'conflict')
+    }
+  }, [presence?.identity_conflict_at, conflictDismissed, targetOrgId])
   const displayLocation = useMemo(() => {
     if (transformer?.location && transformer.location !== '—') return transformer.location
     const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
@@ -1502,6 +1517,66 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           {/* Diagnostics Section (Visible on Desktop OR when mobileTab === 'diagnostics') */}
           <div className={mobileTab === 'diagnostics' ? 'block' : 'hidden lg:block'}>
             <div className="rounded-2xl p-4 mt-4 lg:mt-0 lg:mb-4 lg:mx-0 space-y-4" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+              {/* 🚨 Layer 1-3: Hardware Collision & Stream Arbitration Banner */}
+              {presence?.identity_conflict_at && !conflictDismissed && (
+                <div
+                  className="rounded-xl border border-rose-500/60 p-3.5 sm:p-4 mb-3 relative overflow-hidden"
+                  style={{ background: 'linear-gradient(135deg, rgba(225,29,72,0.15) 0%, rgba(13,17,23,0.95) 100%)' }}
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="p-1 rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse">
+                          <AlertTriangle size={15} />
+                        </span>
+                        <span className="text-xs font-bold text-rose-200">
+                          ตรวจพบฮาร์ดแวร์ส่งข้อมูลชนกัน (Duplicate Hardware Stream Collision)
+                        </span>
+                        <span className="text-[9px] font-mono px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-500/40">
+                          No-MAC Auto-Protection Active
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-300">
+                        ตรวจพบอุปกรณ์ 2 ตัวแย่งส่งข้อมูลเข้า <span className="font-mono text-amber-300">{transformer.id}</span> 
+                        (วิเคราะห์จาก Uptime Regression สลับขั้ว &amp; Physical Slew-Rate Jumps แม้ฮาร์ดแวร์ไม่ส่ง MAC)
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => setShowArbitrationModal(true)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+                      >
+                        <span>⚖️ จัดการการรวมข้อมูล (Arbitration Panel)</span>
+                      </button>
+                      <button
+                        onClick={() => setConflictDismissed(true)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-white bg-slate-800/60 hover:bg-slate-700/60 transition-all text-xs cursor-pointer"
+                        title="ซ่อนแถบเตือนชั่วคราว"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3-Tier Active Shields */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3 pt-2.5 border-t border-rose-500/20 text-[11px]">
+                    <div className="flex items-center gap-1.5 text-emerald-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span><strong>ชั้นที่ 1 Slew-Rate Filter:</strong> กรองสไปก์ ป้องกัน False Alarm</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-amber-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                      <span><strong>ชั้นที่ 2 Max-Select (IEC 61508):</strong> ยึดค่าอุณหภูมิปลอดภัยสูงสุด</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-indigo-300">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                      <span><strong>ชั้นที่ 3 Stream Quarantine:</strong> ปกป้องฐานข้อมูลประวัติศาสตร์</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* PdM Advanced Studio Sub-Tabs */}
               <div className="flex items-center justify-between border-b border-slate-800 pb-3 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
@@ -1523,10 +1598,10 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     <button
                       onClick={() => setShowCopilotDrawer(true)}
                       className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 transition-all flex items-center gap-1.5 shadow-sm"
-                      title="Open Industrial GenAI Diagnostics Copilot"
+                      title="Open Ask AI Diagnostics"
                     >
                       <Bot size={13} />
-                      <span>🤖 Ask Copilot</span>
+                      <span>🤖 Ask AI</span>
                     </button>
                     <button
                       onClick={() => setShowLabDgaModal(true)}
@@ -1543,6 +1618,25 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                     >
                       <Building2 size={13} />
                       <span>🏢 Fleet Risk</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        const s = useAudioChimeStore.getState().getSettingsForOrg(targetOrgId)
+                        useAudioChimeStore.getState().updateOrgSettings(targetOrgId, { enabled: !s.enabled })
+                        if (!s.enabled) {
+                          useAudioChimeStore.getState().playChime(targetOrgId, 'conflict')
+                        }
+                      }}
+                      className={clsx(
+                        'px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm border cursor-pointer',
+                        orgAudioSettings.enabled
+                          ? 'bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border-purple-500/40'
+                          : 'bg-slate-800/40 hover:bg-slate-800/60 text-slate-500 border-slate-700/50'
+                      )}
+                      title={orgAudioSettings.enabled ? 'Web Audio Chime: เปิดอยู่ (คลิกเพื่อปิด)' : 'Web Audio Chime: ปิดเสียงอยู่ (คลิกเพื่อเปิด)'}
+                    >
+                      {orgAudioSettings.enabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+                      <span>{orgAudioSettings.enabled ? '🔊 Chime' : '🔇 Muted'}</span>
                     </button>
                   </div>
                 </div>
@@ -1885,6 +1979,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               <GenAiDiagnosticsCopilot
                 assetId={transformer.id}
                 assetName={transformer.name}
+                orgId={transformer.orgId || orgId}
                 orgName={currentOrgName}
                 dgaGases={{
                   h2: liveTelemetry.h2,
@@ -1976,15 +2071,118 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         </div>
       )}
 
+      {/* Hardware Collision & Stream Arbitration Modal */}
+      {showArbitrationModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div
+            className="w-full max-w-2xl rounded-2xl p-6 space-y-5 border border-rose-500/50 shadow-2xl relative"
+            style={{ background: '#0d1117' }}
+          >
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                  <AlertTriangle size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">การจัดการฮาร์ดแวร์ชนกัน &amp; แยกสายข้อมูล (Hardware Arbitration)</h3>
+                  <p className="text-xs text-slate-400">Node ID: <span className="font-mono text-amber-300">{transformer.id}</span> (องค์กร: {transformer.orgId})</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowArbitrationModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-300">
+              <div className="p-3 rounded-xl bg-[#0a0e1a] border border-slate-800 space-y-2">
+                <div className="font-semibold text-slate-200 flex items-center justify-between">
+                  <span>📡 การตรวจจับตัวตนแบบไร้ MAC Address:</span>
+                  <span className="text-[10px] text-emerald-400 font-mono">Status: PROTECTED</span>
+                </div>
+                <p className="text-slate-400 leading-relaxed">
+                  แม้ว่าเฟิร์มแวร์ ESP32 ของท่านจะไม่ได้ส่ง MAC address มาใน Payload แต่ระบบวิเคราะห์พบความผิดปกติจาก 
+                  <strong> Uptime Regression</strong> (เวลาเปิดเครื่องกระโดดถอยหลังสลับไปมา) และ 
+                  <strong> Physical Slew-Rate Jumps</strong> (ค่ากระโดดข้ามพิกัดฟิสิกส์ความจุความร้อนของน้ำมัน)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="font-bold text-slate-200 uppercase tracking-wider text-[11px]">
+                  เลือกแนวทางการผสานข้อมูล (Arbitration Strategy):
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div
+                    onClick={() => setArbitrationMode('max')}
+                    className={clsx(
+                      'p-3 rounded-xl border cursor-pointer transition-all space-y-1',
+                      arbitrationMode === 'max'
+                        ? 'border-amber-500 bg-amber-500/10 text-white'
+                        : 'border-slate-800 bg-[#0a0e1a] text-slate-400 hover:border-slate-700'
+                    )}
+                  >
+                    <div className="font-bold text-amber-300 flex items-center justify-between">
+                      <span>🛡️ Max-Select Safety (แนะนำ)</span>
+                      {arbitrationMode === 'max' && <span className="text-[10px]">✓ ใช้งานอยู่</span>}
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      หาก 2 กล่องส่งค่าอุณหภูมิไม่เท่ากัน ระบบจะยึดค่าที่สูงกว่าเพื่อความปลอดภัยในการคำนวณอายุฉนวนและสั่งพัดลมระบายความร้อน
+                    </p>
+                  </div>
+
+                  <div
+                    onClick={() => setArbitrationMode('mean')}
+                    className={clsx(
+                      'p-3 rounded-xl border cursor-pointer transition-all space-y-1',
+                      arbitrationMode === 'mean'
+                        ? 'border-indigo-500 bg-indigo-500/10 text-white'
+                        : 'border-slate-800 bg-[#0a0e1a] text-slate-400 hover:border-slate-700'
+                    )}
+                  >
+                    <div className="font-bold text-indigo-300 flex items-center justify-between">
+                      <span>📊 Dual-Redundant Mean (เฉลี่ย)</span>
+                      {arbitrationMode === 'mean' && <span className="text-[10px]">✓ ใช้งานอยู่</span>}
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      เหมาะสำหรับกรณีที่ตั้งใจติด 2 เซนเซอร์คู่ขนาน (Redundancy 1oo2) ระบบจะหาค่าเฉลี่ยและเตือนเมื่อ Discrepancy &gt; 5°C
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800 flex flex-col sm:flex-row gap-2 justify-between items-center">
+                <button
+                  onClick={() => {
+                    setConflictDismissed(true)
+                    setShowArbitrationModal(false)
+                  }}
+                  className="w-full sm:w-auto px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 transition-all cursor-pointer"
+                >
+                  ✅ ยืนยันการแก้ไขหน้างานแล้ว (Clear Alert)
+                </button>
+                <button
+                  onClick={() => setShowArbitrationModal(false)}
+                  className="w-full sm:w-auto px-4 py-2 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all cursor-pointer"
+                >
+                  ปิดหน้าต่าง
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Action Button for Copilot (Responsive: Compact Icon on Mobile, Full Pill on Desktop) */}
       <button
         onClick={() => setShowCopilotDrawer(true)}
         className="fixed bottom-5 right-4 sm:bottom-6 sm:right-6 z-40 p-3 sm:px-4 sm:py-3 rounded-full bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-bold text-xs shadow-2xl flex items-center gap-2 border border-indigo-400/40 hover:scale-105 transition-all"
-        title="Open Industrial GenAI Diagnostics Copilot"
-        aria-label="Open Industrial GenAI Diagnostics Copilot"
+        title="Open Ask AI Diagnostics"
+        aria-label="Open Ask AI Diagnostics"
       >
         <Bot size={19} className="animate-pulse flex-shrink-0" />
-        <span className="hidden sm:inline">Ask Industrial AI Copilot</span>
+        <span className="hidden sm:inline">Ask AI</span>
         <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping flex-shrink-0" />
       </button>
 

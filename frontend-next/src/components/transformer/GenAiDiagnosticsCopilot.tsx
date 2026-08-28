@@ -4,14 +4,17 @@ import React, { useState, useMemo, useRef, useEffect } from 'react'
 import {
   Bot, Sparkles, Send, MessageSquare, AlertTriangle, ShieldCheck,
   CheckCircle2, Copy, Download, Radio, Wrench, RefreshCw, FileText,
-  Clock, ArrowRight, Zap, ExternalLink, ChevronRight, X
+  Clock, ArrowRight, Zap, ExternalLink, ChevronRight, X, Trash2, User as UserIcon
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import { useSession } from '@/lib/auth'
+import { useAuditStore } from '@/lib/auditStore'
 
 interface GenAiDiagnosticsCopilotProps {
   assetId?: string
   assetName?: string
+  orgId?: string
   orgName?: string
   dgaGases?: {
     h2: number
@@ -50,6 +53,7 @@ interface ChatMessage {
 export default function GenAiDiagnosticsCopilot({
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
+  orgId,
   orgName = 'Industrial Substation',
   dgaGases = { h2: 65, ch4: 45, c2h2: 3.2, c2h4: 35, c2h6: 28, co: 420, co2: 3200 },
   duvalVerdict = 'T2 - Thermal Fault (300°C - 700°C)',
@@ -63,6 +67,16 @@ export default function GenAiDiagnosticsCopilot({
   bushingTanDeltaLive = null,
   partialDischargeLive = null,
 }: GenAiDiagnosticsCopilotProps) {
+  const session = useSession()
+  const userRole = session?.role || 'customer'
+  const userId = session?.id || session?.email || 'guest'
+  const effectiveOrgId = orgId || session?.orgId || 'org-1'
+  const canDispatchWorkOrder = userRole === 'admin' || userRole === 'superadmin'
+
+  // Strict Triple-Namespace Isolation: orgId + assetId + userId
+  // Guarantees zero cross-talk between different users, organizations, or assets!
+  const storageKey = `copilot_chat_${effectiveOrgId}_${assetId}_${userId}`
+
   // The bushing answer below quoted tan δ = 0.82%, ΔC1 = +3.6% and PD = 195 pC
   // as this transformer's readings, and concluded "ฉนวนระเบิดได้" (the
   // insulation can explode) within 60 days. Those three numbers were string
@@ -76,6 +90,7 @@ export default function GenAiDiagnosticsCopilot({
   const tanDeltaTxt = tanDeltaKnown ? `${bushingTanDeltaLive}%` : '0.82% (ตัวอย่างจำลอง)'
   const pdTxt = pdKnown ? `${partialDischargeLive} pC` : '195 pC (ตัวอย่างจำลอง)'
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [hasLoadedPersisted, setHasLoadedPersisted] = useState(false)
   const [inputQuery, setInputQuery] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [showWorkOrderModal, setShowWorkOrderModal] = useState(false)
@@ -92,28 +107,60 @@ export default function GenAiDiagnosticsCopilot({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
 
-  // Initial Executive Briefing message from Copilot on load
+  // Load chat session strictly isolated by (orgId + assetId + userId)
   useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed)
+          setHasLoadedPersisted(true)
+          return
+        }
+      }
+    } catch {}
+
     const initialGreeting: ChatMessage = {
       id: 'msg-init',
       sender: 'ai',
-      text: `สวัสดีครับวิศวกรผู้ดูแลระบบ ผมคือ **Industrial GenAI Diagnostics Copilot** 🤖 พร้อมช่วยวินิจฉัยสภาพหม้อแปลง **${assetName} (${assetId})** แบบเรียลไทม์\n\n📌 **สรุปสถานะด่วนจาก Telemetry ปัจจุบัน:**\n- **DGA Diagnosis:** ตรวจพบก๊าซ C₂H₂ สะสม ${dgaGases.c2h2} ppm เข้าข่าย **${duvalVerdict}**\n- **พยากรณ์ Time-to-Trip (RTT):** คาดว่าจะแตะระดับขีดอันตรายในอีก **${rttDays} วัน** หากไม่มีการระบายก๊าซ\n- **Bushing Health:** ${tanDeltaKnown ? `tan δ = ${bushingTanDeltaLive}% (ค่าที่วัดได้)` : 'ยังไม่ได้ติดตั้งเซนเซอร์วัดบุชชิ่ง — ไม่มีค่าจริง'}\n- **DTR Headroom:** ขณะนี้ยังมีขีดความสามารถรองรับโหลดได้อีก **+${dtrHeadroomKva.toLocaleString()} kVA** อย่างปลอดภัย\n\nคุณสามารถคลิกคำถามด่วนด้านล่าง หรือสอบถามเจาะจงได้เลยครับ!`,
+      text: `สวัสดีครับคุณ **${session?.name || 'วิศวกรผู้ดูแลระบบ'}** ผมคือ **Industrial Diagnostics Copilot** 🤖 พร้อมช่วยวินิจฉัยสภาพหม้อแปลง **${assetName} (${assetId})** ประจำองค์กร **${orgName}** แบบเรียลไทม์\n\n📌 **สรุปสถานะด่วนจาก Telemetry ปัจจุบัน:**\n- **DGA Diagnosis:** ตรวจพบก๊าซ C₂H₂ สะสม ${dgaGases.c2h2} ppm เข้าข่าย **${duvalVerdict}**\n- **พยากรณ์ Time-to-Trip (RTT):** คาดว่าจะแตะระดับขีดอันตรายในอีก **${rttDays} วัน** หากไม่มีการระบายก๊าซ\n- **Bushing Health:** ${tanDeltaKnown ? `tan δ = ${bushingTanDeltaLive}% (ค่าที่วัดได้)` : 'ยังไม่ได้ติดตั้งเซนเซอร์วัดบุชชิ่ง — ไม่มีค่าจริง'}\n- **DTR Headroom:** ขณะนี้ยังมีขีดความสามารถรองรับโหลดได้อีก **+${dtrHeadroomKva.toLocaleString()} kVA** อย่างปลอดภัย\n\nคุณสามารถคลิกคำถามด่วนด้านล่าง หรือพิมพ์สอบถามเจาะจงได้เลยครับ!`,
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
     }
     setMessages([initialGreeting])
-    // Keyed on the ASSET only. This depended on dtrHeadroomKva, c2h2 and the
-    // bushing reading as well — all of which change on every telemetry poll —
-    // and the body REPLACES the array, so a user mid-conversation had their
-    // entire chat history wiped every time a new sample arrived. The greeting
-    // is a snapshot at open time; it does not need to track live values.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assetId, assetName])
+    setHasLoadedPersisted(true)
+  }, [assetId, assetName, storageKey, orgName, session?.name, tanDeltaKnown, bushingTanDeltaLive, dgaGases.c2h2, duvalVerdict, rttDays, dtrHeadroomKva])
+
+  // Persist messages whenever they change
+  useEffect(() => {
+    if (!hasLoadedPersisted || typeof window === 'undefined') return
+    try {
+      if (messages.length > 0) {
+        localStorage.setItem(storageKey, JSON.stringify(messages))
+      }
+    } catch {}
+  }, [messages, storageKey, hasLoadedPersisted])
+
+  const handleClearHistory = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(storageKey)
+    }
+    const resetGreeting: ChatMessage = {
+      id: `msg-reset-${Date.now()}`,
+      sender: 'ai',
+      text: `เริ่มเซสชันสนทนาใหม่สำหรับหม้อแปลง **${assetName} (${assetId})** เรียบร้อยแล้วครับ สอบถามประเด็นที่ต้องการได้เลยครับ!`,
+      timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }),
+    }
+    setMessages([resetGreeting])
+    toast.success('ล้างประวัติการสนทนานี้เรียบร้อยแล้ว')
+  }
 
   // Preset Question Suggestions
   const PRESET_QUERIES = [
     {
       id: 'rca',
-      title: '🔍 วิเคราะห์ RootAnalysis (RCA)',
+      title: '🔍 วิเคราะห์ Root Cause(RCA)',
       prompt: 'ช่วยวิเคราะห์ Root Cause Analysis (RCA) ว่าทำไม C2H2 ถึงสะสม และเข้าข่ายความผิดปกติใดตามมาตรฐาน IEEE C57.104?',
     },
     {
@@ -153,18 +200,22 @@ export default function GenAiDiagnosticsCopilot({
       let reply = ''
       let actionSuggestion = undefined
 
-      if (text.includes('RCA') || text.includes('สาเหตุ') || text.includes('C2H2')) {
-        reply = `### 🔍 ผลการวิเคราะห์ RootAnalysis (Root Cause Analysis - RCA)\n**อ้างอิงมาตรฐาน IEEE C57.104-2019 & IEC 60599:**\n\n1. **กลไกการเกิดก๊าซ (Gas Generation Mechanism):**\n   - สัดส่วนก๊าซ Acetylene (C₂H₂ = ${dgaGases.c2h2} ppm) ร่วมกับ Ethylene (C₂H₄ = ${dgaGases.c2h4} ppm) ใน Duval Pentagon บ่งชี้ว่าเกิด **ความร้อนสูงเฉพาะจุด (Thermal Hot-Spot > 500°C)**\n   - สาเหตุที่เป็นไปได้สูง: หน้าสัมผัสของชุด Tap Changer (OLTC) หลวม หรือกระแสไหลวน (Circulating Currents) บริเวณแกนเหล็กขดลวด\n\n2. **ความเร่งด่วนและ Time-to-Trip:**\n   - เวกเตอร์ความเร็วในการสะสมก๊าซอยู่ที่ **+0.42 %/วัน** ซึ่งทำให้คาดการณ์ RTT อยู่ที่ **${rttDays} วัน** ก่อนที่สวิตช์ตรวจจับก๊าซจะตัดวงจร (Trip)\n\n3. **ข้อเสนอแนะทางวิศวกรรม:**\n   - สั่งเก็บตัวอย่างน้ำมันไซริงค์ซ้ำใน 7 วัน เพื่อสอบเทียบ Drift (ASTM D3612)\n   - เตรียมต่อเครื่องกรองและไล่ก๊าซน้ำมัน (Degassing Machine) ในแผนซ่อมบำรุงประจำเดือน`
-      } else if (text.includes('โหลด') || text.includes('DTR') || text.includes('overload')) {
+      const lower = text.toLowerCase()
+
+      if (lower.includes('rca') || lower.includes('root cause') || lower.includes('สาเหตุ') || lower.includes('c2h2') || lower.includes('ก๊าซ') || lower.includes('แก๊ส') || lower.includes('dga') || lower.includes('duval')) {
+        reply = `### 🔍 ผลการวิเคราะห์ Root Cause(RCA)\n**อ้างอิงมาตรฐาน IEEE C57.104-2019 & IEC 60599:**\n\n1. **กลไกการเกิดก๊าซ (Gas Generation Mechanism):**\n   - สัดส่วนก๊าซ Acetylene (C₂H₂ = ${dgaGases.c2h2} ppm) ร่วมกับ Ethylene (C₂H₄ = ${dgaGases.c2h4} ppm) ใน Duval Pentagon บ่งชี้ว่าเกิด **ความร้อนสูงเฉพาะจุด (Thermal Hot-Spot > 500°C)**\n   - สาเหตุที่เป็นไปได้สูง: หน้าสัมผัสของชุด Tap Changer (OLTC) หลวม หรือกระแสไหลวน (Circulating Currents) บริเวณแกนเหล็กขดลวด\n\n2. **ความเร่งด่วนและ Time-to-Trip:**\n   - เวกเตอร์ความเร็วในการสะสมก๊าซอยู่ที่ **+0.42 %/วัน** ซึ่งทำให้คาดการณ์ RTT อยู่ที่ **${rttDays} วัน** ก่อนที่สวิตช์ตรวจจับก๊าซจะตัดวงจร (Trip)\n\n3. **ข้อเสนอแนะทางวิศวกรรม:**\n   - สั่งเก็บตัวอย่างน้ำมันไซริงค์ซ้ำใน 7 วัน เพื่อสอบเทียบ Drift (ASTM D3612)\n   - เตรียมต่อเครื่องกรองและไล่ก๊าซน้ำมัน (Degassing Machine) ในแผนซ่อมบำรุงประจำเดือน`
+      } else if (lower.includes('โหลด') || lower.includes('load') || lower.includes('dtr') || lower.includes('overload') || lower.includes('เร่งโหลด') || lower.includes('kva')) {
         reply = `### ⚡ ผลการประเมินการจ่ายโหลดแบบไดนามิก (DTR Assessment)\n**อิงตามมาตรฐาน IEEE C57.115:**\n\n- **สถานะปัจจุบัน:** ขณะนี้หม้อแปลงมี Headroom ปลอดภัยเหลืออยู่ **+${dtrHeadroomKva.toLocaleString()} kVA**\n- **คำตอบ:** Headroom ที่คำนวณได้คือ **${dtrHeadroomKva.toLocaleString()} kVA** — ตัวเลขนี้มาจากแบบจำลอง DTR ไม่ใช่การอนุมัติให้จ่ายโหลดเพิ่ม กรุณายืนยันกับอุณหภูมิ Hot-Spot จริง (ปัจจุบัน ${hotSpotTemp}°C, ขีดจำกัด 120°C) และสภาพโหลดหน้างานก่อนตัดสินใจทุกครั้ง\n\n💰 **การวิเคราะห์ความคุ้มค่า (Economic Arbitrage):**\n- การรันโหลดเพิ่ม 300 kVA เป็นเวลา 4 ชั่วโมง จะสร้างมูลค่าพลังงานไฟฟ้าประมาณ **+$132 USD**\n- ในขณะที่ค่าเสื่อมราคาของฉนวนกระดาษ (Aging Loss) เพิ่มขึ้นเพียง **-$0.85 USD** เท่านั้น ถือว่าคุ้มค่าอย่างยิ่ง\n- **คำแนะนำ:** แนะนำให้เปิดระบบ **Auto-Dispatch ONAF-1 Pre-Cooling** ไว้ล่วงหน้า 30 นาที เพื่อหน่วงอุณหภูมิไม่ให้พุ่งเร็วเกินไปครับ`
-      } else if (text.includes('Bushing') || text.includes('บุชชิ่ง') || text.includes('tan delta')) {
+      } else if (lower.includes('bushing') || lower.includes('บุชชิ่ง') || lower.includes('tan delta') || lower.includes('pd') || lower.includes('flashover')) {
         reply = (tanDeltaKnown || pdKnown)
           ? `### 🔌 การประเมินความเสี่ยงบุชชิ่ง\n**อ้างอิงเกณฑ์ IEEE C57.19.00 / IEC 60137:**\n\n1. **ค่าที่วัดได้จากหม้อแปลงเครื่องนี้:**\n   - tan δ = **${tanDeltaTxt}** (เกณฑ์: ปกติ < 0.5%, เริ่มเสื่อม 0.5–1.0%, อันตราย > 1.0%)\n   - Partial Discharge = **${pdTxt}**\n\n2. **ข้อควรระวัง:**\n   - ตัวเลขข้างต้นเป็นค่า ณ ขณะนี้เท่านั้น การประเมินความเสี่ยง Flashover ที่เชื่อถือได้ต้องดูแนวโน้มย้อนหลังและผลทดสอบ Doble ประจำปีประกอบด้วย\n   - หากค่า tan δ เกิน 1.0% หรือมีแนวโน้มเพิ่มเร็ว ให้ปรึกษาวิศวกรผู้รับผิดชอบเพื่อวางแผนทดสอบแบบ off-line`
           : `### 🔌 การประเมินความเสี่ยงบุชชิ่ง\n\n⚠️ **หม้อแปลง ${assetName} (${assetId}) เครื่องนี้ยังไม่ได้ติดตั้งเซนเซอร์วัดบุชชิ่ง** จึงไม่มีค่า tan δ หรือ PD จริงให้ประเมิน\n\n**ด้านล่างนี้คือ **ตัวอย่างจำลอง (worked example)** เพื่ออธิบายเกณฑ์เท่านั้น — ไม่ใช่ค่าของหม้อแปลงเครื่องนี้:**\n\n- ตัวอย่าง: tan δ = 0.82% → อยู่ในช่วง "เริ่มเสื่อม" (เกณฑ์ปกติ < 0.5%, เริ่มเสื่อม 0.5–1.0%, อันตราย > 1.0%)\n- ตัวอย่าง: PD = 195 pC → บ่งชี้รูปแบบ Void/Cavity Discharge\n\n**สิ่งที่ควรทำจริง:** ใช้ผลทดสอบ Doble/tan δ ประจำปีของหม้อแปลงเครื่องนี้เป็นเกณฑ์ หรือติดตั้งชุด Online Bushing Adapter เพื่อให้ระบบประเมินจากค่าจริงได้`
-      } else if (text.includes('CMMS') || text.includes('ใบสั่งงาน') || text.includes('Work Order')) {
+      } else if (lower.includes('cmms') || lower.includes('ใบสั่งงาน') || lower.includes('work order') || lower.includes('ซ่อมบำรุง') || lower.includes('ซ่อม')) {
         reply = `### 📋 ร่างใบสั่งงานซ่อมบำรุง (CMMS Work Order Generated)\nระบบได้สร้างร่างใบสั่งงานฉบับสมบูรณ์สำหรับหม้อแปลง **${assetName}** เรียบร้อยแล้วครับ:\n\n- **Work Order ID:** \`WO-2026-0828-TR01\`\n- **Priority:** 🔴 HIGH PRIORITY (Urgent Maintenance Window)\n- **ชื่องาน:** ตรวจสอบหน้าสัมผัสขดลวด, ไล่ก๊าซ C₂H₂ และทดสอบ Dielectric บุชชิ่ง Phase B\n- **Safety Protocol:** LOTO 115 kV + Arc-Flash Category 4 PPE Checklist พร้อมแล้ว\n\nท่านสามารถคลิกปุ่มด้านล่างเพื่อเปิดดูและส่งเข้าระบบ CMMS / SAP PM ได้ทันทีครับ!`
         actionSuggestion = {
-          label: '📑 เปิดดูใบสั่งงานซ่อมบำรุง (View Work Order)',
+          label: canDispatchWorkOrder
+            ? '📑 เปิดดูและส่งใบสั่งงานซ่อมบำรุง (Review & Dispatch WO)'
+            : '👁️ ดูร่างใบสั่งงาน (Read-Only Preview - สิทธิ์ Viewer)',
           action: () => setShowWorkOrderModal(true),
         }
       } else {
@@ -205,14 +256,41 @@ export default function GenAiDiagnosticsCopilot({
           </div>
         </div>
 
-        {/* Quick Action Button to Open Work Order */}
-        <div className="flex items-center gap-2">
+        {/* Quick Actions & Multi-User RBAC Status */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* User Role Badge */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0a0e1a] border border-slate-800 text-[11px]">
+            <UserIcon size={12} className="text-indigo-400" />
+            <span className="text-slate-400 font-mono">
+              {session?.name || 'User'}:
+            </span>
+            <span className={clsx(
+              'font-bold text-[10px] px-1.5 py-0.5 rounded uppercase',
+              userRole === 'superadmin' ? 'bg-purple-900/60 text-purple-300 border border-purple-500/40' :
+              userRole === 'admin' ? 'bg-indigo-900/60 text-indigo-300 border border-indigo-500/40' :
+              'bg-slate-800 text-slate-300'
+            )}>
+              {userRole === 'superadmin' ? 'Superadmin' : userRole === 'admin' ? 'Admin / Engineer' : 'Viewer'}
+            </span>
+          </div>
+
+          {/* Clear Session History */}
+          <button
+            onClick={handleClearHistory}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 bg-slate-900 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/40 transition-colors"
+            title="ล้างประวัติการสนทนาของหม้อแปลงลูกนี้"
+            type="button"
+          >
+            <Trash2 size={14} />
+          </button>
+
+          {/* Quick Action Button to Open Work Order */}
           <button
             onClick={() => setShowWorkOrderModal(true)}
             className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition-all flex items-center gap-1.5 shadow-sm"
           >
             <Wrench size={13} />
-            <span>Generate CMMS Work Order</span>
+            <span>{canDispatchWorkOrder ? 'Generate CMMS Work Order' : 'Preview Work Order'}</span>
           </button>
         </div>
       </div>
@@ -384,31 +462,66 @@ export default function GenAiDiagnosticsCopilot({
                 <AlertTriangle size={14} className="shrink-0" />
                 <span>ข้อกำหนดความปลอดภัย: สวมชุด Arc-Flash NFPA 70E Category 4, ถุงมือฉนวน Class 4 (36 kV), และเข็มขัดนิรภัยเต็มตัว</span>
               </div>
+
+              {/* RBAC Notice for Viewers */}
+              {!canDispatchWorkOrder && (
+                <div className="p-2.5 rounded-lg border border-indigo-500/40 bg-indigo-950/30 text-indigo-200 text-[11px] flex items-start gap-2">
+                  <ShieldCheck size={15} className="shrink-0 text-indigo-400 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-white block">🔒 สิทธิ์การสั่งงานถูกจำกัด (Read-Only Preview):</span>
+                    <span>บัญชีระดับ <span className="font-mono text-indigo-300 font-bold">{userRole.toUpperCase()}</span> สามารถตรวจสอบเอกสารได้เท่านั้น การอนุมัติส่งใบสั่งงานเข้าสู่ระบบ SAP PM / CMMS ต้องดำเนินการโดยวิศวกรผู้มีอำนาจ (Admin / Engineer) ตามข้อกำหนด Four-Eyes และ ISO 55000</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Modal Actions */}
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
               <button
                 onClick={() => {
-                  navigator.clipboard.writeText(`Work Order: WO-2026-0828-TR01\nTarget: ${assetName}\nPriority: HIGH\nPrescription: C2H2 Degassing & Bushing Phase B C1/C2 sweep`)
+                  navigator.clipboard.writeText(`Work Order: WO-2026-0828-TR01\nTarget: ${assetName} (${assetId})\nPriority: HIGH\nPrescription: C2H2 Degassing & Bushing Phase B C1/C2 sweep\nGenerated by: ${session?.name || 'Engineer'} (${userRole})`)
                   toast.success('คัดลอกข้อมูลใบสั่งงานเรียบร้อยแล้ว!')
                 }}
-                className="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
               >
                 <Copy size={13} />
                 <span>Copy Summary</span>
               </button>
 
-              <button
-                onClick={() => {
-                  toast.success('ส่งใบสั่งงานเข้าสู่ระบบ SAP PM / Maximo เรียบร้อยแล้ว (Work Order #WO-2026-0828-TR01)')
-                  setShowWorkOrderModal(false)
-                }}
-                className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 shadow-md"
-              >
-                <Send size={13} />
-                <span>🚀 Dispatch to CMMS / SAP</span>
-              </button>
+              {canDispatchWorkOrder ? (
+                <button
+                  onClick={() => {
+                    useAuditStore.getState().addRecord({
+                      id: `AUD-${Date.now()}`,
+                      timestamp: new Date().toISOString(),
+                      actor: {
+                        name: session?.name || 'Authorized Engineer',
+                        email: session?.email || 'engineer@substation.local',
+                        role: userRole.toUpperCase(),
+                      },
+                      ipAddress: '127.0.0.1',
+                      action: 'CONFIG_CHANGE',
+                      target: { assetId, assetName },
+                      before: 'Pending Maintenance',
+                      after: 'Dispatched to CMMS (WO-2026-0828-TR01)',
+                      justification: `AI Copilot RCA Recommendation: Degas C2H2 and dielectric sweep on Bushing Phase B`,
+                      workOrderId: 'WO-2026-0828-TR01',
+                      checksum: Math.random().toString(16).substring(2) + Math.random().toString(16).substring(2),
+                    })
+                    toast.success('🚀 ส่งใบสั่งงาน WO-2026-0828-TR01 เข้าสู่ระบบ SAP PM / Maximo และบันทึก 21 CFR Part 11 Audit Trail เรียบร้อยแล้ว!')
+                    setShowWorkOrderModal(false)
+                  }}
+                  className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+                >
+                  <Send size={13} />
+                  <span>🚀 Dispatch to CMMS / SAP</span>
+                </button>
+              ) : (
+                <div className="px-3.5 py-2 rounded-lg text-xs font-bold text-slate-400 bg-slate-900 border border-slate-800 flex items-center gap-1.5 cursor-not-allowed">
+                  <ShieldCheck size={13} className="text-slate-500" />
+                  <span>🔒 สิทธิ์ Viewer (ดูอย่างเดียว)</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

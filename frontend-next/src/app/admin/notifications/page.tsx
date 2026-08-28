@@ -11,7 +11,7 @@ import EmailTemplateConfigurator from '@/components/notifications/EmailTemplateC
 import { api, isLive, useIsLive } from '@/lib/api'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
 import type { NotificationChannelConfig } from '@/types/org'
-import { getSession } from '@/lib/auth'
+import { getSession, useSessionRole } from '@/lib/auth'
 import {
   Mail,
   MessageCircle,
@@ -47,9 +47,12 @@ import {
   AlertOctagon,
   HelpCircle,
   Plus,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import { useAudioChimeStore } from '@/lib/audioChimeStore'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -63,7 +66,7 @@ const channelIcon = {
   webhook: Globe,
 } as const
 
-type TabKey = 'alarms' | 'channels' | 'escalation' | 'shelving' | 'email'
+type TabKey = 'alarms' | 'channels' | 'escalation' | 'shelving' | 'email' | 'chime'
 type ScopeType = 'org' | 'department' | 'user'
 
 interface RawChannelRow {
@@ -82,6 +85,18 @@ export default function AlarmNotificationPage() {
   const orgId = selectedOrgId || 'org-1'
   const orgName = orgNames[orgId] || 'ETERNITY'
   const { devices } = useManagedDevices(orgId)
+  const role = useSessionRole()
+  const isSuperadmin = role === 'superadmin'
+
+  const [chimeTargetOrgId, setChimeTargetOrgId] = useState<string>(orgId)
+  useEffect(() => {
+    setChimeTargetOrgId(orgId)
+  }, [orgId])
+
+  const activeChimeOrgId = isSuperadmin ? chimeTargetOrgId : orgId
+  const activeChimeOrgName = orgNames[activeChimeOrgId] || activeChimeOrgId
+  const { getSettingsForOrg, updateOrgSettings, playChime, applyToAllOrgs } = useAudioChimeStore()
+  const chimeSettings = getSettingsForOrg(activeChimeOrgId)
 
   const [activeTab, setActiveTab] = useState<TabKey>('alarms')
 
@@ -645,6 +660,27 @@ export default function AlarmNotificationPage() {
         >
           <Mail size={14} className={activeTab === 'email' ? 'text-indigo-400' : 'text-slate-500'} />
           <span>Email &amp; SOP Template</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('chime')}
+          className={clsx(
+            'flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all shrink-0 cursor-pointer',
+            activeTab === 'chime'
+              ? 'bg-purple-600/20 text-purple-300 border border-purple-500/50 shadow-sm'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/40 border border-transparent'
+          )}
+        >
+          <Volume2 size={14} className={activeTab === 'chime' ? 'text-purple-400' : 'text-slate-500'} />
+          <span>Web Audio Chime</span>
+          <span className={clsx(
+            'px-2 py-0.5 rounded-full text-[10px] font-bold border',
+            chimeSettings.enabled
+              ? 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+              : 'bg-slate-800 text-slate-500 border-slate-700'
+          )}>
+            {chimeSettings.enabled ? 'ON' : 'MUTE'}
+          </span>
         </button>
       </div>
 
@@ -1370,6 +1406,249 @@ export default function AlarmNotificationPage() {
       {activeTab === 'email' && (
         <div className="space-y-4">
           <EmailTemplateConfigurator orgId={orgId} orgName={orgName} />
+        </div>
+      )}
+
+      {/* TAB 6: Web Audio Chime Configuration */}
+      {activeTab === 'chime' && (
+        <div className="space-y-5">
+          <div className="rounded-xl p-5 space-y-5" style={surface}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                  <Volume2 size={22} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>Web Audio Chime Configuration</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-mono bg-purple-950/80 text-purple-300 border border-purple-500/40">
+                      Org: {activeChimeOrgName} ({activeChimeOrgId})
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    เสียงแจ้งเตือนสังเคราะห์ผ่านเบราว์เซอร์ (Synthesized Web Audio) เตือนทันทีเมื่อเกิดเหตุวิกฤตหรือ Hardware ชนกัน
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const played = playChime(activeChimeOrgId, 'conflict')
+                    if (played) toast.success(`🔔 กำลังเล่นเสียงตัวอย่าง Web Audio Chime สำหรับ ${activeChimeOrgName}`)
+                    else toast('เสียงถูกปิดไว้ หรือติด Cooldown', { icon: '🔕' })
+                  }}
+                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                >
+                  <Volume2 size={14} />
+                  <span>🔔 ทดสอบเสียง (Test Chime)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Superadmin Multi-Org Switcher & Broadcast Tool */}
+            {isSuperadmin && (
+              <div className="p-3.5 rounded-xl border border-indigo-500/40 bg-indigo-950/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-inner">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-1.5 rounded-lg bg-indigo-600/30 text-indigo-300 border border-indigo-400/30">
+                    <Building2 size={18} />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center gap-2">
+                      <span>👑 Superadmin Multi-Tenant Audio Control</span>
+                      <span className="text-[9px] px-2 py-0.5 rounded font-mono bg-indigo-500 text-white font-bold">
+                        SUPERADMIN MODE
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-indigo-200/70">
+                      สลับเลือกปรับแต่งเสียงได้ทุก Org ในระบบ หรือสั่ง Broadcast การตั้งค่าให้ทุก Org พร้อมกัน
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 bg-[#0a0e1a] px-2.5 py-1 rounded-lg border border-indigo-500/40">
+                    <span className="text-xs text-slate-300 font-medium">สลับ Org:</span>
+                    <select
+                      value={activeChimeOrgId}
+                      onChange={(e) => setChimeTargetOrgId(e.target.value)}
+                      className="bg-transparent text-xs text-indigo-300 font-bold focus:outline-none cursor-pointer"
+                    >
+                      {Object.entries(orgNames).map(([id, name]) => (
+                        <option key={id} value={id} className="bg-[#0d1117] text-white">
+                          {name} ({id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIds = Object.keys(orgNames)
+                      applyToAllOrgs(activeChimeOrgId, allIds)
+                      toast.success(`⚡ คัดลอกการตั้งค่าเสียงของ ${activeChimeOrgName} ไปยังทุก ${allIds.length} องค์กรเรียบร้อย!`, {
+                        icon: '📢',
+                        duration: 4500,
+                      })
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+                    title="คัดลอกการตั้งค่าของ Org นี้ไปบังคับใช้กับทุก Org"
+                  >
+                    <span>⚡ คัดลอกให้ทุก Org (Apply to All)</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Master Toggle */}
+            <div className="p-4 rounded-xl flex items-center justify-between gap-4" style={inset}>
+              <div className="space-y-0.5">
+                <div className="text-xs font-bold text-white flex items-center gap-2">
+                  <span>สถานะเสียงแจ้งเตือนเบราว์เซอร์ (Master Audio Switch)</span>
+                  {chimeSettings.enabled ? (
+                    <span className="text-[10px] text-emerald-400 font-bold">● กำลังเปิดใช้งาน</span>
+                  ) : (
+                    <span className="text-[10px] text-slate-500 font-bold">○ ปิดเสียง (Muted)</span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  ควบคุมเสียงเตือนเฉพาะอุปกรณ์ในองค์กร {activeChimeOrgName} บนหน้าจอแดชบอร์ด
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => updateOrgSettings(activeChimeOrgId, { enabled: !chimeSettings.enabled })}
+                className={clsx(
+                  'px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer',
+                  chimeSettings.enabled
+                    ? 'bg-emerald-600 text-white shadow-lg'
+                    : 'bg-slate-800 text-slate-400 hover:text-white'
+                )}
+              >
+                {chimeSettings.enabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+                <span>{chimeSettings.enabled ? 'เปิดเสียง (ENABLED)' : 'ปิดเสียง (MUTED)'}</span>
+              </button>
+            </div>
+
+            {/* Audio Properties Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Volume Slider */}
+              <div className="p-4 rounded-xl space-y-3" style={inset}>
+                <div className="flex items-center justify-between text-xs font-bold text-white">
+                  <span>ระดับความดังของเสียง (Volume Level)</span>
+                  <span className="text-purple-400 font-mono">{Math.round(chimeSettings.volume * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="100"
+                  value={Math.round(chimeSettings.volume * 100)}
+                  onChange={(e) => updateOrgSettings(activeChimeOrgId, { volume: Number(e.target.value) / 100 })}
+                  className="w-full accent-purple-500 cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-slate-500">
+                  <span>เบา (5%)</span>
+                  <span>ปานกลาง (50%)</span>
+                  <span>ดังสุด (100%)</span>
+                </div>
+              </div>
+
+              {/* Chime Tone Style */}
+              <div className="p-4 rounded-xl space-y-2.5" style={inset}>
+                <div className="text-xs font-bold text-white">สไตล์โทนเสียงสังเคราะห์ (Chime Tone Style)</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'subtle' as const, label: 'นุ่มนวล (Subtle)', desc: 'Sine Wave D5→A5' },
+                    { id: 'industrial' as const, label: 'ระฆังโรงงาน', desc: 'Harmonic Bell 440Hz' },
+                    { id: 'urgent' as const, label: 'ฉุกเฉิน (Urgent)', desc: 'Triple Pulse' },
+                  ].map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => updateOrgSettings(activeChimeOrgId, { chimeStyle: s.id })}
+                      className={clsx(
+                        'p-2.5 rounded-lg text-left transition-all border cursor-pointer',
+                        chimeSettings.chimeStyle === s.id
+                          ? 'bg-purple-600/20 text-purple-200 border-purple-500/60 shadow-sm'
+                          : 'bg-[#0d1117] text-slate-400 border-slate-800 hover:border-slate-700'
+                      )}
+                    >
+                      <div className="text-[11px] font-bold">{s.label}</div>
+                      <div className="text-[9px] text-slate-500 mt-0.5">{s.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Triggers & Cooldown */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Event Triggers */}
+              <div className="p-4 rounded-xl space-y-3" style={inset}>
+                <div className="text-xs font-bold text-white">เงื่อนไขการส่งเสียงเตือน (Audio Trigger Events)</div>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={chimeSettings.alertOnConflict}
+                      onChange={(e) => updateOrgSettings(activeChimeOrgId, { alertOnConflict: e.target.checked })}
+                      className="rounded accent-purple-500"
+                    />
+                    <span>🚨 ตรวจพบ Hardware ID Conflict (อุปกรณ์ส่งชนกัน)</span>
+                  </label>
+                  <label className="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={chimeSettings.alertOnCritical}
+                      onChange={(e) => updateOrgSettings(activeChimeOrgId, { alertOnCritical: e.target.checked })}
+                      className="rounded accent-purple-500"
+                    />
+                    <span>🔴 สัญญาณเตือนระดับวิกฤต (Critical Alarm / Trip Risk)</span>
+                  </label>
+                  <label className="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={chimeSettings.alertOnWarning}
+                      onChange={(e) => updateOrgSettings(activeChimeOrgId, { alertOnWarning: e.target.checked })}
+                      className="rounded accent-purple-500"
+                    />
+                    <span>🟡 สัญญาณเตือนระดับเฝ้าระวัง (Warning / Elevated Risk)</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Anti-Fatigue Cooldown */}
+              <div className="p-4 rounded-xl space-y-3" style={inset}>
+                <div className="flex items-center justify-between text-xs font-bold text-white">
+                  <span>หน่วงเวลาป้องกันเสียงรบกวน (Anti-Fatigue Cooldown)</span>
+                  <span className="text-purple-400 font-mono">{chimeSettings.cooldownSec} วินาที</span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  ระยะเวลาขั้นต่ำก่อนที่จะส่งเสียงซ้ำ เพื่อป้องกันไม่ให้เสียงดังรัวกวนสมาธิวิศวกรขณะกำลังแก้ไขปัญหา
+                </p>
+                <div className="flex gap-2">
+                  {[10, 20, 30, 60].map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      onClick={() => updateOrgSettings(activeChimeOrgId, { cooldownSec: sec })}
+                      className={clsx(
+                        'flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all cursor-pointer',
+                        chimeSettings.cooldownSec === sec
+                          ? 'bg-purple-600/20 text-purple-200 border-purple-500/50'
+                          : 'bg-[#0d1117] text-slate-400 border-slate-800 hover:border-slate-700'
+                      )}
+                    >
+                      {sec}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

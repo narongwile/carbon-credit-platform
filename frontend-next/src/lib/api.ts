@@ -33,6 +33,7 @@ export interface DevicePresence {
   batt?: number | null
   fw?: string | null
   transport?: string | null
+  identity_conflict_at?: string | null
 }
 
 /**

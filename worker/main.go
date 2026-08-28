@@ -52,6 +52,8 @@ type TelemetryPayload struct {
 	Batt      *int   `json:"batt"`
 	Transport string `json:"transport"`
 	Heap      *int64 `json:"heap"`
+	MAC       string `json:"mac,omitempty"`
+	Channel   string `json:"channel,omitempty"`
 }
 
 // id returns the device identity, accepting either spelling.
@@ -164,6 +166,47 @@ func topicNodeID(topic string) string {
 	return parts[3]
 }
 
+// stripMacSuffix checks if a nodeId or topic segment ends with an underscore
+// followed by a 12-character hex MAC address (e.g. "tr-221_246F28A1B2C3").
+// If so, it returns the base asset ID ("tr-221") and the extracted MAC.
+func stripMacSuffix(id string) (string, string) {
+	if idx := strings.LastIndex(id, "_"); idx > 0 {
+		suffix := id[idx+1:]
+		if len(suffix) == 12 {
+			isHex := true
+			for _, c := range suffix {
+				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+					isHex = false
+					break
+				}
+			}
+			if isHex {
+				return id[:idx], strings.ToUpper(suffix)
+			}
+		}
+	}
+	return id, ""
+}
+
+// normalizeMAC standardizes both compact hex ("246F28A1B2C3") and colon-delimited
+// ("24:6F:28:A1:B2:C3") MAC addresses into canonical format with colons and compact format.
+func normalizeMAC(raw string) (canonical string, compact string) {
+	clean := strings.ToUpper(strings.TrimSpace(raw))
+	clean = strings.ReplaceAll(clean, ":", "")
+	clean = strings.ReplaceAll(clean, "-", "")
+	if len(clean) != 12 {
+		return raw, clean
+	}
+	for _, c := range clean {
+		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
+			return raw, clean
+		}
+	}
+	canonical = fmt.Sprintf("%s:%s:%s:%s:%s:%s",
+		clean[0:2], clean[2:4], clean[4:6], clean[6:8], clean[8:10], clean[10:12])
+	return canonical, clean
+}
+
 // identityEnforced reports whether a frame whose payload nodeId disagrees with
 // its topic should be REJECTED (true) or merely logged (false).
 //
@@ -263,6 +306,51 @@ var (
 	// Caches
 	nodeToOrg       sync.Map // string (nodeId) -> OrgCacheEntry
 	tenantDBs       sync.Map // string (orgId) -> *sql.DB
+	metricSlewCache sync.Map // string ("nodeId:paramKey") -> metricSlewEntry
+)
+
+type metricSlewEntry struct {
+	val float64
+	ts  time.Time
+}
+
+func checkPhysicalSlew(nodeID, key string, val float64, ts time.Time) (bool, float64) {
+	var maxRatePerSec float64
+	switch key {
+	case "oilTemp", "ambientTemp", "Tbox":
+		maxRatePerSec = 0.5 // max 30°C/min
+	case "windingTemp":
+		maxRatePerSec = 1.0 // max 60°C/min
+	case "hydrogen":
+		maxRatePerSec = 10.0 // max 10 ppm/sec
+	case "moisture", "oilMoisture":
+		maxRatePerSec = 2.0 // max 2 ppm/sec
+	default:
+		return false, 0
+	}
+
+	cacheKey := nodeID + ":" + key
+	raw, ok := metricSlewCache.Load(cacheKey)
+	metricSlewCache.Store(cacheKey, metricSlewEntry{val: val, ts: ts})
+	if !ok {
+		return false, 0
+	}
+	prev := raw.(metricSlewEntry)
+	deltaSec := ts.Sub(prev.ts).Seconds()
+	if deltaSec <= 0 || deltaSec > 60 {
+		return false, 0
+	}
+	diff := val - prev.val
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 3.0 && (diff/deltaSec) > maxRatePerSec {
+		return true, diff
+	}
+	return false, 0
+}
+
+var (
 	rulesCache      sync.Map // string (nodeId) -> RuleCacheEntry
 	alarmStateCache sync.Map // string (nodeId) -> *AlarmNodeState
 	orgExistsCache  sync.Map // string (orgId) -> orgExistEntry
@@ -1053,9 +1141,13 @@ func updatePresence(t TelemetryPayload) {
 		flagConflict = flagged && !identityConflictAt.Valid
 		if flagConflict {
 			statIdentityConflicts.Add(1)
-			log.Printf("IDENTITY CONFLICT %s: uptime went backwards %d times in %s "+
+			macHint := ""
+			if t.MAC != "" {
+				macHint = fmt.Sprintf(" (reporting MAC %s)", t.MAC)
+			}
+			log.Printf("IDENTITY CONFLICT %s%s: uptime went backwards %d times in %s "+
 				"(two devices publishing under this id, or one boot-looping) — flagged for admin review",
-				t.NodeID, nextRegressions, uptimeRegressionWindow)
+				t.NodeID, macHint, nextRegressions, uptimeRegressionWindow)
 		}
 	}
 	// A merged pair (nodes.merge_into, resolveFeed) shares ONE presence row
@@ -1709,16 +1801,30 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	// secondary onto its primary — a feed publishes on its own topic under its
 	// own id, and it is that pairing the broker authorised.
 	if claimed := topicNodeID(msg.Topic()); claimed != "" && claimed != t.NodeID {
-		statIdentityRejected.Add(1)
-		verb := "REJECTED"
-		if !identityEnforced() {
-			verb = "ALLOWED (MQTT_IDENTITY_ENFORCE=warn)"
+		baseClaimed, macFromTopic := stripMacSuffix(claimed)
+		basePayload, _ := stripMacSuffix(t.NodeID)
+		if baseClaimed != "" && (baseClaimed == t.NodeID || baseClaimed == basePayload) {
+			// Topic appended a compact MAC suffix (e.g. topic "tr-221_246F28A1B2C3" vs payload "tr-221")
+			claimed = t.NodeID
+			if t.MAC == "" && macFromTopic != "" {
+				t.MAC, _ = normalizeMAC(macFromTopic)
+			}
+		} else {
+			statIdentityRejected.Add(1)
+			verb := "REJECTED"
+			if !identityEnforced() {
+				verb = "ALLOWED (MQTT_IDENTITY_ENFORCE=warn)"
+			}
+			log.Printf("Identity mismatch %s: topic %q names %q but payload claims %q",
+				verb, msg.Topic(), claimed, t.NodeID)
+			if identityEnforced() {
+				return
+			}
 		}
-		log.Printf("Identity mismatch %s: topic %q names %q but payload claims %q",
-			verb, msg.Topic(), claimed, t.NodeID)
-		if identityEnforced() {
-			return
-		}
+	}
+	if t.MAC != "" {
+		canonical, _ := normalizeMAC(t.MAC)
+		t.MAC = canonical
 	}
 
 	// A secondary feed is redirected to its primary BEFORE anything is recorded,
@@ -1834,6 +1940,15 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		}
 	}
 
+	// ── Physical Slew-Rate / Thermal Inertia Guard ─────────────────────────────
+	// When two ESP32s publish with the same nodeId without MAC or channel, they
+	// produce rapid alternating jumps on continuous parameters (e.g. oilTemp 40°C
+	// and 76°C interleaved).
+	// A 500kVA+ transformer oil reservoir has tons of oil mass: oil cannot change
+	// faster than 0.5°C/s (30°C/min), windingTemp cannot change faster than 1.0°C/s.
+	// Jumps exceeding this physical limit are impossible on a single unit and prove
+	// either (1) two colliding streams on the same nodeId, or (2) sensor wire open/short.
+
 	// Store readings under the CANONICAL param key (ALARM_SCHEMA), not the raw
 	// wire key, so alarm rules and the device pages (which look up oilTemp,
 	// hydrogen, …) find them. Unmapped keys are stored as-is.
@@ -1848,7 +1963,15 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 			normalized["tempLow"] = val
 			continue
 		}
-		normalized[canonicalParam(key)] = val
+		canonical := canonicalParam(key)
+		normalized[canonical] = val
+
+		// Layer 1: Check physical slew rate to catch dual hardware without MAC
+		if violated, jump := checkPhysicalSlew(t.NodeID, canonical, val, ts); violated {
+			statIdentityConflicts.Add(1)
+			log.Printf("PHYSICAL SLEW-RATE VIOLATION on %s [%s]: jumped %.1f in short window — duplicate hardware or sensor fault detected; flagging identity conflict", t.NodeID, canonical, jump)
+			_, _ = controlDB.Exec("UPDATE device_presence SET identity_conflict_at = COALESCE(identity_conflict_at, NOW(3)) WHERE node_id = ?", t.NodeID)
+		}
 	}
 	t.Values = normalized
 

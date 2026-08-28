@@ -16,7 +16,7 @@
 import { useEffect, useState } from 'react'
 import { api, useIsLive, type DevicePresence } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { Wifi, WifiOff, RefreshCw } from 'lucide-react'
+import { Wifi, WifiOff, RefreshCw, AlertTriangle } from 'lucide-react'
 import { fmtDateTime } from '@/lib/displayTime'
 
 /** Presence is authoritative, but the sweep only runs every 10s — a frame that
@@ -90,14 +90,26 @@ export default function DeviceLiveStatus({ nodeId }: { nodeId: string }) {
       : ['text-slate-500', 'bg-slate-500', 'OFFLINE']
 
   return (
-    <span
-      className={`flex items-center gap-1.5 text-xs font-medium ${color}`}
-      title={`Last reading ${ago(seenAt)}${presence?.fw ? ` · fw ${presence.fw}` : ''}${presence?.rssi != null ? ` · RSSI ${presence.rssi}` : ''}`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${dot} ${online && streaming ? 'animate-pulse' : ''}`} />
-      {online ? <Wifi size={12} /> : <WifiOff size={12} />}
-      {label}
-      <span className="text-slate-600 font-normal">· {ago(seenAt)}</span>
+    <span className="inline-flex items-center gap-2 flex-wrap">
+      <span
+        className={`flex items-center gap-1.5 text-xs font-medium ${color}`}
+        title={`Last reading ${ago(seenAt)}${presence?.fw ? ` · fw ${presence.fw}` : ''}${presence?.rssi != null ? ` · RSSI ${presence.rssi}` : ''}`}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${dot} ${online && streaming ? 'animate-pulse' : ''}`} />
+        {online ? <Wifi size={12} /> : <WifiOff size={12} />}
+        {label}
+        <span className="text-slate-600 font-normal">· {ago(seenAt)}</span>
+      </span>
+
+      {presence?.identity_conflict_at && (
+        <span
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/90 text-rose-300 border border-rose-500/60 animate-pulse shadow-sm"
+          title={`🚨 ตรวจพบอุปกรณ์ 2 ตัวแย่งกันส่งข้อมูลภายใต้ nodeId '${nodeId}' เดียวกัน (เริ่มตรวจพบ: ${fmtDateTime(presence.identity_conflict_at)}) กรุณาตรวจสอบการตั้งค่าฮาร์ดแวร์`}
+        >
+          <AlertTriangle size={11} className="text-rose-400" />
+          <span>ID CONFLICT (ชนกัน)</span>
+        </span>
+      )}
     </span>
   )
 }
