@@ -11,6 +11,7 @@ import {
   ResponsiveContainer, ReferenceLine, CartesianGrid
 } from 'recharts'
 import clsx from 'clsx'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 interface BessCoOptimizationProps {
   transformerName?: string
@@ -150,6 +151,18 @@ export default function BessCoOptimization({
 
   return (
     <div className="rounded-2xl p-5 space-y-6 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      {/* nameplateKva / currentLoadKva / hotSpotTemp / dtrHeadroomKva ARE real.
+          What is not: the 24h load SHAPE (fixed fractions of nameplate), the
+          TOU tariff (2.6 / 4.3 THB), the 3.5 peak-hour window, the THB->USD
+          rate (/36), the 0.20 kgCO2e/kWh grid differential, and the 0.04 degC
+          per kVA thermal-relief coefficient. Those drive the daily-profit and
+          carbon-avoided figures this panel headlines — the same class of
+          externally-reportable number the carbon page and the fleet capex
+          table already had to disclose. */}
+      <DemoDataBanner
+        title="ตัวเลขกำไรต่อวันและคาร์บอนที่ลดได้ เป็นค่าประมาณจากสมมุติฐานคงที่"
+        detail="พิกัดหม้อแปลง โหลดปัจจุบัน และ Hot-Spot เป็นค่าจริงจากอุปกรณ์ แต่รูปแบบโหลด 24 ชม. อัตราค่าไฟ TOU (2.6 / 4.3 บาท) ช่วงพีค 3.5 ชม. อัตราแลกเปลี่ยน และค่า 0.20 kgCO₂e/kWh ล้วนเป็นค่าคงที่ในโค้ด ไม่ได้มาจากสัญญาซื้อไฟหรือ emission factor จริงขององค์กร ห้ามใช้ตัวเลขนี้ประกอบการลงทุน BESS หรือรายงานคาร์บอน โดยไม่ตรวจสอบกับอัตราจริง"
+      />
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div>

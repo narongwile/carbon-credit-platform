@@ -35,6 +35,7 @@ const MUST_DISCLOSE = [
   ['LabDgaIngestion.tsx', 'ships sample laboratory certificates with CERTIFIED status and oil-quality figures'],
   ['DgaDuvalTriangle.tsx', 'renders a Duval fault verdict from gases that fall back to catalogue constants'],
   ['InsulationAgingRul.tsx', 'computes remaining life from a literal service-hours figure and an estimated hot-spot'],
+  ['BessCoOptimization.tsx', 'headlines daily profit and carbon-avoided from a hardcoded TOU tariff, FX rate, peak-hour window and grid emission factor'],
 ];
 
 for (const [file, why] of MUST_DISCLOSE) {
@@ -101,6 +102,15 @@ t('admin/carbon discloses that its emissions figures are not measured',
 t('admin/carbon does not re-roll its intensity curve with Math.random()',
   !/Math\.random\(\)/.test(carbon.replace(/\/\/.*$/gm, '')),
   'random jitter made a fabricated series move like a live feed');
+
+// ── 6. BESS economics ─────────────────────────────────────────────────────
+// nameplate/load/hot-spot are real, but the daily-profit and tCO2e figures
+// rest on a fixed 24h load shape, a hardcoded TOU tariff, a fixed FX rate and
+// a fixed grid emission factor. Money and carbon are exactly the numbers that
+// leave the platform, so the assumptions have to be visible.
+const bess = read('BessCoOptimization.tsx');
+t('BessCoOptimization names its tariff/FX/emission-factor assumptions',
+  /TOU/.test(bess) && /kgCO/.test(bess));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
