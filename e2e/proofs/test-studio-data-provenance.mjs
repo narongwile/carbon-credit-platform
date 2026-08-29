@@ -31,7 +31,7 @@ const read = (f) => readFileSync(new URL(f, DIR), 'utf8');
 // Each of these carries a hardcoded fleet / certificate / gas set that is NOT
 // derived from this asset, so each must disclose that on screen.
 const MUST_DISCLOSE = [
-  ['FleetRiskMatrix.tsx', 'takes no props at all — the entire fleet table, including the capex budget total, is a constant'],
+  ['FleetRiskMatrix.tsx', 'derives PoF/CoF from real fleet data but keeps a five-value lookup table for budget and a linear rescale for RUL'],
   ['LabDgaIngestion.tsx', 'ships sample laboratory certificates with CERTIFIED status and oil-quality figures'],
   ['DgaDuvalTriangle.tsx', 'renders a Duval fault verdict from gases that fall back to catalogue constants'],
   ['InsulationAgingRul.tsx', 'computes remaining life from a literal service-hours figure and an estimated hot-spot'],
@@ -77,6 +77,30 @@ t('liveTelemetry exposes measured flags', /measured:\s*\{/.test(detail));
 t('measured.dga is passed to the Duval studio, not only to the PDF',
   /gasesMeasured=\{liveTelemetry\.measured\.dga\}/.test(detail),
   'the flag existed but only the PDF consumed it, leaving every on-screen studio unlabelled');
+
+// ── 4. A disclosure must not vanish when real data arrives ────────────────
+// FleetRiskMatrix gained a `hosts` prop and hid its banner behind
+// `!hasRealData`. But only the asset list, health index and kVA become real —
+// budgetEstUsd and fiscalYear stay five-value lookup tables and rulYears stays
+// a linear rescale. Hiding the banner left an unqualified "CapEx Investment
+// Planning" heading over a budget total that is a bucket count times a
+// constant, which reads as MORE authoritative than the fully-fake version.
+const fleet = read('FleetRiskMatrix.tsx');
+t('FleetRiskMatrix discloses in BOTH the real-data and fallback cases',
+  /hasRealData \? \(/.test(fleet) && (fleet.match(/<DemoDataBanner/g) || []).length >= 2,
+  'a single banner behind !hasRealData disappears exactly when the numbers start looking credible');
+t('FleetRiskMatrix still names the budget lookup as an estimate',
+  /150,?000/.test(fleet) || /ตารางค่าคงที่/.test(fleet));
+
+// ── 5. admin/carbon ───────────────────────────────────────────────────────
+// GHG figures are externally reported (CDP, SBTi, ISO 14064) and can carry
+// legal weight — the one place a fabricated number could reach a regulator.
+const carbon = readFileSync(new URL('../../frontend-next/src/app/admin/carbon/page.tsx', import.meta.url), 'utf8');
+t('admin/carbon discloses that its emissions figures are not measured',
+  /<DemoDataBanner/.test(carbon));
+t('admin/carbon does not re-roll its intensity curve with Math.random()',
+  !/Math\.random\(\)/.test(carbon.replace(/\/\/.*$/gm, '')),
+  'random jitter made a fabricated series move like a live feed');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

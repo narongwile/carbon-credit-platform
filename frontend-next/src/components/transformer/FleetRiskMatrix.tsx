@@ -200,10 +200,23 @@ export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId }: F
 
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
-      {!hasRealData && (
+      {/* Two different disclosures, because with real hosts only HALF of this
+          panel becomes real. The asset list, health index and kVA come from
+          the fleet; but rulYears is a linear rescale of health index, and
+          budgetEstUsd / fiscalYear are five-value lookup tables keyed on
+          pof*cof. Hiding the banner the moment `hosts` arrives — which is what
+          this did — leaves an unqualified "CapEx Investment Planning" heading
+          over a budget total that is a bucket count times a made-up constant.
+          That reads as more authoritative than the fully-fake version did. */}
+      {!hasRealData ? (
         <DemoDataBanner
           title="หน้าจอนี้ไม่ได้ดึงข้อมูลจากฟลีทจริงขององค์กรคุณ"
-          detail="หม้อแปลงทุกเครื่องในตาราง (TR-004, TR-101, ...) ค่า Health Index, RUL, ตำแหน่ง PoF/CoF และโดยเฉพาะ 'งบประมาณที่ต้องใช้' ทั้งหมด เป็นชุดข้อมูลตัวอย่างที่ฝังอยู่ในโค้ด — ส่ง prop hosts เพื่อแสดงผลจากฟลีทจริงของคุณ"
+          detail="หม้อแปลงทุกเครื่องในตาราง (TR-004, TR-101, ...) ค่า Health Index, RUL, ตำแหน่ง PoF/CoF และงบประมาณ ทั้งหมดเป็นชุดข้อมูลตัวอย่างที่ฝังอยู่ในโค้ด — ส่ง prop hosts เพื่อแสดงผลจากฟลีทจริงของคุณ"
+        />
+      ) : (
+        <DemoDataBanner
+          title="รายชื่อหม้อแปลงเป็นของจริง แต่ 'งบประมาณ' และ 'อายุคงเหลือ' ยังเป็นค่าประมาณจากสูตรคงที่"
+          detail="PoF/CoF คำนวณจาก Health Index และพิกัด kVA จริง แต่ RUL เป็นการแปลงเชิงเส้นจาก Health Index ไม่ใช่แบบจำลองอายุฉนวน ส่วนงบประมาณต่อเครื่องและปีงบประมาณมาจากตารางค่าคงที่ 5 ระดับ (1,500 / 5,000 / 18,000 / 45,000 / 150,000 USD) ตามคะแนนความเสี่ยง ยอดรวมงบประมาณจึงเป็นเพียงการนับจำนวนเครื่องในแต่ละระดับ ห้ามใช้ตั้งงบจริงโดยไม่มีใบเสนอราคาและผลประเมินสภาพจากวิศวกร"
         />
       )}
       {/* Header */}

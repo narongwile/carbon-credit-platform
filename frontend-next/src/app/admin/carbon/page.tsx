@@ -19,6 +19,7 @@ import {
 } from 'recharts'
 import { Leaf, Factory, Zap, Truck, Target, TrendingDown, Info, AlertTriangle, CheckCircle, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -29,18 +30,16 @@ const SCOPE_DATA = [
   { name: 'Scope 3 (Value Chain)', value: 156.8, color: '#fbbf24' },
 ]
 
+// A fixed illustrative day curve (solar-depressed midday, evening peak).
+// This used to add Math.random() jitter to each hour, re-rolled on every
+// render, so a fabricated series moved like a live feed and no two views of
+// "the same day" agreed. If it is not measured it should at least not pretend
+// to change.
 const TOU_DATA = Array.from({ length: 24 }).map((_, i) => {
-  let intensity = 0.45;
-  if (i >= 9 && i <= 15) {
-    intensity = 0.38 + Math.random() * 0.02 - 0.01;
-  } else if (i >= 18 && i <= 22) {
-    intensity = 0.58 + Math.random() * 0.04 - 0.02;
-  } else {
-    intensity = 0.45 + Math.random() * 0.02 - 0.01;
-  }
+  const intensity = i >= 9 && i <= 15 ? 0.38 : i >= 18 && i <= 22 ? 0.58 : 0.45
   return {
     hour: `${i.toString().padStart(2, '0')}:00`,
-    intensity: parseFloat(intensity.toFixed(3)),
+    intensity,
   }
 })
 
@@ -66,7 +65,19 @@ export default function CarbonPage() {
   return (
     <div className="min-h-screen bg-[#050505] text-slate-300 p-6 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
-        
+        {/* This page makes no backend call of any kind — no api.*, no fetch().
+            Scope 1/2/3 tonnages, the SBTi trajectory and the TOU intensity
+            curve are all module-level constants, identical for every
+            organization. GHG figures are externally reported (CDP, SBTi,
+            ISO 14064) and can carry legal weight, so presenting invented
+            tonnage as an organization's own emissions is the one place in this
+            product where a fabricated number could end up in someone's
+            regulatory filing. */}
+        <DemoDataBanner
+          title="ตัวเลขคาร์บอนทั้งหน้านี้เป็นข้อมูลตัวอย่าง ไม่ใช่ค่าการปล่อยจริงขององค์กรคุณ"
+          detail="Scope 1/2/3 (12.4 / 847.2 / 156.8 tCO₂e), เส้นทาง SBTi ปี 2020–2040 และกราฟความเข้มคาร์บอนรายชั่วโมง ล้วนเป็นค่าคงที่ที่ฝังอยู่ในโค้ด — ทุกองค์กรที่เปิดหน้านี้เห็นตัวเลขชุดเดียวกัน ห้ามนำไปใช้รายงาน CDP/SBTi/ISO 14064 หรือเปิดเผยต่อสาธารณะ ต้องเชื่อมต่อข้อมูลการใช้พลังงานจริงและค่า emission factor ของกริดก่อน"
+        />
+
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
