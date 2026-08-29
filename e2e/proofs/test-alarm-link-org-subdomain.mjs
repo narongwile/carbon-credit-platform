@@ -26,6 +26,22 @@
 // as the orgId. So even on production the link named a tenant that does not
 // exist, and org-2 became the bare label "2".
 //
+// org-eternity is a REAL organization, seeded by migrate-v48.sql. That makes
+// the old aliasing concretely worse than "names a tenant that does not exist":
+//
+//   org-eternity -> sub = 'eternity'   (the "org-" prefix stripped)
+//   org-1        -> sub = 'eternity'   (the `sub === '1'` special case)
+//
+// Both produced https://eternity.iiotplatform...  — and guard() compares the
+// :orgId path param to claims.orgId with STRICT equality, so 'eternity' never
+// matches 'org-eternity'. The link opened a page that immediately 403'd
+// "outside your organization" on the recipient's OWN org. For org-1 it also
+// pointed at a subdomain named after a DIFFERENT real tenant (no data leak —
+// guard still refuses — but the wrong company's address).
+//
+// Only three handlers (the logo endpoint and two org-move paths) do the
+// `startsWith('org-') ? clean : 'org-'+clean` fallback; general auth does not.
+//
 // The contract is lib/orgResolver.getOrgWorkspaceUrl(): orgId VERBATIM,
 // prepended to the iiotplatform root. Asserted here against both hosts.
 //
@@ -61,7 +77,7 @@ for (const [label, nodeId, re] of paths) {
     const fnName = m[0].slice(6, m[0].indexOf(' =', 6))
     const build = new Function('env', `${m[0]}; return ${fnName};`)(env)
 
-    for (const org of ['org-1', 'org-2', 'kmutt']) {
+    for (const org of ['org-eternity', 'org-1', 'org-2', 'kmutt']) {
       const url = build(org)
       const host = new URL(url).hostname
 
