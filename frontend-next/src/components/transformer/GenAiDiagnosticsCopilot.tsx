@@ -466,7 +466,7 @@ export default function GenAiDiagnosticsCopilot({
                     '2. ทำการเก็บตัวอย่างน้ำมันไซริงค์ (ASTM D3612 Certified Lab Syringe) ส่งตรวจแล็บ SGS เพื่อยืนยัน C2H2 Baseline',
                     '3. ต่อเครื่องกรองน้ำมันสุญญากาศ (Vacuum Oil Purifier / Degasser) ไล่ก๊าซติดไฟจนต่ำกว่าขีดเตือน',
                     '4. ดำเนินการทดสอบ C1/C2 Sweep Frequency Dielectric Test ที่ Bushing Phase B ตามคำแนะนำ IEEE C57.19',
-                    '5. บันทึกผลทดสอบลงในบันทึกอิเล็กทรอนิกส์ 21 CFR Part 11 Audit Trail',
+                    '5. บันทึกผลทดสอบลงในระบบบันทึกกิจกรรม (เก็บในเบราว์เซอร์เท่านั้น ไม่ใช่หลักฐานตามข้อกำหนด)',
                   ].map((step, idx) => (
                     <div key={idx} className="flex items-start gap-2 text-slate-300">
                       <CheckCircle2 size={13} className="text-indigo-400 shrink-0 mt-0.5" />
@@ -519,7 +519,7 @@ export default function GenAiDiagnosticsCopilot({
                       justification: `AI Copilot RCA Recommendation: Degas C2H2 and dielectric sweep on Bushing Phase B`,
                       workOrderId: woId,
                     }).catch(() => {})
-                    toast.success(`ส่งใบสั่งงาน ${woId} บันทึก 21 CFR Part 11 Audit Trail เรียบร้อยแล้ว (Export สู่ CMMS ด้วยตนเอง)`)
+                    toast.success(`บันทึกใบสั่งงาน ${woId} ลงบันทึกกิจกรรมในเบราว์เซอร์นี้แล้ว — ยังไม่ได้ส่งเข้า CMMS กรุณา Export เอง`)
                     setShowWorkOrderModal(false)
                   }}
                   className="px-4 py-2 rounded-lg text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"

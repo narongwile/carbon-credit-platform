@@ -49,7 +49,13 @@ export interface PendingApproval {
 }
 
 /**
- * Deterministic SHA-256 cryptographic checksum calculation for immutable audit compliance (21 CFR Part 11).
+ * SHA-256 hash of a record's contents, so an accidental edit is detectable.
+ *
+ * NOT an immutability or compliance control. This store persists to
+ * localStorage and never reaches a server, so the record and its hash are both
+ * writable by the user being audited — recompute both and validation passes.
+ * 21 CFR Part 11 requires the trail to be independent of that operator, which
+ * a browser-local store cannot be.
  */
 export async function computeAuditChecksum(content: string): Promise<string> {
   try {
@@ -84,7 +90,7 @@ const initialBaselineRecords: AuditRecord[] = [
     action: 'CONFIG_CHANGE',
     target: { assetId: 'SYSTEM-CORE', assetName: 'Eternity Platform Governance' },
     before: 'Security Ledger: Uninitialized',
-    after: 'Cryptographic Audit Trail Active (21 CFR Part 11 / ISO 27001)',
+    after: 'Local activity log active (browser storage, SHA-256 record hashes)',
     justification: 'System baseline initialization & security policy activation',
     checksum: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
     approvalStatus: 'APPROVED',

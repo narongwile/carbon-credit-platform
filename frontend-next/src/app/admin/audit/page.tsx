@@ -3,7 +3,6 @@
 import { useState, useMemo } from 'react'
 import { useAuditStore, AuditAction, AuditRecord, PendingApproval } from '@/lib/auditStore'
 import { useSession } from '@/lib/auth'
-import { useAppStore } from '@/lib/store'
 import {
   ShieldCheck, AlertTriangle, CheckCircle2, XCircle, Search, Download,
   Eye, FileText, Activity, ShieldAlert, Key, ClipboardList, CheckSquare, BarChart3, Server,
@@ -35,7 +34,11 @@ const chartColors = ['#fbbf24', '#60a5fa', '#fb7185', '#c084fc', '#e879f9', '#34
 export default function AuditPage() {
   const { records, pending, approvePending, rejectPending } = useAuditStore()
   const session = useSession()
-  const { selectedOrgId } = useAppStore()
+  // Deliberately NOT reading selectedOrgId. The ledger it would filter has no
+  // org dimension at all — auditStore persists one flat list to this browser's
+  // localStorage — so an org selector here would imply a separation that does
+  // not exist, which is worse than showing the list unfiltered and saying so.
+  // Scoping this properly means moving the ledger server-side first.
   const [activeTab, setActiveTab] = useState<TabKey>('audit_trail')
   
   // Tab 1: Audit Trail Filters
@@ -155,12 +158,32 @@ export default function AuditPage() {
             <h1 className="text-xl font-bold text-white flex items-center gap-2">
               Enterprise Security Audit &amp; Authorization
             </h1>
-            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-indigo-950/60 text-indigo-300 border border-indigo-500/30">
-              21 CFR Part 11 · ISO 27001
+            <span className="text-[10px] px-2 py-0.5 rounded font-mono font-bold bg-amber-950/60 text-amber-300 border border-amber-500/40">
+              LOCAL TO THIS BROWSER — NOT A COMPLIANCE RECORD
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-0.5">
-            Tamper-evident audit trail with SHA-256 integrity, dual-control Four-Eyes authorization, and regulatory compliance.
+            Activity log with SHA-256 record hashes and a dual-control review flow.
+          </p>
+          {/* This ledger has no backend: auditStore is a zustand `persist` store
+              (key eternity_audit_ledger_v2), so every record lives in THIS
+              browser's localStorage and nowhere else. It is not org-scoped, not
+              visible to anyone else, gone when site data is cleared, and
+              editable from devtools in seconds.
+
+              It was badged "21 CFR Part 11 · ISO 27001". Part 11 requires an
+              audit trail that is computer-generated, time-stamped and
+              INDEPENDENT of the operator being audited — precisely so the
+              person acting cannot alter the record. The SHA-256 hash does not
+              close that gap, because the record and its checksum sit in the
+              same user-writable store: recompute both and it still validates.
+              Same correction already applied to iiotReportGenerator and
+              officialDossierGenerator; see their headers. */}
+          <p className="text-[11px] text-amber-400/90 mt-1.5 max-w-2xl leading-relaxed">
+            Records are stored in this browser only — they are not sent to a server, not shared
+            between users or organizations, and are lost if site data is cleared. Treat this as an
+            operator convenience, not as evidence: a regulated audit trail has to be
+            server-side and outside the acting user&apos;s control.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
