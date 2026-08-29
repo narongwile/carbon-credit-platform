@@ -745,6 +745,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
   // Fall back to the live fleet host, projected through the same makeTransformer
   // the seed uses, so the asset frame exists and useLiveTransformer can fill it
   // with real readings.
+  const isLive = useIsLive()
   const { hosts, loaded: fleetLoaded, fromBackend } = useFleetHosts(orgId)
   const base = useMemo(() => {
     // The live roster FIRST, and in live mode it is the only source that may
@@ -762,9 +763,9 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     // `verified` flag; this page never got the equivalent.
     const host = hosts.find((h) => h.id === id && h.domain === 'transformer' && (!h.orgId || h.orgId === orgId))
     if (host) return makeTransformer(host as TransformerHost)
-    if (fromBackend) return undefined
+    if (fromBackend || isLive) return undefined
     return transformers.find((t) => t.id === id && (!t.orgId || t.orgId === orgId))
-  }, [transformers, hosts, id, fromBackend, orgId])
+  }, [transformers, hosts, id, fromBackend, orgId, isLive])
   // makeTransformer doesn't carry siteId onto the Transformer it returns (only
   // a jittered lat/lng — see DeviceLocationCard's header comment for why that
   // never was this device's real position). Pulled separately so the real

@@ -1,10 +1,13 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
-import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet } from 'lucide-react'
+import React, { useState, useMemo, useEffect } from 'react'
+import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet, Database, RefreshCw } from 'lucide-react'
 import clsx from 'clsx'
 import type { SensorHost } from '@/types/fleet'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
+import { api, useIsLive } from '@/lib/api'
+import { useAppStore } from '@/lib/store'
+import { healthFromValues } from '@/lib/alarmParams'
 
 interface FleetRiskMatrixProps {
   hosts?: SensorHost[]
@@ -190,7 +193,7 @@ function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
 
   const riskScore = pof * cof
   // Find nearest defined capex tier <= riskScore
-  const tierKey = Object.keys(CAPEX_MATRIX).map(Number).sort((a, b) => b - a).find(k => k <= riskScore) ?? 1
+  const tierKey = Object.keys(CAPEX_MATRIX).map(Number).sort((a, b) => b - a).find((k) => k <= riskScore) ?? 1
   const { action: capexAction, budgetUsd: budgetEstUsd, targetFy: fiscalYear } = CAPEX_MATRIX[tierKey]
 
   return {
@@ -209,31 +212,85 @@ function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
   }
 }
 
-export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId, orgId }: FleetRiskMatrixProps) {
+export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {}, currentAssetId, orgId: propOrgId }: FleetRiskMatrixProps) {
+  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
+  const orgId = propOrgId || selectedOrgId || 'org-1'
+  const live = useIsLive()
+
+  const [dbHosts, setDbHosts] = useState<SensorHost[] | null>(null)
+  const [dbSites, setDbSites] = useState<Record<string, string>>({})
+  const [loadingDb, setLoadingDb] = useState(false)
+
+  // Direct database query from MySQL if hosts not provided via props
+  useEffect(() => {
+    if (propHosts) return
+    if (!live || !orgId) return
+    let cancelled = false
+    setLoadingDb(true)
+    Promise.all([
+      api.fleet(orgId, 'transformer'),
+      api.sites(orgId),
+    ]).then(([rows, sitesRes]) => {
+      if (cancelled) return
+      setLoadingDb(false)
+      if (sitesRes?.sites) {
+        setDbSites(Object.fromEntries(sitesRes.sites.map((s) => [s.id, s.name])))
+      }
+      if (rows) {
+        const mapped = rows.map((n) => {
+          const sample = n.last_sample || {}
+          return {
+            id: n.id,
+            orgId: n.org_id || orgId,
+            siteId: n.site_id ?? '—',
+            name: n.name || n.id,
+            domain: 'transformer' as const,
+            status: (n.alarm ? n.alarm : n.online === 0 ? 'OFFLINE' : 'NORMAL') as any,
+            sensorCount: n.sensor_count ?? 0,
+            healthIndex: healthFromValues(sample, 'transformer') ?? 95,
+            model: '—',
+            serial: n.id.toUpperCase(),
+            kva: 0,
+            voltage: '—',
+            openAlarms: n.alarm ? 1 : 0,
+          }
+        })
+        setDbHosts(mapped)
+      } else {
+        setDbHosts([])
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setLoadingDb(false)
+        setDbHosts([])
+      }
+    })
+    return () => { cancelled = true }
+  }, [propHosts, live, orgId])
+
+  const hosts = propHosts ?? dbHosts
+  const sites = propSites && Object.keys(propSites).length > 0 ? propSites : dbSites
+
   const scopedHosts = useMemo(() => {
     if (!hosts) return undefined
     return hosts.filter((h) => (!h.domain || h.domain === 'transformer') && (!orgId || !h.orgId || h.orgId === orgId))
   }, [hosts, orgId])
 
+  const isFromDb = Boolean(live && (propHosts || dbHosts))
   const hasRealData = Boolean(scopedHosts && scopedHosts.length > 0)
+
   const FLEET_DATA: FleetTransformerRisk[] = useMemo(() => {
     if (!hasRealData) {
-      // In fallback/demo mode, scope mock data to the target organization so assets never leak across tenants
-      if (orgId === 'org-2') {
-        return FALLBACK_DATA.filter((f) => f.id === 'tr-101' || f.id === 'tr-102')
-      }
-      if (orgId === 'org-3') {
-        return FALLBACK_DATA.filter((f) => f.id === 'tr-201' || f.id === 'tr-202')
-      }
-      if (orgId === 'org-4') {
-        return FALLBACK_DATA.filter((f) => f.id === 'tr-301' || f.id === 'tr-302')
+      if (isFromDb) {
+        // When querying database, if org has 0 transformers, reflect truth (empty array, no fake transformers)
+        return []
       }
       return FALLBACK_DATA.filter((f) => !f.id.startsWith('tr-1') && !f.id.startsWith('tr-2') && !f.id.startsWith('tr-3'))
     }
     return scopedHosts!
       .map((h) => deriveRisk(h, sites[h.siteId ?? ''] ?? h.siteId ?? '—'))
       .sort((a, b) => (b.pof * b.cof) - (a.pof * a.cof))
-  }, [scopedHosts, sites, hasRealData, orgId])
+  }, [scopedHosts, sites, hasRealData, isFromDb])
   
   const [selectedAsset, setSelectedAsset] = useState<FleetTransformerRisk | null>(FLEET_DATA[0] ?? null)
 
@@ -261,6 +318,31 @@ export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId, org
           title="รายชื่อหม้อแปลงเป็นของจริง แต่ 'งบประมาณ' และ 'อายุคงเหลือ' ยังเป็นค่าประมาณจากสูตรคงที่"
           detail="PoF/CoF คำนวณจาก Health Index และพิกัด kVA จริง แต่ RUL เป็นการแปลงเชิงเส้นจาก Health Index ไม่ใช่แบบจำลองอายุฉนวน ส่วนงบประมาณต่อเครื่องและปีงบประมาณมาจากตารางค่าคงที่ 5 ระดับ (1,500 / 5,000 / 18,000 / 45,000 / 150,000 USD) ตามคะแนนความเสี่ยง ยอดรวมงบประมาณจึงเป็นเพียงการนับจำนวนเครื่องในแต่ละระดับ ห้ามใช้ตั้งงบจริงโดยไม่มีใบเสนอราคาและผลประเมินสภาพจากวิศวกร"
         />
+      )}
+
+      {isFromDb && (
+        <div className="px-3 py-1.5 rounded-lg text-xs font-mono text-emerald-400 bg-emerald-950/30 border border-emerald-800/40 flex items-center justify-between flex-wrap gap-2">
+          <span className="flex items-center gap-2">
+            <Database size={13} className="text-emerald-400" />
+            <span>Database Query (MySQL nodes): {FLEET_DATA.length} transformer{FLEET_DATA.length === 1 ? '' : 's'} active for {orgId}</span>
+          </span>
+          <span className="text-[10px] text-slate-400">Live API: /api/fleet?domain=transformer</span>
+        </div>
+      )}
+
+      {loadingDb && (
+        <div className="py-8 text-center text-slate-400 flex items-center justify-center gap-2 text-sm">
+          <RefreshCw size={16} className="animate-spin text-indigo-400" />
+          <span>กำลังดึงข้อมูลหม้อแปลงจาก Database MySQL...</span>
+        </div>
+      )}
+
+      {isFromDb && !loadingDb && FLEET_DATA.length === 0 && (
+        <div className="p-8 rounded-xl text-center space-y-2 border border-slate-800 bg-[#0a0e1a]">
+          <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+          <p className="text-sm font-semibold text-white">ไม่พบข้อมูลหม้อแปลงในฐานข้อมูลสำหรับ {orgId}</p>
+          <p className="text-xs text-slate-400">องค์กรนี้ยังไม่มีหม้อแปลงที่ลงทะเบียนในฐานข้อมูล ท่านสามารถเพิ่มหม้อแปลงได้ที่หน้าจัดการอุปกรณ์ (Device Management)</p>
+        </div>
       )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
