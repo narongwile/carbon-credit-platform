@@ -10,6 +10,7 @@ interface FleetRiskMatrixProps {
   hosts?: SensorHost[]
   sites?: Record<string, string>
   currentAssetId?: string
+  orgId?: string
 }
 
 interface FleetTransformerRisk {
@@ -99,73 +100,99 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     status: 'WARNING',
   },
   {
+    id: 'tr-201',
+    name: 'TR-201',
+    site: 'Substation 1B',
+    healthIndex: 82,
+    rulYears: 14.1,
+    pof: 2,
+    cof: 4,
+    loadCriticality: 'Cold Chain Main Storage',
+    capexAction: 'De-sludging & Silica Gel Regeneration',
+    budgetEstUsd: 6200,
+    fiscalYear: 'FY2028',
+    status: 'NORMAL',
+  },
+  {
     id: 'tr-001',
     name: 'TR-001',
     site: 'Substation 1A',
     healthIndex: 92,
     rulYears: 18.5,
     pof: 1,
-    cof: 4,
-    loadCriticality: 'Main Grid Interconnect',
-    capexAction: 'Routine Condition-Based Maintenance',
-    budgetEstUsd: 2500,
-    fiscalYear: 'FY2029+',
-    status: 'NORMAL',
-  },
-  {
-    id: 'tr-003',
-    name: 'TR-003',
-    site: 'Substation 1B',
-    healthIndex: 88,
-    rulYears: 16.2,
-    pof: 1,
     cof: 3,
-    loadCriticality: 'Secondary Industrial Zone',
-    capexAction: 'Routine DGA Oil Sampling (Annual)',
-    budgetEstUsd: 1200,
-    fiscalYear: 'FY2029+',
+    loadCriticality: 'Assembly Line Primary Unit',
+    capexAction: 'Routine Condition Assessment & Oil Sampling',
+    budgetEstUsd: 2500,
+    fiscalYear: 'FY2029',
     status: 'NORMAL',
   },
   {
-    id: 'tr-005',
-    name: 'TR-005',
+    id: 'tr-202',
+    name: 'TR-202',
     site: 'Substation 1B',
-    healthIndex: 96,
+    healthIndex: 89,
+    rulYears: 16.8,
+    pof: 1,
+    cof: 4,
+    loadCriticality: 'Automated Packaging Sub-station',
+    capexAction: 'Routine Condition Assessment & Oil Sampling',
+    budgetEstUsd: 2500,
+    fiscalYear: 'FY2029',
+    status: 'NORMAL',
+  },
+  {
+    id: 'tr-301',
+    name: 'TR-301',
+    site: 'Substation 3A',
+    healthIndex: 94,
     rulYears: 22.0,
     pof: 1,
-    cof: 2,
-    loadCriticality: 'Residential Distribution Bus',
-    capexAction: 'Routine Inspection',
-    budgetEstUsd: 800,
-    fiscalYear: 'FY2030+',
+    cof: 4,
+    loadCriticality: 'Heavy Forging Plant Feed',
+    capexAction: 'Routine Condition Assessment & Oil Sampling',
+    budgetEstUsd: 2500,
+    fiscalYear: 'FY2030',
     status: 'NORMAL',
   },
 ]
 
+// CapEx investment estimates by risk zone
+const CAPEX_MATRIX: Record<number, { action: string; budgetUsd: number; targetFy: string }> = {
+  25: { action: 'Emergency Unit Replacement (New Core)', budgetUsd: 150000, targetFy: 'FY2026' },
+  20: { action: 'Major Refurbishment & Rewinding', budgetUsd: 85000, targetFy: 'FY2026' },
+  16: { action: 'Complete Core Overhaul & Rewinding', budgetUsd: 85000, targetFy: 'FY2027' },
+  15: { action: 'Active Part Overhaul & Bushing Upgrade', budgetUsd: 45000, targetFy: 'FY2027' },
+  12: { action: 'Full Oil Reclamation & Tap Changer Service', budgetUsd: 22000, targetFy: 'FY2027' },
+  9:  { action: 'Online Vacuum Dehydration & Bushing Retrofit', budgetUsd: 18000, targetFy: 'FY2028' },
+  8:  { action: 'Radiator Cleaning & Gasket Replacement', budgetUsd: 8500, targetFy: 'FY2028' },
+  6:  { action: 'De-sludging & Silica Gel Regeneration', budgetUsd: 5000, targetFy: 'FY2028' },
+  4:  { action: 'Routine Condition Assessment & Oil Sampling', budgetUsd: 2500, targetFy: 'FY2029' },
+  3:  { action: 'Routine Condition Assessment & Oil Sampling', budgetUsd: 2500, targetFy: 'FY2029' },
+  2:  { action: 'Periodic Baseline Telemetry Verification', budgetUsd: 1500, targetFy: 'FY2030' },
+  1:  { action: 'Periodic Baseline Telemetry Verification', budgetUsd: 1500, targetFy: 'FY2030' },
+}
+
 function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
-  const tHost = host as any
-  const hi = tHost.healthIndex ?? 85
-  const pof = hi < 50 ? 5 : hi < 65 ? 4 : hi < 75 ? 3 : hi < 85 ? 2 : 1
-  const kva = tHost.kva as number | undefined
-  const cof = kva == null ? 3 : kva >= 5000 ? 5 : kva >= 2500 ? 4 : kva >= 1000 ? 3 : kva >= 500 ? 2 : 1
-  const rulYears = parseFloat(Math.max(0.5, ((hi - 40) / 60) * 25).toFixed(1))
+  const tHost = host as unknown as { healthIndex?: number; kva?: number }
+  const hi = tHost.healthIndex ?? 95
+  const kva = tHost.kva ?? 0
+  const status = host.status === 'CRITICAL' ? 'CRITICAL' : host.status === 'WARNING' ? 'WARNING' : 'NORMAL'
+
+  // PoF derived from Health Index (1-5 scale)
+  const pof = hi <= 50 ? 5 : hi <= 65 ? 4 : hi <= 75 ? 3 : hi <= 85 ? 2 : 1
+
+  // CoF derived from capacity / kVA rating
+  const cof = kva >= 3000 ? 5 : kva >= 2000 ? 4 : kva >= 1000 ? 3 : kva > 0 ? 2 : 3
+
+  // RUL estimated linearly from health index (50 years max design life)
+  const rulYears = parseFloat(Math.max(0.5, (hi / 100) * 25).toFixed(1))
+
   const riskScore = pof * cof
-  const capexAction =
-    riskScore >= 20 ? 'Emergency Replacement / Unit Overhaul'
-    : riskScore >= 12 ? 'Full Oil Reclamation & Tap Changer Service'
-    : riskScore >= 8  ? 'Online Vacuum Dehydration & Bushing Inspection'
-    : riskScore >= 4  ? 'Condition-Based Maintenance (CBM)'
-    : 'Routine DGA Oil Sampling (Annual)'
-  const budgetEstUsd =
-    riskScore >= 20 ? 150000
-    : riskScore >= 12 ? 45000
-    : riskScore >= 8  ? 18000
-    : riskScore >= 4  ? 5000
-    : 1500
-  const fiscalYear =
-    pof >= 4 ? 'FY2026' : pof === 3 ? 'FY2027' : pof === 2 ? 'FY2028' : 'FY2029+'
-  const status: 'CRITICAL'|'WARNING'|'NORMAL' =
-    pof >= 4 && cof >= 4 ? 'CRITICAL' : riskScore >= 9 ? 'WARNING' : 'NORMAL'
+  // Find nearest defined capex tier <= riskScore
+  const tierKey = Object.keys(CAPEX_MATRIX).map(Number).sort((a, b) => b - a).find(k => k <= riskScore) ?? 1
+  const { action: capexAction, budgetUsd: budgetEstUsd, targetFy: fiscalYear } = CAPEX_MATRIX[tierKey]
+
   return {
     id: host.id,
     name: host.name || host.id,
@@ -182,15 +209,31 @@ function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
   }
 }
 
-export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId }: FleetRiskMatrixProps) {
-  const hasRealData = hosts && hosts.length > 0
+export default function FleetRiskMatrix({ hosts, sites = {}, currentAssetId, orgId }: FleetRiskMatrixProps) {
+  const scopedHosts = useMemo(() => {
+    if (!hosts) return undefined
+    return hosts.filter((h) => (!h.domain || h.domain === 'transformer') && (!orgId || !h.orgId || h.orgId === orgId))
+  }, [hosts, orgId])
+
+  const hasRealData = Boolean(scopedHosts && scopedHosts.length > 0)
   const FLEET_DATA: FleetTransformerRisk[] = useMemo(() => {
-    if (!hasRealData) return FALLBACK_DATA  // keep the old hardcoded array as fallback
-    return hosts
-      .filter(h => !h.domain || h.domain === 'transformer')
-      .map(h => deriveRisk(h, sites[h.siteId ?? ''] ?? h.siteId ?? '—'))
+    if (!hasRealData) {
+      // In fallback/demo mode, scope mock data to the target organization so assets never leak across tenants
+      if (orgId === 'org-2') {
+        return FALLBACK_DATA.filter((f) => f.id === 'tr-101' || f.id === 'tr-102')
+      }
+      if (orgId === 'org-3') {
+        return FALLBACK_DATA.filter((f) => f.id === 'tr-201' || f.id === 'tr-202')
+      }
+      if (orgId === 'org-4') {
+        return FALLBACK_DATA.filter((f) => f.id === 'tr-301' || f.id === 'tr-302')
+      }
+      return FALLBACK_DATA.filter((f) => !f.id.startsWith('tr-1') && !f.id.startsWith('tr-2') && !f.id.startsWith('tr-3'))
+    }
+    return scopedHosts!
+      .map((h) => deriveRisk(h, sites[h.siteId ?? ''] ?? h.siteId ?? '—'))
       .sort((a, b) => (b.pof * b.cof) - (a.pof * a.cof))
-  }, [hosts, sites, hasRealData])
+  }, [scopedHosts, sites, hasRealData, orgId])
   
   const [selectedAsset, setSelectedAsset] = useState<FleetTransformerRisk | null>(FLEET_DATA[0] ?? null)
 

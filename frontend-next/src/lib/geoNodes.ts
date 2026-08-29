@@ -68,7 +68,8 @@ function metric(h: (typeof hosts)[number]): { label: string; value: string } {
 }
 
 export function getGeoNodes(orgId?: string): GeoNode[] {
-  const list = orgId ? hosts.filter((h) => h.orgId === orgId) : hosts
+  const targetOrg = orgId || 'org-1'
+  const list = hosts.filter((h) => h.orgId === targetOrg)
   return list.map((h, i) => {
     // Place each node at its real site coordinates (best-practice geo mapping),
     // falling back to a spread of Thai cities if a site has no coordinates.

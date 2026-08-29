@@ -1242,6 +1242,7 @@ export interface FleetNode {
   id: string
   name: string
   domain: SensorDomain
+  org_id?: string
   site_id: string | null
   department_id: string | null
   lat: number | null

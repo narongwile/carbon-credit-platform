@@ -760,17 +760,24 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
     // transformer dashboard that /api/fleet had correctly excluded from their
     // roster. Same class of hole DeviceDetailClient already closed with its
     // `verified` flag; this page never got the equivalent.
-    const host = hosts.find((h) => h.id === id && h.domain === 'transformer')
+    const host = hosts.find((h) => h.id === id && h.domain === 'transformer' && (!h.orgId || h.orgId === orgId))
     if (host) return makeTransformer(host as TransformerHost)
     if (fromBackend) return undefined
-    return transformers.find((t) => t.id === id)
-  }, [transformers, hosts, id, fromBackend])
+    return transformers.find((t) => t.id === id && (!t.orgId || t.orgId === orgId))
+  }, [transformers, hosts, id, fromBackend, orgId])
   // makeTransformer doesn't carry siteId onto the Transformer it returns (only
   // a jittered lat/lng — see DeviceLocationCard's header comment for why that
   // never was this device's real position). Pulled separately so the real
   // per-device coordinate widget below can resolve the site it belongs to.
   const siteId = useMemo(() => hosts.find((h) => h.id === id && h.domain === 'transformer')?.siteId, [hosts, id])
   const { transformer, live, online, lastReadingAt, values, series, presence } = useLiveTransformer(base)
+  const [sites, setSites] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!live || !orgId) { setSites({}); return }
+    let cancelled = false
+    api.sites(orgId).then((r) => { if (!cancelled && r) setSites(Object.fromEntries((r.sites ?? []).map((s) => [s.id, s.name]))) })
+    return () => { cancelled = true }
+  }, [live, orgId])
   const [showArbitrationModal, setShowArbitrationModal] = useState(false)
   const [arbitrationMode, setArbitrationMode] = useState<'max' | 'mean'>('max')
   const [conflictDismissed, setConflictDismissed] = useState(false)
@@ -1322,8 +1329,13 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               {!isFullscreen && <div className="hidden 2xl:block w-px bg-[#1e2433]" />}
               <div className={clsx('flex-1 min-w-[320px]', isFullscreen && 'bg-[#0a0e1a] p-4 rounded-2xl border border-slate-800/80 shadow-md')}>
                 <InsulationAgingRul 
+                  inputsMeasured={Boolean(liveTelemetry.measured.oilTemp && liveTelemetry.measured.load)}
                   hotSpotTemp={liveTelemetry.hotSpotTemp} 
-                  hoursInService={52000} 
+                  hoursInService={
+                    nameplate?.yearInstalled
+                      ? Math.max(100, Math.round((new Date().getFullYear() - nameplate.yearInstalled) * 8760))
+                      : 52000
+                  } 
                   oilTemp={liveTelemetry.oilTemp}
                   moistureInOil={liveTelemetry.moisture}
                   assetId={transformer.id || 'TRF-01'}
@@ -2221,9 +2233,13 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         accent="amber"
       >
         <InsulationAgingRul
-          inputsMeasured={false}
+          inputsMeasured={Boolean(liveTelemetry.measured.oilTemp && liveTelemetry.measured.load)}
           hotSpotTemp={liveTelemetry.hotSpotTemp}
-          hoursInService={52000}
+          hoursInService={
+            nameplate?.yearInstalled
+              ? Math.max(100, Math.round((new Date().getFullYear() - nameplate.yearInstalled) * 8760))
+              : 52000
+          }
           oilTemp={liveTelemetry.oilTemp}
           moistureInOil={liveTelemetry.moisture}
           assetId={transformer.id || 'TRF-01'}
@@ -2313,7 +2329,12 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         icon={<Building2 size={20} />}
         accent="amber"
       >
-        <FleetRiskMatrix currentAssetId={transformer.id} />
+        <FleetRiskMatrix
+          currentAssetId={transformer.id}
+          hosts={hosts.filter((h) => (!h.domain || h.domain === 'transformer') && (!h.orgId || h.orgId === orgId))}
+          sites={sites}
+          orgId={orgId}
+        />
       </StudyModal>
 
       {/* Fullscreen PdM Studio Workspace Modal */}

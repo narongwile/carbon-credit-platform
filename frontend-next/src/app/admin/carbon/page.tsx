@@ -20,6 +20,8 @@ import {
 import { Leaf, Factory, Zap, Truck, Target, TrendingDown, Info, AlertTriangle, CheckCircle, ArrowRight } from 'lucide-react'
 import clsx from 'clsx'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
+import { useAppStore } from '@/lib/store'
+import { useManagedDevices } from '@/lib/useManagedDevices'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -59,6 +61,11 @@ type Tab = 'scope' | 'tou' | 'sbti'
 
 export default function CarbonPage() {
   const [activeTab, setActiveTab] = useState<Tab>('scope')
+
+  const selectedOrgId = useAppStore((s) => s.selectedOrgId)
+  const orgId = selectedOrgId || 'org-1'
+  const { devices, fromBackend } = useManagedDevices(orgId)
+  const transformerCount = devices.filter((d) => d.domain === 'transformer').length
 
   const totalEmissions = SCOPE_DATA.reduce((acc, curr) => acc + curr.value, 0)
 
@@ -137,10 +144,20 @@ export default function CarbonPage() {
                   </div>
                   <div>
                     <h3 className="font-medium text-white">Scope 2 (Grid Electricity)</h3>
-                    <p className="text-xs text-slate-500">Purchased electricity from transformers</p>
+                    <p className="text-xs text-slate-500">
+                      {fromBackend && transformerCount > 0
+                        ? `Live grid feed from ${transformerCount} metering asset${transformerCount > 1 ? 's' : ''}`
+                        : 'Purchased electricity from transformers'}
+                    </p>
                   </div>
                 </div>
                 <div className="text-3xl font-bold text-white">847.2 <span className="text-sm font-normal text-slate-500">tCO₂e</span></div>
+                {fromBackend && (
+                  <div className="text-[11px] text-emerald-400 flex items-center gap-1.5 pt-1.5 border-t border-slate-800/80">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>Live fleet telemetry: {devices.length} asset{devices.length > 1 ? 's' : ''} active in {orgId}</span>
+                  </div>
+                )}
               </div>
               <div className="p-6 rounded-xl flex flex-col gap-4" style={surface}>
                 <div className="flex items-center gap-3">

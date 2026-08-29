@@ -80,6 +80,7 @@ export function fleetToGeoNodes(byId: Map<string, FleetNode>, orgId: string): Ge
   const geo: GeoNode[] = []
   for (const n of Array.from(byId.values())) {
     if (n.lat == null || n.lng == null) continue
+    if (n.org_id && n.org_id !== orgId) continue
     const meta = DOMAIN_META[n.domain]
     geo.push({
       id: n.id, orgId, name: n.name, domain: n.domain,
