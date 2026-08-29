@@ -5287,7 +5287,25 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
     threshold: '90.0°C',
     risk_insight: 'Winding / insulation degradation risk (>90°C)',
     time: new Date().toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' }) + ' (Asia/Bangkok)',
-    link: mc.frontendUrl + '/admin/nodes/detail/?id=TR-SUBSTATION-01',
+    // Same org-scoped host a REAL alarm uses. This was mc.frontendUrl —
+    // the platform-wide FRONTEND_URL with no org label at all — so the
+    // "Test send" button, which is exactly how an admin checks that
+    // email/LINE/Telegram/Google Chat delivery works, produced a link
+    // that did not match what a genuine alarm would send. Testing the
+    // channel therefore could not test the link.
+    link: (function(){
+      const cb = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || env.get('CORS_ORIGIN') || mc.frontendUrl || '';
+      const sub = String(orgId || '').trim();
+      if (!cb || cb === '*' || !sub) return (mc.frontendUrl || '') + '/admin/nodes/detail/?id=TR-SUBSTATION-01';
+      try {
+        const u = new URL(cb);
+        let host = u.hostname;
+        const i = host.indexOf('.iiotplatform.');
+        if (i > 0) host = host.slice(i + 1);
+        u.hostname = sub + '.' + host;
+        return u.origin.replace(new RegExp('/+$'), '') + '/admin/nodes/detail/?id=TR-SUBSTATION-01';
+      } catch(_) { return cb.replace(new RegExp('/+$'), '') + '/admin/nodes/detail/?id=TR-SUBSTATION-01'; }
+    })(),
     sevEmoji: '🔴',
   };
 

@@ -101,5 +101,34 @@ for (const [label, nodeId, re] of paths) {
   }
 }
 
+// ── The "Test send" preview link ──────────────────────────────────────────
+// admin/settings' channel test is how an admin verifies email/LINE/Telegram/
+// Google Chat delivery actually works. Its sample payload built the link from
+// mc.frontendUrl — the platform-wide FRONTEND_URL, with NO org label — so the
+// one button whose entire job is "prove the notification looks right" sent a
+// link that did not match what a real alarm produces. Testing the channel
+// could not test the link.
+{
+  const node = flows.find((n) => n.id === 'emailtpltest_fn')
+  if (!node) {
+    t('emailtpltest handler present', false)
+  } else {
+    const m = node.func.match(/link: \(function\(\)\{[\s\S]*?\}\)\(\),/)
+    if (!m) {
+      t('test-send builds its link with the org-scoped host', false, 'link builder not found')
+    } else {
+      const body = m[0].replace(/^link: /, '').replace(/,$/, '')
+      for (const [envLabel, base, rootHost] of ENVS) {
+        for (const org of ['org-eternity', 'org-2']) {
+          const env = { get: (k) => (k === 'APP_BASE_URL' ? base : undefined) }
+          const out = new Function('env', 'mc', 'orgId', `return (${body})`)(env, { frontendUrl: base }, org)
+          t(`test-send · ${envLabel} · ${org}: link uses the org's own host`,
+            new URL(out).hostname === `${org}.${rootHost}`, `got ${out}`)
+        }
+      }
+    }
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)
