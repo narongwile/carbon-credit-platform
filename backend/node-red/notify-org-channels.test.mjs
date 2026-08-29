@@ -66,5 +66,35 @@ ok('webhook payload carries the alarm details, not an empty ping',
 ok('CRITICAL-only channel NOT contacted for a WARNING alarm (min_severity gate holds)',
    !mails.includes('critical-only@x.com'))
 
+// --- Per-channel fallback test (regression: all-or-nothing !channels.length) ---
+// When an org has an email channel configured, but chat channels are not configured or
+// disabled (as mail-sink-guard does in UAT), Telegram, Google Chat, and LINE must still
+// fall back to global notifyConfig credentials.
+const mails2 = [], posts2 = []
+const pool2 = { query: async (sql) => {
+  if (sql.includes('notification_channels')) {
+    return [[{ channel: 'email', target: 'ops2@x.com', min_severity: 'WARNING', enabled: 1, department_id: null, user_id: null }]]
+  }
+  return [[]]
+}}
+const globalCtx2 = { get: (k) => ({
+  pool: pool2,
+  resolvePool: () => pool2,
+  mailConfig: async () => ({ from: 'noreply@x', transport: { sendMail: async (m) => { mails2.push(m.to) } } }),
+  notifyConfig: async () => ({ telegramToken: 'GLOBALTOK', telegramChatId: 'GLOBALCHAT', lineToken: 'GLOBALLINE', googleChatWebhook: 'https://chat.googleapis.com/global_fallback' }),
+}[k]) }
+globalThis.fetch = async (url, opt) => { posts2.push({ url, body: opt?.body }); return { ok: true } }
+
+new Function('env', 'node', 'global', 'msg', 'fetch', fn)(env, node, globalCtx2, msg, globalThis.fetch)
+await new Promise(r => setTimeout(r, 300))
+
+ok('fallback: email still delivered to org target', mails2.includes('ops2@x.com'))
+ok('fallback: telegram sent to platform fallback when org has only email',
+   posts2.some(p => p.url.includes('/botGLOBALTOK/') && String(p.body).includes('"chat_id":"GLOBALCHAT"')))
+ok('fallback: google chat sent to platform fallback when org has only email',
+   posts2.some(p => p.url === 'https://chat.googleapis.com/global_fallback'))
+ok('fallback: line sent to platform fallback when org has only email',
+   posts2.some(p => p.url.includes('api.line.me')))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)

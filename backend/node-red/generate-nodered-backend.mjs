@@ -1786,7 +1786,7 @@ const __buildBaseUrl = (orgId) => {
 };
 
 const __linkFor = (role) => {
-  const base = __buildBaseUrl(e.orgId);
+  const base = __buildBaseUrl(e.orgId || e.org_id);
   if (!base) return '';
   const viewer = role === 'viewer' || role === 'customer';
   const dom = e.domain || 'transformer';
@@ -1955,11 +1955,16 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       }
     }
     const nc = await global.get('notifyConfig')();
-    if (!channels.length) {
-      if (nc.lineToken) channels.push({ channel:'line', target:'' });
-      if (nc.telegramToken) channels.push({ channel:'telegram', target:'' });
-      if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
-    }
+    // Fall back to platform-wide notify credentials for any channel NOT configured in this org.
+    // The previous all-or-nothing check (if (!channels.length)) silenced chat whenever an email
+    // channel was enabled: in UAT, mail-sink-guard disables per-org chat channels so test alarms
+    // route to the operator's test Telegram/GoogleChat — but because the org still had an email
+    // channel, channels.length was never 0, so Telegram, Google Chat, and LINE platform fallbacks
+    // were completely suppressed!
+    const _hasChan = (ch) => channels.some(c => c.channel === ch);
+    if (!_hasChan('line') && nc.lineToken) channels.push({ channel:'line', target:'' });
+    if (!_hasChan('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });
+    if (!_hasChan('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
     for (const c of channels) {
       if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL') continue;
       try {
@@ -2344,7 +2349,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     } else {
       path = viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/';
     }
-    const base = __buildPersonalBaseUrl(e.orgId);
+    const base = __buildPersonalBaseUrl(e.orgId || e.org_id);
     const link = base ? (base + path + '?id=' + encodeURIComponent(e.nodeId)) : '';
     const linkLine = link ? '\\n🔗 ' + link : '';
 
