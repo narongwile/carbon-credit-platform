@@ -129,6 +129,14 @@ test_proofs_and_integrity:
     # alarms silently stopped sending, with no error anywhere. Delivery is the
     # last mile of an alarm system; a silent failure here means an operator
     # never hears about a fault.
+    # The "Open device" deep link must resolve to <orgId>.iiotplatform.<base>,
+    # the only shape the ingress serves, in BOTH environments. The old builder
+    # replaced the host's first label whenever it had >= 4 labels — on UAT's
+    # iiotplatform.27.254.143.144.nip.io (7 labels, IP octets count) that
+    # overwrote 'iiotplatform' itself, so every alarm link was dead; and it
+    # aliased org-1 to the PRODUCT id 'eternity'. Verified to fail 28/40 on the
+    # pre-fix code.
+    - node e2e/proofs/test-alarm-link-org-subdomain.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see

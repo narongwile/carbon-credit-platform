@@ -1740,11 +1740,15 @@ alarms.forEach(a => {
 const subject = String(e.nodeId) + ' ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms' : (e.paramLabel || 'Alarm'));
 
 const __buildBaseUrl = (orgId) => {
-  let sub = String(orgId || '').trim();
-  if (sub.toLowerCase().startsWith('org-')) {
-    sub = sub.slice(4);
-  }
-  if (!sub || sub === '1') sub = 'eternity';
+  // orgId VERBATIM. This used to strip the "org-" prefix and alias org-1 to
+  // 'eternity', producing https://eternity...  and https://2... — but
+  // 'eternity' is a PRODUCT id (entitlements maps eternityTransformers ->
+  // 'eternity'), never an organization, and lib/orgResolver.getOrgFromLocation
+  // reads the first label back as the orgId verbatim. So the link handed to an
+  // engineer named an org that does not exist, and the app could not resolve
+  // the tenant from it. getOrgWorkspaceUrl() — the app's own link builder — has
+  // always used the raw orgId; this now matches it.
+  const sub = String(orgId || '').trim();
   // APP_BASE_URL is optional by design — node-red.yaml's own comment says so
   // explicitly ("notify falls back to CORS_ORIGIN when this is unset"), and
   // the pre-existing __base variable this replaced always included CORS_ORIGIN
@@ -1757,14 +1761,21 @@ const __buildBaseUrl = (orgId) => {
   if (customBase && customBase !== '*') {
     try {
       const u = new URL(customBase);
-      const hostParts = u.hostname.split('.');
-      if (hostParts.length >= 4 && !hostParts[0].includes('localhost') && !/^\d+$/.test(hostParts[0])) {
-        if (hostParts[0] !== sub) {
-          hostParts[0] = sub;
-          u.hostname = hostParts.join('.');
-        }
-      } else if (!u.hostname.startsWith(sub + '.')) {
-        u.hostname = sub + '.' + u.hostname;
+      if (sub) {
+        // The ingress serves exactly two shapes (frontend-next.yaml):
+        //   iiotplatform.<base>   and   *.iiotplatform.<base>
+        // so an org link is ALWAYS the orgId prepended to the ROOT host.
+        //
+        // The old code replaced hostParts[0] whenever the host had >= 4 labels.
+        // On UAT that host is iiotplatform.27.254.143.144.nip.io — SEVEN labels,
+        // because the IP octets count — so it overwrote 'iiotplatform' and
+        // produced https://<x>.27.254.143.144.nip.io, which matches no ingress
+        // rule at all. Every "Open device" link in every UAT email, LINE,
+        // Telegram and Google Chat alarm was dead.
+        let host = u.hostname;
+        const i = host.indexOf('.iiotplatform.');
+        if (i > 0) host = host.slice(i + 1);   // drop an org label already present
+        u.hostname = sub + '.' + host;
       }
       return u.origin.replace(new RegExp('/+$'), '');
     } catch(_) {
@@ -2213,11 +2224,15 @@ const isMulti = alarms.length > 1;
 const subject = String(e.nodeId) + ' ' + __sevEmoji + ' [Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' thresholds' : (e.paramLabel || 'Alert'));
 
 const __buildPersonalBaseUrl = (orgId) => {
-  let sub = String(orgId || '').trim();
-  if (sub.toLowerCase().startsWith('org-')) {
-    sub = sub.slice(4);
-  }
-  if (!sub || sub === '1') sub = 'eternity';
+  // orgId VERBATIM. This used to strip the "org-" prefix and alias org-1 to
+  // 'eternity', producing https://eternity...  and https://2... — but
+  // 'eternity' is a PRODUCT id (entitlements maps eternityTransformers ->
+  // 'eternity'), never an organization, and lib/orgResolver.getOrgFromLocation
+  // reads the first label back as the orgId verbatim. So the link handed to an
+  // engineer named an org that does not exist, and the app could not resolve
+  // the tenant from it. getOrgWorkspaceUrl() — the app's own link builder — has
+  // always used the raw orgId; this now matches it.
+  const sub = String(orgId || '').trim();
   // APP_BASE_URL is optional by design — node-red.yaml's own comment says so
   // explicitly ("notify falls back to CORS_ORIGIN when this is unset"), and
   // the pre-existing __base variable this replaced always included CORS_ORIGIN
@@ -2230,14 +2245,21 @@ const __buildPersonalBaseUrl = (orgId) => {
   if (customBase && customBase !== '*') {
     try {
       const u = new URL(customBase);
-      const hostParts = u.hostname.split('.');
-      if (hostParts.length >= 4 && !hostParts[0].includes('localhost') && !/^\d+$/.test(hostParts[0])) {
-        if (hostParts[0] !== sub) {
-          hostParts[0] = sub;
-          u.hostname = hostParts.join('.');
-        }
-      } else if (!u.hostname.startsWith(sub + '.')) {
-        u.hostname = sub + '.' + u.hostname;
+      if (sub) {
+        // The ingress serves exactly two shapes (frontend-next.yaml):
+        //   iiotplatform.<base>   and   *.iiotplatform.<base>
+        // so an org link is ALWAYS the orgId prepended to the ROOT host.
+        //
+        // The old code replaced hostParts[0] whenever the host had >= 4 labels.
+        // On UAT that host is iiotplatform.27.254.143.144.nip.io — SEVEN labels,
+        // because the IP octets count — so it overwrote 'iiotplatform' and
+        // produced https://<x>.27.254.143.144.nip.io, which matches no ingress
+        // rule at all. Every "Open device" link in every UAT email, LINE,
+        // Telegram and Google Chat alarm was dead.
+        let host = u.hostname;
+        const i = host.indexOf('.iiotplatform.');
+        if (i > 0) host = host.slice(i + 1);   // drop an org label already present
+        u.hostname = sub + '.' + host;
       }
       return u.origin.replace(new RegExp('/+$'), '');
     } catch(_) {

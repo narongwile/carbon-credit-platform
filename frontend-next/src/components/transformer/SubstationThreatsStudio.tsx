@@ -36,6 +36,8 @@ interface ArresterPhaseData {
   lastStrikeKa: number
   strikeCount: number
   healthPct: number
+  /** true only when this phase's value came from real telemetry. */
+  measured?: boolean
 }
 
 export default function SubstationThreatsStudio({
@@ -66,6 +68,12 @@ export default function SubstationThreatsStudio({
       { phase: 'C', totalCurrentUa: 260, resistiveCurrentUa: 31, status: 'good', lastStrikeKa: 9.8, strikeCount: 7, healthPct: 92 },
     ]
     if (!arresterInstalled || surgeArresterCurrentLive == null) return base
+    // Only ONE channel exists (surgeArresterCurrent), so only phase B can be
+    // measured. A and C keep reference values — and this is a three-phase
+    // COMPARISON table, where the entire point is reading one phase against the
+    // others. Showing a live B beside a constant A and C invites "B is
+    // degrading relative to its neighbours", which the data cannot support.
+    // Flagged per phase so the table can say which is which.
     return base.map((a) => {
       if (a.phase === 'B') {
         const uA = surgeArresterCurrentLive * 1000
@@ -79,9 +87,10 @@ export default function SubstationThreatsStudio({
           strikeCount: surgeCounterLive ?? a.strikeCount,
           status,
           healthPct,
+          measured: true,
         }
       }
-      return a
+      return { ...a, measured: false }
     })
   }, [arresterInstalled, surgeArresterCurrentLive, surgeCounterLive])
 
@@ -272,6 +281,7 @@ export default function SubstationThreatsStudio({
             {arresters.map((arr) => (
               <div
                 key={arr.phase}
+                data-measured={arr.measured ? 'yes' : 'no'}
                 className={clsx(
                   'rounded-xl p-4 border transition-all',
                   arr.status === 'caution'
@@ -285,6 +295,14 @@ export default function SubstationThreatsStudio({
                       {arr.phase}
                     </span>
                     <span className="text-xs font-bold text-slate-300">Phase {arr.phase} Arrester ({voltageKv} kV)</span>
+                    {/* Only phase B has a telemetry channel. Without this badge
+                        the table reads as a like-for-like three-phase
+                        comparison when two of the three are constants. */}
+                    {arresterInstalled && surgeArresterCurrentLive != null && !arr.measured && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-amber-950/70 text-amber-300 border border-amber-600/40 font-bold whitespace-nowrap">
+                        NO CT — REF
+                      </span>
+                    )}
                   </div>
                   <span
                     className={clsx(
