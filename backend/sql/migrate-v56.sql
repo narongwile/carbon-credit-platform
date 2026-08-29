@@ -5,4 +5,6 @@
 
 USE iothub;
 
-ALTER TABLE report_schedules ADD COLUMN IF NOT EXISTS domain VARCHAR(32) NULL DEFAULT 'all';
+-- MySQL has no IF NOT EXISTS on ADD COLUMN (MariaDB-only). The runner already
+-- tolerates ER_DUP_FIELDNAME on re-run — see migrate-v54.sql's note.
+ALTER TABLE report_schedules ADD COLUMN domain VARCHAR(32) NULL DEFAULT 'all';

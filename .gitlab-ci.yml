@@ -76,6 +76,13 @@ test_proofs_and_integrity:
   image: node:20-alpine
   script:
     - node backend/node-red/generate-nodered-backend.mjs
+    # backend/sql is baked into the migrate-service image and only ever runs
+    # against a real MySQL, so a dialect error is invisible until the migrate
+    # Job fails in the cluster. migrate-v54 shipped MariaDB-only
+    # "ADD COLUMN IF NOT EXISTS" / "CREATE INDEX IF NOT EXISTS" — a hard PARSE
+    # error on MySQL — which aborted the run on its first statement and left
+    # v54/v55/v56/v57 unapplied on every database. Verified to fail on that file.
+    - node e2e/proofs/test-sql-mysql-dialect.mjs
     - node e2e/proofs/test-emailguard.mjs
     - node e2e/proofs/test-riskmap.mjs
     - node e2e/proofs/test-report-honesty.mjs
