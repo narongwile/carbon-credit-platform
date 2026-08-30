@@ -101,14 +101,7 @@ export default function MyAlertSettings({
     if (!session?.id) { toast.error('Sign in to test alerts'); return }
     setTesting(true)
     try {
-      // Auto-save delivery channels first so backend has latest preferences
-      const current = prefs ?? ((await api.getMyConfig(session.id))?.prefs ?? {}) as Record<string, unknown>
-      const perNodeChannels = { ...((current.alertChannels ?? {}) as Record<string, unknown>), [nodeId]: enabled }
-      const next = { ...current, alertChannels: perNodeChannels }
-      await api.putMyConfig(session.id, next)
-      setPrefs(next)
-
-      const res = await api.testMyPersonalAlert(nodeId)
+      const res = await api.testMyPersonalAlert(nodeId, enabled)
       if (res?.ok) {
         const sentChannels = Object.keys(res.sent || {}).filter(k => res.sent[k])
         if (sentChannels.length > 0) {
@@ -129,7 +122,7 @@ export default function MyAlertSettings({
     } finally {
       setTesting(false)
     }
-  }, [session?.id, prefs, enabled, nodeId])
+  }, [session?.id, enabled, nodeId])
 
   const missing = CHANNELS.filter((c) => c.prefsKey && enabled[c.id] && !prefs?.[c.prefsKey] && !dbUserChannels[c.id])
 

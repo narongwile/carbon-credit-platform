@@ -373,10 +373,10 @@ export const api = {
   getMyNodeRule: (nodeId: string) => req<{ rule: NodeAlarmRule | null }>(`/api/nodes/${nodeId}/personal-rule`),
   putMyNodeRule: (nodeId: string, body: { rule: NodeAlarmRule }) =>
     req<{ ok: boolean }>(`/api/nodes/${nodeId}/personal-rule`, { method: 'PUT', body: JSON.stringify(body) }),
-  testMyPersonalAlert: (nodeId: string) =>
+  testMyPersonalAlert: (nodeId: string, channels?: Record<string, boolean>) =>
     req<{ ok: boolean; sent: Record<string, boolean>; errors: Record<string, string>; channels: Record<string, boolean> }>(
       `/api/nodes/${nodeId}/personal-rule/test`,
-      { method: 'POST' }
+      { method: 'POST', body: channels ? JSON.stringify({ channels }) : undefined }
     ),
   /** Admin bulk-apply of the shared device rule, scoped to one or more departments (or users' departments) — never touches org_domain_rules. */
   putOrgRuleDepartment: (orgId: string, body: { rule: NodeAlarmRule; departmentId?: string; departmentIds?: string[]; userId?: string; userIds?: string[]; updatedBy?: string }) =>

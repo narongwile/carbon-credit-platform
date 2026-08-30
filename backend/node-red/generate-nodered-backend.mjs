@@ -3068,7 +3068,7 @@ if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authenticatio
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
-const personalRuleTestFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||'';
+const personalRuleTestFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||''; const b=msg.payload||{};
 const __ok=(x)=>{msg.headers=__CORS;msg.payload=x;node.send(msg);};
 const __err=(code,e)=>{msg.headers=__CORS;msg.statusCode=code;msg.payload={error:e};node.send(msg);};
 if(!uid) return __err(401,'authentication required');
@@ -3103,7 +3103,7 @@ if(!uid) return __err(401,'authentication required');
   const dbEmail=userChannelsFromDb.find(c=>c.channel==='email');
   const dbWebhook=userChannelsFromDb.find(c=>c.channel==='webhook');
 
-  const nodeChannels=(pf.alertChannels||{})[id];
+  const nodeChannels=(b.channels!==undefined && b.channels!==null) ? b.channels : ((pf.alertChannels||{})[id]);
   const sel={
     email: nodeChannels&&nodeChannels.email!==undefined ? !!nodeChannels.email : (dbEmail ? !!dbEmail.enabled : !!u.email),
     telegram: nodeChannels&&nodeChannels.telegram!==undefined ? !!nodeChannels.telegram : (dbTg ? !!dbTg.enabled : !!(pf.telegramChatId||pf.telegramBotApi||nc.telegramChatId)),
@@ -7984,6 +7984,7 @@ const usrPostFn = flow.find((n) => n.id === 'usrpost_fn'); if (usrPostFn) usrPos
 // "Test" button on a Telegram/LINE/Google Chat channel; email uses nodemailer
 // and was unaffected.
 const settingsTestFn = flow.find((n) => n.id === 'settingstest_fn'); if (settingsTestFn) settingsTestFn.libs = [FETCH_LIB]
+const personalRuleTestFn = flow.find((n) => n.id === 'personalruletest_fn'); if (personalRuleTestFn) personalRuleTestFn.libs = NOTIFY_LIBS
 // send-export attaches files over SMTP (nodemailer) and Telegram multipart
 // (form-data + fetch) — the same trio reportrun uses. Without this it would
 // throw ReferenceError on the first send rather than at deploy time.
