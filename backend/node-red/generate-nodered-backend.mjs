@@ -2206,7 +2206,7 @@ if (!global.get(timerKey)) {
     if (finalBatch.length > 0) {
       node.send({ payload: finalBatch });
     }
-  }, 10000);
+  }, 2000);
   global.set(timerKey, t);
 }
 return null;
@@ -2229,41 +2229,15 @@ const isMulti = alarms.length > 1;
 const subject = String(e.nodeId) + ' ' + __sevEmoji + ' [Personal Alert · ' + topSeverity + '] ' + (isMulti ? alarms.length + ' thresholds' : (e.paramLabel || 'Alert'));
 
 const __buildPersonalBaseUrl = (orgId) => {
-  // orgId VERBATIM. This used to strip the "org-" prefix and alias org-1 to
-  // 'eternity', producing https://eternity...  and https://2... — but
-  // 'eternity' is a PRODUCT id (entitlements maps eternityTransformers ->
-  // 'eternity'), never an organization, and lib/orgResolver.getOrgFromLocation
-  // reads the first label back as the orgId verbatim. So the link handed to an
-  // engineer named an org that does not exist, and the app could not resolve
-  // the tenant from it. getOrgWorkspaceUrl() — the app's own link builder — has
-  // always used the raw orgId; this now matches it.
   const sub = String(orgId || '').trim();
-  // APP_BASE_URL is optional by design — node-red.yaml's own comment says so
-  // explicitly ("notify falls back to CORS_ORIGIN when this is unset"), and
-  // the pre-existing __base variable this replaced always included CORS_ORIGIN
-  // in the chain. Dropping it here doesn't break the CURRENT deployment (both
-  // vars happen to be set to the same value in node-red.yaml), but silently
-  // turns every alarm link into the hardcoded-IP last resort below the moment
-  // APP_BASE_URL/FRONTEND_URL is ever unset without CORS_ORIGIN also missing —
-  // exactly the safety net that comment says exists.
   const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || env.get('CORS_ORIGIN') || '';
   if (customBase && customBase !== '*') {
     try {
       const u = new URL(customBase);
       if (sub) {
-        // The ingress serves exactly two shapes (frontend-next.yaml):
-        //   iiotplatform.<base>   and   *.iiotplatform.<base>
-        // so an org link is ALWAYS the orgId prepended to the ROOT host.
-        //
-        // The old code replaced hostParts[0] whenever the host had >= 4 labels.
-        // On UAT that host is iiotplatform.27.254.143.144.nip.io — SEVEN labels,
-        // because the IP octets count — so it overwrote 'iiotplatform' and
-        // produced https://<x>.27.254.143.144.nip.io, which matches no ingress
-        // rule at all. Every "Open device" link in every UAT email, LINE,
-        // Telegram and Google Chat alarm was dead.
         let host = u.hostname;
         const i = host.indexOf('.iiotplatform.');
-        if (i > 0) host = host.slice(i + 1);   // drop an org label already present
+        if (i > 0) host = host.slice(i + 1);
         u.hostname = sub + '.' + host;
       }
       return u.origin.replace(new RegExp('/+$'), '');
@@ -2300,7 +2274,6 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { return; }
     const nc = await global.get('notifyConfig')();
 
-    // Read user-specific channels configured under 'admin/notifications'
     const tenantPool = global.get('resolvePool')(e.orgId || e.org_id);
     let userChannelsFromDb = [];
     try {
@@ -2319,17 +2292,6 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     const dbEmail = userChannelsFromDb.find(c => c.channel === 'email');
     const dbWebhook = userChannelsFromDb.find(c => c.channel === 'webhook');
 
-    // Re-checked at delivery time: either explicitly enabled for this node in alertChannels,
-    // or enabled in user-level notification_channels.
-    //
-    // min_severity is honoured here the same way the org/department loop does
-    // it ("if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL')
-    // continue"). It was SELECTed and then never read, so a channel an admin
-    // had deliberately set to CRITICAL-only on admin/notifications still
-    // delivered this user's personal WARNING alarms — the same row, on the
-    // same screen, filtering correctly for org alarms and silently not for
-    // personal ones. Applied per channel, because each notification_channels
-    // row carries its own threshold.
     const __sevOK = (c) => !c || c.min_severity !== 'CRITICAL' || topSeverity === 'CRITICAL';
     const nodeChannels = (pf.alertChannels || {})[e.nodeId];
     const sel = {
@@ -2388,15 +2350,29 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
         const at = rawTg.lastIndexOf('@');
         let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
         let chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
-        if (!tok && e.orgId) {
+        if ((!tok || !chat) && (e.orgId || e.org_id)) {
+          const oid = e.orgId || e.org_id;
+          let orgTgRows = [];
           try {
-            const [orgTg] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1", [e.orgId]);
-            if (orgTg.length && orgTg[0].target) {
-              const ot = orgTg[0].target.trim();
-              const oAt = ot.lastIndexOf('@');
-              if (oAt > 0) tok = ot.slice(0, oAt);
-            }
+            const [r1] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
+            orgTgRows = r1;
           } catch(_) {}
+          if (!orgTgRows.length) {
+            try {
+              const [r2] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
+              orgTgRows = r2;
+            } catch(_) {}
+          }
+          if (orgTgRows.length && orgTgRows[0].target) {
+            const ot = orgTgRows[0].target.trim();
+            const oAt = ot.lastIndexOf('@');
+            if (oAt > 0) {
+              if (!tok) tok = ot.slice(0, oAt);
+              if (!chat) chat = ot.slice(oAt + 1);
+            } else {
+              if (!chat) chat = ot;
+            }
+          }
         }
         if (!tok && nc.telegramToken) tok = nc.telegramToken.trim();
         if (!chat && nc.telegramChatId) chat = nc.telegramChatId.trim();
@@ -2428,15 +2404,29 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
             tok = rawLine;
           }
         }
-        if (!tok && e.orgId) {
+        if ((!tok || !to) && (e.orgId || e.org_id)) {
+          const oid = e.orgId || e.org_id;
+          let orgLineRows = [];
           try {
-            const [orgLine] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1", [e.orgId]);
-            if (orgLine.length && orgLine[0].target) {
-              const ot = orgLine[0].target.trim();
-              const oAt = ot.lastIndexOf('@');
-              if (oAt > 0) tok = ot.slice(0, oAt);
-            }
+            const [r1] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
+            orgLineRows = r1;
           } catch(_) {}
+          if (!orgLineRows.length) {
+            try {
+              const [r2] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
+              orgLineRows = r2;
+            } catch(_) {}
+          }
+          if (orgLineRows.length && orgLineRows[0].target) {
+            const ot = orgLineRows[0].target.trim();
+            const oAt = ot.lastIndexOf('@');
+            if (oAt > 0) {
+              if (!tok) tok = ot.slice(0, oAt);
+              if (!to) to = ot.slice(oAt + 1);
+            } else {
+              if (!to) to = ot;
+            }
+          }
         }
         if (!tok && nc.lineToken) tok = nc.lineToken.trim();
         if (tok && to && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {
@@ -2489,11 +2479,20 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     let rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || (dbGchat ? dbGchat.target : '') || '').trim();
     if (sel.googlechat) {
       try {
-        if (!rawGchat && e.orgId) {
+        if (!rawGchat && (e.orgId || e.org_id)) {
+          const oid = e.orgId || e.org_id;
+          let orgGcRows = [];
           try {
-            const [orgGc] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='googlechat' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [e.orgId]);
-            if (orgGc.length && orgGc[0].target) rawGchat = orgGc[0].target.trim();
+            const [r1] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='googlechat' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
+            orgGcRows = r1;
           } catch(_) {}
+          if (!orgGcRows.length) {
+            try {
+              const [r2] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='googlechat' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
+              orgGcRows = r2;
+            } catch(_) {}
+          }
+          if (orgGcRows.length && orgGcRows[0].target) rawGchat = orgGcRows[0].target.trim();
         }
         if (!rawGchat && nc.googleChatWebhook) rawGchat = nc.googleChatWebhook.trim();
         if (rawGchat) {
@@ -2548,6 +2547,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
               time: a.ts || a.time || e.time
             })),
             link,
+            personalUserId: e.personalUserId,
             timestamp: new Date().toISOString()
           })
         });

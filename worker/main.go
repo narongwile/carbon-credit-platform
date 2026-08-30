@@ -1353,9 +1353,6 @@ func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
 	return r, true
 }
 
-// getPersonalRules returns every user's personal rule for this node — opt-in
-// and normally empty, so the common case costs one cache lookup returning a
-// nil slice, not a query. Mirrors getAlarmRule's cache shape exactly.
 func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
 	if cached, ok := personalRulesCache.Load(nodeID); ok {
 		entry := cached.(PersonalRulesCacheEntry)
@@ -1364,10 +1361,15 @@ func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
 		}
 	}
 
-	rows, err := tenantDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
-	if err != nil {
-		// Table not created yet on this DB (fresh tenant, migration pending) —
-		// same "no personal rules" outcome as none existing, not an error.
+	var rows *sql.Rows
+	var err error
+	if tenantDB != nil {
+		rows, err = tenantDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
+	}
+	if (err != nil || rows == nil) && controlDB != nil && controlDB != tenantDB {
+		rows, err = controlDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
+	}
+	if err != nil || rows == nil {
 		return nil
 	}
 	defer rows.Close()
@@ -1383,7 +1385,7 @@ func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
 
 	personalRulesCache.Store(nodeID, PersonalRulesCacheEntry{
 		Rules:     out,
-		ExpiresAt: time.Now().Add(30 * time.Second),
+		ExpiresAt: time.Now().Add(5 * time.Second),
 	})
 	return out
 }
@@ -1672,6 +1674,9 @@ func evaluatePersonalAlarms(client mqtt.Client, orgID string, t TelemetryPayload
 		if err := json.Unmarshal([]byte(pr.RuleJSON), &ruleDef); err != nil {
 			log.Printf("Failed to unmarshal personal rule JSON for node %s user %s: %v", t.NodeID, pr.UserID, err)
 			continue
+		}
+		if ruleDef.DwellMin <= 0 {
+			ruleDef.DwellMin = 1
 		}
 
 		stateKey := pr.UserID + "\x1f" + t.NodeID
