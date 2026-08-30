@@ -4912,13 +4912,22 @@ const orgId = au.role==='superadmin' ? (q.orgId||au.orgId) : au.orgId;
 const pool=global.get('resolvePool')(orgId);   // event_problems live in the org DB
 (async()=>{let sql="SELECT * FROM event_problems WHERE org_id=?"; const a=[orgId]; if(q.departmentId){sql+=" AND (department_id=? OR department_id IS NULL)"; a.push(q.departmentId);} if(q.domain){sql+=" AND (domain=? OR domain IS NULL)"; a.push(q.domain);} sql+=" ORDER BY label"; const[r]=await pool.query(sql,a); msg.headers=__CORS; msg.payload=r; node.send(msg);})()` + bbErr
 
-const epPostFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const b=msg.payload||{};
+const epPostFunc = CORS + `const au=msg.auth||{}; const b=msg.payload||{};
 if(!b.label){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'label required'};return msg;}
 // Force org from the JWT (never trust a client-supplied orgId); superadmin may target one.
 const orgId = au.role==='superadmin' ? (b.orgId||au.orgId) : au.orgId;
-(async()=>{const id=b.id||'ep-'+Date.now(); await pool.query("INSERT INTO event_problems (id,org_id,department_id,domain,label) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE department_id=VALUES(department_id),domain=VALUES(domain),label=VALUES(label)",[id,orgId,b.departmentId||null,b.domain||null,b.label]); msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);})()` + bbErr
+const pool=global.get('resolvePool')(orgId);
+(async()=>{
+  try {
+    await pool.query("CREATE TABLE IF NOT EXISTS event_problems (id VARCHAR(64) PRIMARY KEY, org_id VARCHAR(64) NOT NULL, department_id VARCHAR(64), domain VARCHAR(32), label VARCHAR(120) NOT NULL, INDEX idx_ep_org (org_id))");
+  } catch(_) {}
+  const id=b.id||'ep-'+Date.now();
+  await pool.query("INSERT INTO event_problems (id,org_id,department_id,domain,label) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE department_id=VALUES(department_id),domain=VALUES(domain),label=VALUES(label)",[id,orgId,b.departmentId||null,b.domain||null,b.label]);
+  msg.headers=__CORS; msg.payload={ok:true,id}; node.send(msg);
+})()` + bbErr
 
-const epDelFunc = CORS + `const pool=global.get('pool'); const au=msg.auth||{}; const id=msg.req.params.id;
+const epDelFunc = CORS + `const au=msg.auth||{}; const id=msg.req.params.id;
+const pool=global.get('resolvePool')(au.orgId||'');
 (async()=>{const chk=await global.get('ownOrg')(au,pool,"SELECT org_id FROM event_problems WHERE id=?",[id]); if(!chk.ok){msg.headers=__CORS;msg.statusCode=chk.code;msg.payload={error:chk.error};node.send(msg);return;}
   await pool.query("DELETE FROM event_problems WHERE id=?",[id]); msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);})()` + bbErr
 
@@ -5483,6 +5492,9 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 const emailTplPutFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 (async()=>{
+  try {
+    await pool.query("CREATE TABLE IF NOT EXISTS platform_settings (skey VARCHAR(64) PRIMARY KEY, sval TEXT, updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))");
+  } catch(_) {}
   const sval = JSON.stringify({
     subjectTemplate: String(b.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}} - {{param_label}} ({{category}})').slice(0, 300),
     customHeaderNote: String(b.customHeaderNote || '').slice(0, 500),
