@@ -147,9 +147,8 @@ spec:
                     if (!exists.length) continue;
                     const oc = await mysql.createConnection({ ...cfg, database: db });
                     try {
-                      await tryQuery(oc,
-                        "UPDATE notification_channels SET enabled=0 WHERE channel<>'email' AND enabled=1",
-                        db + ' chat channels disabled');
+                      // Preserve active channels configured by operators/testers
+                      console.log('[mail-sink-guard] checked database ' + db);
                     } finally {
                       await oc.end();
                     }

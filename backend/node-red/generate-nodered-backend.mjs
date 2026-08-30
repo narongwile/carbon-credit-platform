@@ -1636,13 +1636,19 @@ global.set(batchKey, batch);
 
 if (!global.get(timerKey)) {
   const t = setTimeout(() => {
-    const finalBatch = global.get(batchKey) || [];
-    global.set(batchKey, []);
-    global.set(timerKey, null);
-    if (finalBatch.length > 0) {
-      node.send({ payload: finalBatch });
+    try {
+      const finalBatch = global.get(batchKey) || [];
+      global.set(batchKey, []);
+      global.set(timerKey, null);
+      if (finalBatch.length > 0) {
+        node.send({ payload: finalBatch });
+      }
+    } catch(err) {
+      global.set(batchKey, []);
+      global.set(timerKey, null);
+      node.error('stormbatch error: ' + err.message);
     }
-  }, 10000);
+  }, 2000);
   global.set(timerKey, t);
 }
 return null;
@@ -2200,11 +2206,17 @@ global.set(batchKey, batch);
 
 if (!global.get(timerKey)) {
   const t = setTimeout(() => {
-    const finalBatch = global.get(batchKey) || [];
-    global.set(batchKey, []);
-    global.set(timerKey, null);
-    if (finalBatch.length > 0) {
-      node.send({ payload: finalBatch });
+    try {
+      const finalBatch = global.get(batchKey) || [];
+      global.set(batchKey, []);
+      global.set(timerKey, null);
+      if (finalBatch.length > 0) {
+        node.send({ payload: finalBatch });
+      }
+    } catch(err) {
+      global.set(batchKey, []);
+      global.set(timerKey, null);
+      node.error('personalstormbatch error: ' + err.message);
     }
   }, 2000);
   global.set(timerKey, t);

@@ -356,13 +356,6 @@ var (
 	alarmStateCache sync.Map // string (nodeId) -> *AlarmNodeState
 	orgExistsCache  sync.Map // string (orgId) -> orgExistEntry
 
-	// Personal (per-user, per-node) alarm thresholds — independent of the
-	// shared rule/state above. Keyed separately (node vs userId+"\x1f"+node)
-	// so a personal breach can never read or clobber the shared org state,
-	// and vice versa.
-	personalRulesCache      sync.Map // string (nodeId) -> PersonalRulesCacheEntry
-	personalAlarmStateCache sync.Map // string (userId+"\x1f"+nodeId) -> *AlarmNodeState
-
 	// Regex for DB name sanitization
 	nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 )
@@ -370,6 +363,7 @@ var (
 type OrgCacheEntry struct {
 	OrgID        string
 	DepartmentID string
+	Domain       string
 	Status       string // active | pending | rejected
 	MergeInto    string // non-empty → this feed's readings belong to that node
 	ExpiresAt    time.Time
@@ -413,19 +407,6 @@ type RuleCacheEntry struct {
 	ExpiresAt time.Time
 }
 
-// PersonalRule is one user's own threshold set for one node — "notify me
-// when MY reading crosses MY limit," never the shared alarm_rules row
-// everyone (including admins) sees for this device.
-type PersonalRule struct {
-	UserID   string
-	Domain   string
-	RuleJSON string
-}
-
-type PersonalRulesCacheEntry struct {
-	Rules     []PersonalRule
-	ExpiresAt time.Time
-}
 
 func main() {
 	// 1. Connect to Control MySQL DB
@@ -877,15 +858,15 @@ func noteMergeIntoMissing() {
 	mergeIntoMissingUntil.Store(time.Now().Add(5 * time.Minute).UnixMilli())
 }
 
-func nodeInfo(nodeID string) (orgID, depID, status, mergeInto string) {
+func nodeInfo(nodeID string) (orgID, depID, domain, status, mergeInto string) {
 	if cached, ok := nodeToOrg.Load(nodeID); ok {
 		entry := cached.(OrgCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
-			return entry.OrgID, entry.DepartmentID, entry.Status, entry.MergeInto
+			return entry.OrgID, entry.DepartmentID, entry.Domain, entry.Status, entry.MergeInto
 		}
 	}
 
-	var org, dep, st, mi sql.NullString
+	var org, dep, dom, st, mi sql.NullString
 	var err error
 	// merge_into arrives with migrate-v20, and the flow/worker image rolls
 	// independently of the migration Job. Selecting it unconditionally made
@@ -894,29 +875,30 @@ func nodeInfo(nodeID string) (orgID, depID, status, mergeInto string) {
 	// whole fleet. Fall back to the pre-v20 shape and retry the full one later,
 	// so ingest survives the gap and picks the column up without a restart.
 	if mergeIntoOK() {
-		err = controlDB.QueryRow("SELECT org_id, department_id, status, merge_into FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st, &mi)
+		err = controlDB.QueryRow("SELECT org_id, department_id, domain, status, merge_into FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &dom, &st, &mi)
 		if err != nil && strings.Contains(err.Error(), "merge_into") {
 			noteMergeIntoMissing()
-			err = controlDB.QueryRow("SELECT org_id, department_id, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st)
+			err = controlDB.QueryRow("SELECT org_id, department_id, domain, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &dom, &st)
 		}
 	} else {
-		err = controlDB.QueryRow("SELECT org_id, department_id, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &st)
+		err = controlDB.QueryRow("SELECT org_id, department_id, domain, status FROM nodes WHERE id=?", nodeID).Scan(&org, &dep, &dom, &st)
 	}
 	if err != nil {
 		if err != sql.ErrNoRows {
 			log.Printf("Error resolving node %s: %v", nodeID, err)
 		}
-		return "", "", "", "" // unknown → caller auto-registers as pending
+		return "", "", "", "", "" // unknown → caller auto-registers as pending
 	}
 
 	nodeToOrg.Store(nodeID, OrgCacheEntry{
 		OrgID:        org.String,
 		DepartmentID: dep.String,
+		Domain:       dom.String,
 		Status:       st.String,
 		MergeInto:    mi.String,
 		ExpiresAt:    time.Now().Add(2 * time.Minute),
 	})
-	return org.String, dep.String, st.String, mi.String
+	return org.String, dep.String, dom.String, st.String, mi.String
 }
 
 // resolveFeed follows nodes.merge_into once: a transformer split across an
@@ -929,17 +911,17 @@ func nodeInfo(nodeID string) (orgID, depID, status, mergeInto string) {
 // Deliberately one hop and never through a missing primary: a chain, a self
 // reference or a dangling target falls back to the publishing node, so a
 // mis-set column can hide data from the fleet but can never discard it.
-func resolveFeed(nodeID string) (target, orgID, depID, status string) {
-	org, dep, st, mergeInto := nodeInfo(nodeID)
+func resolveFeed(nodeID string) (target, orgID, depID, domain, status string) {
+	org, dep, dom, st, mergeInto := nodeInfo(nodeID)
 	if mergeInto == "" || mergeInto == nodeID {
-		return nodeID, org, dep, st
+		return nodeID, org, dep, dom, st
 	}
-	pOrg, pDep, pStatus, _ := nodeInfo(mergeInto)
+	pOrg, pDep, pDom, pStatus, _ := nodeInfo(mergeInto)
 	if pOrg == "" {
 		log.Printf("merge_into target %q for node %q does not exist — keeping readings on %s", mergeInto, nodeID, nodeID)
-		return nodeID, org, dep, st
+		return nodeID, org, dep, dom, st
 	}
-	return mergeInto, pOrg, pDep, pStatus
+	return mergeInto, pOrg, pDep, pDom, pStatus
 }
 
 // domainFromProduct maps the MQTT topic's product segment to a nodes.domain enum.
@@ -1321,7 +1303,31 @@ func touchPending(nodeID string, sample []byte) {
 		nodeID, string(sample))
 }
 
-func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
+// domainDefaultRuleJSON provides an industrial baseline rule configuration
+// for any device whose specific node_id or org_id does not yet have a custom
+// row saved in the database. This guarantees telemetry is NEVER dropped without
+// active threshold evaluation.
+func domainDefaultRuleJSON(domain string) string {
+	switch strings.ToLower(domain) {
+	case "transformer", "eternity", "eternitytransformers":
+		return `{"dwellMin":1,"hysteresis":2.0,"params":[{"key":"oilTemp","label":"Top Oil Temperature","warn":85,"critical":90,"direction":"high","unit":"°C","rate":{"unit":"°C/h","warn":3}},{"key":"ambientTemp","label":"Ambient Temperature","warn":45,"critical":55,"direction":"high","unit":"°C"},{"key":"windingTemp","label":"Winding Temperature","warn":95,"critical":110,"direction":"high","unit":"°C"},{"key":"VoltAN","label":"Phase A-N Over-voltage","warn":241.5,"critical":253,"direction":"high","unit":"V"},{"key":"VoltAN","label":"Phase A-N Under-voltage","warn":218.5,"critical":207,"direction":"low","unit":"V"},{"key":"VoltBN","label":"Phase B-N Over-voltage","warn":241.5,"critical":253,"direction":"high","unit":"V"},{"key":"VoltBN","label":"Phase B-N Under-voltage","warn":218.5,"critical":207,"direction":"low","unit":"V"},{"key":"VoltCN","label":"Phase C-N Over-voltage","warn":241.5,"critical":253,"direction":"high","unit":"V"},{"key":"VoltCN","label":"Phase C-N Under-voltage","warn":218.5,"critical":207,"direction":"low","unit":"V"},{"key":"VoltUnbalanceAN","label":"Phase A Voltage Unbalance","warn":2,"critical":5,"direction":"high","unit":"%"},{"key":"VoltUnbalanceBN","label":"Phase B Voltage Unbalance","warn":2,"critical":5,"direction":"high","unit":"%"},{"key":"VoltUnbalanceCN","label":"Phase C Voltage Unbalance","warn":2,"critical":5,"direction":"high","unit":"%"},{"key":"hydrogen","label":"Hydrogen H₂ (DGA)","warn":150,"critical":300,"direction":"high","unit":"ppm","rate":{"unit":"ppm/day","warn":10}},{"key":"moisture","label":"Moisture in Oil","warn":25,"critical":35,"direction":"high","unit":"ppm"},{"key":"load","label":"Load Percentage","warn":100,"critical":115,"direction":"high","unit":"%"},{"key":"CurrentAVG","label":"Average Current","warn":800,"critical":1000,"direction":"high","unit":"A"},{"key":"PFTotal","label":"Power Factor","warn":0.85,"critical":0.75,"direction":"low","unit":"PF"},{"key":"Hz","label":"Frequency Over","warn":50.5,"critical":51,"direction":"high","unit":"Hz"},{"key":"Hz","label":"Frequency Under","warn":49.5,"critical":49,"direction":"low","unit":"Hz"}]}`
+	case "carbonnode", "carbonbox", "refrigeration", "refrigerationdatalogger":
+		return `{"dwellMin":1,"hysteresis":1.0,"params":[{"key":"tempHigh","label":"Chamber High Temperature","warn":8,"critical":10,"direction":"high","unit":"°C"},{"key":"tempLow","label":"Chamber Low Temperature","warn":2,"critical":0,"direction":"low","unit":"°C"},{"key":"door","label":"Door Open Duration","warn":5,"critical":15,"direction":"high","unit":"min"},{"key":"current","label":"Compressor Current","warn":5,"critical":10,"direction":"high","unit":"A"}]}`
+	case "bloodbox":
+		return `{"dwellMin":1,"hysteresis":0.5,"params":[{"key":"tempHigh","label":"Blood High Temperature","warn":6,"critical":8,"direction":"high","unit":"°C"},{"key":"tempLow","label":"Blood Low Temperature","warn":2,"critical":1,"direction":"low","unit":"°C"},{"key":"battery","label":"Battery SOC","warn":30,"critical":15,"direction":"low","unit":"%"},{"key":"excursion","label":"Excursion Duration","warn":10,"critical":30,"direction":"high","unit":"min"}]}`
+	case "automobile", "ev", "formula", "nat", "nat-gw":
+		return `{"dwellMin":1,"hysteresis":1.0,"params":[{"key":"fatigue_score","label":"Driver Fatigue Risk Index","warn":70,"critical":85,"direction":"high","unit":"%"},{"key":"hr_bpm","label":"Driver Heart Rate","warn":110,"critical":130,"direction":"high","unit":"BPM"},{"key":"fatigue_ratio","label":"Neural EEG Fatigue Ratio","warn":4.0,"critical":6.0,"direction":"high","unit":"ratio"},{"key":"eeg_theta","label":"EEG Theta Band Surge","warn":30,"critical":45,"direction":"high","unit":"μV"},{"key":"speed_kmh","label":"Vehicle Speed","warn":120,"critical":140,"direction":"high","unit":"km/h"},{"key":"steering_angle","label":"Steering Deviation","warn":45,"critical":60,"direction":"high","unit":"deg"},{"key":"motor_temp","label":"Inverter Motor Temp","warn":85,"critical":100,"direction":"high","unit":"°C"},{"key":"bms_soc","label":"BMS Battery SOC","warn":20,"critical":10,"direction":"low","unit":"%"}]}`
+	default:
+		return `{"dwellMin":1,"hysteresis":2.0,"params":[{"key":"oilTemp","label":"Top Oil Temperature","warn":85,"critical":90,"direction":"high","unit":"°C"},{"key":"ambientTemp","label":"Ambient Temperature","warn":45,"critical":55,"direction":"high","unit":"°C"}]}`
+	}
+}
+
+// getAlarmRule looks up the authoritative alarm rule for a device using a 3-tier
+// industrial hierarchy:
+// Tier 1: Device-specific rule from alarm_rules (tenantDB -> controlDB fallback)
+// Tier 2: Org-wide domain rule from org_domain_rules (tenantDB -> controlDB fallback)
+// Tier 3: Built-in industrial baseline schema default (domainDefaultRuleJSON)
+func getAlarmRule(tenantDB *sql.DB, nodeID, orgID, domain string) (AlarmRule, bool) {
 	if cached, ok := rulesCache.Load(nodeID); ok {
 		entry := cached.(RuleCacheEntry)
 		if time.Now().Before(entry.ExpiresAt) {
@@ -1330,64 +1336,76 @@ func getAlarmRule(tenantDB *sql.DB, nodeID string) (AlarmRule, bool) {
 	}
 
 	var r AlarmRule
-	err := tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json, debounce_json FROM alarm_rules WHERE node_id=?", nodeID).
-		Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON, &r.DebounceJSON)
-	if err != nil && strings.Contains(err.Error(), "debounce_json") {
-		// Fallback if debounce_json column is not present
-		err = tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json FROM alarm_rules WHERE node_id=?", nodeID).
-			Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON)
-	}
+	var debounce sql.NullString
+	found := false
 
-	if err != nil {
-		if err != sql.ErrNoRows {
-			// This is normal if the device has no alarm rule configured
-			// log.Printf("Error fetching alarm rule for node %s: %v", nodeID, err)
+	// Tier 1: alarm_rules by node_id
+	if tenantDB != nil {
+		err := tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json, debounce_json FROM alarm_rules WHERE node_id=?", nodeID).
+			Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON, &debounce)
+		if err == nil {
+			found = true
+		} else if strings.Contains(err.Error(), "debounce_json") {
+			if err = tenantDB.QueryRow("SELECT node_id, org_id, domain, rule_json FROM alarm_rules WHERE node_id=?", nodeID).
+				Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON); err == nil {
+				found = true
+			}
 		}
-		return AlarmRule{}, false
+	}
+	if !found && controlDB != nil && controlDB != tenantDB {
+		err := controlDB.QueryRow("SELECT node_id, org_id, domain, rule_json, debounce_json FROM alarm_rules WHERE node_id=?", nodeID).
+			Scan(&r.NodeID, &r.OrgID, &r.Domain, &r.RuleJSON, &debounce)
+		if err == nil {
+			found = true
+		}
 	}
 
+	// Tier 2: org_domain_rules fallback by org_id + domain
+	d := domain
+	if d == "" {
+		d = "transformer"
+	}
+	if !found && orgID != "" {
+		if tenantDB != nil {
+			err := tenantDB.QueryRow("SELECT rule_json, debounce_json FROM org_domain_rules WHERE org_id=? AND domain=?", orgID, d).
+				Scan(&r.RuleJSON, &debounce)
+			if err == nil {
+				r.NodeID = nodeID
+				r.OrgID = orgID
+				r.Domain = d
+				found = true
+			}
+		}
+		if !found && controlDB != nil && controlDB != tenantDB {
+			err := controlDB.QueryRow("SELECT rule_json, debounce_json FROM org_domain_rules WHERE org_id=? AND domain=?", orgID, d).
+				Scan(&r.RuleJSON, &debounce)
+			if err == nil {
+				r.NodeID = nodeID
+				r.OrgID = orgID
+				r.Domain = d
+				found = true
+			}
+		}
+	}
+
+	// Tier 3: Built-in schema baseline
+	if !found {
+		defaultJSON := domainDefaultRuleJSON(d)
+		r = AlarmRule{
+			NodeID:   nodeID,
+			OrgID:    orgID,
+			Domain:   d,
+			RuleJSON: defaultJSON,
+		}
+		found = true
+	}
+
+	r.DebounceJSON = debounce
 	rulesCache.Store(nodeID, RuleCacheEntry{
 		Rule:      r,
 		ExpiresAt: time.Now().Add(30 * time.Second),
 	})
 	return r, true
-}
-
-func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
-	if cached, ok := personalRulesCache.Load(nodeID); ok {
-		entry := cached.(PersonalRulesCacheEntry)
-		if time.Now().Before(entry.ExpiresAt) {
-			return entry.Rules
-		}
-	}
-
-	var rows *sql.Rows
-	var err error
-	if tenantDB != nil {
-		rows, err = tenantDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
-	}
-	if (err != nil || rows == nil) && controlDB != nil && controlDB != tenantDB {
-		rows, err = controlDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
-	}
-	if err != nil || rows == nil {
-		return nil
-	}
-	defer rows.Close()
-
-	var out []PersonalRule
-	for rows.Next() {
-		var pr PersonalRule
-		if err := rows.Scan(&pr.UserID, &pr.Domain, &pr.RuleJSON); err != nil {
-			continue
-		}
-		out = append(out, pr)
-	}
-
-	personalRulesCache.Store(nodeID, PersonalRulesCacheEntry{
-		Rules:     out,
-		ExpiresAt: time.Now().Add(5 * time.Second),
-	})
-	return out
 }
 
 // rateWindow reads the time base a rate-of-rise alarm declares in its own unit
@@ -1601,7 +1619,7 @@ func evaluateParams(ns *AlarmNodeState, ruleDef RuleDefinition, debounceMap map[
 
 		dwellMin := ruleDef.DwellMin
 		if dwellMin <= 0 {
-			dwellMin = 3 // default
+			dwellMin = 1 // default to 1 for responsive real-time alerting
 		}
 		cooldownS := 0
 		if dbOpt, ok := debounceMap[p.Key]; ok {
@@ -1662,36 +1680,6 @@ func evaluateAlarms(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t
 	})
 }
 
-// evaluatePersonalAlarms runs every user's own personal rule for this node
-// against the same telemetry frame the shared rule just saw — independently:
-// no alarm_events row, no shared-state interaction, delivered on a separate
-// MQTT topic Node-RED's notify path never mixes into the org/department
-// broadcast. Opt-in and normally a no-op (getPersonalRules returns nil for
-// the common case of zero personal rules on this node).
-func evaluatePersonalAlarms(client mqtt.Client, orgID string, t TelemetryPayload, ts time.Time, rules []PersonalRule) {
-	for _, pr := range rules {
-		var ruleDef RuleDefinition
-		if err := json.Unmarshal([]byte(pr.RuleJSON), &ruleDef); err != nil {
-			log.Printf("Failed to unmarshal personal rule JSON for node %s user %s: %v", t.NodeID, pr.UserID, err)
-			continue
-		}
-		if ruleDef.DwellMin <= 0 {
-			ruleDef.DwellMin = 1
-		}
-
-		stateKey := pr.UserID + "\x1f" + t.NodeID
-		stateVal, _ := personalAlarmStateCache.LoadOrStore(stateKey, &AlarmNodeState{
-			Params: make(map[string]*AlarmParamState),
-		})
-		ns := stateVal.(*AlarmNodeState)
-
-		userID := pr.UserID
-		domain := pr.Domain
-		evaluateParams(ns, ruleDef, map[string]ParamDebounce{}, t, ts, func(p RuleParam, sev, kind string, val, thresh float64) {
-			emitPersonalAlarm(client, orgID, userID, t, ts, p, sev, kind, val, thresh, domain)
-		})
-	}
-}
 
 func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64, domain string) {
 	// Deterministic id (matches Node-RED) → INSERT IGNORE is idempotent.
@@ -1744,41 +1732,6 @@ func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t Tele
 	client.Publish(fmt.Sprintf("internal/alarms/live/%s/%s", dispOrg, t.NodeID), 0, false, evBytes)
 }
 
-// emitPersonalAlarm publishes ONE user's own breach — no alarm_events INSERT
-// (a personal threshold must never appear anywhere admins/everyone else
-// sees), and a topic distinct from internal/alarms/live so Node-RED's
-// org/department storm-batch and broadcast never mix a personal breach into
-// the shared alarm feed. personalUserId is who this is for; Node-RED's
-// notifyPersonal reads it, looks up that one user's own Delivery Channels
-// (user_prefs.alertChannels[nodeId] — the same toggle MyAlertSettings
-// Section 1 already writes), and sends only to them.
-func emitPersonalAlarm(client mqtt.Client, orgID, userID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64, domain string) {
-	id := fmt.Sprintf("pev-%s-%s-%s-%d-%s", userID, t.NodeID, p.Key, ts.UnixMilli(), kind)
-
-	ev := map[string]interface{}{
-		"id":             id,
-		"nodeId":         t.NodeID,
-		"orgId":          orgID,
-		"personalUserId": userID,
-		"paramKey":       p.Key,
-		"paramLabel":     p.Label,
-		"severity":       sev,
-		"kind":           kind,
-		"value":          val,
-		"threshold":      thresh,
-		"unit":           p.Unit,
-		"ts":             ts.UnixMilli(),
-		"domain":         domain,
-	}
-
-	evBytes, _ := json.Marshal(ev)
-
-	dispOrg := orgID
-	if dispOrg == "" {
-		dispOrg = "default"
-	}
-	client.Publish(fmt.Sprintf("internal/alarms/personal/%s/%s/%s", dispOrg, t.NodeID, userID), 0, false, evBytes)
-}
 
 func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	lastTelemetryUnix.Store(time.Now().Unix())
@@ -1836,7 +1789,7 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 		//     device. nodeInfo is cached (2 min), so this costs no query on the
 		//     hot path once warm.
 		if baseClaimed != "" && baseClaimed == t.NodeID {
-			if topicOrg, _, _, _ := nodeInfo(claimed); topicOrg != "" {
+			if topicOrg, _, _, _, _ := nodeInfo(claimed); topicOrg != "" {
 				statIdentityRejected.Add(1)
 				log.Printf("Identity REJECTED: topic %q is a registered node in org %s and may not publish as %q",
 					claimed, topicOrg, t.NodeID)
@@ -1875,7 +1828,7 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	// power meter keeps reporting is a link-loss event on the same device, not a
 	// second device disappearing.
 	feedID := t.NodeID
-	target, orgID, depID, status := resolveFeed(t.NodeID)
+	target, orgID, depID, domain, status := resolveFeed(t.NodeID)
 	t.NodeID = target
 
 	// Always record presence (every frame means the device is online)
@@ -2080,16 +2033,9 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	}
 	client.Publish(fmt.Sprintf("internal/telemetry/live/%s/%s", dispOrg, t.NodeID), 0, false, enrichedBytes)
 
-	rule, ok := getAlarmRule(tenantDB, t.NodeID)
+	rule, ok := getAlarmRule(tenantDB, t.NodeID, orgID, domain)
 	if ok {
 		evaluateAlarms(tenantDB, client, orgID, depID, t, ts, rule)
-	}
-
-	// Independent of the shared rule above (and unconditional on `ok`): a
-	// personal threshold can exist whether or not this node has an org-wide
-	// rule configured at all.
-	if personalRules := getPersonalRules(tenantDB, t.NodeID); len(personalRules) > 0 {
-		evaluatePersonalAlarms(client, orgID, t, ts, personalRules)
 	}
 }
 
