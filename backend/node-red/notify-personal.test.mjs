@@ -182,4 +182,53 @@ const fn = flows.find(n => n.id === 'notifypersonal').func
   console.log('PASS - Case 3: the same channels do fire on a genuine CRITICAL')
 }
 
+// Test Case 4: Default fallback when alertChannels[nodeId] is not yet customized in user_prefs,
+// and platform fallback for Google Chat & Telegram credentials.
+{
+  const posts = [], mails = []
+  const userFresh = [
+    { id: 'u-4', email: 'fresh-user@example.com', role: 'viewer', prefs: JSON.stringify({}) }
+  ]
+  const pool = { query: async (sql) => {
+    if (sql.includes('FROM users u LEFT JOIN user_prefs')) return [userFresh]
+    if (sql.includes('FROM notification_channels WHERE user_id=?')) return [[]]
+    return [[]]
+  }}
+  const globalCtx = { get: (k) => ({
+    pool: pool,
+    resolvePool: () => pool,
+    mailConfig: async () => ({ from: 'noreply@x', transport: { sendMail: async (m) => { mails.push(m) } } }),
+    notifyConfig: async () => ({
+      telegramToken: 'PLAT_BOT_TOKEN',
+      telegramChatId: 'PLAT_CHAT_ID',
+      googleChatWebhook: 'https://chat.googleapis.com/v1/spaces/platform_space'
+    }),
+  }[k]) }
+  const node = { warn: () => {}, error: (m) => console.log('  ERROR:', m) }
+  const fetchMock = async (url, opt) => { posts.push({ url, body: opt?.body }); return { ok: true } }
+
+  const msg = { payload: [{
+    nodeId: 'tr-001', orgId: 'org-1', personalUserId: 'u-4', paramKey: 'oilTemp',
+    paramLabel: 'Oil Temperature', value: 92, unit: '°C', threshold: 85, severity: 'WARNING', time: new Date(0).toISOString()
+  }]}
+
+  new Function('env', 'node', 'global', 'msg', 'fetch', fn)({ get: () => '' }, node, globalCtx, msg, fetchMock)
+  await new Promise(r => setTimeout(r, 200))
+
+  if (!mails.some(m => m.to === 'fresh-user@example.com')) {
+    console.error('FAIL - Case 4: Fresh user with undefined alertChannels did not receive Email by default')
+    process.exit(1)
+  }
+  if (!posts.some(p => p.url === 'https://chat.googleapis.com/v1/spaces/platform_space')) {
+    console.error('FAIL - Case 4: Personal alarm did not fall back to platform Google Chat webhook')
+    process.exit(1)
+  }
+  if (!posts.some(p => p.url.includes('/botPLAT_BOT_TOKEN/sendMessage') && String(p.body).includes('"chat_id":"PLAT_CHAT_ID"'))) {
+    console.error('FAIL - Case 4: Personal alarm did not fall back to platform Telegram credentials')
+    process.exit(1)
+  }
+  console.log('PASS - Case 4: Fresh user defaults & platform credentials fallback work cleanly')
+}
+
 console.log('All Personal Alarm coverage tests (Email, Telegram, LINE, Google Chat) passed!')
+

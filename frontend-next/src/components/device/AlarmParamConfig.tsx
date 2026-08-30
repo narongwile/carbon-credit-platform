@@ -9,6 +9,7 @@ import { api, isLive, useIsLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import type { SensorDomain } from '@/types/fleet'
 import type { NodeAlarmRule, ParamRule } from '@/server/alarmEngine'
+import { getSession } from '@/lib/auth'
 import {
   ArrowUp, ArrowDown, TrendingUp, Timer, Activity, Save, Plus, Trash2,
   Search, Sliders, SlidersHorizontal, Check, AlertTriangle, RefreshCw, X, ShieldAlert,
@@ -1060,6 +1061,23 @@ export default function AlarmParamConfig({
       if (isLive()) {
         const r = await api.putMyNodeRule(nodeId, { rule })
         if (!r) { toast.error('Could not save your personal alarm thresholds'); return }
+        try {
+          const s = getSession()
+          if (s?.id) {
+            const cfg = await api.getMyConfig(s.id)
+            const p = (cfg?.prefs ?? {}) as Record<string, unknown>
+            const currentChannels = (p.alertChannels ?? {}) as Record<string, unknown>
+            if (!currentChannels[nodeId]) {
+              currentChannels[nodeId] = {
+                email: true,
+                telegram: !!(p.telegramBotApi || p.telegramChatId),
+                line: !!(p.lineMsgApi || p.lineUserId),
+                googlechat: !!(p.googleChatApi || p.googleChatWebhook)
+              }
+              await api.putMyConfig(s.id, { ...p, alertChannels: currentChannels })
+            }
+          }
+        } catch (_) {}
       }
       toast.success('Your personal alarm thresholds are saved')
       return

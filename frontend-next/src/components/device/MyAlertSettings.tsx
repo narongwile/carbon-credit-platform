@@ -17,7 +17,7 @@ import AdminBulkApplyAlarmEditor from '@/components/device/AdminBulkApplyAlarmEd
 import type { SensorDomain } from '@/types/fleet'
 import {
   Bell, Save, Loader2, ToggleLeft, ToggleRight, AlertTriangle,
-  Sliders, ChevronDown, ChevronUp
+  Sliders, ChevronDown, ChevronUp, Send
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -51,6 +51,7 @@ export default function MyAlertSettings({
   const [showPersonalThresholds, setShowPersonalThresholds] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [testing, setTesting] = useState(false)
 
   useEffect(() => {
     if (!apiEnabled || !session?.id) return
@@ -93,6 +94,40 @@ export default function MyAlertSettings({
       toast.error('Could not save your alert settings')
     } finally {
       setSaving(false)
+    }
+  }, [session?.id, prefs, enabled, nodeId])
+
+  const sendTest = useCallback(async () => {
+    if (!session?.id) { toast.error('Sign in to test alerts'); return }
+    setTesting(true)
+    try {
+      // Auto-save delivery channels first so backend has latest preferences
+      const current = prefs ?? ((await api.getMyConfig(session.id))?.prefs ?? {}) as Record<string, unknown>
+      const perNodeChannels = { ...((current.alertChannels ?? {}) as Record<string, unknown>), [nodeId]: enabled }
+      const next = { ...current, alertChannels: perNodeChannels }
+      await api.putMyConfig(session.id, next)
+      setPrefs(next)
+
+      const res = await api.testMyPersonalAlert(nodeId)
+      if (res?.ok) {
+        const sentChannels = Object.keys(res.sent || {}).filter(k => res.sent[k])
+        if (sentChannels.length > 0) {
+          toast.success(`🔔 Test alert sent to: ${sentChannels.join(', ')}`)
+        } else {
+          const errList = Object.entries(res.errors || {}).map(([k, v]) => `${k}: ${v}`)
+          if (errList.length > 0) {
+            toast.error(`Delivery failed: ${errList.join('; ')}`, { duration: 6000 })
+          } else {
+            toast.error('No channels enabled or configured for test alert')
+          }
+        }
+      } else {
+        toast.error('Failed to send test alert')
+      }
+    } catch (e: any) {
+      toast.error(`Test alert error: ${e?.message || 'Unknown'}`)
+    } finally {
+      setTesting(false)
     }
   }, [session?.id, prefs, enabled, nodeId])
 
@@ -160,15 +195,28 @@ export default function MyAlertSettings({
         </p>
       )}
 
-      <button
-        onClick={save}
-        disabled={saving || !live}
-        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 transition-all shadow-md"
-        style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}
-      >
-        {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-        {saved ? 'Settings Saved!' : saving ? 'Saving…' : 'Save My Alert Preferences'}
-      </button>
+      <div className="flex flex-col sm:flex-row items-center gap-2">
+        <button
+          onClick={save}
+          disabled={saving || !live}
+          className="w-full flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-white disabled:opacity-50 transition-all shadow-md"
+          style={saved ? { background: 'rgba(74,222,128,0.2)', color: '#4ade80' } : gradient}
+        >
+          {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          {saved ? 'Settings Saved!' : saving ? 'Saving…' : 'Save My Alert Preferences'}
+        </button>
+
+        <button
+          type="button"
+          onClick={sendTest}
+          disabled={testing || !live}
+          className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-xs font-semibold text-indigo-300 hover:text-white bg-slate-900 border border-indigo-500/40 hover:border-indigo-500 hover:bg-indigo-950/40 disabled:opacity-50 transition-all shadow-md whitespace-nowrap"
+          title="Send an immediate test alert to your enabled delivery channels to verify reception"
+        >
+          {testing ? <Loader2 size={14} className="animate-spin text-indigo-400" /> : <Send size={14} className="text-indigo-400" />}
+          {testing ? 'Sending Test…' : 'Send Test Alert'}
+        </button>
+      </div>
 
       {/* Section 2: My Personal Alarm Thresholds — independent of the shared
           device rule (below, admin-only): this notifies only the signed-in

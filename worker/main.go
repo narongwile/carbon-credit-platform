@@ -238,6 +238,7 @@ type RuleParam struct {
 	Critical  float64 `json:"critical"`
 	Direction string  `json:"direction"`
 	Unit      string  `json:"unit"`
+	Enabled   *bool   `json:"enabled,omitempty"`
 	Rate      *struct {
 		// Unit carries the rate's own time base ('ppm/day', '°C/h') and was
 		// previously dropped during unmarshal — leaving the worker with a
@@ -1517,6 +1518,9 @@ func evaluateParams(ns *AlarmNodeState, ruleDef RuleDefinition, debounceMap map[
 	defer ns.Mu.Unlock()
 
 	for _, p := range ruleDef.Params {
+		if p.Enabled != nil && !*p.Enabled {
+			continue
+		}
 		val, exists := t.Values[p.Key]
 		if !exists {
 			continue
