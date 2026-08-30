@@ -130,5 +130,66 @@ for (const [label, nodeId, re] of paths) {
   }
 }
 
+// ── Every base-URL builder in the flow, not just the ones named above ─────
+// The three checks above name their subject nodes explicitly. That is how the
+// bug came back: commit f83c4a64 added POST /api/nodes/:id/personal-rule/test
+// with a FOURTH, private copy of the builder carrying the original pre-fix
+// logic (strip 'org-', alias org-1 -> 'eternity', replace hostParts[0] when the
+// host has >= 4 labels). All 56 assertions above still passed, because that
+// handler was not on the list.
+//
+// So this section discovers the builders instead of naming them: it walks every
+// handler body, extracts anything shaped like a base-URL builder by brace
+// matching, and runs the SAME contract against each. A fifth copy is covered
+// the moment it is written.
+{
+  // Pull `const <name> = (arg) => { ... }` out of a body by matching braces,
+  // so indentation and spacing style don't matter.
+  const extract = (src) => {
+    const out = []
+    const re = /const\s+(__build\w*BaseUrl)\s*=\s*\(\s*(\w+)\s*\)\s*=>\s*\{/g
+    let m
+    while ((m = re.exec(src))) {
+      let depth = 1
+      let i = re.lastIndex
+      for (; i < src.length && depth > 0; i++) {
+        if (src[i] === '{') depth++
+        else if (src[i] === '}') depth--
+      }
+      if (depth === 0) out.push([m[1], src.slice(m.index, i)])
+    }
+    return out
+  }
+
+  const found = []
+  for (const n of flows) {
+    if (typeof n.func !== 'string') continue
+    for (const [name, body] of extract(n.func)) found.push([n.id, name, body])
+  }
+
+  // If this drops to the count at the time of writing without a deliberate
+  // change, a delivery path lost its org scoping rather than gained one.
+  t(`discovered every base-URL builder in the flow`, found.length >= 3,
+    `${found.length} builder(s): ${found.map(([id, nm]) => `${id}/${nm}`).join(', ')}`)
+
+  for (const [nodeId, name, body] of found) {
+    for (const [envLabel, base, rootHost] of ENVS) {
+      const env = { get: (k) => (k === 'APP_BASE_URL' ? base : undefined) }
+      let build
+      try {
+        build = new Function('env', `${body}; return ${name};`)(env)
+      } catch (err) {
+        t(`${nodeId}/${name}: builder is evaluable`, false, err.message)
+        continue
+      }
+      for (const org of ['org-eternity', 'org-1', 'org-2']) {
+        const host = new URL(build(org)).hostname
+        t(`${nodeId}/${name} · ${envLabel} · ${org}: host is <orgId>.${rootHost}`,
+          host === `${org}.${rootHost}`, `got ${host}`)
+      }
+    }
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)

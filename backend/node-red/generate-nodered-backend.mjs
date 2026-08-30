@@ -3123,20 +3123,28 @@ if(!uid) return __err(401,'authentication required');
   else if(domain==='automobile') path=viewer?'/customer/automobile/detail/':'/admin/automobile/detail/';
   else path=viewer?'/customer/devices/detail/':'/admin/nodes/detail/';
 
+  // Same contract as notify's __buildBaseUrl / notifyPersonal's
+  // __buildPersonalBaseUrl: orgId VERBATIM, prepended to the iiotplatform ROOT
+  // host. This handler originally shipped its own copy of the pre-fix builder
+  // (strip 'org-', alias org-1 -> 'eternity', replace hostParts[0] when the
+  // host has >= 4 labels) — which is exactly the logic that produced dead
+  // https://<x>.27.254.143.144.nip.io links on UAT and 403-on-your-own-org
+  // links on production. A test button that sends a DIFFERENT link from the one
+  // real alarms send cannot verify anything, so it must not diverge again.
   const __buildPersonalBaseUrl=(org)=>{
-    let sub=String(org||'').trim();
-    if(sub.toLowerCase().startsWith('org-')) sub=sub.slice(4);
-    if(!sub||sub==='1') sub='eternity';
-    const customBase=env.get('APP_BASE_URL')||env.get('FRONTEND_URL')||'';
+    const sub=String(org||'').trim();
+    const customBase=env.get('APP_BASE_URL')||env.get('FRONTEND_URL')||env.get('CORS_ORIGIN')||'';
     if(customBase&&customBase!=='*'){
       try{
         const url=new URL(customBase);
-        const hostParts=url.hostname.split('.');
-        if(hostParts.length>=4&&!hostParts[0].includes('localhost')&&!/^\\d+$/.test(hostParts[0])){
-          if(hostParts[0]!==sub){ hostParts[0]=sub; url.hostname=hostParts.join('.'); }
-        } else if(!url.hostname.startsWith(sub+'.')){ url.hostname=sub+'.'+url.hostname; }
-        return url.origin.replace(/\\/+$/,'');
-      }catch(_){ return customBase.replace(/\\/+$/,''); }
+        if(sub){
+          let host=url.hostname;
+          const i=host.indexOf('.iiotplatform.');
+          if(i>0) host=host.slice(i+1);
+          url.hostname=sub+'.'+host;
+        }
+        return url.origin.replace(new RegExp('/+$'),'');
+      }catch(_){ return customBase.replace(new RegExp('/+$'),''); }
     }
     return 'http://'+sub+'.iiotplatform.27.254.143.144.nip.io:30080';
   };
