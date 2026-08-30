@@ -223,3 +223,21 @@ patches:
                         name: uat-notify
                         key: google-chat-webhook
                         optional: true
+  - target:
+      kind: Deployment
+      name: ingest-worker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ingest-worker
+      spec:
+        template:
+          spec:
+            containers:
+              - name: worker
+                env:
+                  - name: MQTT_BROKER
+                    value: "tcp://emqx.iiot-uat.svc.cluster.local:1883"
+                  - name: DB_HOST
+                    value: "mysql.iiot-uat.svc.cluster.local"
