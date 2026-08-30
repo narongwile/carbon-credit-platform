@@ -352,9 +352,11 @@ func checkPhysicalSlew(nodeID, key string, val float64, ts time.Time) (bool, flo
 }
 
 var (
-	rulesCache      sync.Map // string (nodeId) -> RuleCacheEntry
-	alarmStateCache sync.Map // string (nodeId) -> *AlarmNodeState
-	orgExistsCache  sync.Map // string (orgId) -> orgExistEntry
+	rulesCache              sync.Map // string (nodeId) -> RuleCacheEntry
+	alarmStateCache         sync.Map // string (nodeId) -> *AlarmNodeState
+	personalRulesCache      sync.Map // string (nodeId) -> PersonalRulesCacheEntry
+	personalAlarmStateCache sync.Map // string (userId+"\x1f"+nodeId) -> *AlarmNodeState
+	orgExistsCache          sync.Map // string (orgId) -> orgExistEntry
 
 	// Regex for DB name sanitization
 	nonAlphanumericRegex = regexp.MustCompile(`[^a-zA-Z0-9]+`)
@@ -404,6 +406,17 @@ var lastReadingRetryAt atomic.Int64
 
 type RuleCacheEntry struct {
 	Rule      AlarmRule
+	ExpiresAt time.Time
+}
+
+type PersonalRule struct {
+	UserID   string
+	Domain   string
+	RuleJSON string
+}
+
+type PersonalRulesCacheEntry struct {
+	Rules     []PersonalRule
 	ExpiresAt time.Time
 }
 
@@ -1408,6 +1421,45 @@ func getAlarmRule(tenantDB *sql.DB, nodeID, orgID, domain string) (AlarmRule, bo
 	return r, true
 }
 
+// getPersonalRules returns every user's personal rule for this node.
+// Checks controlDB (where user_node_rules is created by migrate-v53) with fallback to tenantDB.
+func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
+	if cached, ok := personalRulesCache.Load(nodeID); ok {
+		entry := cached.(PersonalRulesCacheEntry)
+		if time.Now().Before(entry.ExpiresAt) {
+			return entry.Rules
+		}
+	}
+
+	var rows *sql.Rows
+	var err error
+	if controlDB != nil {
+		rows, err = controlDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
+	}
+	if (err != nil || rows == nil) && tenantDB != nil && tenantDB != controlDB {
+		rows, err = tenantDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
+	}
+	if err != nil || rows == nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []PersonalRule
+	for rows.Next() {
+		var pr PersonalRule
+		if err := rows.Scan(&pr.UserID, &pr.Domain, &pr.RuleJSON); err != nil {
+			continue
+		}
+		out = append(out, pr)
+	}
+
+	personalRulesCache.Store(nodeID, PersonalRulesCacheEntry{
+		Rules:     out,
+		ExpiresAt: time.Now().Add(10 * time.Second),
+	})
+	return out
+}
+
 // rateWindow reads the time base a rate-of-rise alarm declares in its own unit
 // string ('ppm/day' for DGA gassing, '°C/h' for thermal). Returns 0 when the
 // unit carries no interpretable denominator, in which case the caller SKIPS the
@@ -1732,6 +1784,60 @@ func emitAlarm(tenantDB *sql.DB, client mqtt.Client, orgID, depID string, t Tele
 	client.Publish(fmt.Sprintf("internal/alarms/live/%s/%s", dispOrg, t.NodeID), 0, false, evBytes)
 }
 
+// evaluatePersonalAlarms runs every user's personal rule for this node against the telemetry frame.
+func evaluatePersonalAlarms(client mqtt.Client, orgID string, t TelemetryPayload, ts time.Time, rules []PersonalRule) {
+	for _, pr := range rules {
+		var ruleDef RuleDefinition
+		if err := json.Unmarshal([]byte(pr.RuleJSON), &ruleDef); err != nil {
+			log.Printf("Failed to unmarshal personal rule JSON for node %s user %s: %v", t.NodeID, pr.UserID, err)
+			continue
+		}
+		if ruleDef.DwellMin <= 0 {
+			ruleDef.DwellMin = 1
+		}
+
+		stateKey := pr.UserID + "\x1f" + t.NodeID
+		stateVal, _ := personalAlarmStateCache.LoadOrStore(stateKey, &AlarmNodeState{
+			Params: make(map[string]*AlarmParamState),
+		})
+		ns := stateVal.(*AlarmNodeState)
+
+		userID := pr.UserID
+		domain := pr.Domain
+		evaluateParams(ns, ruleDef, map[string]ParamDebounce{}, t, ts, func(p RuleParam, sev, kind string, val, thresh float64) {
+			emitPersonalAlarm(client, orgID, userID, t, ts, p, sev, kind, val, thresh, domain)
+		})
+	}
+}
+
+func emitPersonalAlarm(client mqtt.Client, orgID, userID string, t TelemetryPayload, ts time.Time, p RuleParam, sev, kind string, val, thresh float64, domain string) {
+	id := fmt.Sprintf("pev-%s-%s-%s-%d-%s", userID, t.NodeID, p.Key, ts.UnixMilli(), kind)
+
+	ev := map[string]interface{}{
+		"id":             id,
+		"nodeId":         t.NodeID,
+		"orgId":          orgID,
+		"personalUserId": userID,
+		"paramKey":       p.Key,
+		"paramLabel":     p.Label,
+		"severity":       sev,
+		"kind":           kind,
+		"value":          val,
+		"threshold":      thresh,
+		"unit":           p.Unit,
+		"ts":             ts.UnixMilli(),
+		"domain":         domain,
+	}
+
+	evBytes, _ := json.Marshal(ev)
+
+	dispOrg := orgID
+	if dispOrg == "" {
+		dispOrg = "default"
+	}
+	client.Publish(fmt.Sprintf("internal/alarms/personal/%s/%s/%s", dispOrg, t.NodeID, userID), 0, false, evBytes)
+}
+
 
 func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	lastTelemetryUnix.Store(time.Now().Unix())
@@ -2036,6 +2142,10 @@ func handleTelemetry(client mqtt.Client, msg mqtt.Message) {
 	rule, ok := getAlarmRule(tenantDB, t.NodeID, orgID, domain)
 	if ok {
 		evaluateAlarms(tenantDB, client, orgID, depID, t, ts, rule)
+	}
+
+	if personalRules := getPersonalRules(tenantDB, t.NodeID); len(personalRules) > 0 {
+		evaluatePersonalAlarms(client, orgID, t, ts, personalRules)
 	}
 }
 

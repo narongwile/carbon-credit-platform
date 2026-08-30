@@ -452,8 +452,8 @@ extraDeploy:
 
         %% Internal services
         {allow, {user, "backend"}, all, ["app/#", "$SYS/#", "internal/#", "telemetry/#"]}.
-        {allow, {user, "nodered"}, all, ["app/#", "iot/#", "transformers/#", "telemetry/#"]}.
-        {allow, {user, "ingest"}, all, ["telemetry/#", "transformers/#", "sensors/#", "$share/ingest-worker/#"]}.
+        {allow, {user, "nodered"}, all, ["app/#", "iot/#", "internal/#", "transformers/#", "telemetry/#"]}.
+        {allow, {user, "ingest"}, all, ["#"]}.
 
         %% Devices — scoped by clientid.
         %%
