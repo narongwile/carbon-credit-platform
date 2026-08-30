@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS notification_channels (
   org_id      VARCHAR(64) NOT NULL,
   department_id VARCHAR(64),
   user_id     VARCHAR(64),
-  channel     ENUM('email','line','telegram','googlechat') NOT NULL,
+  channel     VARCHAR(32) NOT NULL,
   target      VARCHAR(255),
   min_severity ENUM('WARNING','CRITICAL') DEFAULT 'WARNING',
   enabled     TINYINT(1) DEFAULT 1,

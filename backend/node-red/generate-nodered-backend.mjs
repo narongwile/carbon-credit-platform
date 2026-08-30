@@ -5366,11 +5366,13 @@ const fetchAll=(msg.req.query&&String(msg.req.query.all)==='true');
               ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId,dept]))[0]
               : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id,user_id FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY channel",[orgId]))[0]));
   } catch(e) {
-    r = fetchAll
-      ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? ORDER BY channel",[orgId]))[0]
-      : (dept
-          ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id=? ORDER BY channel",[orgId,dept]))[0]
-          : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id IS NULL ORDER BY channel",[orgId]))[0]);
+    try {
+      r = fetchAll
+        ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? ORDER BY channel",[orgId]))[0]
+        : (dept
+            ? (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id=? ORDER BY channel",[orgId,dept]))[0]
+            : (await pool.query("SELECT id,channel,target,min_severity,enabled,department_id FROM notification_channels WHERE org_id=? AND department_id IS NULL ORDER BY channel",[orgId]))[0]);
+    } catch(_) { r = []; }
   }
   msg.headers=__CORS; msg.payload=r; node.send(msg);
 })()` + bbErr
@@ -5391,54 +5393,64 @@ const uid=(b.userId===''||b.userId===undefined||b.userId===null)?null:String(b.u
     const[u]=await global.get('pool').query("SELECT id FROM users WHERE id=? AND org_id=?",[uid,orgId]);
     if(!u.length){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'user is not in this organization'};node.send(msg);return;}
   }
-  if(uid){
+
+  const ensureTable = async (p) => {
     try {
-      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND user_id=?",[orgId,uid]);
+      await p.query("CREATE TABLE IF NOT EXISTS notification_channels (id BIGINT AUTO_INCREMENT PRIMARY KEY, org_id VARCHAR(64) NOT NULL, department_id VARCHAR(64), user_id VARCHAR(64), channel VARCHAR(32) NOT NULL, target VARCHAR(512), min_severity ENUM('WARNING','CRITICAL') DEFAULT 'WARNING', enabled TINYINT(1) DEFAULT 1, INDEX (org_id), INDEX (org_id, department_id), INDEX (org_id, user_id))");
+    } catch(_) {}
+    try { await p.query("ALTER TABLE notification_channels MODIFY COLUMN channel VARCHAR(32) NOT NULL"); } catch(_) {}
+    try { await p.query("ALTER TABLE notification_channels MODIFY COLUMN target VARCHAR(512) NULL"); } catch(_) {}
+    try { await p.query("ALTER TABLE notification_channels ADD COLUMN user_id VARCHAR(64) NULL AFTER department_id"); } catch(_) {}
+  };
+  await ensureTable(pool);
+
+  const doSave = async (p) => {
+    if(uid){
+      await p.query("DELETE FROM notification_channels WHERE org_id=? AND user_id=?",[orgId,uid]);
       for(const c of list){
-        await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+        await p.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
           [orgId, null, uid, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
       }
-    } catch(e) {
-      if(String(e&&e.message||'').indexOf('user_id')>=0){
-        await pool.query("ALTER TABLE notification_channels ADD COLUMN user_id VARCHAR(64) NULL AFTER department_id");
-        await pool.query("DELETE FROM notification_channels WHERE org_id=? AND user_id=?",[orgId,uid]);
-        for(const c of list){
-          await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
-            [orgId, null, uid, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+    } else if(dept){
+      try {
+        await p.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='')",[orgId,dept]);
+      } catch(e){
+        await p.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=?",[orgId,dept]);
+      }
+      for(const c of list){
+        try {
+          await p.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+            [orgId, dept, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+        } catch(e){
+          await p.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
+            [orgId, dept, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
         }
-      } else throw e;
-    }
-  } else if(dept){
-    try {
-      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=? AND (user_id IS NULL OR user_id='')",[orgId,dept]);
-    } catch(e){
-      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id=?",[orgId,dept]);
-    }
-    for(const c of list){
+      }
+    } else {
       try {
-        await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
-          [orgId, dept, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+        await p.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='')",[orgId]);
       } catch(e){
-        await pool.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
-          [orgId, dept, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+        await p.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL",[orgId]);
+      }
+      for(const c of list){
+        try {
+          await p.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
+            [orgId, null, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+        } catch(e){
+          await p.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
+            [orgId, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
+        }
       }
     }
-  } else {
-    try {
-      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL AND (user_id IS NULL OR user_id='')",[orgId]);
-    } catch(e){
-      await pool.query("DELETE FROM notification_channels WHERE org_id=? AND department_id IS NULL",[orgId]);
-    }
-    for(const c of list){
-      try {
-        await pool.query("INSERT INTO notification_channels (org_id,department_id,user_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?,?)",
-          [orgId, null, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
-      } catch(e){
-        await pool.query("INSERT INTO notification_channels (org_id,department_id,channel,target,min_severity,enabled) VALUES (?,?,?,?,?,?)",
-          [orgId, null, String(c.channel||c.id), c.target||null, (c.minSeverity||c.min_severity)==='CRITICAL'?'CRITICAL':'WARNING', c.enabled===false?0:1]);
-      }
-    }
+  };
+
+  try {
+    await doSave(pool);
+  } catch(err) {
+    await ensureTable(pool);
+    await doSave(pool);
   }
+
   msg.headers=__CORS; msg.payload={ok:true,count:list.length,departmentId:dept,userId:uid}; node.send(msg);
 })()` + bbErr
 

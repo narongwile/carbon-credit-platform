@@ -82,11 +82,12 @@ interface RawChannelRow {
 export default function AlarmNotificationPage() {
   const live = useIsLive()
   const { selectedOrgId, orgNames } = useAppStore()
-  const orgId = selectedOrgId || 'org-1'
-  const orgName = orgNames[orgId] || 'ETERNITY'
-  const { devices } = useManagedDevices(orgId)
   const role = useSessionRole()
   const isSuperadmin = role === 'superadmin'
+  const sessionUser = getSession()
+  const orgId = (isSuperadmin ? selectedOrgId : (sessionUser?.orgId || selectedOrgId)) || 'org-1'
+  const orgName = orgNames[orgId] || 'ETERNITY'
+  const { devices } = useManagedDevices(orgId)
 
   const [chimeTargetOrgId, setChimeTargetOrgId] = useState<string>(orgId)
   useEffect(() => {
@@ -342,7 +343,8 @@ export default function AlarmNotificationPage() {
       toast.success('Notification preferences saved (demo — not persisted)')
       return
     }
-    const res = await api.putOrgChannels(orgId, orgChannels)
+    const targetOrgId = (isSuperadmin ? orgId : (user.orgId || orgId)) || 'org-1'
+    const res = await api.putOrgChannels(targetOrgId, orgChannels)
     if (!res) { toast.error('Could not save organization fallback channels'); return }
     setOrgSaved(true)
     toast.success('Organization-wide notification fallback saved successfully!')
