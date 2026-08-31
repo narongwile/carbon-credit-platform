@@ -631,11 +631,10 @@ export default function AlarmParamConfig({
   const reportedKeys = useMemo(() => {
     if (!nodeId) return null
     const s = new Set<string>(Object.keys(liveReadings))
-    discoveredWireKeys.forEach((k) => s.add(k))
     const dev = devices.find((d) => d.id === nodeId) as { lastSample?: Record<string, unknown> } | undefined
     if (dev?.lastSample) for (const k of Object.keys(dev.lastSample)) s.add(k)
     return s
-  }, [nodeId, liveReadings, discoveredWireKeys, devices])
+  }, [nodeId, liveReadings, devices])
 
   const allParams: ExtendedAlarmParam[] = useMemo(() => {
     const map = new Map<string, ExtendedAlarmParam>()

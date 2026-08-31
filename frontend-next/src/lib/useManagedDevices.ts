@@ -108,9 +108,13 @@ export function useManagedDevices(orgId: string, domain?: string): Roster {
     if (!live || !orgId) { setNodes(null); setLoaded(true); return }
     let cancelled = false
     setLoaded(false)
-    fetchFleetWithRetry(orgId, domain)
-      .then((rows) => { if (!cancelled) { setNodes(rows); setLoaded(true) } })
-    return () => { cancelled = true }
+    const load = () => {
+      fetchFleetWithRetry(orgId, domain)
+        .then((rows) => { if (!cancelled) { setNodes(rows); setLoaded(true) } })
+    }
+    load()
+    const timer = setInterval(load, 10000)
+    return () => { cancelled = true; clearInterval(timer) }
   }, [live, orgId, domain])
 
   useEffect(() => {
