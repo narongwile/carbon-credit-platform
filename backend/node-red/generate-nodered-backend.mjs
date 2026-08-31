@@ -4013,6 +4013,18 @@ const openOnly=!!q.open;
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 const __ms=(v)=>{ const n=Number(v); return Number.isFinite(n)&&n>0 ? n : null; };
 const fromMs=__ms(q.from), toMs=__ms(q.to);
+// severity / unacked join the range as QUERY narrowing rather than filters
+// over an already-capped page. Without this, "CRITICAL" over a wide range
+// filters the newest N rows and silently omits a CRITICAL further back inside
+// the same range — the row the operator opened the console to find.
+// Whitelisted, never interpolated: alarm_events.severity is
+// ENUM('WARNING','CRITICAL'), so anything else is a caller error, not a filter.
+const sevRaw=String(q.severity||'').toUpperCase();
+const severity=(sevRaw==='WARNING'||sevRaw==='CRITICAL') ? sevRaw : null;
+// Distinct from openOnly: 'open' also requires cleared_at IS NULL, which the
+// console's "Show Acknowledged" toggle does NOT mean. Reusing it would hide a
+// cleared-but-unacknowledged alarm that the toggle currently shows.
+const unackedOnly=!!q.unacked;
 // Bounded so a hand-built ?limit= cannot ask for the whole table.
 const MAX_ROWS=2000, DEF_ROWS=300;
 let limit=Number(q.limit); if(!Number.isFinite(limit)||limit<1) limit=DEF_ROWS;
@@ -4025,6 +4037,8 @@ const pool=global.get('resolvePool')(orgId);
   if(openOnly){ sql+=" AND e.cleared_at IS NULL AND e.acknowledged_at IS NULL"; }
   if(fromMs!==null){ sql+=" AND e.raised_at >= ?"; args.push(new Date(fromMs)); }
   if(toMs!==null){ sql+=" AND e.raised_at <= ?"; args.push(new Date(toMs)); }
+  if(severity){ sql+=" AND e.severity=?"; args.push(severity); }
+  if(unackedOnly && !openOnly){ sql+=" AND e.acknowledged_at IS NULL"; }
   sql += " ORDER BY e.raised_at DESC";
   // A non-admin's rows are narrowed AFTER the query by accessFor/deptVisible/
   // siteVisible/nodeVisible, so limiting the scan to exactly 'limit' would

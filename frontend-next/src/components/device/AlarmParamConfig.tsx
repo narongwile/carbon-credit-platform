@@ -447,10 +447,25 @@ export default function AlarmParamConfig({
   /** 'reported' = only what this device sends; 'all' = the whole catalog. */
   const [scopeFilter, setScopeFilter] = useState<'reported' | 'all'>('reported')
   /**
-   * Keys the SAVED rule already covers. Kept apart from `vals`, which the
-   * seeding effect fills for every catalog row — so `vals` cannot answer
-   * "was this parameter actually configured on this device", and using it
-   * to decide visibility would show all 80 rows again.
+   * Keys of parameters the saved rule has ENABLED — i.e. someone deliberately
+   * configured an alarm on them.
+   *
+   * These are unioned with the device's reported keys when deciding what to
+   * show, so a configured alarm never becomes unreachable just because its
+   * sensor went quiet — which is precisely when an engineer needs to get at
+   * its threshold.
+   *
+   * Only ENABLED params, and that distinction is the whole reason this is safe
+   * to read again: persist() writes a row for every parameter in scope, with
+   * `enabled: false` for the ones nobody configured. Keying off mere PRESENCE
+   * in saved.params therefore re-admitted the entire catalog, which is the
+   * 88-param bloat afca3da9 removed — it dropped every read of this set to
+   * kill that, and with it the stop-reporting safety net, leaving the state
+   * written but never read. Filtering to enabled keeps both properties.
+   *
+   * Read only on the DEVICE-mode path. Personal mode's visible set is bounded
+   * by the admin's Displayed Parameters restriction (a0de0e9f); widening it
+   * here would quietly undo that enforcement.
    */
   const [ruleKeys, setRuleKeys] = useState<Set<string>>(new Set())
 
@@ -793,7 +808,9 @@ export default function AlarmParamConfig({
     // When scoped to what devices in scope actually report (default "Reported by device" / "Active in selection"):
     if (scopeFilter === 'reported') {
       if (nodeId && activeKeys.size > 0) {
-        return allParams.filter((p) => activeKeys.has(p.key))
+        // ...plus anything the saved rule has ENABLED, so a configured alarm
+        // stays reachable after its sensor stops reporting.
+        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key))
       }
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key))
@@ -806,7 +823,7 @@ export default function AlarmParamConfig({
       }
     }
     return allParams
-  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, mode, domain])
+  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
 
   const activeParamsCount = useMemo(() => {
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
@@ -828,7 +845,9 @@ export default function AlarmParamConfig({
       }
     }
     if (nodeId && activeKeys.size > 0) {
-      return allParams.filter((p) => activeKeys.has(p.key)).length
+      // Must match scopedParams' device-mode branch, or the count disagrees
+      // with the rows actually rendered.
+      return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key)).length
     }
     if (activeKeys.size > 0) {
       return allParams.filter((p) => activeKeys.has(p.key)).length
@@ -840,7 +859,7 @@ export default function AlarmParamConfig({
       return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
     }
     return allParams.length
-  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, mode, domain])
+  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
 
   const readingCount = useMemo(() => scopedParams.filter((p) => p.paramType !== 'compound').length, [scopedParams])
   const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
@@ -931,7 +950,7 @@ export default function AlarmParamConfig({
     // reported-only filter never hides an alarm someone configured — including
     // one whose sensor has since stopped reporting, which is exactly when you
     // most need to reach it.
-    setRuleKeys(new Set((saved.params ?? []).map((p) => p.key)))
+    setRuleKeys(new Set((saved.params ?? []).filter((p) => p.enabled !== false).map((p) => p.key)))
     if (saved.debounceJson) setDbVals(saved.debounceJson)
     if (saved.dwellMin !== undefined) setDwell(saved.dwellMin)
     if (saved.hysteresis !== undefined) setHyst(saved.hysteresis)

@@ -101,7 +101,7 @@ for (const [label, path, tsField, ackField] of VIEWS) {
 // ── 5. api.orgAlarms serialises the range ─────────────────────────────────
 const apiSrc = read('frontend-next/src/lib/api.ts')
 t('api.orgAlarms accepts a range and builds a query string',
-  /orgAlarms:\s*\(orgId: string, opts\?: \{ open\?: boolean; fromMs\?: number; toMs\?: number; limit\?: number \}\)/.test(apiSrc))
+  /opts\?: \{ open\?: boolean; fromMs\?: number; toMs\?: number; limit\?: number; severity\?: 'WARNING' \| 'CRITICAL'; unacked\?: boolean \}/.test(apiSrc))
 t('api.orgAlarms keeps ?open=1 working for the badge/notification callers',
   /if \(opts\?\.open\) qs\.set\('open', '1'\)/.test(apiSrc))
 t('api.orgAlarms refuses non-finite bounds',
@@ -111,9 +111,9 @@ t('api.orgAlarms refuses non-finite bounds',
 // ── 6. useOrgAlarms refetches when the range changes ──────────────────────
 const hookSrc = read('frontend-next/src/lib/useOrgAlarms.ts')
 t('useOrgAlarms forwards the range to the API',
-  /api\.orgAlarms\(orgId, \{ open, fromMs, toMs, limit \}\)/.test(hookSrc))
+  /api\.orgAlarms\(orgId, \{ open, fromMs, toMs, limit, severity, unacked \}\)/.test(hookSrc))
 t('useOrgAlarms makes the range part of load()’s identity',
-  /\}, \[orgId, open, fromMs, toMs, limit\]\)/.test(hookSrc),
+  /\}, \[orgId, open, fromMs, toMs, limit, severity, unacked\]\)/.test(hookSrc),
   'without this the range changes but the data never refetches')
 
 // ── 7. The endpoint filters in SQL and is bounded ─────────────────────────
@@ -143,6 +143,64 @@ if (!node) {
     'limiting to exactly `limit` would under-fill a user who sees part of the org')
   t('endpoint still slices the visible set to the requested limit',
     /\.slice\(0,limit\)/.test(fn))
+}
+
+// ── 7b. The severity / Show-Acknowledged controls ─────────────────────────
+// These sit beside the range picker and narrow the same list, so they carry
+// the same hazard: applied client-side over a capped page, "CRITICAL" across a
+// wide range filters the newest N rows and silently omits an older CRITICAL
+// that the range does cover — the exact row the operator opened the console
+// for. On the admin console they are query parameters.
+{
+  const adminSrc = read('frontend-next/src/components/AlarmsManagementView.tsx')
+
+  t('admin console pushes the severity filter into the query',
+    /severity: filter === 'all' \? undefined : filter/.test(adminSrc))
+  t('admin console pushes Show-Acknowledged into the query',
+    /unacked: !showAcked/.test(adminSrc))
+
+  // INFO is unreachable: alarm_events.severity is ENUM('WARNING','CRITICAL')
+  // and nothing in the worker, Node-RED or the mock set writes another value,
+  // so the button could only ever render an empty table.
+  t('admin console no longer offers the unreachable INFO filter',
+    !/'all', 'CRITICAL', 'WARNING', 'INFO'/.test(adminSrc) &&
+    /\['all', 'CRITICAL', 'WARNING'\] as const/.test(adminSrc))
+  t("admin console's filter state cannot hold INFO either",
+    !/useState<'all' \| 'CRITICAL' \| 'WARNING' \| 'INFO'>/.test(adminSrc))
+
+  // Header badges must not follow the severity/ack narrowing, or choosing
+  // CRITICAL hides the Warning badge — on screen that is indistinguishable
+  // from "there are no warnings".
+  t('admin header badges read a source that is range-scoped but not severity-scoped',
+    /const \{ alarms: badgeAlarms \} = useOrgAlarms/.test(adminSrc) &&
+    /const critCount = inRange\.filter/.test(adminSrc))
+  t('the badge source is not narrowed by the severity buttons',
+    !/badgeAlarms[\s\S]{0,400}?severity: filter/.test(adminSrc))
+
+  // The customer view deliberately keeps these client-side; assert that too,
+  // so the difference is a recorded decision rather than an oversight.
+  const custSrc = read('frontend-next/src/components/CustomerAlarmsView.tsx')
+  t('customer view keeps severity/ack client-side (its stat cards need the un-narrowed set)',
+    !/severity: severity === 'all'/.test(custSrc) && !/unacked: !showAcked/.test(custSrc))
+  t('customer view never offered INFO',
+    /useState<'all' \| 'CRITICAL' \| 'WARNING'>/.test(custSrc))
+}
+
+// ── 7c. Endpoint support for severity / unacked ───────────────────────────
+if (node) {
+  const fn = node.func
+  t('endpoint narrows by severity in SQL',
+    /AND e\.severity=\?/.test(fn) && /args\.push\(severity\)/.test(fn))
+  t('endpoint whitelists severity instead of interpolating it',
+    /sevRaw==='WARNING'\|\|sevRaw==='CRITICAL'/.test(fn),
+    'the column is an ENUM, so any other value is a caller error')
+  t('endpoint narrows by unacked in SQL',
+    /AND e\.acknowledged_at IS NULL/.test(fn))
+  // `open` means unacknowledged AND uncleared. The console's toggle means
+  // only the first, so reusing `open` would hide a cleared-but-unacknowledged
+  // alarm the toggle currently shows.
+  t('unacked is a separate parameter from open, not an alias',
+    /const unackedOnly=!!q\.unacked/.test(fn) && /if\(unackedOnly && !openOnly\)/.test(fn))
 }
 
 // ── 8. Behavioural check of the range maths ───────────────────────────────

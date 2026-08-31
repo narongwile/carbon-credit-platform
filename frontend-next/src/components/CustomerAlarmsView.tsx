@@ -125,6 +125,14 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
 
   // One scoped request, polled — not one request per device — and the range is
   // part of the QUERY, not a filter over an already-truncated newest-N page.
+  //
+  // Unlike AlarmsManagementView, the severity and Show-Acknowledged controls
+  // are deliberately NOT pushed into this query. The stat cards below read the
+  // same `alarms` array and need the un-narrowed range set to mean anything —
+  // "open / total" is only a ratio if `total` still counts acknowledged rows,
+  // and pushing severity down would make every card follow the severity
+  // buttons. A customer sees only their own devices, so the row count inside a
+  // range stays far below the cap that makes client-side narrowing lossy.
   const { alarms, loaded, refetch } = useOrgAlarms(orgId, {
     pollMs: live ? 20000 : undefined,
     fromMs: range.start > 0 ? range.start : undefined,

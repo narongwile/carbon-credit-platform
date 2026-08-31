@@ -543,9 +543,17 @@ export const api = {
    * all read the SAME real list. open=true narrows to unacknowledged +
    * uncleared (the badge/notifications use case); omit for the full history.
    */
-  orgAlarms: (orgId: string, opts?: { open?: boolean; fromMs?: number; toMs?: number; limit?: number }) => {
+  orgAlarms: (
+    orgId: string,
+    opts?: { open?: boolean; fromMs?: number; toMs?: number; limit?: number; severity?: 'WARNING' | 'CRITICAL'; unacked?: boolean },
+  ) => {
     const qs = new URLSearchParams()
     if (opts?.open) qs.set('open', '1')
+    if (opts?.severity) qs.set('severity', opts.severity)
+    // Narrows to acknowledged_at IS NULL only. Deliberately not `open`, which
+    // also requires cleared_at IS NULL — a stricter thing than the console's
+    // "Show Acknowledged" toggle means.
+    if (opts?.unacked) qs.set('unacked', '1')
     // Only finite, positive instants go on the wire — Infinity (the picker's
     // "…until now") and NaN (a half-typed datetime-local) must not become the
     // literal strings "Infinity"/"NaN" in a query the server then parses.

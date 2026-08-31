@@ -119,7 +119,13 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   const { alarms: mockAlarms, acknowledgeAlarm, selectedOrgId } = useAppStore()
   const sessionOrgId = useSessionOrgId('org-1')
   const effOrgId = selectedOrgId || sessionOrgId || 'org-1'
-  const [filter, setFilter] = useState<'all' | 'CRITICAL' | 'WARNING' | 'INFO'>('all')
+  // No 'INFO': alarm_events.severity is ENUM('WARNING','CRITICAL') in the
+  // schema, nothing in the Go worker or Node-RED ever writes another value,
+  // and the mock set has none either. The INFO button could therefore only
+  // ever produce an empty table — a control whose sole effect was to make the
+  // console look broken. The Alarm type still allows INFO, so the badge branch
+  // in AlarmRow stays; only the unusable filter is gone.
+  const [filter, setFilter] = useState<'all' | 'CRITICAL' | 'WARNING'>('all')
   const [showAcked, setShowAcked] = useState(false)
   const live = useIsLive()
 
@@ -159,13 +165,32 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   // page: the endpoint returns the newest `limit` rows, so filtering a fixed
   // newest-N window client-side could never reach the older events a wider
   // range actually covers.
+  //
+  // The severity and Show-Acknowledged controls go into the query for the same
+  // reason: filtering them client-side over a capped page means a CRITICAL
+  // further back inside the chosen range is silently dropped, because the cap
+  // was already spent on newer rows of other severities.
   const { alarms: liveOrgAlarms, refetch: refetchAlarms } = useOrgAlarms(effOrgId, {
     pollMs: live ? 5000 : undefined,
     fromMs: range.start > 0 ? range.start : undefined,
     toMs: Number.isFinite(range.end) ? range.end : undefined,
+    severity: filter === 'all' ? undefined : filter,
+    unacked: !showAcked,
     limit: 1000,
   })
   const alarms = live ? liveOrgAlarms.map((a) => toAlarm(a, effOrgId)) : mockAlarms
+
+  // Feeds the header's Critical/Warning badges only — same range, but never
+  // narrowed by severity or the ack toggle. `unacked: true` keeps it to the
+  // rows the badges actually count, so it stays a cheap query rather than the
+  // full history.
+  const { alarms: badgeAlarms } = useOrgAlarms(effOrgId, {
+    pollMs: live ? 5000 : undefined,
+    fromMs: range.start > 0 ? range.start : undefined,
+    toMs: Number.isFinite(range.end) ? range.end : undefined,
+    unacked: true,
+    limit: 1000,
+  })
 
   const [problems, setProblems] = useState<EventProblem[]>([])
   useEffect(() => {
@@ -243,8 +268,19 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
     fmtDateTime(a.timestamp), a.acknowledged ? 'Acknowledged' : 'Open', a.acknowledgedBy ?? '',
   ])
 
-  const critCount = orgAlarms.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length
-  const warnCount = orgAlarms.filter((a) => a.severity === 'WARNING' && !a.acknowledged).length
+  // Counted from a set that follows the TIME RANGE but not the severity or
+  // Show-Acknowledged controls. Those two narrow the table on purpose; the
+  // header badges answer "what is outstanding", and computing them from the
+  // narrowed set would make selecting CRITICAL hide the Warning badge
+  // altogether — indistinguishable on screen from "there are no warnings".
+  const badgeSource = live ? badgeAlarms.map((a) => toAlarm(a, effOrgId)) : mockAlarms
+  const inRange = badgeSource.filter((a) => {
+    if (a.orgId && a.orgId !== effOrgId) return false
+    const ts = new Date(a.timestamp).getTime()
+    return !(Number.isFinite(ts) && (ts < range.start || ts > range.end))
+  })
+  const critCount = inRange.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length
+  const warnCount = inRange.filter((a) => a.severity === 'WARNING' && !a.acknowledged).length
 
   return (
     <div className={embedded ? "space-y-4" : "p-6 space-y-5"}>
@@ -371,7 +407,7 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
       {/* Filters */}
       <div className="flex items-center gap-3">
         <div className="flex gap-2">
-          {(['all', 'CRITICAL', 'WARNING', 'INFO'] as const).map((f) => (
+          {(['all', 'CRITICAL', 'WARNING'] as const).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}

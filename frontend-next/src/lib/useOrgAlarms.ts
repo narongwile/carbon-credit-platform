@@ -45,7 +45,10 @@ export interface OrgAlarmRow {
  */
 export function useOrgAlarms(
   orgId: string,
-  opts?: { open?: boolean; pollMs?: number; fromMs?: number; toMs?: number; limit?: number },
+  opts?: {
+    open?: boolean; pollMs?: number; fromMs?: number; toMs?: number; limit?: number
+    severity?: 'WARNING' | 'CRITICAL'; unacked?: boolean
+  },
 ): {
   alarms: OrgAlarmRow[]
   loaded: boolean
@@ -58,10 +61,12 @@ export function useOrgAlarms(
   const fromMs = opts?.fromMs
   const toMs = opts?.toMs
   const limit = opts?.limit
+  const severity = opts?.severity
+  const unacked = opts?.unacked
 
   const load = useCallback(() => {
     if (!isLive() || !orgId) { setAlarms([]); setLoaded(true); return }
-    api.orgAlarms(orgId, { open, fromMs, toMs, limit }).then((rows) => {
+    api.orgAlarms(orgId, { open, fromMs, toMs, limit, severity, unacked }).then((rows) => {
       setAlarms((rows ?? []).map((r) => ({
         id: r.id, nodeId: r.node_id, nodeName: r.node_name, domain: r.domain,
         paramLabel: r.param_label, severity: r.severity, value: Number(r.value), threshold: Number(r.threshold),
@@ -70,7 +75,7 @@ export function useOrgAlarms(
       })))
       setLoaded(true)
     })
-  }, [orgId, open, fromMs, toMs, limit])
+  }, [orgId, open, fromMs, toMs, limit, severity, unacked])
 
   useEffect(() => {
     load()

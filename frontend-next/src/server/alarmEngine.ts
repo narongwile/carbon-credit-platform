@@ -17,6 +17,17 @@ export interface ParamRule {
   warn: number
   critical: number
   rate?: { unit: string; warn: number } // emit a rate event if |Δ/sample| exceeds this
+  /**
+   * Whether this parameter is armed. Absent means armed, so rules saved before
+   * the flag existed keep firing.
+   *
+   * It was already being written (AlarmParamConfig.persist casts through `any`
+   * to set it) and already being read — worker/main.go's RuleParam.Enabled
+   * *bool skips a disabled param in evaluateParams. Only this shared type
+   * never declared it, so the one layer that could have type-checked the
+   * producer against the consumer was opted out of by the cast.
+   */
+  enabled?: boolean
 }
 
 export interface NodeAlarmRule {
