@@ -251,7 +251,7 @@ const WEEKDAYS = [
   { v: 5, label: 'Fri' }, { v: 6, label: 'Sat' }, { v: 7, label: 'Sun' },
 ]
 const MINUTES = [0, 15, 30, 45]
-const MONTH_DAYS = Array.from({ length: 28 }, (_, i) => i + 1)
+const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => i + 1)
 
 type OrgUser = { id: string; name?: string | null; email?: string | null; department_ids?: string[]; department_id?: string | null }
 
@@ -758,10 +758,10 @@ function ReportsPageContent() {
     subjectTemplate: r.subjectTemplate, bodyTemplate: r.bodyTemplate,
   })
 
-  const draftRecipientCount = draft.channel === 'telegram'
-    ? (draft.recipients.trim() ? 1 : 0)
-    : draft.recipientMode === 'department' ? mailableInDepts(draft.recipientDeptIds).length
-    : draft.recipientMode === 'users' ? users.filter((u) => draft.recipientUserIds.includes(u.id) && (u.email || '').trim()).length
+  const draftRecipientCount = draft.recipientMode === 'department'
+    ? draft.recipientDeptIds.length
+    : draft.recipientMode === 'users'
+    ? draft.recipientUserIds.length
     : draft.recipients.split(',').map((x) => x.trim()).filter(Boolean).length
 
   const openCreateSchedule = () => {
@@ -840,9 +840,15 @@ function ReportsPageContent() {
       return
     }
     if (draftRecipientCount === 0) {
-      toast.error(draft.recipientMode === 'manual' || draft.channel === 'telegram'
-        ? 'Add at least one recipient'
-        : `The selected ${draft.recipientMode === 'department' ? 'departments have' : 'users have'} no email address`)
+      toast.error(
+        draft.recipientMode === 'manual'
+          ? (draft.channel === 'telegram' ? 'Enter Telegram Chat/Channel ID'
+             : draft.channel === 'line' ? 'Enter LINE User/Group ID'
+             : draft.channel === 'googlechat' ? 'Enter Google Chat Space Webhook URL'
+             : draft.channel === 'webhook' ? 'Enter Destination Webhook URL'
+             : 'Add at least one email address')
+          : `Select at least one ${draft.recipientMode === 'department' ? 'department' : 'staff user'}`
+      )
       return
     }
 
@@ -1969,6 +1975,14 @@ function ReportsPageContent() {
                         >
                           1st only
                         </button>
+                        <span className="text-slate-600">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setDraft((d) => ({ ...d, dayOfMonth: '31' }))}
+                          className="hover:underline"
+                        >
+                          Month-End (31st)
+                        </button>
                       </div>
                     </div>
                     <div className="grid grid-cols-7 gap-1 max-h-28 overflow-y-auto p-1.5 rounded-lg" style={inset}>
@@ -1997,7 +2011,7 @@ function ReportsPageContent() {
                 )}
 
                 {/* Send Time & Delivery Channel */}
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
                       Send Time (Bangkok +07:00)
@@ -2028,12 +2042,12 @@ function ReportsPageContent() {
 
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Delivery Channel</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
+                    <div className="grid grid-cols-5 gap-1">
                       {([
                         ['email', 'Email', Mail],
                         ['telegram', 'Telegram', Send],
                         ['line', 'LINE', MessageSquare],
-                        ['googlechat', 'Google Chat', Bot],
+                        ['googlechat', 'GChat', Bot],
                         ['webhook', 'Webhook', Webhook],
                       ] as const).map(([ch, label, Icon]) => (
                         <button
@@ -2044,7 +2058,7 @@ function ReportsPageContent() {
                             setPreviewChannel(ch)
                           }}
                           className={clsx(
-                            'flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold capitalize transition-colors',
+                            'flex flex-col sm:flex-row items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] sm:text-xs font-semibold capitalize transition-colors',
                             draft.channel === ch ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-900 text-slate-400 border border-slate-800 hover:text-white'
                           )}
                         >
@@ -2056,220 +2070,230 @@ function ReportsPageContent() {
                   </div>
                 </div>
 
-                {/* Recipient Targeting */}
-                {draft.channel === 'telegram' ? (
-                  <div>
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
-                      Telegram Chat / Channel ID
-                    </label>
-                    <input
-                      value={draft.recipients}
-                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                      placeholder="-1001234567890"
-                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
-                      style={inset}
-                    />
+                {/* Attached Report Format Selection */}
+                <div>
+                  <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
+                    Attached Report Format &amp; Artifact
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {([
+                      ['PDF', 'PDF Executive Document (.pdf)', FileText, 'bg-rose-500/15 text-rose-300 border-rose-500/40'],
+                      ['XLSX', 'Excel Metrics Workbook (.xlsx)', FileSpreadsheet, 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'],
+                      ['CSV', 'CSV Raw Telemetry Log (.csv)', FileBarChart, 'bg-indigo-500/15 text-indigo-300 border-indigo-500/40'],
+                    ] as const).map(([fmt, label, Icon, activeStyle]) => (
+                      <button
+                        key={fmt}
+                        type="button"
+                        onClick={() => setDraft((d) => ({ ...d, format: fmt }))}
+                        className={clsx(
+                          'p-2 rounded-lg border text-left transition-all flex items-center gap-2',
+                          draft.format === fmt
+                            ? `${activeStyle} ring-1 ring-indigo-500 shadow-sm`
+                            : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                        )}
+                      >
+                        <Icon size={16} className={draft.format === fmt ? '' : 'text-slate-500'} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-bold text-white">{fmt}</div>
+                          <div className="text-[9px] text-slate-400 truncate">{label}</div>
+                        </div>
+                      </button>
+                    ))}
                   </div>
-                ) : draft.channel === 'line' ? (
-                  <div>
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
-                      LINE User ID / Group ID
-                    </label>
-                    <input
-                      value={draft.recipients}
-                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                      placeholder="e.g. U1234567890abcdef... or C123456789..."
-                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
-                      style={inset}
-                    />
-                    <span className="text-[10px] text-slate-500 mt-1 block">
-                      Dispatches interactive Flex Bubble cards directly via LINE Messaging API.
-                    </span>
-                  </div>
-                ) : draft.channel === 'googlechat' ? (
-                  <div>
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
-                      Google Chat Space Webhook URL
-                    </label>
-                    <input
-                      value={draft.recipients}
-                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                      placeholder="https://chat.googleapis.com/v1/spaces/AAAA.../messages?key=...&token=..."
-                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
-                      style={inset}
-                    />
-                    <span className="text-[10px] text-slate-500 mt-1 block">
-                      Dispatches interactive Cards V2 summary cards directly into your Google Chat Space.
-                    </span>
-                  </div>
-                ) : draft.channel === 'webhook' ? (
-                  <div>
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">
-                      Destination Webhook URL (ERP / MinIO / SAP)
-                    </label>
-                    <input
-                      value={draft.recipients}
-                      onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                      placeholder="https://sap-gateway.internal/api/v2/ingest-report"
-                      className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
-                      style={inset}
-                    />
-                    <span className="text-[10px] text-slate-500 mt-1 block">
-                      POSTs structured JSON payload + CSV data series to your cloud data lake or ERP.
-                    </span>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Recipient Target Mode</label>
-                    <div className="flex gap-1.5">
-                      {([['manual', 'Direct Emails', Mail], ['department', 'Department Staff', Building2], ['users', 'Specific Users', Users]] as const).map(
-                        ([m, label, Icon]) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => setDraft((d) => ({ ...d, recipientMode: m }))}
-                            className={clsx(
-                              'flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
-                              draft.recipientMode === m ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
-                            )}
-                          >
-                            <Icon size={11} /> {label}
-                          </button>
-                        )
-                      )}
-                    </div>
+                </div>
 
-                    {draft.recipientMode === 'manual' && (
+                {/* Recipient Targeting Mode across ALL channels */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
+                      Recipient Target Mode ({draft.channel.toUpperCase()})
+                    </label>
+                    <span className="text-[10px] text-indigo-400 font-medium capitalize">
+                      Active: {draft.recipientMode === 'manual' ? 'Direct Endpoint' : draft.recipientMode === 'department' ? 'Department Staff' : 'Specific Users'}
+                    </span>
+                  </div>
+
+                  <div className="flex gap-1.5">
+                    {([
+                      ['manual', draft.channel === 'webhook' ? 'Webhook Endpoint' : draft.channel === 'googlechat' ? 'Space Webhook' : 'Direct Target', draft.channel === 'webhook' ? Webhook : draft.channel === 'googlechat' ? Bot : Send],
+                      ['department', 'Department Staff', Building2],
+                      ['users', 'Specific Users', Users],
+                    ] as const).map(([m, label, Icon]) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setDraft((d) => ({ ...d, recipientMode: m }))}
+                        className={clsx(
+                          'flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-[10px] font-semibold transition-colors',
+                          draft.recipientMode === m ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-400 border border-slate-800'
+                        )}
+                      >
+                        <Icon size={11} /> {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {draft.recipientMode === 'manual' && (
+                    <div>
                       <input
                         value={draft.recipients}
                         onChange={(e) => setDraft((d) => ({ ...d, recipients: e.target.value }))}
-                        placeholder="maintenance.lead@corp.net, facility@corp.net"
-                        className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none"
+                        placeholder={
+                          draft.channel === 'email'
+                            ? 'maintenance.lead@corp.net, facility@corp.net'
+                            : draft.channel === 'telegram'
+                            ? '-1001234567890 (Telegram Chat ID or @channel_username)'
+                            : draft.channel === 'line'
+                            ? 'e.g. U1234567890abcdef... or C123456789... (LINE User / Group ID)'
+                            : draft.channel === 'googlechat'
+                            ? 'https://chat.googleapis.com/v1/spaces/AAAA.../messages?key=...&token=...'
+                            : 'https://sap-gateway.internal/api/v2/ingest-report'
+                        }
+                        className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none font-mono"
                         style={inset}
                       />
-                    )}
+                      <span className="text-[10px] text-slate-500 mt-1 block">
+                        {draft.channel === 'email'
+                          ? 'Comma-separated email addresses for automated report distribution.'
+                          : draft.channel === 'telegram'
+                          ? 'Telegram target chat ID or public channel username.'
+                          : draft.channel === 'line'
+                          ? 'LINE Messaging API target User ID or Group ID.'
+                          : draft.channel === 'googlechat'
+                          ? 'Incoming Webhook URL for your Google Chat Space.'
+                          : 'Destination endpoint URL to receive structured JSON/CSV report payload.'}
+                      </span>
+                    </div>
+                  )}
 
-                    {draft.recipientMode === 'department' && (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-[10px] text-slate-400">
-                          <span className="font-semibold text-slate-300">
-                            Target Departments ({draft.recipientDeptIds.length} of {departments.length} selected)
-                          </span>
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: departments.map((x) => x.id) }))}
-                              className="text-indigo-400 hover:text-indigo-300 font-semibold"
-                            >
-                              Select All
-                            </button>
-                            <span className="text-slate-600">·</span>
-                            <button
-                              type="button"
-                              onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: [] }))}
-                              className="text-slate-500 hover:text-slate-400 font-semibold"
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
-                          {departments.map((dep) => {
-                            const on = draft.recipientDeptIds.includes(dep.id)
-                            const n = mailableInDepts([dep.id]).length
-                            return (
-                              <button
-                                key={dep.id}
-                                type="button"
-                                onClick={() =>
-                                  setDraft((d) => ({
-                                    ...d,
-                                    recipientDeptIds: on
-                                      ? d.recipientDeptIds.filter((x) => x !== dep.id)
-                                      : [...d.recipientDeptIds, dep.id],
-                                  }))
-                                }
-                                className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
-                              >
-                                <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
-                                  <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
-                                    {on && '✓'}
-                                  </span>
-                                  {dep.name}
-                                </span>
-                                <span className="text-[10px] text-slate-500 font-mono">{n} staff emails</span>
-                              </button>
-                            )
-                          })}
+                  {draft.recipientMode === 'department' && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span className="font-semibold text-slate-300">
+                          Target Departments ({draft.recipientDeptIds.length} of {departments.length} selected — empty targets all)
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: departments.map((x) => x.id) }))}
+                            className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                          >
+                            Select All
+                          </button>
+                          <span className="text-slate-600">·</span>
+                          <button
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, recipientDeptIds: [] }))}
+                            className="text-slate-500 hover:text-slate-400 font-semibold"
+                          >
+                            Clear
+                          </button>
                         </div>
                       </div>
-                    )}
-
-                    {draft.recipientMode === 'users' && (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-[10px] text-slate-400">
-                          <span className="font-semibold text-slate-300">
-                            Target Staff Users ({draft.recipientUserIds.length} of {users.length} selected)
-                          </span>
-                          <div className="flex gap-2">
+                      <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                        {departments.map((dep) => {
+                          const on = draft.recipientDeptIds.includes(dep.id)
+                          const n = mailableInDepts([dep.id]).length
+                          return (
                             <button
+                              key={dep.id}
                               type="button"
-                              onClick={() => setDraft((d) => ({ ...d, recipientUserIds: users.filter((u) => (u.email || '').trim()).map((x) => x.id) }))}
-                              className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                              onClick={() =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  recipientDeptIds: on
+                                    ? d.recipientDeptIds.filter((x) => x !== dep.id)
+                                    : [...d.recipientDeptIds, dep.id],
+                                }))
+                              }
+                              className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
                             >
-                              Select All
-                            </button>
-                            <span className="text-slate-600">·</span>
-                            <button
-                              type="button"
-                              onClick={() => setDraft((d) => ({ ...d, recipientUserIds: [] }))}
-                              className="text-slate-500 hover:text-slate-400 font-semibold"
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
-                          {users.map((u) => {
-                            const on = draft.recipientUserIds.includes(u.id)
-                            const mailable = !!(u.email || '').trim()
-                            return (
-                              <button
-                                key={u.id}
-                                type="button"
-                                disabled={!mailable}
-                                onClick={() =>
-                                  setDraft((d) => ({
-                                    ...d,
-                                    recipientUserIds: on
-                                      ? d.recipientUserIds.filter((x) => x !== u.id)
-                                      : [...d.recipientUserIds, u.id],
-                                  }))
-                                }
-                                className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 disabled:opacity-30 transition-colors"
-                              >
-                                <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
-                                  <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
-                                    {on && '✓'}
-                                  </span>
-                                  {u.name || u.id}
+                              <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                                <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
+                                  {on && '✓'}
                                 </span>
-                                <span className="text-[10px] text-slate-500 truncate">{u.email || 'no email'}</span>
-                              </button>
-                            )
-                          })}
+                                {dep.name}
+                              </span>
+                              <span className="text-[10px] text-slate-500 font-mono">{n} staff members</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {draft.recipientMode === 'users' && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span className="font-semibold text-slate-300">
+                          Target Staff Users ({draft.recipientUserIds.length} of {users.length} selected)
+                        </span>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, recipientUserIds: users.map((x) => x.id) }))}
+                            className="text-indigo-400 hover:text-indigo-300 font-semibold"
+                          >
+                            Select All
+                          </button>
+                          <span className="text-slate-600">·</span>
+                          <button
+                            type="button"
+                            onClick={() => setDraft((d) => ({ ...d, recipientUserIds: [] }))}
+                            className="text-slate-500 hover:text-slate-400 font-semibold"
+                          >
+                            Clear
+                          </button>
                         </div>
                       </div>
-                    )}
-                  </div>
-                )}
+                      <div className="space-y-1 max-h-36 overflow-y-auto rounded-lg p-2" style={inset}>
+                        {users.map((u) => {
+                          const on = draft.recipientUserIds.includes(u.id)
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() =>
+                                setDraft((d) => ({
+                                  ...d,
+                                  recipientUserIds: on
+                                    ? d.recipientUserIds.filter((x) => x !== u.id)
+                                    : [...d.recipientUserIds, u.id],
+                                }))
+                              }
+                              className="w-full flex items-center justify-between px-2 py-1 rounded text-xs hover:bg-white/5 transition-colors"
+                            >
+                              <span className={clsx('flex items-center gap-2 truncate', on ? 'text-white font-semibold' : 'text-slate-400')}>
+                                <span className="w-2.5 h-2.5 rounded-sm flex items-center justify-center text-[8px]" style={on ? { background: '#6366f1' } : { border: '1px solid #334155' }}>
+                                  {on && '✓'}
+                                </span>
+                                {u.name || u.id}
+                              </span>
+                              <span className="text-[10px] text-slate-500 truncate">{u.email || 'account user'}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
 
-                {/* Email Template */}
+                {/* Channel-Adaptive Subject & Custom Message Template */}
                 <div className="p-3.5 rounded-xl border border-indigo-900/40 bg-[#0a0e1a]/80 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-white">
                       <Sparkles size={13} className="text-indigo-400" />
-                      <span>Email Subject &amp; Custom Message Template</span>
+                      <span>
+                        {draft.channel === 'email'
+                          ? '📧 Email Subject & Message Body Template'
+                          : draft.channel === 'telegram'
+                          ? '✈️ Telegram Message Title & Caption Template'
+                          : draft.channel === 'line'
+                          ? '💬 LINE Flex Header & Message Body Template'
+                          : draft.channel === 'googlechat'
+                          ? '🤖 Google Chat Card Title & Section Text Template'
+                          : '🔗 Webhook Event Subject & Payload Note Template'}
+                      </span>
                     </div>
                     <span className="text-[10px] text-indigo-400 font-mono">Dynamic Tokens</span>
                   </div>
@@ -2310,12 +2334,30 @@ function ReportsPageContent() {
 
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-                      Subject Line Template
+                      {draft.channel === 'email'
+                        ? 'Subject Line Template'
+                        : draft.channel === 'telegram'
+                        ? 'Telegram Message Header / Title'
+                        : draft.channel === 'line'
+                        ? 'LINE Flex Card Header Title'
+                        : draft.channel === 'googlechat'
+                        ? 'Google Chat Card Title'
+                        : 'Webhook Event Summary / Header'}
                     </label>
                     <input
                       value={draft.subjectTemplate}
                       onChange={(e) => setDraft((d) => ({ ...d, subjectTemplate: e.target.value }))}
-                      placeholder={`[${orgName} Audit] {{name}} - {{sequence}} Report`}
+                      placeholder={
+                        draft.channel === 'email'
+                          ? `[${orgName} Audit] {{name}} - {{sequence}} Report`
+                          : draft.channel === 'telegram'
+                          ? `📊 [${orgName}] {{name}} - {{sequence}} Digest`
+                          : draft.channel === 'line'
+                          ? `📊 {{name}} ({{sequence}} Digest)`
+                          : draft.channel === 'googlechat'
+                          ? `📊 ONEOPS · {{name}}`
+                          : `REPORT_DISPATCH: {{name}}`
+                      }
                       className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
                       style={inset}
                     />
@@ -2323,13 +2365,21 @@ function ReportsPageContent() {
 
                   <div>
                     <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-                      Custom Message / SOP Operational Note
+                      {draft.channel === 'email'
+                        ? 'Custom Message / SOP Operational Note'
+                        : draft.channel === 'telegram'
+                        ? 'Telegram Markdown Caption & SOP Note'
+                        : draft.channel === 'line'
+                        ? 'LINE Flex Description & Operational Note'
+                        : draft.channel === 'googlechat'
+                        ? 'Google Chat Section Body Text'
+                        : 'Webhook Operational Metadata & Description Note'}
                     </label>
                     <textarea
                       rows={2}
                       value={draft.bodyTemplate}
                       onChange={(e) => setDraft((d) => ({ ...d, bodyTemplate: e.target.value }))}
-                      placeholder="e.g. Please review the attached CSV report and confirm compliance before shift handover."
+                      placeholder="e.g. Please review the attached report and confirm compliance before shift handover."
                       className="w-full rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:ring-1 focus:ring-indigo-500"
                       style={inset}
                     />
@@ -2402,14 +2452,26 @@ function ReportsPageContent() {
                           </div>
                         </div>
 
-                        <div className="p-2 rounded-lg border border-indigo-500/30 bg-indigo-950/20 flex items-center justify-between">
+                        <div className={clsx(
+                          'p-2 rounded-lg border flex items-center justify-between',
+                          draft.format === 'PDF' ? 'border-rose-500/30 bg-rose-950/20'
+                          : draft.format === 'XLSX' ? 'border-emerald-500/30 bg-emerald-950/20'
+                          : 'border-indigo-500/30 bg-indigo-950/20'
+                        )}>
                           <div className="flex items-center gap-2 truncate">
-                            <FileBarChart size={14} className="text-indigo-400 shrink-0" />
+                            {draft.format === 'PDF' ? <FileText size={14} className="text-rose-400 shrink-0" />
+                             : draft.format === 'XLSX' ? <FileSpreadsheet size={14} className="text-emerald-400 shrink-0" />
+                             : <FileBarChart size={14} className="text-indigo-400 shrink-0" />}
                             <span className="text-[10px] font-bold text-white truncate">
-                              {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'operations_audit.csv'}
+                              {draft.name ? `${draft.name.replace(/\s+/g, '_')}.${draft.format.toLowerCase()}` : `operations_audit.${draft.format.toLowerCase()}`}
                             </span>
                           </div>
-                          <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-600/30 text-indigo-300 font-bold">CSV</span>
+                          <span className={clsx(
+                            'text-[9px] px-1.5 py-0.5 rounded font-bold uppercase',
+                            draft.format === 'PDF' ? 'bg-rose-600/30 text-rose-300'
+                            : draft.format === 'XLSX' ? 'bg-emerald-600/30 text-emerald-300'
+                            : 'bg-indigo-600/30 text-indigo-300'
+                          )}>{draft.format}</span>
                         </div>
                       </div>
                     </div>
@@ -2425,9 +2487,14 @@ function ReportsPageContent() {
                           <span>Time: {String(draft.sendHour).padStart(2,'0')}:{String(draft.sendMinute).padStart(2,'0')} ICT</span>
                         </div>
                       </div>
-                      <div className="p-2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-400 flex items-center gap-2">
-                        <FileBarChart size={13} className="text-sky-400" />
-                        <span>Attached: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'report.csv'}</span>
+                      <div className="p-2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-400 flex items-center justify-between">
+                        <div className="flex items-center gap-2 truncate">
+                          {draft.format === 'PDF' ? <FileText size={13} className="text-rose-400 shrink-0" />
+                           : draft.format === 'XLSX' ? <FileSpreadsheet size={13} className="text-emerald-400 shrink-0" />
+                           : <FileBarChart size={13} className="text-sky-400 shrink-0" />}
+                          <span className="truncate">Attached: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.${draft.format.toLowerCase()}` : `report.${draft.format.toLowerCase()}`}</span>
+                        </div>
+                        <span className="text-[9px] font-bold text-sky-300 uppercase font-mono">{draft.format}</span>
                       </div>
                     </div>
                   ) : previewChannel === 'line' ? (
@@ -2444,8 +2511,8 @@ function ReportsPageContent() {
                           {previewBody}
                         </p>
                         <div className="p-2 rounded bg-black/40 border border-emerald-900/40 text-[10px] text-emerald-300 flex items-center justify-between">
-                          <span>Attached: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'operations.csv'}</span>
-                          <span className="font-mono capitalize">{draft.sequence}</span>
+                          <span className="truncate">Attached: {draft.name ? `${draft.name.replace(/\s+/g, '_')}.${draft.format.toLowerCase()}` : `operations.${draft.format.toLowerCase()}`}</span>
+                          <span className="font-mono capitalize">{draft.format}</span>
                         </div>
                         <button type="button" className="w-full py-1.5 rounded-lg bg-[#06c755] text-white text-[11px] font-bold shadow hover:bg-[#05b34c] transition-colors">
                           VIEW AUDIT REPORT
@@ -2484,8 +2551,8 @@ function ReportsPageContent() {
                             <strong className="text-white truncate block">{INDUSTRIAL_DOMAINS.find(d => d.id === draft.domain)?.label}</strong>
                           </div>
                           <div>
-                            <span className="text-slate-400 block text-[9px]">Attachment</span>
-                            <strong className="text-indigo-300 truncate block">{draft.name ? `${draft.name.replace(/\s+/g, '_')}.csv` : 'operations.csv'}</strong>
+                            <span className="text-slate-400 block text-[9px]">Format</span>
+                            <strong className="text-indigo-300 truncate block">{draft.format} ({draft.name ? `${draft.name.replace(/\s+/g, '_')}.${draft.format.toLowerCase()}` : `operations.${draft.format.toLowerCase()}`})</strong>
                           </div>
                         </div>
 
@@ -2512,9 +2579,10 @@ function ReportsPageContent() {
   scheduleName: draft.name || 'Operations Audit',
   domain: draft.domain,
   sequence: draft.sequence,
+  format: draft.format,
   timestamp: new Date().toISOString(),
   integrityHash: 'sha256:8f2a4e9b1...',
-  fileName: `${(draft.name || 'report').replace(/\s+/g, '_')}.csv`
+  fileName: `${(draft.name || 'report').replace(/\s+/g, '_')}.${draft.format.toLowerCase()}`
 }, null, 2)}
                       </pre>
                       <div className="text-[10px] text-slate-500">
