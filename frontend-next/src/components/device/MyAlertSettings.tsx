@@ -49,9 +49,39 @@ export default function MyAlertSettings({
   const [enabled, setEnabled] = useState<Record<ChannelId, boolean>>(DEFAULT_ENABLED)
   const [showAdminThresholds, setShowAdminThresholds] = useState(false)
   const [showPersonalThresholds, setShowPersonalThresholds] = useState(false)
+  const [showPersonalHistory, setShowPersonalHistory] = useState(false)
+  const [personalEvents, setPersonalEvents] = useState<Array<{ id: string; param_key: string; param_label?: string; severity?: string; value: number; unit?: string; threshold: number; raised_at: string; acknowledged_at?: string }>>([])
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
+
+  const fetchPersonalEvents = useCallback(async () => {
+    if (!apiEnabled || !nodeId) return
+    try {
+      const rows = await api.events(nodeId)
+      if (Array.isArray(rows)) {
+        const userPrefix = 'PERSONAL:' + (session?.id || '')
+        const filtered = rows.filter((r: any) => r.source === userPrefix || String(r.source || '').startsWith('PERSONAL'))
+        setPersonalEvents(filtered as any)
+      }
+    } catch (_) {}
+  }, [nodeId, session?.id])
+
+  const handleAckPersonal = useCallback(async (evtId: string) => {
+    try {
+      await api.ackEvent(evtId, { by: session?.name || session?.email || 'User' })
+      toast.success('Personal alarm acknowledged')
+      fetchPersonalEvents()
+    } catch (_) {
+      toast.error('Could not acknowledge alarm')
+    }
+  }, [session?.name, session?.email, fetchPersonalEvents])
+
+  useEffect(() => {
+    if (showPersonalHistory) {
+      fetchPersonalEvents()
+    }
+  }, [showPersonalHistory, fetchPersonalEvents])
 
   useEffect(() => {
     if (!apiEnabled || !session?.id) return
@@ -238,6 +268,86 @@ export default function MyAlertSettings({
               independent of the device&apos;s official thresholds everyone else sees.
             </p>
             <AlarmParamConfig domain={domain} nodeId={nodeId} orgId={orgId} mode="personal" />
+          </div>
+        )}
+      </div>
+
+      {/* Section 3: My Personal Alarm History & In-App ACK Console */}
+      <div className="pt-1 space-y-2">
+        <button
+          type="button"
+          onClick={() => setShowPersonalHistory(!showPersonalHistory)}
+          className="w-full flex items-center justify-between p-2.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900/60 border border-slate-800 transition-all"
+        >
+          <span className="flex items-center gap-2">
+            <Bell size={13} className="text-amber-400" />
+            <span>3. My Personal Alarm History &amp; Console</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-500/30 font-mono">
+              {personalEvents.length} Recorded Alerts
+            </span>
+          </span>
+          {showPersonalHistory ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {showPersonalHistory && (
+          <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/80 animate-in fade-in duration-200 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-slate-400">
+                Audit trail of personal alerts delivered to your Telegram/Email. Click ACK to confirm receipt.
+              </p>
+              <button
+                type="button"
+                onClick={fetchPersonalEvents}
+                className="text-[10px] px-2 py-1 rounded bg-slate-900 text-slate-300 hover:text-white border border-slate-800"
+              >
+                Refresh Log
+              </button>
+            </div>
+
+            {personalEvents.length === 0 ? (
+              <div className="p-4 rounded-lg bg-slate-900/40 border border-slate-800 text-center text-xs text-slate-500">
+                No personal alarm events recorded for this device yet.
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {personalEvents.map((evt) => (
+                  <div
+                    key={evt.id}
+                    className="p-2.5 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center justify-between text-xs"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {evt.severity || 'WARNING'}
+                        </span>
+                        <span className="font-semibold text-slate-200">{evt.param_label || evt.param_key}</span>
+                        <span className="font-mono text-amber-300">{evt.value} {evt.unit}</span>
+                        <span className="text-[10px] text-slate-500">(Limit: {evt.threshold})</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono">
+                        {new Date(evt.raised_at).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div>
+                      {evt.acknowledged_at ? (
+                        <span className="text-[10px] px-2 py-1 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 font-mono">
+                          ✓ ACKed
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleAckPersonal(evt.id)}
+                          className="text-[11px] px-2.5 py-1 rounded font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow transition-all"
+                        >
+                          ACK
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

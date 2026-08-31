@@ -2056,6 +2056,20 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
         const isAdmin = u.role === 'admin' || u.role === 'superadmin';
         if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;
 
+        // Log Personal Alarm Event to alarm_events table for in-app console & auditability
+        if (u.id && (sel.email || sel.telegram || sel.line || sel.googlechat)) {
+          try {
+            for (const a of alarms) {
+              const pevtId = 'pevt_' + String(u.id).slice(0, 8) + '_' + String(a.paramKey) + '_' + Date.now();
+              await pool.query(
+                "INSERT IGNORE INTO alarm_events (id, node_id, org_id, department_id, param_key, param_label, severity, kind, source, value, threshold, unit, raised_at, notified) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'threshold', ?, ?, ?, ?, NOW(3), 1)",
+                [pevtId, e.nodeId, e.orgId, e.departmentId || null, a.paramKey, a.paramLabel, a.severity, 'PERSONAL:' + u.id, a.value, a.threshold, a.unit]
+              );
+            }
+          } catch(err) { node.warn('notify:personal-event-log ' + err.message); }
+        }
+
         if (sel.email && u.email && !_sentEmails.has(u.email.toLowerCase())) {
           try {
             const mc = await global.get('mailConfig')();
@@ -2719,24 +2733,61 @@ const pool = global.get('pool'); if (!pool || typeof pool.query !== 'function') 
 const CLEAR_MIN = Number(env.get('CLEAR_AFTER_MIN') || 5);
 (async () => {
   for (const __org of await global.get('sweepOrgs')()) {
-  const pool = global.get('resolvePool')(__org);
-  const [evs] = await pool.query("SELECT e.id, e.node_id, e.param_key, n.mqtt_prefix FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE e.cleared_at IS NULL AND e.kind IN ('threshold','rate')");
-  for (const ev of evs) {
-    const [rr] = await pool.query("SELECT rule_json FROM alarm_rules WHERE node_id=?", [ev.node_id]);
-    if (!rr.length) continue;
-    const rule = typeof rr[0].rule_json==='string' ? JSON.parse(rr[0].rule_json) : rr[0].rule_json;
-    const param = (rule.params||[]).find(p => p.key===ev.param_key);
-    if (!param) continue;
-    const hys = rule.hysteresis || 0;
-    const [rows] = await pool.query("SELECT value FROM readings WHERE node_id=? AND param_key=? AND taken_at > (NOW(3) - INTERVAL ? MINUTE)", [ev.node_id, ev.param_key, CLEAR_MIN]);
-    if (!rows.length) continue;   // no fresh data ⇒ don't clear yet
-    const stillBreaching = rows.some(r => { const v = Number(r.value); return param.direction==='high' ? v >= (param.warn - hys) : v <= (param.warn + hys); });
-    if (!stillBreaching) {
-      await pool.query("UPDATE alarm_events SET cleared_at=NOW(3) WHERE id=?", [ev.id]);
-      // §9: clear the retained alarm topic so subscribers see NORMAL
-      if (ev.mqtt_prefix) node.send({ topic: ev.mqtt_prefix+'/alarm/'+ev.param_key, payload: { sid:ev.param_key, state:'NORMAL', ts:Date.now() }, qos:1, retain:true });
+    const pool = global.get('resolvePool')(__org);
+    const [evs] = await pool.query(
+      "SELECT e.id, e.node_id, e.param_key, n.mqtt_prefix, r.rule_json " +
+      "FROM alarm_events e " +
+      "JOIN nodes n ON n.id=e.node_id " +
+      "LEFT JOIN alarm_rules r ON r.node_id=e.node_id " +
+      "WHERE e.cleared_at IS NULL AND e.kind IN ('threshold','rate') " +
+      "LIMIT 200"
+    );
+    if (!evs || !evs.length) continue;
+
+    const nodeParamPairs = evs.map(e => pool.escape(e.node_id + "::" + e.param_key)).join(",");
+    const [readingsRows] = await pool.query(
+      "SELECT node_id, param_key, value FROM readings " +
+      "WHERE taken_at > (NOW(3) - INTERVAL ? MINUTE) AND CONCAT(node_id, '::', param_key) IN (" + nodeParamPairs + ")",
+      [CLEAR_MIN]
+    );
+
+    const readingsMap = {};
+    for (const row of readingsRows || []) {
+      const k = row.node_id + "::" + row.param_key;
+      if (!readingsMap[k]) readingsMap[k] = [];
+      readingsMap[k].push(Number(row.value));
     }
-  }
+
+    const clearedEventIds = [];
+    const clearedMqttMsgs = [];
+
+    for (const ev of evs) {
+      if (!ev.rule_json) continue;
+      let rule = {};
+      try { rule = typeof ev.rule_json === 'string' ? JSON.parse(ev.rule_json) : ev.rule_json; } catch(_) { continue; }
+      const param = (rule.params || []).find(p => p.key === ev.param_key);
+      if (!param) continue;
+      const hys = rule.hysteresis || 0;
+      const values = readingsMap[ev.node_id + "::" + ev.param_key];
+      if (!values || !values.length) continue;
+
+      const stillBreaching = values.some(v => param.direction === 'high' ? v >= (param.warn - hys) : v <= (param.warn + hys));
+      if (!stillBreaching) {
+        clearedEventIds.push(ev.id);
+        if (ev.mqtt_prefix) {
+          clearedMqttMsgs.push({
+            topic: ev.mqtt_prefix + '/alarm/' + ev.param_key,
+            payload: { sid: ev.param_key, state: 'NORMAL', ts: Date.now() },
+            qos: 1, retain: true
+          });
+        }
+      }
+    }
+
+    if (clearedEventIds.length > 0) {
+      await pool.query("UPDATE alarm_events SET cleared_at=NOW(3) WHERE id IN (" + clearedEventIds.map(id => pool.escape(id)).join(",") + ")");
+      for (const msg of clearedMqttMsgs) node.send(msg);
+    }
   }
 })().catch(e => node.error('clear-sweep: ' + e.message));
 return null;
@@ -2896,14 +2947,75 @@ return null;
 
 const escalationFunc = `
 const ctl = global.get('pool'); if(!ctl || typeof ctl.query !== 'function') return null;
-(async()=>{
+const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
+(async () => {
   for (const __org of await global.get('sweepOrgs')()) {
-  const pool = global.get('resolvePool')(__org);
-  const [rows]=await pool.query("SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL AND escalated=0 AND raised_at<(NOW(3)-INTERVAL ${ESCALATE_MIN} MINUTE)");
-  for(const r of rows){ node.send({ payload: { nodeId:r.node_id, orgId:r.org_id, departmentId:r.department_id, paramLabel:'ESCALATION · '+r.param_label, kind:r.kind, value:Number(r.value), unit:r.unit, threshold:Number(r.threshold), severity:'CRITICAL', time:new Date(r.raised_at).toISOString() } }); }
-  if(rows.length){ await pool.query('UPDATE alarm_events SET escalated=1 WHERE id IN (?)',[rows.map(r=>r.id)]); }
+    const pool = global.get('resolvePool')(__org);
+
+    // LEVEL 1: Un-ACK'd CRITICAL alarms > ESCALATE_MIN (15m) -> Dept Lead
+    const [l1Rows] = await pool.query(
+      "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
+      "AND (escalated = 0 OR escalated IS NULL) AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
+      [ESCALATE_MIN]
+    );
+    for (const r of l1Rows) {
+      node.send({
+        payload: {
+          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
+          paramLabel: '⚡ [ESCALATION L1 - Dept Lead] ' + r.param_label,
+          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
+          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
+          escalationLevel: 1
+        }
+      });
+    }
+    if (l1Rows.length) {
+      await pool.query("UPDATE alarm_events SET escalated = 1 WHERE id IN (" + l1Rows.map(r => pool.escape(r.id)).join(",") + ")");
+    }
+
+    // LEVEL 2: Un-ACK'd CRITICAL alarms > 2 * ESCALATE_MIN (30m) -> Duty Engineer
+    const [l2Rows] = await pool.query(
+      "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
+      "AND escalated = 1 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
+      [ESCALATE_MIN * 2]
+    );
+    for (const r of l2Rows) {
+      node.send({
+        payload: {
+          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
+          paramLabel: '🔥 [ESCALATION L2 - Duty Engineer] ' + r.param_label,
+          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
+          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
+          escalationLevel: 2
+        }
+      });
+    }
+    if (l2Rows.length) {
+      await pool.query("UPDATE alarm_events SET escalated = 2 WHERE id IN (" + l2Rows.map(r => pool.escape(r.id)).join(",") + ")");
+    }
+
+    // LEVEL 3: Un-ACK'd CRITICAL alarms > 4 * ESCALATE_MIN (60m) -> Executive Admin
+    const [l3Rows] = await pool.query(
+      "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
+      "AND escalated = 2 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
+      [ESCALATE_MIN * 4]
+    );
+    for (const r of l3Rows) {
+      node.send({
+        payload: {
+          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
+          paramLabel: '💥 [ESCALATION L3 - Executive Admin / Emergency] ' + r.param_label,
+          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
+          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
+          escalationLevel: 3
+        }
+      });
+    }
+    if (l3Rows.length) {
+      await pool.query("UPDATE alarm_events SET escalated = 3 WHERE id IN (" + l3Rows.map(r => pool.escape(r.id)).join(",") + ")");
+    }
   }
-})().catch(e=>node.error(e.message));
+})().catch(e => node.error('escalation: ' + e.message));
 return null;
 `
 
