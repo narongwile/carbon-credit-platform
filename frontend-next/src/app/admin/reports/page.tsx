@@ -446,7 +446,8 @@ function ReportsPageContent() {
 
   const generatorFilteredDevices = useMemo(() => {
     let list = devices
-    if (selectedDomains.length > 0 && selectedDomains.length < ALL_DOMAIN_KEYS.length) {
+    const totalPossible = orgDomains.length > 0 ? orgDomains.length : ALL_DOMAIN_KEYS.length
+    if (selectedDomains.length > 0 && selectedDomains.length < totalPossible) {
       list = list.filter((d) => d.domain && selectedDomains.includes(d.domain))
     }
     if (generatorScope === 'site' && selectedSite !== 'all') {
@@ -457,7 +458,7 @@ function ReportsPageContent() {
       list = list.filter((d) => generatorDeviceIds.includes(d.id))
     }
     return list
-  }, [devices, selectedDomains, generatorScope, selectedSite, selectedDeptIds, generatorDeviceIds])
+  }, [devices, selectedDomains, orgDomains, generatorScope, selectedSite, selectedDeptIds, generatorDeviceIds])
 
   // Live Metrics & Preview Cache
   const [reportData, setReportData] = useState<{
@@ -470,12 +471,13 @@ function ReportsPageContent() {
 
   useEffect(() => {
     let cancelled = false
+    const totalPossible = orgDomains.length > 0 ? orgDomains.length : ALL_DOMAIN_KEYS.length
     buildIIoTReportData({
       orgId,
       orgName,
       title: customReportTitle.trim() || undefined,
       days: effectiveDays,
-      domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length === ALL_DOMAIN_KEYS.length ? 'all' : selectedDomains.join(','),
+      domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length >= totalPossible ? 'all' : selectedDomains.join(','),
       siteId: generatorScope === 'site' ? selectedSite : undefined,
       siteName: generatorScope === 'site' ? activeSiteName : undefined,
       departmentId: selectedDeptIds.length === 1 ? selectedDeptIds[0] : undefined,
@@ -536,7 +538,7 @@ function ReportsPageContent() {
         orgName,
         title: customReportTitle.trim() || undefined,
         days: effectiveDays,
-        domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length === ALL_DOMAIN_KEYS.length ? 'all' : selectedDomains.join(','),
+        domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length >= (orgDomains.length || ALL_DOMAIN_KEYS.length) ? 'all' : selectedDomains.join(','),
         siteId: generatorScope === 'site' ? selectedSite : undefined,
         siteName: generatorScope === 'site' ? activeSiteName : undefined,
         departmentId: selectedDeptIds.length === 1 ? selectedDeptIds[0] : undefined,
@@ -1212,12 +1214,12 @@ function ReportsPageContent() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="block text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
-                    Asset Domain Filter ({selectedDomains.length} of {ALL_DOMAIN_KEYS.length} selected)
+                    Asset Domain Filter ({selectedDomains.length} of {orgDomains.length || ALL_DOMAIN_KEYS.length} selected)
                   </label>
                   <div className="flex gap-2 text-[10px]">
                     <button
                       type="button"
-                      onClick={() => setSelectedDomains([...ALL_DOMAIN_KEYS])}
+                      onClick={() => setSelectedDomains(orgDomains.length > 0 ? [...orgDomains] : [...ALL_DOMAIN_KEYS])}
                       className="text-indigo-400 hover:text-indigo-300 font-semibold"
                     >
                       Select All
