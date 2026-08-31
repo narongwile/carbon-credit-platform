@@ -456,6 +456,7 @@ export default function AlarmParamConfig({
 
   // Current live sensor readings polled or subscribed
   const [liveReadings, setLiveReadings] = useState<Record<string, number>>({})
+  const [deviceReadingsMap, setDeviceReadingsMap] = useState<Record<string, Record<string, number>>>({})
   const [configuredDisplayKeys, setConfiguredDisplayKeys] = useState<string[]>([])
   const [discoveredWireKeys, setDiscoveredWireKeys] = useState<string[]>([])
   const [customParams, setCustomParams] = useState<AlarmParam[]>([])
@@ -490,6 +491,7 @@ export default function AlarmParamConfig({
         api.latest(nodeId).then((r) => {
           if (cancelled || !r?.values) return
           setLiveReadings(r.values)
+          setDeviceReadingsMap((prev) => ({ ...prev, [nodeId]: r.values }))
           setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(r.values)])))
         })
       }
@@ -500,6 +502,10 @@ export default function AlarmParamConfig({
       const unsubscribe = subscribeTelemetry((frame) => {
         if (frame.id === nodeId && frame.values && Object.keys(frame.values).length > 0) {
           setLiveReadings((prev) => ({ ...prev, ...frame.values }))
+          setDeviceReadingsMap((prev) => ({
+            ...prev,
+            [nodeId]: { ...(prev[nodeId] ?? {}), ...frame.values },
+          }))
           setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
         }
       })
@@ -526,14 +532,24 @@ export default function AlarmParamConfig({
           if (cancelled) return
           const combined: Record<string, number> = {}
           const keys = new Set<string>()
-          for (const res of results) {
-            if (res.status === 'fulfilled' && res.value?.values) {
+          const devMap: Record<string, Record<string, number>> = {}
+          targetNodeIds.slice(0, 10).forEach((id, idx) => {
+            const res = results[idx]
+            if (res && res.status === 'fulfilled' && res.value?.values) {
+              devMap[id] = res.value.values
               Object.entries(res.value.values).forEach(([k, v]) => {
                 keys.add(k)
                 if (typeof v === 'number' && combined[k] === undefined) combined[k] = v
               })
             }
-          }
+          })
+          setDeviceReadingsMap((prev) => {
+            const next = { ...prev }
+            Object.entries(devMap).forEach(([id, vals]) => {
+              next[id] = { ...(next[id] ?? {}), ...vals }
+            })
+            return next
+          })
           if (keys.size > 0) {
             setLiveReadings((prev) => ({ ...prev, ...combined }))
             setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
@@ -548,6 +564,10 @@ export default function AlarmParamConfig({
       const unsubscribe = subscribeTelemetry((frame) => {
         if (frame.id && targetNodeSet.has(frame.id) && frame.values && Object.keys(frame.values).length > 0) {
           setLiveReadings((prev) => ({ ...prev, ...frame.values }))
+          setDeviceReadingsMap((prev) => ({
+            ...prev,
+            [frame.id]: { ...(prev[frame.id] ?? {}), ...frame.values },
+          }))
           setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
         }
       })
@@ -573,6 +593,7 @@ export default function AlarmParamConfig({
       }
     } else {
       setLiveReadings({})
+      setDeviceReadingsMap({})
     }
   }, [live, nodeId, targetDeviceIds])
 
@@ -1180,17 +1201,20 @@ export default function AlarmParamConfig({
     const results: Array<{ deviceId: string; deviceName: string; value: number }> = []
     if (nodeId) {
       const dev = devices.find((d) => d.id === nodeId)
-      const raw = liveReadings[paramKey] ?? (dev as any)?.lastSample?.[paramKey]
+      const raw = deviceReadingsMap[nodeId]?.[paramKey] ?? liveReadings[paramKey] ?? (dev as any)?.lastSample?.[paramKey]
       const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
       if (!isNaN(val)) {
         results.push({ deviceId: nodeId, deviceName: dev?.name || nodeId, value: val })
       }
     } else {
       for (const dev of scopedDevices) {
-        const raw = (dev as any)?.lastSample?.[paramKey] ?? (targetDeviceIds?.has(dev.id) ? liveReadings[paramKey] : undefined)
-        const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
-        if (!isNaN(val)) {
-          results.push({ deviceId: dev.id, deviceName: dev.name || dev.id, value: val })
+        const devMap = deviceReadingsMap[dev.id]
+        const raw = devMap?.[paramKey] ?? (dev as any)?.lastSample?.[paramKey]
+        if (raw != null) {
+          const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
+          if (!isNaN(val)) {
+            results.push({ deviceId: dev.id, deviceName: dev.name || dev.id, value: val })
+          }
         }
       }
     }
