@@ -40,7 +40,7 @@ GITLAB_REGISTRY_USER=oauth2 GITLAB_REGISTRY_TOKEN='glpat-lxTRJgWKtpwWFD9wuMjEbmM
 GITLAB_REGISTRY_USER=oauth2 GITLAB_REGISTRY_TOKEN='glpat-lxTRJgWKtpwWFD9wuMjEbmM6MQpvOjEKdTpuaDlqNw8.01.171jfngrv' bash infra/scripts/build-push-migrate.sh
 
 # Kubernetes SQL Schema & Migration ConfigMap Sync
-bash infra/scripts/sync-sql-configmap.sh
+bash infra/scripts/sync-sql-configmap.sh backend/sql
 ```
 
 ## Architecture & Tenancy Norms
