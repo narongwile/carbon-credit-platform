@@ -741,14 +741,19 @@ export default function AlarmParamConfig({
     // When editing a specific single device (nodeId set), scope strictly to what THAT device actually reports in live telemetry
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (mode === 'personal') {
+      // If Admin has set specific Displayed Parameters for this user/department, enforce that restriction!
+      if (configuredDisplayKeys.length > 0) {
+        if (nodeId && activeKeys.size > 0) {
+          return allParams.filter((p) => activeKeys.has(p.key) && configuredDisplayKeys.includes(p.key))
+        }
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
+      }
+      // If no department/user restriction is configured by admin, show active reported keys for the device
       if (nodeId && activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key))
       }
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key))
-      }
-      if (configuredDisplayKeys.length > 0) {
-        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
       }
       if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
@@ -776,14 +781,17 @@ export default function AlarmParamConfig({
   const activeParamsCount = useMemo(() => {
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (mode === 'personal') {
+      if (configuredDisplayKeys.length > 0) {
+        if (nodeId && activeKeys.size > 0) {
+          return allParams.filter((p) => activeKeys.has(p.key) && configuredDisplayKeys.includes(p.key)).length
+        }
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
+      }
       if (nodeId && activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key)).length
       }
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key)).length
-      }
-      if (configuredDisplayKeys.length > 0) {
-        return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
       }
       if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
