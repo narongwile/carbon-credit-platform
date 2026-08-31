@@ -390,31 +390,11 @@ export default function AdminBulkApplyAlarmEditor({
         </div>
       </div>
 
-      {/* STEP 2: ALARM PARAMETER CONFIG EDITOR */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between px-1">
-          <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
-            <Sliders size={14} className="text-indigo-400" /> STEP 2: Configure Baseline Thresholds (Union Spectrum)
-          </span>
-          <span className="text-[11px] text-indigo-300 font-medium">
-            {selectedDeviceIds.length} device(s) selected in scope
-          </span>
-        </div>
-        <AlarmParamConfig
-          domain={domain}
-          nodeId={selectedDeviceIds.length === 1 ? selectedDeviceIds[0] : undefined}
-          orgId={orgId}
-          onApplyAll={applyRule}
-          applyAllLabel={applyAllLabel}
-          targetDeviceIds={targetDeviceIds}
-        />
-      </div>
-
-      {/* STEP 3: ROLLOUT SCOPE SELECTION */}
+      {/* STEP 2: ROLLOUT SCOPE SELECTION */}
       <div className="p-3.5 rounded-xl border border-slate-800/90 space-y-3" style={{ background: '#0a0e1a' }}>
         <div className="flex items-center justify-between">
           <label className="block text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
-            <Globe size={14} className="text-indigo-400" /> STEP 3: Select Rollout &amp; Deployment Scope
+            <Globe size={14} className="text-indigo-400" /> STEP 2: Select Rollout &amp; Deployment Scope
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -564,6 +544,26 @@ export default function AdminBulkApplyAlarmEditor({
             </div>
           </div>
         )}
+      </div>
+
+      {/* STEP 3: ALARM PARAMETER CONFIG EDITOR */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+            <Sliders size={14} className="text-indigo-400" /> STEP 3: Configure Baseline Thresholds &amp; Apply
+          </span>
+          <span className="text-[11px] text-indigo-300 font-medium">
+            Deploying to {targetDeviceIds.size} device(s) in scope
+          </span>
+        </div>
+        <AlarmParamConfig
+          domain={domain}
+          nodeId={selectedDeviceIds.length === 1 ? selectedDeviceIds[0] : undefined}
+          orgId={orgId}
+          onApplyAll={applyRule}
+          applyAllLabel={applyAllLabel}
+          targetDeviceIds={targetDeviceIds}
+        />
       </div>
     </div>
   )
