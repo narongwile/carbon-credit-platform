@@ -10,6 +10,7 @@ import { sites as defaultSites } from '@/lib/fleetData'
 import type { ReportSequence } from '@/types/org'
 import type { SensorDomain } from '@/types/fleet'
 import type { RecipientMode } from '@/lib/api'
+import { DOMAIN_TO_PLATFORM, licensedDomains } from '@/lib/entitlements'
 import {
   buildIIoTReportData,
   exportIIoTPDF,
@@ -272,6 +273,18 @@ function ReportsPageContent() {
     return () => { cancelled = true }
   }, [live, orgId])
 
+  // Real entitlements — which product domains this organization is actually licensed for
+  const [orgDomains, setOrgDomains] = useState<SensorDomain[]>(() => licensedDomains(orgId))
+  useEffect(() => {
+    if (!live) { setOrgDomains(licensedDomains(orgId)); return }
+    let cancelled = false
+    api.entitlements(orgId).then((ents) => {
+      if (cancelled || !ents) return
+      setOrgDomains((['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[]).filter((d) => ents.includes(DOMAIN_TO_PLATFORM[d])))
+    })
+    return () => { cancelled = true }
+  }, [live, orgId])
+
   const { devices } = useManagedDevices(orgId)
 
   // Compute available sites for this organization's devices
@@ -297,9 +310,24 @@ function ReportsPageContent() {
 
   // Filter & Studio State
   const ALL_DOMAIN_KEYS = ['transformer', 'carbonNode', 'bloodBox', 'automobile'] as const
-  const [selectedDomains, setSelectedDomains] = useState<string[]>(() =>
-    urlDomain && ALL_DOMAIN_KEYS.includes(urlDomain as any) ? [urlDomain] : ['transformer', 'carbonNode', 'bloodBox', 'automobile']
-  )
+  const [selectedDomains, setSelectedDomains] = useState<string[]>(() => {
+    const licensed = licensedDomains(orgId)
+    if (urlDomain && ALL_DOMAIN_KEYS.includes(urlDomain as any) && (licensed.length === 0 || licensed.includes(urlDomain as any))) {
+      return [urlDomain]
+    }
+    return licensed.length > 0 ? licensed : ['transformer', 'carbonNode', 'bloodBox', 'automobile']
+  })
+
+  // Sync selectedDomains when orgDomains change
+  useEffect(() => {
+    if (orgDomains.length > 0) {
+      setSelectedDomains((prev) => {
+        const filtered = prev.filter((d) => orgDomains.includes(d as SensorDomain))
+        return filtered.length > 0 ? filtered : orgDomains
+      })
+    }
+  }, [orgDomains])
+
   const [selectedSite, setSelectedSite] = useState<string>(urlSiteId || 'all')
 
   // Keep the URL in sync with the filters, not just read it once on mount.
@@ -712,7 +740,7 @@ function ReportsPageContent() {
     setDraft({
       ...blankSchedule,
       name: '',
-      domain: selectedDomains.length === 1 ? selectedDomains[0] : 'all',
+      domain: selectedDomains.length === 1 ? selectedDomains[0] : (orgDomains.length === 1 ? orgDomains[0] : 'all'),
       scope: generatorScope === 'all' ? 'org' : generatorScope,
       scopeId: generatorScope === 'site' ? (selectedSite === 'all' ? '' : selectedSite)
              : generatorScope === 'department' ? selectedDeptIds.join(',')
@@ -1205,7 +1233,7 @@ function ReportsPageContent() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {INDUSTRIAL_DOMAINS.filter((d) => d.id !== 'all').map((dm) => {
+                  {INDUSTRIAL_DOMAINS.filter((d) => d.id !== 'all' && orgDomains.includes(d.id as SensorDomain)).map((dm) => {
                     const on = selectedDomains.includes(dm.id)
                     return (
                       <button
@@ -1757,8 +1785,8 @@ function ReportsPageContent() {
                     Product Domain Filter (Multi-Product Org)
                   </label>
                   <div className="flex flex-wrap gap-1.5">
-                    {INDUSTRIAL_DOMAINS.map((dm) => {
-                      const on = (draft.domain || 'all') === dm.id
+                    {INDUSTRIAL_DOMAINS.filter((dm) => dm.id === 'all' ? orgDomains.length > 1 : orgDomains.includes(dm.id as SensorDomain)).map((dm) => {
+                      const on = (draft.domain || (orgDomains.length === 1 ? orgDomains[0] : 'all')) === dm.id
                       return (
                         <button
                           key={dm.id}
