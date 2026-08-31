@@ -285,24 +285,135 @@ export default function AdminBulkApplyAlarmEditor({
   }, [orgUsers, orgDepts, userSearch])
 
   return (
-    <div className="space-y-3.5">
-      <div>
-        <label className="block text-xs text-slate-400 mb-1.5 uppercase tracking-wider font-medium">
-          Apply baseline to
-        </label>
-        <div className="flex flex-wrap gap-2 mb-2.5">
+    <div className="space-y-4">
+      {/* STEP 1: CONTEXT DEVICE SELECTOR */}
+      <div className="p-3.5 rounded-xl border border-indigo-900/40 space-y-3" style={{ background: '#0a0e1a' }}>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Cpu size={14} className="text-indigo-400" /> STEP 1: Select Target Device(s) to Inspect &amp; Edit
+            </span>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Select 1 or multiple transformers to inspect and edit parameter thresholds (Union Spectrum View with Device Coverage Badges)
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={selectAllDevices}
+              className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium underline"
+            >
+              Select All ({domainDevices.length})
+            </button>
+            <span className="text-slate-600">·</span>
+            <button
+              type="button"
+              onClick={clearDevices}
+              className="text-[11px] text-slate-400 hover:text-slate-300 underline"
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+
+        {/* Search Filter */}
+        {domainDevices.length > 3 && (
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={deviceSearch}
+              onChange={(e) => setDeviceSearch(e.target.value)}
+              placeholder={`Search ${domain} devices by name, ID, or site…`}
+              className="w-full pl-7 pr-3 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
+              style={inset}
+            />
+          </div>
+        )}
+
+        {/* Device Selection Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
+          {filteredDevices.map((d) => {
+            const isSelected = selectedDeviceIds.includes(d.id)
+            const isOnline = d.status === 'online'
+            const lastSample = (d as any).lastSample
+            const paramCount = lastSample ? Object.keys(lastSample).length : (d.id === 'tr-222' ? 7 : 35)
+            return (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => toggleDevice(d.id)}
+                className={clsx(
+                  'flex items-center justify-between p-2.5 rounded-lg text-xs font-medium transition-all border text-left',
+                  isSelected
+                    ? 'bg-indigo-950/50 border-indigo-500/80 text-white shadow-sm'
+                    : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
+                )}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className={clsx('w-4 h-4 rounded flex items-center justify-center text-[9px] border shrink-0', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
+                    {isSelected && <Check size={10} />}
+                  </div>
+                  <div className="min-w-0 truncate">
+                    <span className="font-semibold block truncate text-slate-200">{d.name}</span>
+                    <span className="text-[10px] text-slate-500 font-mono block truncate">{d.id}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 border border-slate-700 font-mono">
+                    {paramCount} params
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className={clsx('w-1.5 h-1.5 rounded-full', isOnline ? 'bg-emerald-400' : 'bg-slate-500')} />
+                    <span className="text-[9px] text-slate-400 uppercase">{d.status}</span>
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* STEP 2: ALARM PARAMETER CONFIG EDITOR */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between px-1">
+          <span className="text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+            <Sliders size={14} className="text-indigo-400" /> STEP 2: Configure Baseline Thresholds (Union Spectrum)
+          </span>
+          <span className="text-[11px] text-indigo-300 font-medium">
+            {selectedDeviceIds.length} device(s) selected in scope
+          </span>
+        </div>
+        <AlarmParamConfig
+          domain={domain}
+          nodeId={selectedDeviceIds.length === 1 ? selectedDeviceIds[0] : undefined}
+          orgId={orgId}
+          onApplyAll={applyRule}
+          applyAllLabel={applyAllLabel}
+          targetDeviceIds={targetDeviceIds}
+        />
+      </div>
+
+      {/* STEP 3: ROLLOUT SCOPE SELECTION */}
+      <div className="p-3.5 rounded-xl border border-slate-800/90 space-y-3" style={{ background: '#0a0e1a' }}>
+        <div className="flex items-center justify-between">
+          <label className="block text-xs font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
+            <Globe size={14} className="text-indigo-400" /> STEP 3: Select Rollout &amp; Deployment Scope
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
           {[
-            { id: 'devices', label: 'Select Devices', icon: Sliders },
-            { id: 'org', label: 'Whole organization', icon: Globe },
+            { id: 'devices', label: `Selected Devices (${selectedDeviceIds.length})`, icon: Sliders },
+            { id: 'org', label: 'Whole Organization', icon: Globe },
             { id: 'department', label: 'Departments', icon: Building2 },
-            { id: 'user', label: 'Users', icon: Users },
+            { id: 'user', label: 'User Teams', icon: Users },
           ].map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
               onClick={() => setApplyScope(id as any)}
               className={clsx(
-                'flex-1 min-w-[120px] py-2 px-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all',
+                'flex-1 min-w-[130px] py-2 px-2.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all',
                 applyScope === id ? 'text-white shadow-sm' : 'text-slate-500 hover:text-slate-300'
               )}
               style={applyScope === id ? { background: 'rgba(99,102,241,0.22)', border: '1px solid #6366f1' } : inset}
@@ -312,84 +423,6 @@ export default function AdminBulkApplyAlarmEditor({
             </button>
           ))}
         </div>
-
-        {/* Multi-Device Picker */}
-        {applyScope === 'devices' && (
-          <div className="p-3.5 rounded-xl border border-slate-800/90 space-y-3" style={{ background: '#0a0e1a' }}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-white flex items-center gap-2">
-                <Sliders size={13} className="text-indigo-400" />
-                Select Target {DOMAIN_META[domain]?.platform || 'Devices'} ({selectedDeviceIds.length} of {domainDevices.length} selected)
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={selectAllDevices}
-                  className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium underline"
-                >
-                  Select All ({domainDevices.length})
-                </button>
-                <span className="text-slate-600">·</span>
-                <button
-                  type="button"
-                  onClick={clearDevices}
-                  className="text-[11px] text-slate-400 hover:text-slate-300 underline"
-                >
-                  Reset
-                </button>
-              </div>
-            </div>
-
-            {/* Search Filter */}
-            {domainDevices.length > 3 && (
-              <div className="relative">
-                <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
-                  type="text"
-                  value={deviceSearch}
-                  onChange={(e) => setDeviceSearch(e.target.value)}
-                  placeholder={`Search ${domain} devices by name, ID, or site…`}
-                  className="w-full pl-7 pr-3 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
-                  style={inset}
-                />
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
-              {filteredDevices.map((d) => {
-                const isSelected = selectedDeviceIds.includes(d.id)
-                const isOnline = d.status === 'online'
-                return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => toggleDevice(d.id)}
-                    className={clsx(
-                      'flex items-center justify-between p-2.5 rounded-lg text-xs font-medium transition-all border text-left',
-                      isSelected
-                        ? 'bg-indigo-950/40 border-indigo-500/80 text-white shadow-sm'
-                        : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                    )}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className={clsx('w-4 h-4 rounded flex items-center justify-center text-[9px] border shrink-0', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
-                        {isSelected && <Check size={10} />}
-                      </div>
-                      <div className="min-w-0 truncate">
-                        <span className="font-semibold block truncate text-slate-200">{d.name}</span>
-                        <span className="text-[10px] text-slate-500 font-mono block truncate">{d.id}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                      <span className={clsx('w-1.5 h-1.5 rounded-full', isOnline ? 'bg-emerald-400' : 'bg-slate-500')} />
-                      <span className="text-[10px] text-slate-400 uppercase">{d.status}</span>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
 
         {/* Multi-Department Picker */}
         {applyScope === 'department' && (
@@ -403,7 +436,7 @@ export default function AdminBulkApplyAlarmEditor({
                 <button
                   type="button"
                   onClick={selectAllDepts}
-                  className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium"
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium underline"
                 >
                   Select All
                 </button>
@@ -449,16 +482,16 @@ export default function AdminBulkApplyAlarmEditor({
         {/* Multi-User Picker */}
         {applyScope === 'user' && (
           <div className="p-3 rounded-xl border border-slate-800/90 space-y-2.5" style={{ background: '#0a0e1a' }}>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1.5">
                 <Users size={12} className="text-indigo-400" />
-                Select Users ({selectedUserIds.length} of {orgUsers.length} selected · {targetDeviceIds.size} devices)
+                Select User Teams ({selectedUserIds.length} of {orgUsers.length} selected · {targetDeviceIds.size} devices)
               </span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={selectAllUsers}
-                  className="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-medium"
+                  className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium underline"
                 >
                   Select All
                 </button>
@@ -474,21 +507,21 @@ export default function AdminBulkApplyAlarmEditor({
             </div>
 
             {/* Search Filter */}
-            {orgUsers.length > 4 && (
+            {orgUsers.length > 3 && (
               <div className="relative">
                 <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
                 <input
                   type="text"
                   value={userSearch}
                   onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Filter users or departments…"
-                  className="w-full pl-7 pr-3 py-1.5 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
+                  placeholder="Search users by name or department…"
+                  className="w-full pl-7 pr-3 py-1 rounded-lg text-xs text-white placeholder-slate-500 outline-none focus:ring-1 focus:ring-indigo-500"
                   style={inset}
                 />
               </div>
             )}
 
-            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto pr-1">
+            <div className="flex flex-wrap gap-1.5 max-h-40 overflow-y-auto">
               {filteredUsers.map((u) => {
                 const isSelected = selectedUserIds.includes(u.id)
                 const deptName = orgDepts.find((d) => d.id === u.departmentId)?.name
@@ -498,13 +531,13 @@ export default function AdminBulkApplyAlarmEditor({
                     type="button"
                     onClick={() => toggleUser(u.id)}
                     className={clsx(
-                      'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border text-left',
+                      'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-all border',
                       isSelected
                         ? 'bg-indigo-950/50 border-indigo-500/80 text-white shadow-sm'
                         : 'bg-slate-900/50 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
                     )}
                   >
-                    <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center text-[9px] border shrink-0', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
+                    <div className={clsx('w-3.5 h-3.5 rounded flex items-center justify-center text-[9px] border', isSelected ? 'bg-indigo-600 border-indigo-400 text-white' : 'border-slate-700 bg-slate-800')}>
                       {isSelected && <Check size={10} />}
                     </div>
                     <span>{u.name}</span>
@@ -516,15 +549,6 @@ export default function AdminBulkApplyAlarmEditor({
           </div>
         )}
       </div>
-
-      <AlarmParamConfig
-        domain={domain}
-        nodeId={applyScope === 'devices' ? (selectedDeviceIds.length === 1 ? selectedDeviceIds[0] : undefined) : nodeId}
-        orgId={orgId}
-        onApplyAll={applyRule}
-        applyAllLabel={applyAllLabel}
-        targetDeviceIds={targetDeviceIds}
-      />
     </div>
   )
 }
