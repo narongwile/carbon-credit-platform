@@ -364,8 +364,10 @@ export default function AdminBulkApplyAlarmEditor({
                     {paramCount} params
                   </span>
                   <div className="flex items-center gap-1">
-                    <span className={clsx('w-1.5 h-1.5 rounded-full', isOnline ? 'bg-emerald-400' : 'bg-slate-500')} />
-                    <span className="text-[9px] text-slate-400 uppercase">{d.status}</span>
+                    <span className={clsx('w-1.5 h-1.5 rounded-full', isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500')} />
+                    <span className={clsx('text-[9px] font-semibold uppercase', isOnline ? 'text-emerald-400' : 'text-slate-500')}>
+                      {isOnline ? 'ONLINE' : 'OFFLINE'}
+                    </span>
                   </div>
                 </div>
               </button>
