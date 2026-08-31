@@ -816,7 +816,7 @@ export default function AlarmParamConfig({
   const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
 
   // Active parameter configuration values
-  const [vals, setVals] = useState<Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }>>({})
+  const [vals, setVals] = useState<Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean; direction?: 'high' | 'low' }>>({})
   const [dbVals, setDbVals] = useState<Record<string, { dwell_min?: number; cooldown_s?: number }>>({})
   const [dwell, setDwell] = useState(schema?.dwellMin ?? 3)
   const [hyst, setHyst] = useState(schema?.hysteresis ?? 1)
@@ -832,6 +832,7 @@ export default function AlarmParamConfig({
             warn: p.warn,
             critical: p.critical,
             rate: p.rate?.warn,
+            direction: p.direction,
             // This seed runs for EVERY row and lands in `vals`, which every
             // later read consults first — so an unconditional `true` here
             // silently re-armed the rows the unrationalized rule is meant to
@@ -850,14 +851,17 @@ export default function AlarmParamConfig({
   const toggleEnabled = (key: string) =>
     setVals((s) => ({ ...s, [key]: { ...s[key], enabled: s[key]?.enabled === false ? true : false } }))
 
-  const toggleDirection = (key: string) => {
-    // Invert direction and flip default warn/critical
+  const toggleDirection = (key: string, defaultDir: 'high' | 'low') => {
+    // Invert direction state (high <-> low) and flip warn/critical numbers accordingly
     setVals((s) => {
       const current = s[key]
+      const currentDir = current?.direction ?? defaultDir
+      const nextDir = currentDir === 'high' ? 'low' : 'high'
       return {
         ...s,
         [key]: {
           ...current,
+          direction: nextDir,
           warn: current?.critical ?? 80,
           critical: current?.warn ?? 100,
         },
@@ -870,12 +874,13 @@ export default function AlarmParamConfig({
   // Apply stored rule (from node or org)
   const applyRule = (saved: NodeAlarmRule) => {
     const savedKeys = new Set((saved.params ?? []).map((p) => rowId(p)))
-    const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean }> = {}
+    const nextVals: Record<string, { warn: number; critical: number; rate?: number; enabled?: boolean; direction?: 'high' | 'low' }> = {}
     for (const p of saved.params ?? []) {
       nextVals[rowId(p)] = {
         warn: p.warn,
         critical: p.critical,
         rate: p.rate?.warn,
+        direction: p.direction,
         enabled: (p as any).enabled !== false,
       }
     }
@@ -1024,7 +1029,7 @@ export default function AlarmParamConfig({
         key: p.key,
         label: p.label,
         unit: p.unit,
-        direction: p.direction,
+        direction: v?.direction ?? p.direction,
         warn: v?.warn ?? p.warn,
         critical: v?.critical ?? p.critical,
         rate: p.rate ? { ...p.rate, warn: v?.rate ?? p.rate.warn } : undefined,
@@ -1044,21 +1049,15 @@ export default function AlarmParamConfig({
     }
   }
 
-  /** Enabled parameters whose critical limit sits on the wrong side of warn.
-   *
-   * paramStatus tests critical FIRST, so for a 'high' parameter with warn 90 /
-   * critical 80 everything above 80 reports CRITICAL and the warning tier can
-   * never fire — the operator loses their early notice and only ever sees the
-   * top severity. ParamHistoryModal already refuses to save this; this editor
-   * is the more dangerous one to leave unguarded, because Apply-to-all pushes
-   * a single mistake onto every device in the fleet at once. */
+  /** Enabled parameters whose critical limit sits on the wrong side of warn. */
   const misordered = allParams.filter((p) => {
     const v = vals[rowId(p)]
     if (!(v?.enabled ?? !p.unrationalized)) return false
     const warn = v?.warn ?? p.warn
     const critical = v?.critical ?? p.critical
+    const effDir = v?.direction ?? p.direction
     if (!Number.isFinite(warn) || !Number.isFinite(critical)) return false
-    return p.direction === 'high' ? critical <= warn : critical >= warn
+    return effDir === 'high' ? critical <= warn : critical >= warn
   })
 
   const persist = async () => {
@@ -1699,30 +1698,35 @@ export default function AlarmParamConfig({
 
                     {/* Direction Toggle */}
                     <td className="py-2 px-3 whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleDirection(rowId(p))}
-                        disabled={!isEnabled}
-                        className={clsx(
-                          'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition-all',
-                          p.direction === 'high'
-                            ? 'bg-red-950/40 border-red-800/80 text-red-300 hover:bg-red-900/60'
-                            : 'bg-blue-950/40 border-blue-800/80 text-blue-300 hover:bg-blue-900/60'
-                        )}
-                        title="Click to toggle High (Alarm above) vs Low (Alarm below)"
-                      >
-                        {p.direction === 'high' ? (
-                          <>
-                            <ArrowUp size={11} className="text-red-400" />
-                            <span>Alarm &gt;</span>
-                          </>
-                        ) : (
-                          <>
-                            <ArrowDown size={11} className="text-blue-400" />
-                            <span>Alarm &lt;</span>
-                          </>
-                        )}
-                      </button>
+                      {(() => {
+                        const effDir = current.direction ?? p.direction
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => toggleDirection(rowId(p), p.direction)}
+                            disabled={!isEnabled}
+                            className={clsx(
+                              'flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border transition-all',
+                              effDir === 'high'
+                                ? 'bg-red-950/40 border-red-800/80 text-red-300 hover:bg-red-900/60'
+                                : 'bg-blue-950/40 border-blue-800/80 text-blue-300 hover:bg-blue-900/60'
+                            )}
+                            title="Click to toggle High (Alarm above) vs Low (Alarm below)"
+                          >
+                            {effDir === 'high' ? (
+                              <>
+                                <ArrowUp size={11} className="text-red-400" />
+                                <span>Alarm &gt;</span>
+                              </>
+                            ) : (
+                              <>
+                                <ArrowDown size={11} className="text-blue-400" />
+                                <span>Alarm &lt;</span>
+                              </>
+                            )}
+                          </button>
+                        )
+                      })()}
                     </td>
 
                     {/* Warning Input */}
