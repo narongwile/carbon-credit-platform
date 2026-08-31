@@ -738,17 +738,17 @@ export default function AlarmParamConfig({
    * gets SAVED and validated must not depend on which rows are on screen.
    */
   const scopedParams = useMemo(() => {
-    // When editing a specific single device (nodeId set), scope strictly to what THAT device actually reports
+    // When editing a specific single device (nodeId set), scope strictly to what THAT device actually reports in live telemetry
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (mode === 'personal') {
       if (nodeId && activeKeys.size > 0) {
-        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key))
-      }
-      if (configuredDisplayKeys.length > 0) {
-        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
+        return allParams.filter((p) => activeKeys.has(p.key))
       }
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key))
+      }
+      if (configuredDisplayKeys.length > 0) {
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
       }
       if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
@@ -758,49 +758,51 @@ export default function AlarmParamConfig({
     // When scoped to what devices in scope actually report (default "Reported by device" / "Active in selection"):
     if (scopeFilter === 'reported') {
       if (nodeId && activeKeys.size > 0) {
-        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key))
+        return allParams.filter((p) => activeKeys.has(p.key))
       }
-      if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
-        return allParams.filter(
-          (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
-        )
+      if (activeKeys.size > 0) {
+        return allParams.filter((p) => activeKeys.has(p.key))
+      }
+      if (configuredDisplayKeys.length > 0) {
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
       }
       if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
       }
     }
     return allParams
-  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
+  }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, mode, domain])
 
   const activeParamsCount = useMemo(() => {
     const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (mode === 'personal') {
       if (nodeId && activeKeys.size > 0) {
-        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key)).length
-      }
-      if (configuredDisplayKeys.length > 0) {
-        return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
+        return allParams.filter((p) => activeKeys.has(p.key)).length
       }
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key)).length
+      }
+      if (configuredDisplayKeys.length > 0) {
+        return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
       }
       if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
       }
     }
     if (nodeId && activeKeys.size > 0) {
-      return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key)).length
+      return allParams.filter((p) => activeKeys.has(p.key)).length
     }
-    if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
-      return allParams.filter(
-        (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
-      ).length
+    if (activeKeys.size > 0) {
+      return allParams.filter((p) => activeKeys.has(p.key)).length
+    }
+    if (configuredDisplayKeys.length > 0) {
+      return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
     }
     if (!isLive() && nodeId && domain === 'transformer') {
       return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
     }
     return allParams.length
-  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
+  }, [allParams, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, mode, domain])
 
   const readingCount = useMemo(() => scopedParams.filter((p) => p.paramType !== 'compound').length, [scopedParams])
   const compoundCount = useMemo(() => scopedParams.filter((p) => p.paramType === 'compound').length, [scopedParams])
