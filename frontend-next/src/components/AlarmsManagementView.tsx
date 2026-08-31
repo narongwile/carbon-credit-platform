@@ -122,23 +122,50 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   const [filter, setFilter] = useState<'all' | 'CRITICAL' | 'WARNING' | 'INFO'>('all')
   const [showAcked, setShowAcked] = useState(false)
   const live = useIsLive()
-  const { alarms: liveOrgAlarms, refetch: refetchAlarms } = useOrgAlarms(effOrgId, { pollMs: live ? 5000 : undefined })
-  const alarms = live ? liveOrgAlarms.map((a) => toAlarm(a, effOrgId)) : mockAlarms
 
   const [quick, setQuick] = useState<string>('Last 24 hours')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
 
+  // A relative window ("Last 1 hour") has to keep moving, but its start is a
+  // FETCH input now — recomputing it every render would give `load` a new
+  // identity every render and spin the effect forever. Advancing it once a
+  // minute keeps the window honest while costing at most one extra refetch a
+  // minute, against a poll that already runs every 5s.
+  const [nowMinute, setNowMinute] = useState(() => Math.floor(Date.now() / 60_000))
+  useEffect(() => {
+    const t = setInterval(() => setNowMinute(Math.floor(Date.now() / 60_000)), 60_000)
+    return () => clearInterval(t)
+  }, [])
+
   const range = useMemo(() => {
     if (from || to) {
-      return { start: from ? fromDisplayInput(from) : 0, end: to ? fromDisplayInput(to) : Infinity, label: `${from || '…'} → ${to || 'now'}` }
+      const s = from ? fromDisplayInput(from) : NaN
+      const e = to ? fromDisplayInput(to) : NaN
+      return {
+        start: Number.isFinite(s) ? s : 0,
+        end: Number.isFinite(e) ? e : Infinity,
+        label: `${from || '…'} → ${to || 'now'}`,
+      }
     }
     const hrs = QUICK_RANGES.find((q) => q.label === quick)?.hours ?? null
     return hrs === null
       ? { start: 0, end: Infinity, label: 'All time' }
-      : { start: Date.now() - hrs * 3600_000, end: Infinity, label: quick }
-  }, [quick, from, to])
+      : { start: nowMinute * 60_000 - hrs * 3600_000, end: Infinity, label: quick }
+  }, [quick, from, to, nowMinute])
+
+  // The range is pushed into the query, not applied to an already-truncated
+  // page: the endpoint returns the newest `limit` rows, so filtering a fixed
+  // newest-N window client-side could never reach the older events a wider
+  // range actually covers.
+  const { alarms: liveOrgAlarms, refetch: refetchAlarms } = useOrgAlarms(effOrgId, {
+    pollMs: live ? 5000 : undefined,
+    fromMs: range.start > 0 ? range.start : undefined,
+    toMs: Number.isFinite(range.end) ? range.end : undefined,
+    limit: 1000,
+  })
+  const alarms = live ? liveOrgAlarms.map((a) => toAlarm(a, effOrgId)) : mockAlarms
 
   const [problems, setProblems] = useState<EventProblem[]>([])
   useEffect(() => {
@@ -152,11 +179,22 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   const filtered = orgAlarms.filter((a) => {
     if (!showAcked && a.acknowledged) return false
     if (filter !== 'all' && a.severity !== filter) return false
+    // One rule for every row. This used to read:
+    //
+    //   if (Number.isFinite(ts) && range.start > 0) {
+    //     if (a.acknowledged && (ts < start || ts > end)) return false
+    //     if (!a.acknowledged && (from || to) && (...)) return false
+    //   }
+    //
+    // which made the picker a no-op in the default view. `showAcked` starts
+    // false, so the table shows UNacknowledged alarms — and for those the
+    // range was only honoured when `from`/`to` were set. Every quick range
+    // left both empty, so choosing "Last 1 hour" filtered nothing at all and
+    // week-old alarms stayed on screen. The `range.start > 0` guard also
+    // dropped the whole check when only "To" was set (start falls back to 0),
+    // so an upper bound on its own was ignored too.
     const ts = new Date(a.timestamp).getTime()
-    if (Number.isFinite(ts) && range.start > 0) {
-      if (a.acknowledged && (ts < range.start || ts > range.end)) return false
-      if (!a.acknowledged && (from || to) && (ts < range.start || ts > range.end)) return false
-    }
+    if (Number.isFinite(ts) && (ts < range.start || ts > range.end)) return false
     return true
   })
 
@@ -375,7 +413,13 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
               <tr>
                 <td colSpan={6} className="py-12 text-center text-slate-600">
                   <CheckCircle size={24} className="mx-auto mb-2 text-green-400 opacity-50" />
-                  No alarms matching current filters
+                  No alarms in {range.label}
+                  {/* Naming the window matters: an empty table under a narrow
+                      range means "nothing happened recently", not "this org is
+                      clear". Widening is the next thing the operator wants. */}
+                  <div className="text-[11px] text-slate-700 mt-1">
+                    matching current filters — try a wider range
+                  </div>
                 </td>
               </tr>
             ) : (

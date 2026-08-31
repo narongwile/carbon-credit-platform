@@ -32,11 +32,21 @@ export interface OrgAlarmRow {
  * anywhere that read it, in Live mode or not.
  *
  * open=true narrows to unacknowledged + uncleared (the badge/notifications
- * use case); omit for the full history (the Alarms page's own filters narrow
- * further client-side). Empty array in demo mode or before the first load —
- * callers that also work offline should keep their own mock fallback.
+ * use case); omit for the full history. Empty array in demo mode or before
+ * the first load — callers that also work offline should keep their own mock
+ * fallback.
+ *
+ * fromMs/toMs push the Alarms console's time range into the QUERY. They are
+ * part of `load`'s identity, so picking a different range refetches rather
+ * than re-filtering: the server returns at most `limit` rows ordered newest
+ * first, so a range narrowed client-side could only ever show a subset of the
+ * newest page, never the older events that the range actually covers. Pass
+ * undefined (not 0/Infinity) for an open-ended bound.
  */
-export function useOrgAlarms(orgId: string, opts?: { open?: boolean; pollMs?: number }): {
+export function useOrgAlarms(
+  orgId: string,
+  opts?: { open?: boolean; pollMs?: number; fromMs?: number; toMs?: number; limit?: number },
+): {
   alarms: OrgAlarmRow[]
   loaded: boolean
   refetch: () => void
@@ -45,10 +55,13 @@ export function useOrgAlarms(orgId: string, opts?: { open?: boolean; pollMs?: nu
   const [loaded, setLoaded] = useState(false)
   const open = opts?.open
   const pollMs = opts?.pollMs
+  const fromMs = opts?.fromMs
+  const toMs = opts?.toMs
+  const limit = opts?.limit
 
   const load = useCallback(() => {
     if (!isLive() || !orgId) { setAlarms([]); setLoaded(true); return }
-    api.orgAlarms(orgId, open).then((rows) => {
+    api.orgAlarms(orgId, { open, fromMs, toMs, limit }).then((rows) => {
       setAlarms((rows ?? []).map((r) => ({
         id: r.id, nodeId: r.node_id, nodeName: r.node_name, domain: r.domain,
         paramLabel: r.param_label, severity: r.severity, value: Number(r.value), threshold: Number(r.threshold),
@@ -57,7 +70,7 @@ export function useOrgAlarms(orgId: string, opts?: { open?: boolean; pollMs?: nu
       })))
       setLoaded(true)
     })
-  }, [orgId, open])
+  }, [orgId, open, fromMs, toMs, limit])
 
   useEffect(() => {
     load()

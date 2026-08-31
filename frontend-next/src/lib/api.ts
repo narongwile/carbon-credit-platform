@@ -543,14 +543,24 @@ export const api = {
    * all read the SAME real list. open=true narrows to unacknowledged +
    * uncleared (the badge/notifications use case); omit for the full history.
    */
-  orgAlarms: (orgId: string, open?: boolean) =>
-    req<{
+  orgAlarms: (orgId: string, opts?: { open?: boolean; fromMs?: number; toMs?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (opts?.open) qs.set('open', '1')
+    // Only finite, positive instants go on the wire — Infinity (the picker's
+    // "…until now") and NaN (a half-typed datetime-local) must not become the
+    // literal strings "Infinity"/"NaN" in a query the server then parses.
+    if (Number.isFinite(opts?.fromMs) && (opts!.fromMs as number) > 0) qs.set('from', String(Math.floor(opts!.fromMs as number)))
+    if (Number.isFinite(opts?.toMs) && (opts!.toMs as number) > 0) qs.set('to', String(Math.floor(opts!.toMs as number)))
+    if (opts?.limit) qs.set('limit', String(opts.limit))
+    const q = qs.toString()
+    return req<{
       id: string; node_id: string; org_id: string; department_id: string | null
       param_key: string; param_label: string; severity: 'WARNING' | 'CRITICAL'; kind: string
       value: number; threshold: number; unit: string | null; raised_at: string
       acknowledged_at: string | null; acknowledged_by: string | null; event_problem_id: string | null
       cleared_at: string | null; domain: SensorDomain; node_name: string
-    }[]>(`/api/orgs/${orgId}/alarms${open ? '?open=1' : ''}`),
+    }[]>(`/api/orgs/${orgId}/alarms${q ? '?' + q : ''}`)
+  },
   // Link switches + offline-backlog flushes for a device (transport_events
   // merged with offline_sync_log), newest first.
   transportEvents: (nodeId: string) =>

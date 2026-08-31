@@ -3993,16 +3993,47 @@ const pool=global.get('resolvePool')(orgId);
 // visible both ways: its pre-move alarms would vanish for the department that
 // now owns it, and linger for the one that no longer does. guard()'s own
 // event:view check already joins to nodes for exactly this reason.
-const orgAlarmsGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const openOnly=!!(msg.req.query&&msg.req.query.open);
+// GET /api/orgs/:orgId/alarms?open=1&from=<epochMs>&to=<epochMs>&limit=<n>
+//
+// from/to make the time range a QUERY, not a client-side filter over an
+// already-truncated page. Before this, the Alarms console's range picker only
+// re-filtered whatever the newest-300 fetch happened to contain, so "Last 30
+// days" could never show more than the newest 300 events no matter how many
+// the range actually held — on a busy org that is often under two days.
+//
+// The bound is epoch milliseconds rather than a formatted string on purpose:
+// both pools are opened with timezone: __DBTZ, so handing mysql2 a Date makes
+// it serialize in the DB's zone, and no format/zone assumption has to be
+// agreed between the browser, Node and MySQL. The picker's own value is read
+// as DISPLAY_TZ wall time by lib/displayTime.fromDisplayInput() before it
+// becomes an instant, so what the operator types and what the query compares
+// are the same moment.
+const orgAlarmsGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const q=(msg.req&&msg.req.query)||{};
+const openOnly=!!q.open;
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+const __ms=(v)=>{ const n=Number(v); return Number.isFinite(n)&&n>0 ? n : null; };
+const fromMs=__ms(q.from), toMs=__ms(q.to);
+// Bounded so a hand-built ?limit= cannot ask for the whole table.
+const MAX_ROWS=2000, DEF_ROWS=300;
+let limit=Number(q.limit); if(!Number.isFinite(limit)||limit<1) limit=DEF_ROWS;
+limit=Math.min(Math.floor(limit), MAX_ROWS);
 const pool=global.get('resolvePool')(orgId);
 (async()=>{
   const acc = (au.role==='superadmin'||au.role==='admin') ? null : await global.get('accessFor')(au.userId);
   let sql = "SELECT e.id,e.node_id,e.org_id,e.department_id,e.param_key,e.param_label,e.severity,e.kind,e.value,e.threshold,e.unit,e.raised_at,e.acknowledged_at,e.acknowledged_by,e.event_problem_id,e.cleared_at,n.domain,n.site_id,n.department_id AS node_department_id,n.name AS node_name FROM alarm_events e JOIN nodes n ON n.id=e.node_id WHERE (e.org_id=? OR e.org_id IS NULL OR n.org_id=? OR n.org_id IS NULL)";
   const args=[orgId, orgId];
   if(openOnly){ sql+=" AND e.cleared_at IS NULL AND e.acknowledged_at IS NULL"; }
+  if(fromMs!==null){ sql+=" AND e.raised_at >= ?"; args.push(new Date(fromMs)); }
+  if(toMs!==null){ sql+=" AND e.raised_at <= ?"; args.push(new Date(toMs)); }
   sql += " ORDER BY e.raised_at DESC";
-  if(!acc) sql += " LIMIT 300";
+  // A non-admin's rows are narrowed AFTER the query by accessFor/deptVisible/
+  // siteVisible/nodeVisible, so limiting the scan to exactly 'limit' would
+  // under-fill their page whenever they can see only a slice of the org. They
+  // previously got NO sql limit at all for that reason — which meant the LESS
+  // privileged caller ran the unbounded query and pulled every alarm the org
+  // ever raised into Node's heap before throwing most of it away. Scanning a
+  // bounded multiple keeps the page full without that.
+  sql += acc ? (" LIMIT " + Math.min(limit * 10, MAX_ROWS * 5)) : (" LIMIT " + limit);
   let rows = [];
   try {
     const [r] = await pool.query(sql, args);
@@ -4022,7 +4053,7 @@ const pool=global.get('resolvePool')(orgId);
     if(!global.get('siteVisible')(acc, r.site_id)) return false;
     if(!global.get('nodeVisible')(acc, r.node_id)) return false;
     return true;
-  }).slice(0,300) : rows;
+  }).slice(0,limit) : rows;
   msg.headers=__CORS; msg.payload=vis; node.send(msg);
 })()` + bbErr
 

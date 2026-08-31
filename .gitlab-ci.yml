@@ -144,6 +144,13 @@ test_proofs_and_integrity:
     # aliased org-1 to the PRODUCT id 'eternity'. Verified to fail 28/40 on the
     # pre-fix code.
     - node e2e/proofs/test-alarm-link-org-subdomain.mjs
+    # The Alarms console's ABSOLUTE RANGE / QUICK RANGES picker. Its filter
+    # only applied to ACKNOWLEDGED rows unless from/to were set — and quick
+    # ranges leave those empty while the table defaults to unacknowledged, so
+    # the whole quick-range column was a no-op. The range is also a query
+    # parameter now, not a filter over an already-truncated newest-300 page.
+    # Verified to fail 26/34 on the pre-fix code.
+    - node e2e/proofs/test-alarms-time-range.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see

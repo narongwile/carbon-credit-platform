@@ -52,8 +52,6 @@ interface EventProblem { id: string; label: string }
 export default function CustomerAlarmsView({ embedded = false }: { embedded?: boolean }) {
   const orgId = useSessionOrgId()
   const live = useIsLive()
-  // One scoped request, polled — not one request per device.
-  const { alarms, loaded, refetch } = useOrgAlarms(orgId, { pollMs: live ? 20000 : undefined })
 
   const [evProblems, setEvProblems] = useState<EventProblem[]>([])
   const [evClass, setEvClass] = useState<Record<string, string>>({})
@@ -97,28 +95,55 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
     return () => { cancelled = true }
   }, [live, orgId])
 
+  // A relative window has to keep moving, but its start is a FETCH input —
+  // recomputing it every render would change `load`'s identity every render
+  // and spin the effect forever. Once a minute keeps it honest cheaply.
+  const [nowMinute, setNowMinute] = useState(() => Math.floor(Date.now() / 60_000))
+  useEffect(() => {
+    const t = setInterval(() => setNowMinute(Math.floor(Date.now() / 60_000)), 60_000)
+    return () => clearInterval(t)
+  }, [])
+
   const range = useMemo(() => {
     if (from || to) {
       // fromDisplayInput, not new Date(): a datetime-local value is the
       // BROWSER's wall clock while every timestamp here renders in DISPLAY_TZ,
       // so reading it raw made the filter and the visible column disagree.
-      return { start: from ? fromDisplayInput(from) : 0, end: to ? fromDisplayInput(to) : Infinity, label: `${from || '…'} → ${to || 'now'}` }
+      const s = from ? fromDisplayInput(from) : NaN
+      const e = to ? fromDisplayInput(to) : NaN
+      return {
+        start: Number.isFinite(s) ? s : 0,
+        end: Number.isFinite(e) ? e : Infinity,
+        label: `${from || '…'} → ${to || 'now'}`,
+      }
     }
     const hrs = QUICK_RANGES.find((q) => q.label === quick)?.hours ?? null
     return hrs === null
       ? { start: 0, end: Infinity, label: 'All time' }
-      : { start: Date.now() - hrs * 3600_000, end: Infinity, label: quick }
-  }, [quick, from, to])
+      : { start: nowMinute * 60_000 - hrs * 3600_000, end: Infinity, label: quick }
+  }, [quick, from, to, nowMinute])
+
+  // One scoped request, polled — not one request per device — and the range is
+  // part of the QUERY, not a filter over an already-truncated newest-N page.
+  const { alarms, loaded, refetch } = useOrgAlarms(orgId, {
+    pollMs: live ? 20000 : undefined,
+    fromMs: range.start > 0 ? range.start : undefined,
+    toMs: Number.isFinite(range.end) ? range.end : undefined,
+    limit: 1000,
+  })
 
   const filtered = alarms.filter((a) => {
     if (!showAcked && a.acknowledgedAt) return false
     if (severity !== 'all' && a.severity !== severity) return false
     if (filterEvent !== 'all' && (a.eventProblemId || evClass[a.id]) !== filterEvent) return false
+    // One rule for every row. The old form only honoured the range for
+    // ACKNOWLEDGED alarms unless `from`/`to` were set — and `showAcked` starts
+    // false, so the table shows unacknowledged ones and every quick range
+    // (which leaves from/to empty) filtered nothing at all. The
+    // `range.start > 0` guard additionally skipped the check whenever only
+    // "To" was set, ignoring a lone upper bound.
     const ts = new Date(a.raisedAt).getTime()
-    if (Number.isFinite(ts) && range.start > 0) {
-      if (a.acknowledgedAt && (ts < range.start || ts > range.end)) return false
-      if (!a.acknowledgedAt && (from || to) && (ts < range.start || ts > range.end)) return false
-    }
+    if (Number.isFinite(ts) && (ts < range.start || ts > range.end)) return false
     return true
   })
 
