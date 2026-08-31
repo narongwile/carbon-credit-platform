@@ -335,7 +335,7 @@ export default function AdminBulkApplyAlarmEditor({
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-56 overflow-y-auto pr-1">
           {filteredDevices.map((d) => {
             const isSelected = selectedDeviceIds.includes(d.id)
-            const isOnline = d.status === 'online'
+            const isOnline = d.status === 'online' || (d as any).status === 'NORMAL' || (d as any).status === 'WARNING' || (d as any).status === 'CRITICAL' || (d as any).online == 1 || (d as any).online === '1'
             const lastSample = (d as any).lastSample
             const paramCount = lastSample ? Object.keys(lastSample).length : (d.id === 'tr-222' ? 7 : 35)
             return (

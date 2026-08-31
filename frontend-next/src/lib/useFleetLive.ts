@@ -9,7 +9,7 @@ import type { GeoNode } from './geoNodes'
 export type EffectiveStatus = 'NORMAL' | 'WARNING' | 'CRITICAL' | 'OFFLINE'
 
 export function statusFromLive(n: FleetNode): EffectiveStatus {
-  if (n.online !== 1) return 'OFFLINE'
+  if (!n || n.online === 0 || (n.online as any) === '0' || (n as any).status === 'OFFLINE' || (n as any).status === 'offline') return 'OFFLINE'
   if (n.alarm === 'CRITICAL') return 'CRITICAL'
   if (n.alarm === 'WARNING') return 'WARNING'
   return 'NORMAL'

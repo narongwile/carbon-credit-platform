@@ -76,7 +76,7 @@ export function fleetNodeToDevice(
     location: loc,
     theme: mock?.theme ?? 'fix',
     departmentIds: n.department_id ? [n.department_id] : (mock?.departmentIds ?? []),
-    status: n.online === 1 ? 'online' : 'offline',
+    status: (n.online === 0 || (n.online as any) === '0' || (n.online as any) === false) ? 'offline' : 'online',
     picture: mock?.picture,
     lastValue: mock?.lastValue,
     // Real, admin-set (migrate-v45) — no mock fallback: an unset value means
