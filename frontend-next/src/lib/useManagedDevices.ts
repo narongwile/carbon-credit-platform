@@ -82,7 +82,8 @@ export function fleetNodeToDevice(
     // Real, admin-set (migrate-v45) — no mock fallback: an unset value means
     // "no Grafana dashboard configured", not "show fabricated demo charts".
     grafanaUrl: n.grafana_url ?? null,
-  }
+    lastSample: n.last_sample ?? (mock as any)?.lastSample ?? undefined,
+  } as ManagedDevice & { lastSample?: Record<string, unknown> }
 }
 
 interface Roster {

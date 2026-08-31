@@ -1215,20 +1215,56 @@ export default function AlarmParamConfig({
     toast.success(enable ? 'Enabled all alarm parameters' : 'Disabled all alarm parameters')
   }
 
+  // Helper to resolve parameter values with case-insensitive and key alias matching
+  const getRawParamValue = (sample: Record<string, unknown> | undefined, paramKey: string): unknown => {
+    if (!sample) return undefined
+    if (sample[paramKey] !== undefined) return sample[paramKey]
+
+    const ALIASES: Record<string, string[]> = {
+      oilTemp: ['oilTemperature', 'OilTemp', 'temp', 'topOilTemp'],
+      ambientTemp: ['ambientTemperature', 'ambient', 'AmbientTemp'],
+      hydrogen: ['H2', 'h2', 'hydrogenGas'],
+      moisture: ['OilMoisture', 'h2o', 'waterContent'],
+      windingTemp: ['windingTemperature', 'WindingTemp'],
+      bottomOilTemp: ['bottomOil', 'BottomOilTemp'],
+      coreTemp: ['coreTemperature', 'CoreTemp'],
+      VoltAN: ['voltAN', 'voltageA', 'v_an', 'Volt_AN'],
+      CurrentAVG: ['currentAVG', 'currentAvg', 'avgCurrent', 'Current_AVG'],
+      Hz: ['frequency', 'freq'],
+    }
+
+    const aliases = ALIASES[paramKey]
+    if (aliases) {
+      for (const alias of aliases) {
+        if (sample[alias] !== undefined) return sample[alias]
+      }
+    }
+
+    const pkLower = paramKey.toLowerCase()
+    for (const [k, v] of Object.entries(sample)) {
+      if (k.toLowerCase() === pkLower) return v
+    }
+
+    return undefined
+  }
+
   // Resolves live readings for this parameter across the scoped devices
   const getDeviceReadings = (paramKey: string) => {
     const results: Array<{ deviceId: string; deviceName: string; value: number }> = []
     if (nodeId) {
       const dev = devices.find((d) => d.id === nodeId)
-      const raw = deviceReadingsMap[nodeId]?.[paramKey] ?? liveReadings[paramKey] ?? (dev as any)?.lastSample?.[paramKey]
-      const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
-      if (!isNaN(val)) {
-        results.push({ deviceId: nodeId, deviceName: dev?.name || nodeId, value: val })
+      const devMap = deviceReadingsMap[nodeId]
+      const raw = getRawParamValue(devMap, paramKey) ?? getRawParamValue(liveReadings, paramKey) ?? getRawParamValue((dev as any)?.lastSample, paramKey)
+      if (raw != null) {
+        const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
+        if (!isNaN(val)) {
+          results.push({ deviceId: nodeId, deviceName: dev?.name || nodeId, value: val })
+        }
       }
     } else {
       for (const dev of scopedDevices) {
         const devMap = deviceReadingsMap[dev.id]
-        const raw = devMap?.[paramKey] ?? (dev as any)?.lastSample?.[paramKey]
+        const raw = getRawParamValue(devMap, paramKey) ?? getRawParamValue((dev as any)?.lastSample, paramKey)
         if (raw != null) {
           const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
           if (!isNaN(val)) {
