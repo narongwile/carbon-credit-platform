@@ -710,30 +710,52 @@ export default function CustomerReportsPage() {
 
               {/* Monitored Assets Summary Table */}
               <div className="space-y-2">
-                <h4 className="text-xs font-bold text-white uppercase tracking-wider">Scored Assets Telemetry Breakdown</h4>
-                <div className="rounded-lg border border-slate-800 overflow-hidden">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-white uppercase tracking-wider">Monitored Assets Telemetry &amp; Compliance Breakdown</h4>
+                  <span className="text-[11px] text-slate-400">{reportData?.summaries?.length ?? 0} Assets</span>
+                </div>
+                <div className="rounded-lg border border-slate-800 overflow-hidden max-h-80 overflow-y-auto">
                   <table className="w-full text-xs">
-                    <thead className="bg-[#0a0e1a] text-slate-400 border-b border-slate-800">
+                    <thead className="sticky top-0 bg-[#0a0e1a] text-slate-400 border-b border-slate-800">
                       <tr>
                         <th className="py-2 px-3 text-left">Asset</th>
                         <th className="py-2 px-3 text-left">Domain</th>
                         <th className="py-2 px-3 text-left">Health</th>
                         <th className="py-2 px-3 text-left">Status</th>
-                        <th className="py-2 px-3 text-left">Key Telemetry</th>
+                        <th className="py-2 px-3 text-left">Key Telemetry Range</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 bg-[#0d1117]">
-                      {reportData?.summaries.map((s) => (
-                        <tr key={s.nodeId} className="hover:bg-white/[0.02]">
-                          <td className="py-2 px-3 font-semibold text-white">{s.deviceName}</td>
-                          <td className="py-2 px-3 text-slate-400 capitalize">{s.domain}</td>
-                          <td className="py-2 px-3 font-mono text-emerald-400">{s.healthScore ? `${s.healthScore}/100` : '—'}</td>
-                          <td className="py-2 px-3 capitalize">{s.status}</td>
-                          <td className="py-2 px-3 text-slate-300 font-mono">
-                            {s.parameters[0] ? `${s.parameters[0].label}: ${s.parameters[0].avg} ${s.parameters[0].unit}` : '—'}
+                      {(!reportData?.summaries || reportData.summaries.length === 0) ? (
+                        <tr>
+                          <td colSpan={5} className="py-6 text-center text-slate-500">
+                            No telemetry summaries available for the selected assets.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        reportData.summaries.map((s) => (
+                          <tr key={s.nodeId} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3 font-semibold text-white">
+                              <div>{s.deviceName}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{s.nodeId}</div>
+                            </td>
+                            <td className="py-2 px-3 text-slate-400 capitalize">{s.domain}</td>
+                            <td className="py-2 px-3 font-mono text-emerald-400">{s.healthScore ? `${s.healthScore}/100` : '—'}</td>
+                            <td className="py-2 px-3 capitalize">
+                              <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
+                                s.status === 'online' || s.status === 'NORMAL' ? 'bg-emerald-500/10 text-emerald-400' : s.status === 'critical' || s.status === 'CRITICAL' ? 'bg-rose-500/10 text-rose-400' : 'bg-amber-500/10 text-amber-400'
+                              }`}>
+                                {s.status}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-slate-300 font-mono">
+                              {s.parameters.length > 0
+                                ? s.parameters.slice(0, 2).map((p) => `${p.label}: ${na(p.avg)} ${p.unit}`).join(' · ')
+                                : '—'}
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>

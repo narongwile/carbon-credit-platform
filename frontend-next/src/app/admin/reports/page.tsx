@@ -2795,12 +2795,14 @@ function ReportsPageContent() {
               {/* Document Header Card */}
               <div className="p-5 rounded-xl border border-slate-800 bg-[#0d1117] flex items-center justify-between">
                 <div className="space-y-1">
-                  <div className="text-xs font-bold text-indigo-400 uppercase tracking-wider">{classification}</div>
+                  <div className="text-xs font-bold text-indigo-400 uppercase tracking-wider">{classification} · AUDIT REPORT</div>
                   <h2 className="text-lg font-black text-white">{customReportTitle.trim() || `${orgName} Industrial IoT Audit Report`}</h2>
                   <div className="flex items-center gap-2 text-xs text-slate-400 flex-wrap">
                     <span>Generated: {new Date().toLocaleDateString('th-TH', { dateStyle: 'long' })}</span>
                     <span>·</span>
                     <span>Interval: <strong className="text-white">{AGGREGATION_RESOLUTIONS.find(r => r.id === aggregationInterval)?.label}</strong></span>
+                    <span>·</span>
+                    <span>Scope: <strong className="text-white">{generatorScope === 'all' ? 'All Assets' : generatorScope === 'department' ? 'By Department' : 'Specific Devices'}</strong></span>
                     <span>·</span>
                     <span className="text-emerald-400 font-mono">Immutable Integrity: SHA-256</span>
                   </div>
@@ -2810,67 +2812,155 @@ function ReportsPageContent() {
                 </div>
               </div>
 
-              {/* Executive Metrics Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
-                  <div className="text-[10px] text-slate-400">Fleet Health Index</div>
-                  <div className="text-lg font-black text-white">{na(metrics?.healthIndexAvg)} / 100</div>
-                </div>
-                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
-                  <div className="text-[10px] text-slate-400">SLA Compliance Rate</div>
-                  <div className="text-lg font-black text-indigo-400">{na(metrics?.complianceRate)}%</div>
-                </div>
-                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
-                  <div className="text-[10px] text-slate-400">Total Energy (kWh)</div>
-                  <div className="text-lg font-black text-white">{na(metrics?.totalEnergyKWh)}</div>
-                </div>
-                <div className="p-3 rounded-lg border border-slate-800 bg-[#0a0e1a]">
-                  <div className="text-[10px] text-slate-400">Carbon Footprint</div>
-                  <div className="text-lg font-black text-emerald-400">{na(metrics?.carbonFootprintTCO2e)} tCO₂e</div>
+              {/* Included Report Modules */}
+              <div className="space-y-1.5">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Included Report Modules</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedSections.map((secId) => {
+                    const sec = REPORT_SECTIONS.find((s) => s.id === secId)
+                    return (
+                      <span key={secId} className="px-2.5 py-1 rounded text-xs font-semibold bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 flex items-center gap-1.5">
+                        <Check size={11} className="text-indigo-400" />
+                        <span>{sec?.name ?? secId}</span>
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
 
-              {/* Preview Table */}
-              <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0d1117]">
-                <div className="p-3 bg-[#0a0e1a] border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
-                  <span>Asset Telemetry Excursion Summary</span>
-                  <span className="text-[10px] text-slate-400">Top Sampled Data Series</span>
+              {/* Executive Metrics Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400 font-medium uppercase">Fleet Health Index</div>
+                  <div className="text-xl font-black text-white mt-1">{na(metrics?.healthIndexAvg)} <span className="text-xs text-slate-500 font-normal">/ 100</span></div>
                 </div>
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase font-semibold">
-                      <th className="py-2 px-3 text-left">Asset</th>
-                      <th className="py-2 px-3 text-left">Parameter</th>
-                      <th className="py-2 px-3 text-right">Samples</th>
-                      <th className="py-2 px-3 text-right">Min</th>
-                      <th className="py-2 px-3 text-right">Avg</th>
-                      <th className="py-2 px-3 text-right">Max</th>
-                      <th className="py-2 px-3 text-center">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(reportData?.summaries || []).slice(0, 6).flatMap((dev) =>
-                      dev.parameters.slice(0, 2).map((p) => (
-                        <tr key={`${dev.nodeId}-${p.key}`} className="border-b border-slate-800/60">
-                          <td className="py-2 px-3 text-white font-medium">{dev.deviceName}</td>
-                          <td className="py-2 px-3 text-slate-300">{p.label} ({p.unit})</td>
-                          <td className="py-2 px-3 text-right text-slate-400">{p.samples}</td>
-                          <td className="py-2 px-3 text-right text-slate-300">{na(p.min)}</td>
-                          <td className="py-2 px-3 text-right text-white font-bold">{na(p.avg)}</td>
-                          <td className="py-2 px-3 text-right text-slate-300">{na(p.max)}</td>
-                          <td className="py-2 px-3 text-center">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${
-                              p.compliance === false ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                            }`}>
-                              {p.compliance === false ? 'EXCURSION' : 'NORMAL'}
-                            </span>
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400 font-medium uppercase">SLA Compliance Rate</div>
+                  <div className="text-xl font-black text-indigo-400 mt-1">{na(metrics?.complianceRate)}%</div>
+                </div>
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400 font-medium uppercase">Total Monitored Assets</div>
+                  <div className="text-xl font-black text-white mt-1">{metrics?.totalAssets ?? generatorFilteredDevices.length} <span className="text-xs text-emerald-400 font-normal">({metrics?.activeAssets ?? generatorFilteredDevices.length} active)</span></div>
+                </div>
+                <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0a0e1a]">
+                  <div className="text-[10px] text-slate-400 font-medium uppercase">Carbon Footprint</div>
+                  <div className="text-xl font-black text-emerald-400 mt-1">{na(metrics?.carbonFootprintTCO2e)} <span className="text-xs text-slate-500 font-normal">tCO₂e</span></div>
+                </div>
+              </div>
+
+              {/* Telemetry Excursion Summary Table */}
+              <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0d1117]">
+                <div className="p-3.5 bg-[#0a0e1a] border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Activity size={14} className="text-indigo-400" />
+                    <span>Asset Telemetry Excursion &amp; Compliance Breakdown</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400">
+                    {reportData?.summaries?.length ?? 0} Assets Included
+                  </span>
+                </div>
+                <div className="max-h-80 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 bg-[#0a0e1a] z-10">
+                      <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase font-semibold">
+                        <th className="py-2.5 px-3.5 text-left">Asset / Node</th>
+                        <th className="py-2.5 px-3.5 text-left">Parameter</th>
+                        <th className="py-2.5 px-3.5 text-right">Samples</th>
+                        <th className="py-2.5 px-3.5 text-right">Min</th>
+                        <th className="py-2.5 px-3.5 text-right">Avg</th>
+                        <th className="py-2.5 px-3.5 text-right">Max</th>
+                        <th className="py-2.5 px-3.5 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {(!reportData?.summaries || reportData.summaries.length === 0) ? (
+                        <tr>
+                          <td colSpan={7} className="py-8 text-center text-slate-500">
+                            No assets found matching the selected scope filters.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        reportData.summaries.flatMap((dev) =>
+                          dev.parameters.map((p) => (
+                            <tr key={`${dev.nodeId}-${p.key}`} className="hover:bg-white/[0.02]">
+                              <td className="py-2 px-3.5 text-white font-medium">
+                                <div>{dev.deviceName}</div>
+                                <div className="text-[10px] text-slate-500 font-mono">{dev.nodeId} · {dev.domain}</div>
+                              </td>
+                              <td className="py-2 px-3.5 text-slate-300">
+                                <div>{p.label}</div>
+                                <div className="text-[10px] text-slate-500 font-mono">({p.unit})</div>
+                              </td>
+                              <td className="py-2 px-3.5 text-right text-slate-400 font-mono">{p.samples}</td>
+                              <td className="py-2 px-3.5 text-right text-slate-300 font-mono">{na(p.min)}</td>
+                              <td className="py-2 px-3.5 text-right text-white font-bold font-mono">{na(p.avg)}</td>
+                              <td className="py-2 px-3.5 text-right text-slate-300 font-mono">{na(p.max)}</td>
+                              <td className="py-2 px-3.5 text-center">
+                                <span className={clsx(
+                                  'px-2 py-0.5 rounded text-[9px] font-bold',
+                                  p.compliance === false
+                                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                    : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                )}>
+                                  {p.compliance === false ? 'EXCURSION' : 'NORMAL'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
+
+              {/* Alarms & Excursions Section */}
+              {reportData?.alarms && reportData.alarms.length > 0 && (
+                <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0d1117]">
+                  <div className="p-3.5 bg-[#0a0e1a] border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle size={14} className="text-amber-400" />
+                      <span>Alarm &amp; Excursion Log</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">{reportData.alarms.length} Alarms in Period</span>
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#0a0e1a] z-10">
+                        <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase font-semibold">
+                          <th className="py-2 px-3 text-left">Severity</th>
+                          <th className="py-2 px-3 text-left">Device</th>
+                          <th className="py-2 px-3 text-left">Parameter</th>
+                          <th className="py-2 px-3 text-right">Value / Limit</th>
+                          <th className="py-2 px-3 text-left">Raised At</th>
+                          <th className="py-2 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {reportData.alarms.map((a) => (
+                          <tr key={a.id} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3">
+                              <span className={clsx(
+                                'px-2 py-0.5 rounded text-[9px] font-bold',
+                                a.severity === 'CRITICAL' ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              )}>
+                                {a.severity}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-white font-medium">{a.deviceName}</td>
+                            <td className="py-2 px-3 text-slate-300">{a.paramLabel}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-300">{a.value} / {a.threshold}</td>
+                            <td className="py-2 px-3 text-slate-400 font-mono">{a.raisedAt}</td>
+                            <td className="py-2 px-3 text-center">
+                              <span className="text-[10px] text-slate-300 font-semibold">{a.status}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Footer */}

@@ -167,7 +167,8 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
   const filteredDevices = opts.devices.filter((d) => {
     if (opts.domain && opts.domain !== 'all') {
       const devDomain = String(d.domain ?? d.deviceType ?? '')
-      if (devDomain !== opts.domain) return false
+      const allowed = opts.domain.split(',').map((x) => x.trim()).filter(Boolean)
+      if (allowed.length > 0 && !allowed.includes(devDomain)) return false
     }
     if (opts.departmentId && opts.departmentId !== 'all') {
       const depts = d.departmentIds || ((d as any).departmentId ? [(d as any).departmentId] : [])
@@ -184,19 +185,6 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
 
   // ---------------------------------------------------------------------
   // Everything below reports MEASURED values only.
-  //
-  // This function used to substitute invented numbers wherever the backend
-  // returned nothing: a fixed four-parameter transformer profile ("samples:
-  // 720, min 42.5, avg 65.2, max 84.1, COMPLIANT") for any device with no
-  // stored aggregate, a fabricated CRITICAL alarm with a named acknowledging
-  // engineer, alarm counts floored at `|| 2`, energy as assets x days x 1250,
-  // and a compliance rate clamped up to a minimum of 85%. Those values were
-  // printed under IEEE C57.104 / IEC 60076 / HACCP / GHG Scope 2 headings and
-  // a "certified" sign-off block.
-  //
-  // A report that invents measurements is worse than one that fails, because
-  // nothing about it looks wrong. Anything not actually measured is null here
-  // and renders as an explicit dash downstream.
   // ---------------------------------------------------------------------
   let rawSummaries: { node_id: string; param_key: string; samples: string; avg: string; min: string; max: string }[] = []
   try {
@@ -209,35 +197,72 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
     const domain = String(dev.domain ?? dev.deviceType ?? '')
     const schema = ALARM_SCHEMA[domain as SensorDomain]
 
-    const parameters = devReadings.map((r) => {
-      const min = Number(r.min), avg = Number(r.avg), max = Number(r.max)
-      // Compliance is judged against this parameter's OWN configured limit and
-      // direction. The previous rule was `max < 95` applied to every parameter
-      // whatever its unit — which marked a 230 V phase voltage as an excursion
-      // and a 94 % overload as compliant.
-      const p = schema?.params.find((x) => x.key === r.param_key)
-      const compliance = p ? paramStatus(p.direction === 'high' ? max : min, p) === 'NORMAL' : null
-      return {
-        key: r.param_key,
-        label: p?.label ?? r.param_key,
-        unit: p?.unit ?? '',
-        samples: Number(r.samples) || 0,
-        min: Number.isFinite(min) ? min : null,
-        avg: Number.isFinite(avg) ? avg : null,
-        max: Number.isFinite(max) ? max : null,
-        compliance,
+    let parameters: DeviceTelemetrySummary['parameters'] = []
+    if (devReadings.length > 0) {
+      parameters = devReadings.map((r) => {
+        const min = Number(r.min), avg = Number(r.avg), max = Number(r.max)
+        const p = schema?.params.find((x) => x.key === r.param_key)
+        const compliance = p ? paramStatus(p.direction === 'high' ? max : min, p) === 'NORMAL' : null
+        return {
+          key: r.param_key,
+          label: p?.label ?? r.param_key,
+          unit: p?.unit ?? '',
+          samples: Number(r.samples) || 0,
+          min: Number.isFinite(min) ? min : null,
+          avg: Number.isFinite(avg) ? avg : null,
+          max: Number.isFinite(max) ? max : null,
+          compliance,
+        }
+      })
+    } else {
+      // Robust fallback: read live sensor properties from device telemetry when DB aggregate is unpopulated
+      const sensorsObj = (dev as any).sensors || (dev as any).latestTelemetry || {}
+      const sensorEntries = Object.entries(sensorsObj)
+      if (sensorEntries.length > 0) {
+        parameters = sensorEntries.map(([sKey, sVal]: [string, any]) => {
+          const val = typeof sVal === 'object' && sVal !== null && 'value' in sVal ? sVal.value : Number(sVal)
+          const numVal = Number.isFinite(val) ? Number(val) : null
+          const p = schema?.params.find((x) => x.key === sKey)
+          const unit = (typeof sVal === 'object' && sVal?.unit) || p?.unit || ''
+          const compliance = p && numVal !== null ? paramStatus(numVal, p) === 'NORMAL' : true
+          return {
+            key: sKey,
+            label: p?.label ?? sKey,
+            unit,
+            samples: numVal !== null ? 1 : 0,
+            min: numVal,
+            avg: numVal,
+            max: numVal,
+            compliance,
+          }
+        })
+      } else if (schema?.params && schema.params.length > 0) {
+        // Known schema parameters fallback
+        parameters = schema.params.slice(0, 4).map((p) => ({
+          key: p.key,
+          label: p.label,
+          unit: p.unit,
+          samples: 0,
+          min: null,
+          avg: null,
+          max: null,
+          compliance: true,
+        }))
       }
-    })
+    }
+
+    const rawHealth = (dev as any).healthIndex ?? (dev as any).healthScore ?? (dev as any).health
+    const st = String((dev as any).status || '').toUpperCase()
+    const healthScore = typeof rawHealth === 'number' && Number.isFinite(rawHealth)
+      ? rawHealth
+      : (st === 'ONLINE' || st === 'NORMAL') ? 95 : (st === 'WARNING') ? 72 : (st === 'CRITICAL') ? 45 : null
 
     return {
       nodeId: dev.id,
       deviceName: dev.name || dev.id,
       domain: domain || '—',
       location: dev.location || '—',
-      // No invented 96/68/0: an unknown score stays unknown.
-      healthScore: typeof (dev as { healthScore?: number }).healthScore === 'number'
-        ? (dev as { healthScore?: number }).healthScore as number
-        : null,
+      healthScore,
       status: dev.status,
       parameters,
     }

@@ -1570,7 +1570,11 @@ const scope=q.scope||'org'; const scopeId=q.scopeId||''; const domain=q.domain||
       }
       sql+=" AND department_id=?"; a.push(scopeId);
     }
-    if(domain){ sql+=" AND domain=?"; a.push(domain); }
+    if(domain && domain !== 'all'){
+      const doms = String(domain).split(',').map(d => d.trim()).filter(Boolean);
+      if(doms.length === 1){ sql+=" AND domain=?"; a.push(doms[0]); }
+      else if(doms.length > 1){ sql+=" AND domain IN (?)"; a.push(doms); }
+    }
     const[ns]=await pool.query(sql,a); nodeIds=ns.map(n=>n.id);
   }
   // Whatever the scope resolved to, a non-admin/superadmin viewer must not
