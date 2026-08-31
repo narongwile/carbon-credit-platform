@@ -543,6 +543,15 @@ export default function AlarmParamConfig({
       fetchMulti()
       const pollId = setInterval(fetchMulti, 8000)
 
+      // Telemetry WS stream for multi-device selection
+      const targetNodeSet = new Set(targetNodeIds)
+      const unsubscribe = subscribeTelemetry((frame) => {
+        if (frame.id && targetNodeSet.has(frame.id) && frame.values && Object.keys(frame.values).length > 0) {
+          setLiveReadings((prev) => ({ ...prev, ...frame.values }))
+          setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
+        }
+      })
+
       // Also discover history from readings across selected devices
       Promise.allSettled(targetNodeIds.slice(0, 5).map((id) => api.readings(id, 720, 3600))).then((results) => {
         if (cancelled) return
@@ -560,6 +569,7 @@ export default function AlarmParamConfig({
       return () => {
         cancelled = true
         clearInterval(pollId)
+        unsubscribe()
       }
     } else {
       setLiveReadings({})
@@ -1177,7 +1187,7 @@ export default function AlarmParamConfig({
       }
     } else {
       for (const dev of scopedDevices) {
-        const raw = (dev as any)?.lastSample?.[paramKey]
+        const raw = (dev as any)?.lastSample?.[paramKey] ?? (targetDeviceIds?.has(dev.id) ? liveReadings[paramKey] : undefined)
         const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
         if (!isNaN(val)) {
           results.push({ deviceId: dev.id, deviceName: dev.name || dev.id, value: val })
