@@ -36,8 +36,21 @@ const read = (p) => strip(readFileSync(new URL(p, root), 'utf8'))
   const src = read('frontend-next/src/app/admin/reports/page.tsx')
 
   t('reports derives an effective domain list with an explicit empty fallback',
-    /const effectiveDomains: SensorDomain\[\] = orgDomains\.length > 0/.test(src) &&
+    /const effectiveDomains: SensorDomain\[\] = useMemo\(/.test(src) &&
+    /orgDomains\.length > 0/.test(src) &&
     /'transformer', 'carbonNode', 'bloodBox', 'automobile'/.test(src))
+
+  // Memoized, because it is read inside effects and memos: a fresh array every
+  // render would either force it out of their dependency arrays or spin them.
+  t('the effective domain list is stable across renders',
+    /\[orgDomains\],\s*\)/.test(src))
+
+  // One definition, not the rule re-derived inline at each use site — five
+  // copies of "empty means unrestricted" is five chances to drop one.
+  t('no use site re-derives the fallback inline',
+    !/orgDomains\.length \|\| ALL_DOMAIN_KEYS\.length/.test(src) &&
+    !/orgDomains\.length > 0 \? orgDomains\.length : ALL_DOMAIN_KEYS\.length/.test(src) &&
+    !/setSelectedDomains\(orgDomains\.length > 0/.test(src))
 
   // Every picker must read the fallback, not the raw list.
   t('the On-Demand studio picker uses the effective list',

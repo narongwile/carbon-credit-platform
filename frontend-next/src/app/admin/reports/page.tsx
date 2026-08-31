@@ -333,9 +333,17 @@ function ReportsPageContent() {
   // iiotReportGenerator over data the user can already read, so these chips are
   // UX, not an access control — failing closed buys no safety and costs a
   // broken page.
-  const effectiveDomains: SensorDomain[] = orgDomains.length > 0
-    ? orgDomains
-    : (['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[])
+  //
+  // useMemo, not a bare expression: this is read inside effects and memos, and
+  // a fresh array on every render would either force it out of their
+  // dependency arrays or spin them. Its identity now changes only when
+  // orgDomains does.
+  const effectiveDomains: SensorDomain[] = useMemo(
+    () => (orgDomains.length > 0
+      ? orgDomains
+      : (['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[])),
+    [orgDomains],
+  )
 
   // Sync selectedDomains when orgDomains change
   useEffect(() => {
@@ -465,7 +473,7 @@ function ReportsPageContent() {
 
   const generatorFilteredDevices = useMemo(() => {
     let list = devices
-    const totalPossible = orgDomains.length > 0 ? orgDomains.length : ALL_DOMAIN_KEYS.length
+    const totalPossible = effectiveDomains.length
     if (selectedDomains.length > 0 && selectedDomains.length < totalPossible) {
       list = list.filter((d) => d.domain && selectedDomains.includes(d.domain))
     }
@@ -477,7 +485,7 @@ function ReportsPageContent() {
       list = list.filter((d) => generatorDeviceIds.includes(d.id))
     }
     return list
-  }, [devices, selectedDomains, orgDomains, generatorScope, selectedSite, selectedDeptIds, generatorDeviceIds])
+  }, [devices, selectedDomains, effectiveDomains, generatorScope, selectedSite, selectedDeptIds, generatorDeviceIds])
 
   // Live Metrics & Preview Cache
   const [reportData, setReportData] = useState<{
@@ -490,7 +498,7 @@ function ReportsPageContent() {
 
   useEffect(() => {
     let cancelled = false
-    const totalPossible = orgDomains.length > 0 ? orgDomains.length : ALL_DOMAIN_KEYS.length
+    const totalPossible = effectiveDomains.length
     buildIIoTReportData({
       orgId,
       orgName,
@@ -510,7 +518,7 @@ function ReportsPageContent() {
       if (!cancelled) setReportData(res)
     })
     return () => { cancelled = true }
-  }, [orgId, orgName, effectiveDays, selectedDomains, generatorScope, selectedSite, activeSiteName, selectedDeptIds, selectedSections, selectedFormats, generatorFilteredDevices, customReportTitle, classification, aggregationInterval])
+  }, [orgId, orgName, effectiveDays, selectedDomains, effectiveDomains, departments, generatorScope, selectedSite, activeSiteName, selectedDeptIds, selectedSections, selectedFormats, generatorFilteredDevices, customReportTitle, classification, aggregationInterval])
 
   // Cold-Chain Temperature Summary (MKT) is strictly for refrigeration/bloodBox assets.
   // Never show or apply it if user only selected transformers or automobile.
@@ -557,7 +565,7 @@ function ReportsPageContent() {
         orgName,
         title: customReportTitle.trim() || undefined,
         days: effectiveDays,
-        domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length >= (orgDomains.length || ALL_DOMAIN_KEYS.length) ? 'all' : selectedDomains.join(','),
+        domain: selectedDomains.length === 1 ? selectedDomains[0] : selectedDomains.length >= effectiveDomains.length ? 'all' : selectedDomains.join(','),
         siteId: generatorScope === 'site' ? selectedSite : undefined,
         siteName: generatorScope === 'site' ? activeSiteName : undefined,
         departmentId: selectedDeptIds.length === 1 ? selectedDeptIds[0] : undefined,
@@ -1233,12 +1241,12 @@ function ReportsPageContent() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="block text-[11px] text-slate-400 uppercase tracking-wider font-semibold">
-                    Asset Domain Filter ({selectedDomains.length} of {orgDomains.length || ALL_DOMAIN_KEYS.length} selected)
+                    Asset Domain Filter ({selectedDomains.length} of {effectiveDomains.length} selected)
                   </label>
                   <div className="flex gap-2 text-[10px]">
                     <button
                       type="button"
-                      onClick={() => setSelectedDomains(orgDomains.length > 0 ? [...orgDomains] : [...ALL_DOMAIN_KEYS])}
+                      onClick={() => setSelectedDomains([...effectiveDomains])}
                       className="text-indigo-400 hover:text-indigo-300 font-semibold"
                     >
                       Select All
