@@ -203,6 +203,73 @@ if (node) {
     /const unackedOnly=!!q\.unacked/.test(fn) && /if\(unackedOnly && !openOnly\)/.test(fn))
 }
 
+// ── 7d. Acknowledged and cleared are independent states ───────────────────
+// The clear sweep (clearSweepFunc, cleartick every 60s) closes a threshold or
+// rate event once the parameter has stayed inside the deadband, and the
+// presence handler closes an offline event when the device returns. Neither
+// touches acknowledged_at — ISA-18.2 keeps return-to-normal and operator
+// acknowledgement separate. useOrgAlarms fetched cleared_at all along, but
+// both consoles dropped it, so a condition that recovered days ago rendered
+// exactly like one breaching right now.
+{
+  const adminSrc = read('frontend-next/src/components/AlarmsManagementView.tsx')
+  const custSrc = read('frontend-next/src/components/CustomerAlarmsView.tsx')
+  const typeSrc = read('frontend-next/src/types/index.ts')
+
+  t('Alarm type carries clearedAt', /clearedAt\?: string/.test(typeSrc))
+  t('admin console maps clearedAt through toAlarm',
+    /clearedAt: a\.clearedAt \?\? undefined/.test(adminSrc),
+    'it was fetched and then dropped')
+  t('admin console shows a Recovered state',
+    /alarm\.clearedAt && \(/.test(adminSrc) && /Recovered/.test(adminSrc))
+  t('admin console does not paint a recovered critical as still urgent',
+    /!alarm\.acknowledged && !alarm\.clearedAt \? 'rgba\(239,68,68,0\.03\)'/.test(adminSrc))
+  t('admin open-counts exclude recovered alarms',
+    /'CRITICAL' && !a\.acknowledged && !a\.clearedAt/.test(adminSrc) &&
+    /'WARNING' && !a\.acknowledged && !a\.clearedAt/.test(adminSrc))
+
+  t('customer console shows a Recovered state', /const recovered = !!a\.clearedAt/.test(custSrc))
+  t('customer escalation countdown stops once the alarm has recovered',
+    /crit && !acked && !recovered \? getEscalationUrgency/.test(custSrc),
+    'a recovered alarm kept an animated pulsing "overdue" badge')
+  t('customer open-counts exclude recovered alarms',
+    /'CRITICAL' && !a\.acknowledgedAt && !a\.clearedAt/.test(custSrc))
+
+  // The countdown must agree with the backend it reports on.
+  t('customer escalation window mirrors ESCALATE_AFTER_MIN, not a hardcoded 30',
+    /NEXT_PUBLIC_ESCALATE_AFTER_MIN\) \|\| 15/.test(custSrc) &&
+    !/timeoutMins = 30/.test(custSrc),
+    'the backend escalates at 15m; the UI counted to 30, so 15-30m it reported a pending escalation that had already fired')
+  // escalationFunc wires to `notify` — the same org/department channels — so
+  // there is no separate leadership tier to promise.
+  t('customer console does not claim escalation routes to a leadership tier',
+    !/ESCALATED to Leadership/.test(custSrc))
+
+  // Both exports must distinguish the third state too, or a CSV handed to an
+  // auditor calls a recovered condition "Open".
+  for (const [label, src] of [['admin', adminSrc], ['customer', custSrc]]) {
+    t(`${label} export distinguishes Recovered from Open`,
+      /'Recovered \(unacknowledged\)'/.test(src))
+  }
+}
+
+// ── 7e. The clear/escalate sweeps are actually scheduled ──────────────────
+// Both are timer-driven; a handler with no inject wired to it is dead code
+// that looks alive.
+{
+  const flowNodes = JSON.parse(read('backend/node-red/flows.nodered-backend.json'))
+  for (const [target, why] of [
+    ['clearsweep', 'nothing would ever set cleared_at on a threshold/rate event'],
+    ['escalate', 'an unacknowledged CRITICAL would never be re-alerted'],
+  ]) {
+    const fn = flowNodes.find((n) => n.id === target)
+    const trigger = flowNodes.find((n) => n.type === 'inject' && JSON.stringify(n.wires || []).includes(`"${target}"`))
+    t(`${target} handler exists and is driven by a timer`,
+      !!fn && !!trigger && Number(trigger.repeat) > 0,
+      trigger ? `repeat=${trigger.repeat}s` : `no inject wired to it — ${why}`)
+  }
+}
+
 // ── 8. Behavioural check of the range maths ───────────────────────────────
 // Re-implements only the two lines under test, then asserts the cases the old
 // code got wrong.

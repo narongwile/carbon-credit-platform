@@ -126,6 +126,19 @@ export interface Alarm {
   acknowledged: boolean
   acknowledgedBy?: string
   acknowledgedAt?: string
+  /**
+   * When the condition returned to normal — set by the Node-RED clear sweep
+   * (clearSweepFunc, every 60s) once the parameter has stayed inside the
+   * deadband for CLEAR_AFTER_MIN, and by the presence handler for an offline
+   * alarm when the device reports back.
+   *
+   * Acknowledgement and clearing are INDEPENDENT (ISA-18.2): a breach can
+   * recover without anyone acknowledging it, and can be acknowledged while
+   * still breaching. The console read only `acknowledged`, so a condition that
+   * recovered days ago rendered identically to one breaching right now — same
+   * severity chip, same Acknowledge button, nothing to tell them apart.
+   */
+  clearedAt?: string
   source?: 'edge' | 'cloud'
 }
 

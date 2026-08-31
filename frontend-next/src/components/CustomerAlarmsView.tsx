@@ -66,14 +66,25 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
   const [pickerOpen, setPickerOpen] = useState(false)
   const [shelveDismissed, setShelveDismissed] = useState(false)
 
-  // Escalation timer helper (ISA-18.2 §11)
-  const getEscalationUrgency = (raisedAt: string, timeoutMins = 30) => {
+  // Escalation timer helper (ISA-18.2 §11).
+  //
+  // The window mirrors the backend's ESCALATE_AFTER_MIN, which the Node-RED
+  // generator bakes into escalationFunc's query at build time (default 15).
+  // This countdown was hardcoded to 30, so between minute 15 and 30 the row
+  // said "Auto-escalates in 12m" about an escalation that had already fired —
+  // the UI disagreeing with the system it reports on.
+  const ESCALATE_MIN = Number(process.env.NEXT_PUBLIC_ESCALATE_AFTER_MIN) || 15
+  const getEscalationUrgency = (raisedAt: string, timeoutMins = ESCALATE_MIN) => {
     const raisedMs = new Date(raisedAt).getTime()
     if (!Number.isFinite(raisedMs)) return null
     const deadlineMs = raisedMs + timeoutMins * 60 * 1000
     const diffMs = deadlineMs - Date.now()
     if (diffMs <= 0) {
-      return { overdue: true, text: 'ESCALATED to Leadership' }
+      // Not "to Leadership": escalationFunc re-sends through `notify`, i.e.
+      // the same org/department channels the first alert used. There is no
+      // separate leadership tier or recipient list anywhere in the pipeline,
+      // so naming one promised a routing behaviour that does not exist.
+      return { overdue: true, text: 'ESCALATED · re-alerted' }
     }
     const mins = Math.ceil(diffMs / 60000)
     return { overdue: false, text: `Auto-escalates in ${mins}m` }
@@ -155,8 +166,11 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
     return true
   })
 
-  const critCount = alarms.filter((a) => a.severity === 'CRITICAL' && !a.acknowledgedAt).length
-  const warnCount = alarms.filter((a) => a.severity === 'WARNING' && !a.acknowledgedAt).length
+  // "Open" means still breaching AND unacknowledged. A recovered alarm is no
+  // longer open even if nobody has acknowledged it yet, so counting it here
+  // inflated the headline number with conditions that had already passed.
+  const critCount = alarms.filter((a) => a.severity === 'CRITICAL' && !a.acknowledgedAt && !a.clearedAt).length
+  const warnCount = alarms.filter((a) => a.severity === 'WARNING' && !a.acknowledgedAt && !a.clearedAt).length
 
   // A root cause must be CHOSEN before an alarm can be acknowledged — see the
   // Acknowledge button below. The exception is an organization with no root
@@ -191,7 +205,9 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
   const EXPORT_HEADERS = ['Severity', 'Device', 'Parameter', 'Value', 'Unit', 'Threshold', 'Raised', 'Status', 'Acknowledged By']
   const exportRows = () => filtered.map((a) => [
     a.severity, a.nodeName, a.paramLabel, a.value, a.unit, a.threshold,
-    fmtDateTime(a.raisedAt), a.acknowledgedAt ? 'Acknowledged' : 'Open', a.acknowledgedBy ?? '',
+    fmtDateTime(a.raisedAt),
+    a.acknowledgedAt ? 'Acknowledged' : a.clearedAt ? 'Recovered (unacknowledged)' : 'Open',
+    a.acknowledgedBy ?? '',
   ])
 
   return (
@@ -408,7 +424,12 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
             const color = crit ? '#ef4444' : '#fbbf24'
             const bg = crit ? 'rgba(239,68,68,0.08)' : 'rgba(251,191,36,0.06)'
             const acked = !!a.acknowledgedAt
-            const urgency = crit && !acked ? getEscalationUrgency(a.raisedAt) : null
+            // Acknowledged and cleared are independent states. Without the
+            // clearedAt test a condition that returned to normal days ago kept
+            // an animated, pulsing "overdue" escalation badge — the loudest
+            // thing on the page, pointing at nothing.
+            const recovered = !!a.clearedAt
+            const urgency = crit && !acked && !recovered ? getEscalationUrgency(a.raisedAt) : null
             const insight = getAlarmInsight(a.paramLabel, a.domain)
 
             return (
@@ -427,6 +448,14 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
                       <span className="text-xs text-slate-500 font-mono">
                         (Limit: {a.threshold}{a.unit})
                       </span>
+                      {recovered && (
+                        <span
+                          className="text-[10px] px-2 py-0.5 rounded font-semibold flex items-center gap-1 shrink-0 bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                          title={`Returned to normal at ${fmtDateTime(a.clearedAt as string)}`}
+                        >
+                          <Check size={10} /> Recovered
+                        </span>
+                      )}
                       {crit && !acked && urgency && (
                         <span className={clsx(
                           'text-[10px] px-2 py-0.5 rounded font-mono font-bold flex items-center gap-1 shrink-0',

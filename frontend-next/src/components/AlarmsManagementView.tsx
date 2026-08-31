@@ -37,7 +37,9 @@ function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string
       className="transition-colors border-b"
       style={{
         borderColor: '#1e2433',
-        background: alarm.severity === 'CRITICAL' && !alarm.acknowledged ? 'rgba(239,68,68,0.03)' : 'transparent',
+        // Only a still-breaching critical gets the red wash. A recovered one
+        // kept it, which is the strongest "act now" signal on the row.
+        background: alarm.severity === 'CRITICAL' && !alarm.acknowledged && !alarm.clearedAt ? 'rgba(239,68,68,0.03)' : 'transparent',
       }}
     >
       <td className="py-3 px-4">
@@ -76,6 +78,20 @@ function AlarmRow({ alarm, onAck, problems }: { alarm: Alarm; onAck: (id: string
           </span>
         ) : (
           <div className="flex items-center gap-2">
+            {/* Recovered-but-unacknowledged is its own state (ISA-18.2 RTN
+                unack): the condition is gone, but nobody has confirmed seeing
+                it, so it still needs an acknowledgement — it just must not
+                read as an ongoing emergency. */}
+            {alarm.clearedAt && (
+              <span
+                className="text-[10px] px-2 py-1 rounded-full font-semibold inline-flex items-center gap-1 whitespace-nowrap"
+                style={{ background: 'rgba(52,211,153,0.12)', color: '#34d399', border: '1px solid rgba(52,211,153,0.25)' }}
+                title={`Returned to normal at ${fmtDateTime(alarm.clearedAt)}`}
+              >
+                <CheckCircle size={9} />
+                Recovered
+              </span>
+            )}
             {problems.length > 0 && (
               <select
                 value={problemId}
@@ -113,6 +129,9 @@ const toAlarm = (a: OrgAlarmRow, orgId: string): Alarm => ({
   severity: a.severity, message: `${a.paramLabel}: ${a.value}${a.unit} (threshold ${a.threshold}${a.unit})`,
   sensor: a.paramLabel, value: a.value, unit: a.unit, threshold: a.threshold, timestamp: a.raisedAt,
   acknowledged: !!a.acknowledgedAt, acknowledgedBy: a.acknowledgedBy ?? undefined, acknowledgedAt: a.acknowledgedAt ?? undefined,
+  // Was fetched by useOrgAlarms and then dropped here, so nothing downstream
+  // could tell an active breach from one that recovered.
+  clearedAt: a.clearedAt ?? undefined,
 })
 
 export default function AlarmsManagementView({ embedded = false }: { embedded?: boolean }) {
@@ -265,7 +284,9 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
   const EXPORT_HEADERS = ['Severity', 'Transformer', 'Message', 'Sensor', 'Value', 'Unit', 'Timestamp', 'Status', 'Acknowledged By']
   const exportRows = () => filtered.map((a) => [
     a.severity, a.transformerName, a.message, a.sensor, a.value, a.unit,
-    fmtDateTime(a.timestamp), a.acknowledged ? 'Acknowledged' : 'Open', a.acknowledgedBy ?? '',
+    fmtDateTime(a.timestamp),
+    a.acknowledged ? 'Acknowledged' : a.clearedAt ? 'Recovered (unacknowledged)' : 'Open',
+    a.acknowledgedBy ?? '',
   ])
 
   // Counted from a set that follows the TIME RANGE but not the severity or
@@ -279,8 +300,10 @@ export default function AlarmsManagementView({ embedded = false }: { embedded?: 
     const ts = new Date(a.timestamp).getTime()
     return !(Number.isFinite(ts) && (ts < range.start || ts > range.end))
   })
-  const critCount = inRange.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged).length
-  const warnCount = inRange.filter((a) => a.severity === 'WARNING' && !a.acknowledged).length
+  // Still breaching AND unacknowledged. A recovered alarm is no longer open,
+  // so counting it inflated the headline with conditions that had passed.
+  const critCount = inRange.filter((a) => a.severity === 'CRITICAL' && !a.acknowledged && !a.clearedAt).length
+  const warnCount = inRange.filter((a) => a.severity === 'WARNING' && !a.acknowledged && !a.clearedAt).length
 
   return (
     <div className={embedded ? "space-y-4" : "p-6 space-y-5"}>
