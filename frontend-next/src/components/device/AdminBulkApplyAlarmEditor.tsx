@@ -26,17 +26,31 @@ import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { recordAuditAction } from '@/lib/auditStore'
 
+import { useFleetLive } from '@/lib/useFleetLive'
+
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
 
 export default function AdminBulkApplyAlarmEditor({
   domain, orgId = 'org-1', nodeId,
 }: { domain: SensorDomain; orgId?: string; nodeId?: string }) {
   const { devices } = useManagedDevices(orgId)
+  const { byId: liveNodes } = useFleetLive(orgId, domain)
   const setRuleDB = useAlarmDB((s) => s.setRule)
 
   const domainDevices = useMemo(() => {
-    return devices.filter((d) => d.domain === domain)
-  }, [devices, domain])
+    return devices
+      .filter((d) => d.domain === domain)
+      .map((d) => {
+        const liveNode = liveNodes.get(d.id)
+        if (!liveNode) return d
+        const isOnline = liveNode.online === 1 || (liveNode.online as any) === '1' || (liveNode.online as any) === true
+        return {
+          ...d,
+          status: isOnline ? 'online' : ('offline' as const),
+          lastSample: liveNode.last_sample ?? (d as any).lastSample,
+        }
+      })
+  }, [devices, domain, liveNodes])
 
   const [orgDepts, setOrgDepts] = useState<{ id: string; name: string }[]>([])
   const [orgUsers, setOrgUsers] = useState<{ id: string; name: string; departmentId?: string }[]>([])
