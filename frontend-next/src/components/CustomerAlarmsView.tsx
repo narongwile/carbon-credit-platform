@@ -319,49 +319,107 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
         </div>
       )}
 
-      {/* Time range + export */}
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* Time range + quick pills + export */}
+      <div className="flex items-center gap-2.5 flex-wrap">
+        {/* Quick Range Pills for 1-click selection */}
+        <div className="flex items-center gap-1 p-1 rounded-lg border border-slate-800 bg-[#0a0e1a]">
+          {QUICK_RANGES.map((q) => {
+            const active = !from && !to && quick === q.label
+            const shortLabel = q.hours === 1 ? '1h' : q.hours === 6 ? '6h' : q.hours === 24 ? '24h' : q.hours === 168 ? '7d' : q.hours === 720 ? '30d' : 'All'
+            return (
+              <button
+                key={q.label}
+                type="button"
+                onClick={() => {
+                  setQuick(q.label)
+                  setFrom('')
+                  setTo('')
+                  setPickerOpen(false)
+                }}
+                className={clsx(
+                  'px-2.5 py-1 rounded text-xs font-semibold transition-all',
+                  active
+                    ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-400/40'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                )}
+                title={q.label}
+              >
+                {shortLabel}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Custom Date Range Popover */}
         <div className="relative">
-          <button onClick={() => setPickerOpen((o) => !o)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300" style={surface}>
-            <CalendarDays size={12} className="text-slate-500" />
-            {range.label}
-            <span className="text-slate-600">▾</span>
+          <button
+            onClick={() => setPickerOpen((o) => !o)}
+            className={clsx(
+              'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all',
+              (from || to)
+                ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/50 shadow-sm'
+                : 'text-slate-300 bg-[#0d1117] border border-slate-800 hover:text-white'
+            )}
+          >
+            <CalendarDays size={13} className={(from || to) ? 'text-indigo-400' : 'text-slate-400'} />
+            <span>{(from || to) ? range.label : 'Custom Dates'}</span>
+            <span className="text-slate-500 text-[10px]">▾</span>
           </button>
           {pickerOpen && (
-            <div className="absolute left-0 mt-2 z-20 rounded-xl p-3 w-[420px]" style={{ background: '#0d1117', border: '1px solid #1e2433', boxShadow: '0 12px 32px rgba(0,0,0,0.5)' }}>
+            <div className="absolute left-0 mt-2 z-30 rounded-xl p-3.5 w-[420px]" style={{ background: '#0d1117', border: '1px solid #1e2433', boxShadow: '0 16px 40px rgba(0,0,0,0.6)' }}>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Absolute range</div>
-                  <label className="block text-[10px] text-slate-500 mb-1">From</label>
-                  <input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)}
-                    className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200 mb-2" style={inset} />
-                  <label className="block text-[10px] text-slate-500 mb-1">To</label>
-                  <input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)}
-                    className="w-full text-xs rounded-lg px-2 py-1.5 text-slate-200" style={inset} />
-                  <p className="mt-1.5 text-[10px] text-slate-600">times in {DISPLAY_TZ_LABEL}</p>
-                  <button onClick={() => setPickerOpen(false)}
-                    className="mt-3 w-full text-xs font-medium text-white px-3 py-1.5 rounded-lg" style={{ background: '#6366f1' }}>
-                    Apply range
-                  </button>
-                  {(from || to) && (
-                    <button onClick={() => { setFrom(''); setTo('') }} className="mt-1.5 w-full text-[11px] text-slate-500 hover:text-slate-300">
-                      Clear absolute range
+                  <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Absolute Range</div>
+                  <label className="block text-[10px] text-slate-400 mb-1">From Date/Time</label>
+                  <input
+                    type="datetime-local"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    className="w-full text-xs rounded-lg px-2.5 py-1.5 text-slate-100 mb-2.5 outline-none focus:ring-1 focus:ring-indigo-500"
+                    style={inset}
+                  />
+                  <label className="block text-[10px] text-slate-400 mb-1">To Date/Time</label>
+                  <input
+                    type="datetime-local"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    className="w-full text-xs rounded-lg px-2.5 py-1.5 text-slate-100 outline-none focus:ring-1 focus:ring-indigo-500"
+                    style={inset}
+                  />
+                  <p className="mt-1.5 text-[10px] text-slate-500 font-mono">timezone: {DISPLAY_TZ_LABEL}</p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => setPickerOpen(false)}
+                      className="flex-1 text-xs font-semibold text-white px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 transition-colors shadow"
+                    >
+                      Apply Range
                     </button>
-                  )}
+                    {(from || to) && (
+                      <button
+                        onClick={() => { setFrom(''); setTo(''); setQuick('Last 24 hours'); setPickerOpen(false) }}
+                        className="text-xs text-slate-400 hover:text-white px-2 py-1.5 rounded-lg border border-slate-800 bg-slate-900/60"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Quick ranges</div>
+                  <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-2">Quick Presets</div>
                   <div className="space-y-1">
                     {QUICK_RANGES.map((q) => (
-                      <button key={q.label}
+                      <button
+                        key={q.label}
                         onClick={() => { setQuick(q.label); setFrom(''); setTo(''); setPickerOpen(false) }}
-                        className={clsx('w-full text-left text-xs px-2.5 py-1.5 rounded-lg transition-colors',
-                          !from && !to && quick === q.label ? 'text-white' : 'text-slate-400 hover:text-slate-200')}
-                        style={!from && !to && quick === q.label
-                          ? { background: 'rgba(99,102,241,0.2)', border: '1px solid #6366f1' }
-                          : inset}>
-                        {q.label}
+                        className={clsx(
+                          'w-full text-left text-xs px-2.5 py-1.5 rounded-lg transition-colors flex items-center justify-between',
+                          !from && !to && quick === q.label
+                            ? 'bg-indigo-600/20 text-indigo-300 font-semibold border border-indigo-500/40'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                        )}
+                      >
+                        <span>{q.label}</span>
+                        {!from && !to && quick === q.label && <span className="text-[10px] text-indigo-400">✓</span>}
                       </button>
                     ))}
                   </div>
@@ -370,6 +428,16 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
             </div>
           )}
         </div>
+
+        {(from || to) && (
+          <button
+            onClick={() => { setFrom(''); setTo(''); setQuick('Last 24 hours') }}
+            className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-900 border border-slate-800"
+            title="Clear custom range"
+          >
+            <span>✕ Reset Range</span>
+          </button>
+        )}
 
         <button onClick={() => downloadCSV('alarms', EXPORT_HEADERS, exportRows())}
           disabled={filtered.length === 0}

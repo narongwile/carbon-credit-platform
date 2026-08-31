@@ -296,30 +296,52 @@ const ALARM_CFG: Record<AlarmKey, { sensor: string; unit: string; msg: (v: numbe
 const sensorOf = (t: Transformer, key: AlarmKey) =>
   key === 'oilTemp' ? t.sensors.oilTemperature : key === 'hydrogen' ? t.sensors.hydrogen : t.sensors.oilLevel
 
-export const alarms: Alarm[] = transformers.flatMap((t, ti) => {
-  const out: Alarm[] = []
-  const add = (severity: 'CRITICAL' | 'WARNING', key: AlarmKey) => {
-    const s = sensorOf(t, key)
-    const cfg = ALARM_CFG[key]
-    out.push({
-      id: `a-${t.id}-${out.length + 1}`,
-      transformerId: t.id,
-      transformerName: t.name,
-      orgId: t.orgId,
-      severity,
-      message: cfg.msg(s.value),
-      sensor: cfg.sensor,
-      value: s.value,
-      unit: cfg.unit,
-      threshold: severity === 'CRITICAL' ? s.threshold.critical : s.threshold.warning,
-      timestamp: new Date(Date.now() - (ti * 13 + out.length * 7 + 5) * 60000).toISOString(),
-      acknowledged: false,
-    })
-  }
-  if (t.status === 'CRITICAL') { add('CRITICAL', 'oilTemp'); add('CRITICAL', 'oilLevel') }
-  else if (t.status === 'WARNING') { add('WARNING', 'hydrogen') }
-  return out
-})
+export const alarms: Alarm[] = [
+  ...transformers.flatMap((t, ti) => {
+    const out: Alarm[] = []
+    const add = (severity: 'CRITICAL' | 'WARNING', key: AlarmKey, offsetMins: number, acked = false, cleared = false) => {
+      const s = sensorOf(t, key)
+      const cfg = ALARM_CFG[key]
+      out.push({
+        id: `a-${t.id}-${out.length + 1}`,
+        transformerId: t.id,
+        transformerName: t.name,
+        orgId: t.orgId,
+        severity,
+        message: cfg.msg(s.value),
+        sensor: cfg.sensor,
+        value: s.value,
+        unit: cfg.unit,
+        threshold: severity === 'CRITICAL' ? s.threshold.critical : s.threshold.warning,
+        timestamp: new Date(Date.now() - offsetMins * 60000).toISOString(),
+        acknowledged: acked,
+        acknowledgedBy: acked ? 'Duty Engineer' : undefined,
+        acknowledgedAt: acked ? new Date(Date.now() - (offsetMins - 15) * 60000).toISOString() : undefined,
+        clearedAt: cleared ? new Date(Date.now() - (offsetMins - 30) * 60000).toISOString() : undefined,
+      })
+    }
+    if (t.status === 'CRITICAL') {
+      add('CRITICAL', 'oilTemp', ti * 13 + 5, false, false)
+      add('CRITICAL', 'oilLevel', ti * 13 + 25, false, false)
+      // Historical alarms for this unit
+      add('WARNING', 'hydrogen', (ti + 1) * 24 * 60 + 120, true, true) // ~1-2 days ago
+      add('CRITICAL', 'oilTemp', (ti + 3) * 24 * 60 + 300, true, true) // ~3-5 days ago
+      add('WARNING', 'oilLevel', (ti + 8) * 24 * 60 + 45, true, true)  // ~8-10 days ago
+    } else if (t.status === 'WARNING') {
+      add('WARNING', 'hydrogen', ti * 13 + 12, false, false)
+      add('WARNING', 'oilTemp', (ti + 2) * 24 * 60 + 180, true, true)  // ~2-3 days ago
+      add('WARNING', 'hydrogen', (ti + 14) * 24 * 60 + 60, true, true) // ~14-16 days ago
+    } else {
+      // Historical past alarms on normal units that resolved
+      if (ti % 2 === 0) {
+        add('WARNING', 'hydrogen', (ti + 4) * 24 * 60 + 80, true, true)  // ~4-6 days ago
+        add('CRITICAL', 'oilTemp', (ti + 18) * 24 * 60 + 150, true, true) // ~18-20 days ago
+      }
+    }
+    return out
+  }),
+]
+
 
 export const auditLogs: AuditLog[] = [
   {
