@@ -318,6 +318,25 @@ function ReportsPageContent() {
     return licensed.length > 0 ? licensed : ['transformer', 'carbonNode', 'bloodBox', 'automobile']
   })
 
+  // GET /api/orgs/:orgId/entitlements is a plain
+  // `SELECT platform FROM org_entitlements WHERE org_id=?` with no default, so
+  // an organization that simply has no rows yet — a newly created one, or one
+  // whose admin has not set entitlements — comes back as []. Filtering the
+  // pickers by that directly rendered ZERO domain chips in both the On-Demand
+  // studio and the Automated Sequence modal ('all' included, since it is shown
+  // only when length > 1), leaving an unusable report builder with nothing on
+  // screen to explain why.
+  //
+  // Absence of a licensing record is not a licensing decision. Restricting has
+  // to come from a positive statement, so an empty list means "not restricted"
+  // here. Nothing is lost by that: report generation runs client-side in
+  // iiotReportGenerator over data the user can already read, so these chips are
+  // UX, not an access control — failing closed buys no safety and costs a
+  // broken page.
+  const effectiveDomains: SensorDomain[] = orgDomains.length > 0
+    ? orgDomains
+    : (['transformer', 'carbonNode', 'bloodBox', 'automobile'] as SensorDomain[])
+
   // Sync selectedDomains when orgDomains change
   useEffect(() => {
     if (orgDomains.length > 0) {
@@ -740,7 +759,7 @@ function ReportsPageContent() {
     setDraft({
       ...blankSchedule,
       name: '',
-      domain: selectedDomains.length === 1 ? selectedDomains[0] : (orgDomains.length === 1 ? orgDomains[0] : 'all'),
+      domain: selectedDomains.length === 1 ? selectedDomains[0] : (effectiveDomains.length === 1 ? effectiveDomains[0] : 'all'),
       scope: generatorScope === 'all' ? 'org' : generatorScope,
       scopeId: generatorScope === 'site' ? (selectedSite === 'all' ? '' : selectedSite)
              : generatorScope === 'department' ? selectedDeptIds.join(',')
@@ -1233,7 +1252,7 @@ function ReportsPageContent() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {INDUSTRIAL_DOMAINS.filter((d) => d.id !== 'all' && orgDomains.includes(d.id as SensorDomain)).map((dm) => {
+                  {INDUSTRIAL_DOMAINS.filter((d) => d.id !== 'all' && effectiveDomains.includes(d.id as SensorDomain)).map((dm) => {
                     const on = selectedDomains.includes(dm.id)
                     return (
                       <button
@@ -1785,8 +1804,8 @@ function ReportsPageContent() {
                     Product Domain Filter (Multi-Product Org)
                   </label>
                   <div className="flex flex-wrap gap-1.5">
-                    {INDUSTRIAL_DOMAINS.filter((dm) => dm.id === 'all' ? orgDomains.length > 1 : orgDomains.includes(dm.id as SensorDomain)).map((dm) => {
-                      const on = (draft.domain || (orgDomains.length === 1 ? orgDomains[0] : 'all')) === dm.id
+                    {INDUSTRIAL_DOMAINS.filter((dm) => dm.id === 'all' ? effectiveDomains.length > 1 : effectiveDomains.includes(dm.id as SensorDomain)).map((dm) => {
+                      const on = (draft.domain || (effectiveDomains.length === 1 ? effectiveDomains[0] : 'all')) === dm.id
                       return (
                         <button
                           key={dm.id}

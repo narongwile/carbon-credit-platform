@@ -160,6 +160,14 @@ test_proofs_and_integrity:
     # badge, and escalated to the whole department by escalationFunc.
     # Verified to fail 13/24 on the pre-fix code.
     - node e2e/proofs/test-personal-alarm-privacy.mjs
+    # Two "filter the UI by what the org owns" features that failed CLOSED on
+    # missing data, plus a live-presence hook that was fetched and discarded.
+    # The entitlements endpoint has no default, so an org with no
+    # org_entitlements row returns [] and the report builder rendered zero
+    # domain chips; and admin/fleet called useFleetLive without reading it,
+    # paying for a 5s poll while every row's online icon stayed frozen at page
+    # load. Verified to fail 10/10 on the pre-fix code.
+    - node e2e/proofs/test-frontend-fail-open.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see

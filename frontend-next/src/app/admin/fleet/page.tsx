@@ -31,7 +31,7 @@ import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive, type DevicePresence } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
-import { useFleetLive } from '@/lib/useFleetLive'
+import { useFleetLive, statusFromLive } from '@/lib/useFleetLive'
 import {
   Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2, Plug, Construction, ListChecks,
 } from 'lucide-react'
@@ -78,6 +78,13 @@ export default function FleetPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const { hosts, loaded: fleetLoaded } = useFleetHosts(orgId)
+  // Live presence for the whole list. useFleetHosts fetches ONCE per
+  // [live, orgId] — no poll, no telemetry subscription — so every row's
+  // online/offline icon was frozen at page load: a device that dropped while
+  // the admin watched the page stayed green indefinitely. useFleetLive already
+  // polls api.fleet every 5s and folds in telemetry frames, so overlaying it
+  // per row is what makes the list live. It was being called and its result
+  // discarded, which paid for the poll and kept the stale icons.
   const { byId: liveNodes } = useFleetLive(orgId)
 
   const [activeId, setActiveId] = useState('')
@@ -214,7 +221,13 @@ export default function FleetPage() {
             <p className="text-sm text-slate-500 p-4">Loading fleet…</p>
           ) : hosts.length === 0 ? (
             <p className="text-sm text-slate-500 p-4">No devices in this organization yet.</p>
-          ) : hosts.map((h) => (
+          ) : hosts.map((h) => {
+            // Prefer the live row; fall back to the one-shot fleet fetch for a
+            // device the live poll has not seen yet (or in demo mode, where
+            // useFleetLive returns an empty map).
+            const liveNode = liveNodes.get(h.id)
+            const rowOffline = liveNode ? statusFromLive(liveNode) === 'OFFLINE' : h.status === 'OFFLINE'
+            return (
             <button key={h.id} onClick={() => setActiveId(h.id)} className="w-full text-left p-4 rounded-xl transition-all" style={{ ...surface, borderColor: activeId === h.id ? '#6366f1' : '#1e2433' }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -224,14 +237,15 @@ export default function FleetPage() {
                     <div className="text-[11px] text-slate-500 font-mono truncate">{h.id}</div>
                   </div>
                 </div>
-                {h.status === 'OFFLINE' ? <WifiOff size={15} className="text-slate-600 flex-shrink-0" /> : <Wifi size={15} className="text-green-400 flex-shrink-0" />}
+                {rowOffline ? <WifiOff size={15} className="text-slate-600 flex-shrink-0" /> : <Wifi size={15} className="text-green-400 flex-shrink-0" />}
               </div>
               <div className="flex items-center justify-between mt-2 text-[11px] text-slate-500">
                 <span className="truncate">{siteName(h.siteId)}</span>
                 <span className="capitalize flex-shrink-0 ml-2">{h.domain}</span>
               </div>
             </button>
-          ))}
+            )
+          })}
         </div>
 
         {/* Device detail */}

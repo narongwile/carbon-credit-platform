@@ -31,7 +31,7 @@ node e2e/proofs/test-alarms-time-range.mjs
 ## Architecture & Tenancy Norms
 - **Multi-Tenant Isolation**: Never query shared tables without `org_id` / `user_id` scopes.
 - **Personal Alarms**: Personal alarms must write to `personal_alarm_events` (NOT `alarm_events`).
-- **Product Entitlements**: All product domain selectors must be filtered by `licensedDomains(orgId)` or `org_entitlements`.
+- **Product Entitlements**: Product domain selectors are filtered by `licensedDomains(orgId)` / `org_entitlements`, but an EMPTY list means "not restricted", not "restricted to nothing". `GET /api/orgs/:orgId/entitlements` is a bare `SELECT platform FROM org_entitlements WHERE org_id=?` with no default, so an org that simply has no rows yet returns `[]`; filtering on that directly renders zero chips and an unusable picker. Absence of a licensing record is not a licensing decision. These selectors are UX, not access control — report generation runs client-side over data the user can already read — so fail open and gate access server-side instead.
 - **Database Timezone**: Database operations use `Asia/Bangkok` (`+07:00`).
 
 ## Loop Conventions
