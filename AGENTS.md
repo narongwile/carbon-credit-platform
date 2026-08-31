@@ -28,6 +28,11 @@ node e2e/proofs/test-personal-alarm-privacy.mjs
 node e2e/proofs/test-alarms-time-range.mjs
 ```
 
+### 6. Production Container Build & Push (Deploy to Registry & ArgoCD)
+```bash
+GITLAB_REGISTRY_USER=oauth2 GITLAB_REGISTRY_TOKEN='glpat-lxTRJgWKtpwWFD9wuMjEbmM6MQpvOjEKdTpuaDlqNw8.01.171jfngrv' bash infra/scripts/build-push-frontend.sh
+```
+
 ## Architecture & Tenancy Norms
 - **Multi-Tenant Isolation**: Never query shared tables without `org_id` / `user_id` scopes.
 - **Personal Alarms**: Personal alarms must write to `personal_alarm_events` (NOT `alarm_events`).
@@ -38,4 +43,5 @@ node e2e/proofs/test-alarms-time-range.mjs
 - Always run TypeScript check (`npx tsc --noEmit`) before committing.
 - Regenerate and sync Node-RED flow whenever `generate-nodered-backend.mjs` is modified.
 - Human review required for breaking schema migrations or privilege changes.
+
 
