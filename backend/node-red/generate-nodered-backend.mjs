@@ -2056,15 +2056,34 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
         const isAdmin = u.role === 'admin' || u.role === 'superadmin';
         if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;
 
-        // Log Personal Alarm Event to alarm_events table for in-app console & auditability
+        // Log Personal Alarm Event for the in-app console & auditability.
+        //
+        // personal_alarm_events (migrate-v59), NOT alarm_events. This used to
+        // write into alarm_events tagged by putting 'PERSONAL:<userId>' in the
+        // \`source\` column — which is ENUM('edge','cloud'), so the value did not
+        // fit, and INSERT IGNORE turned the truncation error into a warning and
+        // stored the empty ENUM member. The console filters on
+        // source === 'PERSONAL:<userId>' and so was permanently empty, while the
+        // row itself stayed in alarm_events looking like an ordinary org alarm:
+        // visible to the whole organization in /admin/alarms, counted in the
+        // sidebar badge, and — being CRITICAL, unacknowledged and uncleared —
+        // picked up by escalationFunc, which re-alerted one person's private
+        // early-warning threshold to their entire department.
+        //
+        // A personal breach must not appear anywhere others can see it. A
+        // separate table makes that true by construction instead of relying on
+        // every org-wide query to remember to exclude it.
         if (u.id && (sel.email || sel.telegram || sel.line || sel.googlechat)) {
           try {
             for (const a of alarms) {
-              const pevtId = 'pevt_' + String(u.id).slice(0, 8) + '_' + String(a.paramKey) + '_' + Date.now();
+              // Second-resolution + param key, so a redelivery inside the same
+              // second is deduped by the primary key rather than inserting a
+              // near-duplicate row on every notification.
+              const pevtId = 'pevt_' + String(u.id).slice(0, 24) + '_' + String(a.paramKey) + '_' + Math.floor(Date.now() / 1000);
               await pool.query(
-                "INSERT IGNORE INTO alarm_events (id, node_id, org_id, department_id, param_key, param_label, severity, kind, source, value, threshold, unit, raised_at, notified) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'threshold', ?, ?, ?, ?, NOW(3), 1)",
-                [pevtId, e.nodeId, e.orgId, e.departmentId || null, a.paramKey, a.paramLabel, a.severity, 'PERSONAL:' + u.id, a.value, a.threshold, a.unit]
+                "INSERT IGNORE INTO personal_alarm_events (id, user_id, node_id, org_id, param_key, param_label, severity, kind, value, threshold, unit, raised_at) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'threshold', ?, ?, ?, NOW(3))",
+                [pevtId, u.id, e.nodeId, e.orgId, a.paramKey, a.paramLabel, a.severity, a.value, a.threshold, a.unit]
               );
             }
           } catch(err) { node.warn('notify:personal-event-log ' + err.message); }
@@ -2952,7 +2971,20 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
   for (const __org of await global.get('sweepOrgs')()) {
     const pool = global.get('resolvePool')(__org);
 
-    // LEVEL 1: Un-ACK'd CRITICAL alarms > ESCALATE_MIN (15m) -> Dept Lead
+    // Three re-alert tiers at ESCALATE_MIN / x2 / x4, then silence. This is a
+    // real improvement on the previous single escalation, which set escalated=1
+    // once and then never spoke again however long the CRITICAL stayed
+    // unacknowledged.
+    //
+    // What it is NOT is per-tier routing. All three node.send() calls go to the
+    // same 'notify' node, which routes by orgId/departmentId exactly as the
+    // first alert did; nothing anywhere reads escalationLevel, and the platform
+    // has no concept of a dept-lead, duty-engineer or executive recipient. The
+    // labels therefore say WHEN, not WHO — naming tiers of people who do not
+    // exist would put a false statement in a message an engineer receives and
+    // acts on at 3am.
+    //
+    // LEVEL 1: unacknowledged CRITICAL older than ESCALATE_MIN
     const [l1Rows] = await pool.query(
       "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
       "AND (escalated = 0 OR escalated IS NULL) AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
@@ -2962,7 +2994,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
-          paramLabel: '⚡ [ESCALATION L1 - Dept Lead] ' + r.param_label,
+          paramLabel: '⚡ [ESCALATION L1 · unacknowledged ' + ESCALATE_MIN + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
           escalationLevel: 1
@@ -2973,7 +3005,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       await pool.query("UPDATE alarm_events SET escalated = 1 WHERE id IN (" + l1Rows.map(r => pool.escape(r.id)).join(",") + ")");
     }
 
-    // LEVEL 2: Un-ACK'd CRITICAL alarms > 2 * ESCALATE_MIN (30m) -> Duty Engineer
+    // LEVEL 2: still unacknowledged at 2x ESCALATE_MIN
     const [l2Rows] = await pool.query(
       "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
       "AND escalated = 1 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
@@ -2983,7 +3015,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
-          paramLabel: '🔥 [ESCALATION L2 - Duty Engineer] ' + r.param_label,
+          paramLabel: '🔥 [ESCALATION L2 · still unacknowledged ' + (ESCALATE_MIN*2) + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
           escalationLevel: 2
@@ -2994,7 +3026,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       await pool.query("UPDATE alarm_events SET escalated = 2 WHERE id IN (" + l2Rows.map(r => pool.escape(r.id)).join(",") + ")");
     }
 
-    // LEVEL 3: Un-ACK'd CRITICAL alarms > 4 * ESCALATE_MIN (60m) -> Executive Admin
+    // LEVEL 3: final re-alert at 4x ESCALATE_MIN; escalated=3 ends the chain
     const [l3Rows] = await pool.query(
       "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
       "AND escalated = 2 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
@@ -3004,7 +3036,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
-          paramLabel: '💥 [ESCALATION L3 - Executive Admin / Emergency] ' + r.param_label,
+          paramLabel: '💥 [ESCALATION L3 · FINAL · unacknowledged ' + (ESCALATE_MIN*4) + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
           escalationLevel: 3
@@ -3204,6 +3236,49 @@ if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authenticatio
   if(tenantPool && tenantPool !== controlPool){
     try{ await tenantPool.query(ddl); await tenantPool.query(q,args); }catch(_){}
   }
+  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+// GET /api/nodes/:id/personal-events — this user's own personal-threshold
+// breaches on this device. Scoped to msg.auth.userId server-side and NEVER by
+// a client-supplied id: a personal threshold is private by definition, so
+// "whose events these are" must not be a request parameter.
+const personalEventsGetFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||'';
+if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authentication required'};return msg;}
+(async()=>{
+  const ctl=global.get('pool');
+  const [n]=await ctl.query('SELECT org_id FROM nodes WHERE id=?',[id]);
+  if(!n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'device not found'};node.send(msg);return;}
+  const pool=global.get('resolvePool')(n[0].org_id);
+  let rows=[];
+  try{
+    const [r]=await pool.query(
+      "SELECT id,node_id,param_key,param_label,severity,value,threshold,unit,raised_at,acknowledged_at,acknowledged_by " +
+      "FROM personal_alarm_events WHERE user_id=? AND node_id=? ORDER BY raised_at DESC LIMIT 200",[uid,id]);
+    rows=r||[];
+  }catch(err){
+    // Table absent until migrate-v59 has run — an empty history is the honest
+    // answer, not a 500 that makes the whole settings panel look broken.
+    node.warn('personalEvents: '+err.message);
+  }
+  msg.headers=__CORS; msg.payload=rows; node.send(msg);
+})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
+
+// POST /api/nodes/:id/personal-events/:eventId/ack
+// The WHERE clause carries user_id, so one user cannot acknowledge another's
+// personal event even if they guess the id.
+const personalEventAckFunc = CORS + `const id=msg.req.params.id; const evId=msg.req.params.eventId; const uid=(msg.auth&&msg.auth.userId)||'';
+const by=((msg.payload&&msg.payload.by)||'')||'';
+if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authentication required'};return msg;}
+(async()=>{
+  const ctl=global.get('pool');
+  const [n]=await ctl.query('SELECT org_id FROM nodes WHERE id=?',[id]);
+  if(!n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'device not found'};node.send(msg);return;}
+  const pool=global.get('resolvePool')(n[0].org_id);
+  const [r]=await pool.query(
+    "UPDATE personal_alarm_events SET acknowledged_at=NOW(3), acknowledged_by=? WHERE id=? AND user_id=? AND node_id=? AND acknowledged_at IS NULL",
+    [String(by).slice(0,120), evId, uid, id]);
+  if(!r.affectedRows){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found or already acknowledged'};node.send(msg);return;}
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 
@@ -7952,6 +8027,11 @@ const flow = [
   ...endpoint('personalruleget', 'get', '/api/nodes/:id/personal-rule', getPersonalRuleFunc, 'node'),
   ...endpoint('personalruleput', 'put', '/api/nodes/:id/personal-rule', putPersonalRuleFunc, 'node'),
   ...endpoint('personalruletest', 'post', '/api/nodes/:id/personal-rule/test', personalRuleTestFunc, 'node'),
+  // Policy 'node' (view access to the device), not 'node:manage': every role
+  // must be able to read and acknowledge its OWN personal alarm history. Both
+  // handlers scope by msg.auth.userId, never by a parameter.
+  ...endpoint('personalevents', 'get', '/api/nodes/:id/personal-events', personalEventsGetFunc, 'node'),
+  ...endpoint('personaleventack', 'post', '/api/nodes/:id/personal-events/:eventId/ack', personalEventAckFunc, 'node'),
   // Admin-configurable multi-parameter trend charts (migrate-v47). Any signed-in
   // viewer with access to the device may read the charts an admin configured;
   // only 'node:manage' may create/edit/delete them.

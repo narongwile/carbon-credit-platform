@@ -373,6 +373,21 @@ export const api = {
   getMyNodeRule: (nodeId: string) => req<{ rule: NodeAlarmRule | null }>(`/api/nodes/${nodeId}/personal-rule`),
   putMyNodeRule: (nodeId: string, body: { rule: NodeAlarmRule }) =>
     req<{ ok: boolean }>(`/api/nodes/${nodeId}/personal-rule`, { method: 'PUT', body: JSON.stringify(body) }),
+  /**
+   * This user's own personal-threshold breaches on a device. Scoped server-side
+   * to msg.auth.userId — a personal threshold is private, so whose events these
+   * are is never a request parameter.
+   */
+  myPersonalEvents: (nodeId: string) =>
+    req<{
+      id: string; node_id: string; param_key: string; param_label: string
+      severity: 'WARNING' | 'CRITICAL'; value: number; threshold: number; unit: string | null
+      raised_at: string; acknowledged_at: string | null; acknowledged_by: string | null
+    }[]>(`/api/nodes/${nodeId}/personal-events`),
+  ackMyPersonalEvent: (nodeId: string, eventId: string, body: { by?: string }) =>
+    req<{ ok: boolean }>(`/api/nodes/${nodeId}/personal-events/${eventId}/ack`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
   testMyPersonalAlert: (nodeId: string, channels?: Record<string, boolean>) =>
     req<{ ok: boolean; sent: Record<string, boolean>; errors: Record<string, string>; channels: Record<string, boolean> }>(
       `/api/nodes/${nodeId}/personal-rule/test`,

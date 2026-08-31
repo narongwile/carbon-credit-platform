@@ -237,7 +237,7 @@
     "type": "function",
     "z": "be",
     "name": "notify (Email/LINE/Telegram/GChat · per-tenant)",
-    "func": "\nconst alarms = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\nif (!alarms || !alarms.length) return null;\nconst e = alarms[0];\nif (!e.severity || !e.paramKey) return null; // Safety guard: ignore raw telemetry\n\nconst pool = global.get('resolvePool')(e.orgId);\nconst controlPool = global.get('pool') || pool;\nconst __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok';\n\nconst formatTime = (ts) => {\n  try{ return new Date(ts).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){ return String(ts); }\n};\n\n// Domain-aware category & condition risk insight from industrial spec\nconst __RISK_MAP = {\n  oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },\n  Oiltemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },\n  windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },\n  hydrogen: { cat: 'DGA Gas', critRisk: 'Corona discharge or partial arcing under oil (>300 ppm or rapid rate-of-rise)', warnRisk: 'Dissolved hydrogen elevated (>100 ppm)' },\n  H2: { cat: 'DGA Gas', critRisk: 'Corona discharge or partial arcing under oil (>300 ppm or rapid rate-of-rise)', warnRisk: 'Dissolved hydrogen elevated (>100 ppm)' },\n  moisture: { cat: 'Insulation', critRisk: 'Dielectric breakdown risk & bubble formation (>35 ppm)', warnRisk: 'Oil moisture elevated (>25 ppm)' },\n  OilMoisture: { cat: 'Insulation', critRisk: 'Dielectric breakdown risk & bubble formation (>35 ppm)', warnRisk: 'Oil moisture elevated (>25 ppm)' },\n  VoltAN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase A-N voltage approaching its safe limit' },\n  VoltBN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase B-N voltage approaching its safe limit' },\n  VoltCN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase C-N voltage approaching its safe limit' },\n  VoltUnbalanceAN: { cat: 'Power Quality', critRisk: 'Phase A unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase A voltage unbalance high (>2%)' },\n  VoltUnbalanceBN: { cat: 'Power Quality', critRisk: 'Phase B unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase B voltage unbalance high (>2%)' },\n  VoltUnbalanceCN: { cat: 'Power Quality', critRisk: 'Phase C unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase C voltage unbalance high (>2%)' },\n  CurrentUnbalanceA: { cat: 'Power Quality', critRisk: 'Phase A current unbalance critical (>20%)', warnRisk: 'Phase A current unbalance high (>10%)' },\n  CurrentUnbalanceB: { cat: 'Power Quality', critRisk: 'Phase B current unbalance critical (>20%)', warnRisk: 'Phase B current unbalance high (>10%)' },\n  CurrentUnbalanceC: { cat: 'Power Quality', critRisk: 'Phase C current unbalance critical (>20%)', warnRisk: 'Phase C current unbalance high (>10%)' },\n  load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },\n  CurrentAVG: { cat: 'Current Load', critRisk: 'Continuous overload risk (>115% capacity)', warnRisk: 'Average current high (>100% capacity)' },\n  THD_VoltAB: { cat: 'Harmonics', critRisk: 'Severe harmonic distortion (>8% THDv)', warnRisk: 'Voltage harmonics elevated (>5% THDv)' },\n  THD_CurrentA: { cat: 'Harmonics', critRisk: 'Severe current harmonics (>15% THDi)', warnRisk: 'Current harmonics elevated (>8% THDi)' },\n  Tbox: { cat: 'Enclosure', critRisk: 'Control cabinet overheating', warnRisk: 'Control box temperature elevated' },\n  RHbox: { cat: 'Enclosure', critRisk: 'Critical cabinet humidity (>80%)', warnRisk: 'Control box humidity elevated' },\n  externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },\n  online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },\n  // tempHigh/tempLow are canonical keys shared by BOTH carbonNode (fridge) and\n  // bloodBox (blood cold-chain) — same collision as frontend-next/src/lib/\n  // alarmParams.ts's ALARM_RISK_INSIGHTS (see that file's comment for the\n  // full rationale). Domain-qualified keys below let __riskFor() resolve the\n  // right one; these bare entries are a neutral, domain-generic fallback for\n  // a THIRD domain that reuses the name with no risk text of its own.\n  tempHigh: { cat: 'Temperature', critRisk: 'Reading above the configured critical limit', warnRisk: 'Reading above the configured warning limit' },\n  tempLow: { cat: 'Temperature', critRisk: 'Reading below the configured critical limit', warnRisk: 'Reading below the configured warning limit' },\n  'carbonNode:tempHigh': { cat: 'Refrigeration Thermal', critRisk: 'Internal temp critical — loss of refrigerated preservation (>10°C)', warnRisk: 'Internal temp high — check door seal/evaporator fan (>8°C)' },\n  'carbonNode:tempLow': { cat: 'Refrigeration Thermal', critRisk: 'Accidental freezing risk — ice formation on evaporator (<0°C)', warnRisk: 'Internal temp low — check thermostat/defrost cycle (<2°C)' },\n  // EMERGENCY-worded, not just HIGH like carbonNode: this is a product-safety\n  // excursion on stored blood units, not equipment wear.\n  'bloodBox:tempHigh': { cat: 'Cold-Chain Excursion', critRisk: 'Blood product cold-chain excursion — isolate unit(s) and follow your blood bank\\'s SOP (>8°C)', warnRisk: 'Blood product temperature approaching the excursion limit (>6°C)' },\n  'bloodBox:tempLow': { cat: 'Cold-Chain Excursion', critRisk: 'Blood product freezing risk — isolate unit(s) and follow your blood bank\\'s SOP (<1°C)', warnRisk: 'Blood product temperature approaching the freeze limit (<2°C)' },\n  door: { cat: 'Enclosure & Access', critRisk: 'Door open critical — prolonged warm air ingress and compressor overload (>15 min)', warnRisk: 'Door open — verify seal/latch (>5 min)' },\n  current: { cat: 'Compressor Electrical', critRisk: 'Compressor overcurrent — check condenser/refrigerant charge (>10A)', warnRisk: 'Compressor draw elevated — check condenser (>5A)' },\n};\n\n// domain disambiguates keys two domains both use for physically different\n// things (tempHigh/tempLow) — checked first, ahead of the bare-key entry, so\n// a domain-qualified entry always wins over the generic fallback. Falls back\n// to the generic \"Parameter limit breached\" only for a key __RISK_MAP has no\n// entry for at all (bare or scoped).\nconst __riskFor = (key, domain) => (domain && __RISK_MAP[domain + ':' + key]) || __RISK_MAP[key] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };\n\nconst __info = __riskFor(e.paramKey, e.domain);\nconst __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;\nconst __catText = __info.cat;\nconst topSeverity = alarms.some(a => a.severity === 'CRITICAL') ? 'CRITICAL' : 'WARNING';\nconst __sevEmoji = topSeverity === 'CRITICAL' ? '🔴' : '🟡';\nconst __sevColor = topSeverity === 'CRITICAL' ? '#EF4444' : '#FBBF24';\nconst __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst isMulti = alarms.length > 1;\n\nlet text = '\\n' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? 'Multiple Alarms ('+alarms.length+')' : (e.paramLabel || 'Alarm')) + '\\n';\ntext += '⚡️ Device: ' + e.nodeId + '\\n\\n';\n\nalarms.forEach(a => {\n  const info = __riskFor(a.paramKey, a.domain);\n  const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n  const isOffline = a.kind === 'offline';\n  const valLine = isOffline ? 'No telemetry received' : (a.value + (a.unit||''));\n  const limLine = isOffline ? '—' : (a.threshold + (a.unit||''));\n  text += '🏷 ' + (a.paramLabel || 'Alarm') + ' (' + a.severity + ')\\n';\n  text += '📊 Value: ' + valLine + ' (Limit: ' + limLine + ')\\n';\n  text += '💡 Risk: ' + risk + '\\n';\n  text += '🕒 ' + formatTime(a.ts || a.time) + '\\n\\n';\n});\n\nconst subject = String(e.nodeId) + ' ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms' : (e.paramLabel || 'Alarm'));\n\nconst __buildBaseUrl = (orgId) => {\n  // orgId VERBATIM. This used to strip the \"org-\" prefix and alias org-1 to\n  // 'eternity', producing https://eternity...  and https://2... — but\n  // 'eternity' is a PRODUCT id (entitlements maps eternityTransformers ->\n  // 'eternity'), never an organization, and lib/orgResolver.getOrgFromLocation\n  // reads the first label back as the orgId verbatim. So the link handed to an\n  // engineer named an org that does not exist, and the app could not resolve\n  // the tenant from it. getOrgWorkspaceUrl() — the app's own link builder — has\n  // always used the raw orgId; this now matches it.\n  const sub = String(orgId || '').trim();\n  // APP_BASE_URL is optional by design — node-red.yaml's own comment says so\n  // explicitly (\"notify falls back to CORS_ORIGIN when this is unset\"), and\n  // the pre-existing __base variable this replaced always included CORS_ORIGIN\n  // in the chain. Dropping it here doesn't break the CURRENT deployment (both\n  // vars happen to be set to the same value in node-red.yaml), but silently\n  // turns every alarm link into the hardcoded-IP last resort below the moment\n  // APP_BASE_URL/FRONTEND_URL is ever unset without CORS_ORIGIN also missing —\n  // exactly the safety net that comment says exists.\n  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || env.get('CORS_ORIGIN') || '';\n  if (customBase && customBase !== '*') {\n    try {\n      const u = new URL(customBase);\n      if (sub) {\n        // The ingress serves exactly two shapes (frontend-next.yaml):\n        //   iiotplatform.<base>   and   *.iiotplatform.<base>\n        // so an org link is ALWAYS the orgId prepended to the ROOT host.\n        //\n        // The old code replaced hostParts[0] whenever the host had >= 4 labels.\n        // On UAT that host is iiotplatform.27.254.143.144.nip.io — SEVEN labels,\n        // because the IP octets count — so it overwrote 'iiotplatform' and\n        // produced https://<x>.27.254.143.144.nip.io, which matches no ingress\n        // rule at all. Every \"Open device\" link in every UAT email, LINE,\n        // Telegram and Google Chat alarm was dead.\n        let host = u.hostname;\n        const i = host.indexOf('.iiotplatform.');\n        if (i > 0) host = host.slice(i + 1);   // drop an org label already present\n        u.hostname = sub + '.' + host;\n      }\n      return u.origin.replace(new RegExp('/+$'), '');\n    } catch(_) {\n      return customBase.replace(new RegExp('/+$'), '');\n    }\n  }\n  return 'http://' + sub + '.iiotplatform.27.254.143.144.nip.io:30080';\n};\n\nconst __linkFor = (role) => {\n  const base = __buildBaseUrl(e.orgId || e.org_id);\n  if (!base) return '';\n  const viewer = role === 'viewer' || role === 'customer';\n  const dom = e.domain || 'transformer';\n  let path = '';\n  if (dom === 'transformer') {\n    path = viewer ? '/customer/transformers/detail/' : '/admin/transformers/detail/';\n  } else if (dom === 'carbonNode') {\n    path = viewer ? '/customer/carbon/detail/' : '/admin/carbon/detail/';\n  } else if (dom === 'bloodBox') {\n    path = viewer ? '/customer/bloodbox/detail/' : '/admin/bloodbox/detail/';\n  } else if (dom === 'automobile') {\n    path = viewer ? '/customer/automobile/detail/' : '/admin/automobile/detail/';\n  } else {\n    path = viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/';\n  }\n  return base + path + '?id=' + encodeURIComponent(e.nodeId);\n};\n\n// LINE Flex bubble\nconst __flex = (link) => ({ type:'flex', altText: subject, contents: { type:'bubble',\n  header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[\n    { type:'text', text: topSeverity + ' · ' + (isMulti ? 'Multiple Alarms' : __riskFor(e.paramKey, e.domain).cat), color:'#FFFFFF', size:'xs', weight:'bold' },\n    { type:'text', text: isMulti ? alarms.length + ' Active Alarms' : String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },\n  body: { type:'box', layout:'vertical', spacing:'md', contents: alarms.map(a => {\n    const info = __riskFor(a.paramKey, a.domain);\n    const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n    return { type:'box', layout:'vertical', spacing:'sm', contents:[\n      { type:'text', text: (a.paramLabel||'Alarm') + ' (' + a.severity + ')', weight:'bold', size:'sm' },\n      { type:'text', text: 'Value: ' + (a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))), size:'xs', color:'#64748B' },\n      { type:'text', text: 'Risk: ' + risk, size:'xs', color:'#EF4444', wrap:true },\n      { type:'text', text: '🕒 ' + formatTime(a.ts || a.time || e.time), size:'xxs', color:'#94A3B8' }\n    ]};\n  })},\n  footer: link ? { type:'box', layout:'vertical', contents:[\n    { type:'button', style:'primary', color:'#6366F1', height:'sm',\n      action:{ type:'uri', label:'Open device', uri: link } } ] } : undefined } });\n\n// Telegram\nconst __tgText = '<b>' + __sevEmoji + ' [' + __esc(topSeverity) + '] ' + (isMulti ? alarms.length + ' Alarms' : __esc(e.paramLabel || 'Alarm')) + '</b>\\n'\n  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n\\n'\n  + alarms.map(a => {\n      const info = __riskFor(a.paramKey, a.domain);\n      const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n      return '🏷 <b>' + __esc(a.paramLabel || 'Alarm') + '</b> (' + __esc(a.severity) + ')\\n'\n      + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')\\n'\n      + '💡 <i>' + __esc(risk) + '</i>\\n'\n      + '🕒 <b>Time:</b> ' + formatTime(a.ts || a.time || e.time);\n    }).join('\\n\\n');\n\nconst __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',\n  reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined });\n\n// Google Chat\nconst __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', card: {\n  header: { title: String(e.nodeId) + ' ' + (topSeverity==='CRITICAL'?'🔴 ':'🟡 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },\n  sections: [{ widgets: alarms.map(a => ({\n    decoratedText: {\n      topLabel: (a.paramLabel || 'Alarm') + ' (' + a.severity + ')',\n      text: (a.kind==='offline' ? 'Offline' : (a.value + (a.unit||''))) + ' · ' + __riskFor(a.paramKey, a.domain).warnRisk,\n      bottomLabel: '🕒 ' + formatTime(a.ts || a.time || e.time)\n    }\n  })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])\n  }] } }] });\n\n(async () => {\n  try {\n    let orgName = e.orgId;\n    try {\n      const [orgRows] = await controlPool.query(\"SELECT name FROM organizations WHERE id=?\", [e.orgId]);\n      if (orgRows.length && orgRows[0].name) orgName = orgRows[0].name;\n    } catch(_) {}\n\n    let siteName = '';\n    try {\n      if (pool) {\n        const [nodeRows] = await pool.query(\"SELECT s.name as siteName FROM nodes n LEFT JOIN sites s ON s.id=n.site_id WHERE n.id=?\", [e.nodeId]);\n        if (nodeRows && nodeRows.length && nodeRows[0].siteName) siteName = nodeRows[0].siteName;\n      }\n    } catch(_) {}\n\n    let emailTpl = null;\n    try {\n      const [tRows] = await controlPool.query(\"SELECT sval FROM platform_settings WHERE skey=?\", ['email_template.' + e.orgId]);\n      if (tRows.length && tRows[0].sval) emailTpl = JSON.parse(tRows[0].sval);\n    } catch(_) {}\n    if (!emailTpl) {\n      emailTpl = {\n        subjectTemplate: '[{{severity}}] {{org_name}} Alert: {{device_name}}',\n        customHeaderNote: 'Attention: Automated priority alert triggered by {{org_name}} Industrial IoT Monitoring System.',\n        customFooterSop: '',\n        includeActionLink: true,\n        format: 'html',\n      };\n    }\n\n    const __templateVars = {\n      device_name: e.nodeId,\n      node_id: e.nodeId,\n      site_name: siteName || orgName,\n      location: siteName || orgName,\n      org_id: e.orgId,\n      org_name: orgName,\n      severity: topSeverity,\n      category: isMulti ? 'Multiple Alarms' : __riskFor(e.paramKey, e.domain).cat,\n      param_label: isMulti ? 'Multiple Alarms' : e.paramLabel,\n      sevEmoji: __sevEmoji,\n    };\n    const __renderTpl = (str) => String(str || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => (__templateVars[k] !== undefined ? __templateVars[k] : ''));\n\n    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}}');\n    const emailHeaderNote = __renderTpl(emailTpl.customHeaderNote);\n    const emailFooterSop = __renderTpl(emailTpl.customFooterSop);\n\n    const emailHtml = (link) => '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'\n      + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'\n      + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'\n      + '<div style=\"background-color: ' + __sevColor + '; padding: 18px 24px;\">'\n      + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">' + topSeverity + '</div>'\n      + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + __esc(isMulti ? alarms.length + ' Active Alarms' : (e.paramLabel || 'Industrial Alarm')) + '</div>'\n      + '</div>'\n      + (emailHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + __esc(emailHeaderNote) + '</div>' : '')\n      + '<div style=\"padding: 24px;\">'\n      + '<div style=\"margin-bottom: 16px; color: #94a3b8; font-size: 14px;\">Device: <strong style=\"color:#fff; font-family:monospace;\">' + __esc(e.nodeId) + '</strong>' + (siteName ? ' &nbsp;·&nbsp; Site: <strong style=\"color:#a5b4fc;\">' + __esc(siteName) + '</strong>' : '') + '</div>'\n      \n      + alarms.map(a => {\n          const info = __riskFor(a.paramKey, a.domain);\n          const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n          const aColor = a.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';\n          return '<div style=\"margin-bottom: 16px; padding: 12px; background-color: #111827; border-left: 4px solid '+aColor+'; border-radius: 4px;\">'\n            + '<div style=\"font-weight: bold; color: #fff; margin-bottom: 4px;\">' + __esc(a.paramLabel || 'Alarm') + ' <span style=\"color:'+aColor+'; font-size:11px;\">['+a.severity+']</span></div>'\n            + '<div style=\"color: #cbd5e1; font-size: 13px; margin-bottom: 4px;\">Value: <strong style=\"color:'+aColor+';\">' + __esc(a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))) + '</strong> (Limit: ' + __esc(a.kind==='offline'?'—':(a.threshold+(a.unit||''))) + ')</div>'\n            + '<div style=\"color: #f59e0b; font-size: 12px;\">💡 ' + __esc(risk) + '</div>'\n            + '<div style=\"color: #94a3b8; font-size: 11px; margin-top: 4px;\">🕒 ' + __esc(formatTime(a.ts || a.time || e.time)) + '</div>'\n            + '</div>';\n        }).join('')\n      \n      + (emailFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + __esc(emailFooterSop) + '</div></div>' : '')\n      + (emailTpl.includeActionLink && link ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')\n      + '</div>'\n      + '<div style=\"background-color: #070a12; border-top: 1px solid #1e2433; padding: 14px 24px; font-size: 11px; color: #475569; text-align: center;\">Automated alert from ONEOPS Unified Industrial Monitoring Platform.</div>'\n      + '</div></body></html>';\n\n    const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');\n\n    let channels = [];\n    if (pool && e.orgId) {\n      try {\n        const [r] = await pool.query(\n          \"SELECT channel,target,min_severity,department_id,user_id FROM notification_channels WHERE org_id=? AND enabled=1 AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND (user_id IN (SELECT user_id FROM user_departments WHERE department_id=?) OR user_id IN (SELECT id FROM users WHERE department_id=? OR (department_id IS NULL AND (role='admin' OR role='superadmin'))))) )\",\n          [e.orgId, e.departmentId || null, e.departmentId || null, e.departmentId || null]\n        );\n        // If a department has its own specific channel configured, it overrides the org-level fallback for that channel\n        const deptTypes = new Set(r.filter(c => c.department_id && (!c.user_id || c.user_id === '')).map(c => c.channel));\n        channels = r.filter(c => {\n          if (!c.department_id && (!c.user_id || c.user_id === '')) {\n            return !deptTypes.has(c.channel);\n          }\n          return true;\n        });\n      } catch(err) {\n        const [r] = await pool.query(\n          \"SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)\",\n          [e.orgId, e.departmentId || null]\n        );\n        channels = r;\n      }\n    }\n    const nc = await global.get('notifyConfig')();\n    // Fall back to platform-wide notify credentials for any channel NOT configured in this org.\n    // The previous all-or-nothing check (if (!channels.length)) silenced chat whenever an email\n    // channel was enabled: in UAT, mail-sink-guard disables per-org chat channels so test alarms\n    // route to the operator's test Telegram/GoogleChat — but because the org still had an email\n    // channel, channels.length was never 0, so Telegram, Google Chat, and LINE platform fallbacks\n    // were completely suppressed!\n    const _hasChan = (ch) => channels.some(c => c.channel === ch);\n    if (!_hasChan('line') && nc.lineToken) channels.push({ channel:'line', target:'' });\n    if (!_hasChan('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });\n    if (!_hasChan('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });\n    for (const c of channels) {\n      if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL') continue;\n      try {\n        if (c.channel === 'email') {\n          const mc = await global.get('mailConfig')();\n          if (!mc.transport || !c.target) continue;\n          await mc.transport.sendMail({ from: mc.from, to: c.target, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')) });\n        } else if (c.channel === 'line') {\n          const raw = String(c.target || nc.lineToken || '');\n          const at = raw.lastIndexOf('@');\n          const tok = at > 0 ? raw.slice(0, at) : raw;\n          const to  = at > 0 ? raw.slice(at + 1) : '';\n          if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});\n          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});\n        } else if (c.channel === 'telegram') {\n          const raw = String(c.target || nc.telegramChatId || '').trim();\n          const at = raw.lastIndexOf('@');\n          const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));\n          const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);\n          if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});\n        } else if (c.channel === 'googlechat') {\n          const url = c.target || nc.googleChatWebhook;\n          if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});\n        } else if (c.channel === 'webhook') {\n          const url = (c.target && c.target.startsWith('http')) ? c.target : '';\n          if (url) {\n            await fetch(url, {\n              method: 'POST',\n              headers: { 'content-type': 'application/json' },\n              body: JSON.stringify({\n                event: 'alarm.alert',\n                orgId: e.orgId,\n                orgName,\n                nodeId: e.nodeId,\n                severity: topSeverity,\n                alarms: alarms.map(a => ({\n                  paramKey: a.paramKey,\n                  paramLabel: a.paramLabel,\n                  severity: a.severity,\n                  value: a.value,\n                  unit: a.unit,\n                  threshold: a.threshold,\n                  time: a.ts || a.time || e.time\n                })),\n                link: __linkFor('admin'),\n                timestamp: new Date().toISOString()\n              })\n            });\n          }\n        }\n      } catch(err) { node.error('notify:'+c.channel+' '+err.message); }\n    }\n\n    // --- Deduplication: track targets already dispatched via notification_channels\n    // to prevent double-alerting users who appear in BOTH notification_channels (user_id scoped)\n    // and user_prefs. A user configured in both gets one alert, not two.\n    const _sentEmails = new Set();\n    const _sentTgChats = new Set();\n    const _sentLineIds = new Set();\n    const _sentGchatUrls = new Set();\n    for (const _c of channels) {\n      if (!_c.user_id) continue;\n      if (_c.channel === 'email' && _c.target) _sentEmails.add(_c.target.toLowerCase());\n      if (_c.channel === 'telegram' && _c.target) {\n        const _at = _c.target.lastIndexOf('@');\n        _sentTgChats.add(_at > 0 ? _c.target.slice(_at + 1) : _c.target);\n      }\n      if (_c.channel === 'line' && _c.target) {\n        const _at = _c.target.lastIndexOf('@');\n        _sentLineIds.add(_at > 0 ? _c.target.slice(_at + 1) : _c.target);\n      }\n      if (_c.channel === 'googlechat' && _c.target) _sentGchatUrls.add(_c.target);\n    }\n\n    // Per-user channels\n    try {\n      const [urows] = await controlPool.query(\"SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?\", [e.orgId]);\n      for (const u of urows) {\n        let pf = {};\n        try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { continue; }\n        const sel = (pf.alertChannels || {})[e.nodeId];\n        if (!sel) continue;\n        const isAdmin = u.role === 'admin' || u.role === 'superadmin';\n        if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;\n\n        // Log Personal Alarm Event to alarm_events table for in-app console & auditability\n        if (u.id && (sel.email || sel.telegram || sel.line || sel.googlechat)) {\n          try {\n            for (const a of alarms) {\n              const pevtId = 'pevt_' + String(u.id).slice(0, 8) + '_' + String(a.paramKey) + '_' + Date.now();\n              await pool.query(\n                \"INSERT IGNORE INTO alarm_events (id, node_id, org_id, department_id, param_key, param_label, severity, kind, source, value, threshold, unit, raised_at, notified) \" +\n                \"VALUES (?, ?, ?, ?, ?, ?, ?, 'threshold', ?, ?, ?, ?, NOW(3), 1)\",\n                [pevtId, e.nodeId, e.orgId, e.departmentId || null, a.paramKey, a.paramLabel, a.severity, 'PERSONAL:' + u.id, a.value, a.threshold, a.unit]\n              );\n            }\n          } catch(err) { node.warn('notify:personal-event-log ' + err.message); }\n        }\n\n        if (sel.email && u.email && !_sentEmails.has(u.email.toLowerCase())) {\n          try {\n            const mc = await global.get('mailConfig')();\n            const link = __linkFor(u.role);\n            if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(link) });\n          } catch(err) { node.error('notify:user-email '+err.message); }\n        }\n        let rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();\n        if (!rawTg && u.id) {\n          try {\n            const [uCh] = await controlPool.query(\"SELECT target FROM notification_channels WHERE user_id=? AND channel='telegram' AND enabled=1 LIMIT 1\", [u.id]);\n            if (uCh.length && uCh[0].target) rawTg = uCh[0].target.trim();\n          } catch(_) {}\n        }\n        if (sel.telegram && rawTg) {\n          try {\n            const at = rawTg.lastIndexOf('@');\n            let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));\n            const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);\n            if (!tok && e.orgId) {\n              try {\n                const [orgTg] = await controlPool.query(\"SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1\", [e.orgId]);\n                if (orgTg.length && orgTg[0].target) {\n                  const ot = orgTg[0].target;\n                  const oAt = ot.lastIndexOf('@');\n                  if (oAt > 0) tok = ot.slice(0, oAt);\n                }\n              } catch(_) {}\n            }\n            if (tok && chat && !_sentTgChats.has(String(chat))) {\n              await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor(u.role)))});\n            }\n          } catch(err) { node.error('notify:user-telegram '+err.message); }\n        }\n        let rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();\n        if (!rawLine && u.id) {\n          try {\n            const [uCh] = await controlPool.query(\"SELECT target FROM notification_channels WHERE user_id=? AND channel='line' AND enabled=1 LIMIT 1\", [u.id]);\n            if (uCh.length && uCh[0].target) rawLine = uCh[0].target.trim();\n          } catch(_) {}\n        }\n        if (sel.line && rawLine) {\n          try {\n            const at = rawLine.lastIndexOf('@');\n            let tok = at > 0 ? rawLine.slice(0, at) : '';\n            let to  = at > 0 ? rawLine.slice(at + 1) : '';\n            if (at <= 0) {\n              if (rawLine.startsWith('U') || rawLine.startsWith('C') || rawLine.startsWith('R')) {\n                to = rawLine;\n                tok = nc.lineToken || '';\n              } else {\n                tok = rawLine;\n              }\n            }\n            if (!tok && e.orgId) {\n              try {\n                const [orgLine] = await controlPool.query(\"SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1\", [e.orgId]);\n                if (orgLine.length && orgLine[0].target) {\n                  const ot = orgLine[0].target;\n                  const oAt = ot.lastIndexOf('@');\n                  if (oAt > 0) tok = ot.slice(0, oAt);\n                }\n              } catch(_) {}\n            }\n            if (tok && to && !_sentLineIds.has(to) && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {\n              await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});\n            } else if (tok && to && !_sentLineIds.has(to)) {\n              await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});\n            } else if (tok && !to) {\n              await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});\n            }\n          } catch(err) { node.error('notify:user-line '+err.message); }\n        }\n        let rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();\n        if (!rawGchat && u.id) {\n          try {\n            const [uCh] = await controlPool.query(\"SELECT target FROM notification_channels WHERE user_id=? AND channel='googlechat' AND enabled=1 LIMIT 1\", [u.id]);\n            if (uCh.length && uCh[0].target) rawGchat = uCh[0].target.trim();\n          } catch(_) {}\n        }\n        if (sel.googlechat && rawGchat && !_sentGchatUrls.has(rawGchat)) {\n          try {\n            await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});\n          } catch(err) { node.error('notify:user-googlechat '+err.message); }\n        }\n        const rawWebhook = String(pf.webhookApi || pf.webhookUrl || '').trim();\n        if (sel.webhook && rawWebhook && rawWebhook.startsWith('http')) {\n          try {\n            await fetch(rawWebhook, {\n              method: 'POST',\n              headers: { 'content-type': 'application/json' },\n              body: JSON.stringify({\n                event: 'user_alarm',\n                nodeId: e.nodeId,\n                severity: topSeverity,\n                alarms: alarms.map(a => ({\n                  paramKey: a.paramKey,\n                  paramLabel: a.paramLabel,\n                  severity: a.severity,\n                  value: a.value,\n                  unit: a.unit,\n                  threshold: a.threshold,\n                  time: a.ts || a.time || e.time\n                })),\n                link: __linkFor(u.role),\n                timestamp: new Date().toISOString()\n              })\n            });\n          } catch(err) { node.error('notify:user-webhook '+err.message); }\n        }\n      }\n    } catch(err) { node.warn('notify:user-prefs '+err.message); }\n  } catch(err) { node.error('notify: '+err.message); }\n})();\nreturn null;",
+    "func": "\nconst alarms = Array.isArray(msg.payload) ? msg.payload : [msg.payload];\nif (!alarms || !alarms.length) return null;\nconst e = alarms[0];\nif (!e.severity || !e.paramKey) return null; // Safety guard: ignore raw telemetry\n\nconst pool = global.get('resolvePool')(e.orgId);\nconst controlPool = global.get('pool') || pool;\nconst __TZ=env.get('DISPLAY_TZ')||'Asia/Bangkok';\n\nconst formatTime = (ts) => {\n  try{ return new Date(ts).toLocaleString('en-GB',{timeZone:__TZ,hour12:false})+' ('+__TZ+')'; }catch(_){ return String(ts); }\n};\n\n// Domain-aware category & condition risk insight from industrial spec\nconst __RISK_MAP = {\n  oilTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },\n  Oiltemp: { cat: 'Thermal & Oil', critRisk: 'Winding/insulation damage risk (>90°C)', warnRisk: 'Top oil temperature high (>85°C)' },\n  windingTemp: { cat: 'Thermal & Oil', critRisk: 'Winding/hot-spot insulation risk (>110°C)', warnRisk: 'Winding temp high (>95°C)' },\n  hydrogen: { cat: 'DGA Gas', critRisk: 'Corona discharge or partial arcing under oil (>300 ppm or rapid rate-of-rise)', warnRisk: 'Dissolved hydrogen elevated (>100 ppm)' },\n  H2: { cat: 'DGA Gas', critRisk: 'Corona discharge or partial arcing under oil (>300 ppm or rapid rate-of-rise)', warnRisk: 'Dissolved hydrogen elevated (>100 ppm)' },\n  moisture: { cat: 'Insulation', critRisk: 'Dielectric breakdown risk & bubble formation (>35 ppm)', warnRisk: 'Oil moisture elevated (>25 ppm)' },\n  OilMoisture: { cat: 'Insulation', critRisk: 'Dielectric breakdown risk & bubble formation (>35 ppm)', warnRisk: 'Oil moisture elevated (>25 ppm)' },\n  VoltAN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase A-N voltage approaching its safe limit' },\n  VoltBN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase B-N voltage approaching its safe limit' },\n  VoltCN: { cat: 'Voltage', critRisk: 'Voltage well outside the safe band — over-voltage risks equipment damage, under-voltage risks an operational trip/brownout', warnRisk: 'Phase C-N voltage approaching its safe limit' },\n  VoltUnbalanceAN: { cat: 'Power Quality', critRisk: 'Phase A unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase A voltage unbalance high (>2%)' },\n  VoltUnbalanceBN: { cat: 'Power Quality', critRisk: 'Phase B unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase B voltage unbalance high (>2%)' },\n  VoltUnbalanceCN: { cat: 'Power Quality', critRisk: 'Phase C unbalance critical (>5%) — motor heating & system stress', warnRisk: 'Phase C voltage unbalance high (>2%)' },\n  CurrentUnbalanceA: { cat: 'Power Quality', critRisk: 'Phase A current unbalance critical (>20%)', warnRisk: 'Phase A current unbalance high (>10%)' },\n  CurrentUnbalanceB: { cat: 'Power Quality', critRisk: 'Phase B current unbalance critical (>20%)', warnRisk: 'Phase B current unbalance high (>10%)' },\n  CurrentUnbalanceC: { cat: 'Power Quality', critRisk: 'Phase C current unbalance critical (>20%)', warnRisk: 'Phase C current unbalance high (>10%)' },\n  load: { cat: 'Current', critRisk: 'Immediate short circuit risk (>115% capacity)', warnRisk: 'Overload warning (>100%-115% capacity)' },\n  CurrentAVG: { cat: 'Current Load', critRisk: 'Continuous overload risk (>115% capacity)', warnRisk: 'Average current high (>100% capacity)' },\n  THD_VoltAB: { cat: 'Harmonics', critRisk: 'Severe harmonic distortion (>8% THDv)', warnRisk: 'Voltage harmonics elevated (>5% THDv)' },\n  THD_CurrentA: { cat: 'Harmonics', critRisk: 'Severe current harmonics (>15% THDi)', warnRisk: 'Current harmonics elevated (>8% THDi)' },\n  Tbox: { cat: 'Enclosure', critRisk: 'Control cabinet overheating', warnRisk: 'Control box temperature elevated' },\n  RHbox: { cat: 'Enclosure', critRisk: 'Critical cabinet humidity (>80%)', warnRisk: 'Control box humidity elevated' },\n  externalFault: { cat: 'Event/Fault', critRisk: 'Transformer shutdown from external fault (animals, lightning)', warnRisk: 'External fault event' },\n  online: { cat: 'Connectivity', critRisk: 'Device communication offline', warnRisk: 'Device unreachable' },\n  // tempHigh/tempLow are canonical keys shared by BOTH carbonNode (fridge) and\n  // bloodBox (blood cold-chain) — same collision as frontend-next/src/lib/\n  // alarmParams.ts's ALARM_RISK_INSIGHTS (see that file's comment for the\n  // full rationale). Domain-qualified keys below let __riskFor() resolve the\n  // right one; these bare entries are a neutral, domain-generic fallback for\n  // a THIRD domain that reuses the name with no risk text of its own.\n  tempHigh: { cat: 'Temperature', critRisk: 'Reading above the configured critical limit', warnRisk: 'Reading above the configured warning limit' },\n  tempLow: { cat: 'Temperature', critRisk: 'Reading below the configured critical limit', warnRisk: 'Reading below the configured warning limit' },\n  'carbonNode:tempHigh': { cat: 'Refrigeration Thermal', critRisk: 'Internal temp critical — loss of refrigerated preservation (>10°C)', warnRisk: 'Internal temp high — check door seal/evaporator fan (>8°C)' },\n  'carbonNode:tempLow': { cat: 'Refrigeration Thermal', critRisk: 'Accidental freezing risk — ice formation on evaporator (<0°C)', warnRisk: 'Internal temp low — check thermostat/defrost cycle (<2°C)' },\n  // EMERGENCY-worded, not just HIGH like carbonNode: this is a product-safety\n  // excursion on stored blood units, not equipment wear.\n  'bloodBox:tempHigh': { cat: 'Cold-Chain Excursion', critRisk: 'Blood product cold-chain excursion — isolate unit(s) and follow your blood bank\\'s SOP (>8°C)', warnRisk: 'Blood product temperature approaching the excursion limit (>6°C)' },\n  'bloodBox:tempLow': { cat: 'Cold-Chain Excursion', critRisk: 'Blood product freezing risk — isolate unit(s) and follow your blood bank\\'s SOP (<1°C)', warnRisk: 'Blood product temperature approaching the freeze limit (<2°C)' },\n  door: { cat: 'Enclosure & Access', critRisk: 'Door open critical — prolonged warm air ingress and compressor overload (>15 min)', warnRisk: 'Door open — verify seal/latch (>5 min)' },\n  current: { cat: 'Compressor Electrical', critRisk: 'Compressor overcurrent — check condenser/refrigerant charge (>10A)', warnRisk: 'Compressor draw elevated — check condenser (>5A)' },\n};\n\n// domain disambiguates keys two domains both use for physically different\n// things (tempHigh/tempLow) — checked first, ahead of the bare-key entry, so\n// a domain-qualified entry always wins over the generic fallback. Falls back\n// to the generic \"Parameter limit breached\" only for a key __RISK_MAP has no\n// entry for at all (bare or scoped).\nconst __riskFor = (key, domain) => (domain && __RISK_MAP[domain + ':' + key]) || __RISK_MAP[key] || { cat: 'Industrial Telemetry', critRisk: 'Parameter limit breached', warnRisk: 'Warning threshold reached' };\n\nconst __info = __riskFor(e.paramKey, e.domain);\nconst __riskText = e.severity === 'CRITICAL' ? __info.critRisk : __info.warnRisk;\nconst __catText = __info.cat;\nconst topSeverity = alarms.some(a => a.severity === 'CRITICAL') ? 'CRITICAL' : 'WARNING';\nconst __sevEmoji = topSeverity === 'CRITICAL' ? '🔴' : '🟡';\nconst __sevColor = topSeverity === 'CRITICAL' ? '#EF4444' : '#FBBF24';\nconst __esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst isMulti = alarms.length > 1;\n\nlet text = '\\n' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? 'Multiple Alarms ('+alarms.length+')' : (e.paramLabel || 'Alarm')) + '\\n';\ntext += '⚡️ Device: ' + e.nodeId + '\\n\\n';\n\nalarms.forEach(a => {\n  const info = __riskFor(a.paramKey, a.domain);\n  const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n  const isOffline = a.kind === 'offline';\n  const valLine = isOffline ? 'No telemetry received' : (a.value + (a.unit||''));\n  const limLine = isOffline ? '—' : (a.threshold + (a.unit||''));\n  text += '🏷 ' + (a.paramLabel || 'Alarm') + ' (' + a.severity + ')\\n';\n  text += '📊 Value: ' + valLine + ' (Limit: ' + limLine + ')\\n';\n  text += '💡 Risk: ' + risk + '\\n';\n  text += '🕒 ' + formatTime(a.ts || a.time) + '\\n\\n';\n});\n\nconst subject = String(e.nodeId) + ' ' + __sevEmoji + ' [' + topSeverity + '] ' + (isMulti ? alarms.length + ' Alarms' : (e.paramLabel || 'Alarm'));\n\nconst __buildBaseUrl = (orgId) => {\n  // orgId VERBATIM. This used to strip the \"org-\" prefix and alias org-1 to\n  // 'eternity', producing https://eternity...  and https://2... — but\n  // 'eternity' is a PRODUCT id (entitlements maps eternityTransformers ->\n  // 'eternity'), never an organization, and lib/orgResolver.getOrgFromLocation\n  // reads the first label back as the orgId verbatim. So the link handed to an\n  // engineer named an org that does not exist, and the app could not resolve\n  // the tenant from it. getOrgWorkspaceUrl() — the app's own link builder — has\n  // always used the raw orgId; this now matches it.\n  const sub = String(orgId || '').trim();\n  // APP_BASE_URL is optional by design — node-red.yaml's own comment says so\n  // explicitly (\"notify falls back to CORS_ORIGIN when this is unset\"), and\n  // the pre-existing __base variable this replaced always included CORS_ORIGIN\n  // in the chain. Dropping it here doesn't break the CURRENT deployment (both\n  // vars happen to be set to the same value in node-red.yaml), but silently\n  // turns every alarm link into the hardcoded-IP last resort below the moment\n  // APP_BASE_URL/FRONTEND_URL is ever unset without CORS_ORIGIN also missing —\n  // exactly the safety net that comment says exists.\n  const customBase = env.get('APP_BASE_URL') || env.get('FRONTEND_URL') || env.get('CORS_ORIGIN') || '';\n  if (customBase && customBase !== '*') {\n    try {\n      const u = new URL(customBase);\n      if (sub) {\n        // The ingress serves exactly two shapes (frontend-next.yaml):\n        //   iiotplatform.<base>   and   *.iiotplatform.<base>\n        // so an org link is ALWAYS the orgId prepended to the ROOT host.\n        //\n        // The old code replaced hostParts[0] whenever the host had >= 4 labels.\n        // On UAT that host is iiotplatform.27.254.143.144.nip.io — SEVEN labels,\n        // because the IP octets count — so it overwrote 'iiotplatform' and\n        // produced https://<x>.27.254.143.144.nip.io, which matches no ingress\n        // rule at all. Every \"Open device\" link in every UAT email, LINE,\n        // Telegram and Google Chat alarm was dead.\n        let host = u.hostname;\n        const i = host.indexOf('.iiotplatform.');\n        if (i > 0) host = host.slice(i + 1);   // drop an org label already present\n        u.hostname = sub + '.' + host;\n      }\n      return u.origin.replace(new RegExp('/+$'), '');\n    } catch(_) {\n      return customBase.replace(new RegExp('/+$'), '');\n    }\n  }\n  return 'http://' + sub + '.iiotplatform.27.254.143.144.nip.io:30080';\n};\n\nconst __linkFor = (role) => {\n  const base = __buildBaseUrl(e.orgId || e.org_id);\n  if (!base) return '';\n  const viewer = role === 'viewer' || role === 'customer';\n  const dom = e.domain || 'transformer';\n  let path = '';\n  if (dom === 'transformer') {\n    path = viewer ? '/customer/transformers/detail/' : '/admin/transformers/detail/';\n  } else if (dom === 'carbonNode') {\n    path = viewer ? '/customer/carbon/detail/' : '/admin/carbon/detail/';\n  } else if (dom === 'bloodBox') {\n    path = viewer ? '/customer/bloodbox/detail/' : '/admin/bloodbox/detail/';\n  } else if (dom === 'automobile') {\n    path = viewer ? '/customer/automobile/detail/' : '/admin/automobile/detail/';\n  } else {\n    path = viewer ? '/customer/devices/detail/' : '/admin/nodes/detail/';\n  }\n  return base + path + '?id=' + encodeURIComponent(e.nodeId);\n};\n\n// LINE Flex bubble\nconst __flex = (link) => ({ type:'flex', altText: subject, contents: { type:'bubble',\n  header: { type:'box', layout:'vertical', backgroundColor: __sevColor, paddingAll:'14px', contents:[\n    { type:'text', text: topSeverity + ' · ' + (isMulti ? 'Multiple Alarms' : __riskFor(e.paramKey, e.domain).cat), color:'#FFFFFF', size:'xs', weight:'bold' },\n    { type:'text', text: isMulti ? alarms.length + ' Active Alarms' : String(e.paramLabel||'Alarm'), color:'#FFFFFF', size:'lg', weight:'bold', wrap:true } ] },\n  body: { type:'box', layout:'vertical', spacing:'md', contents: alarms.map(a => {\n    const info = __riskFor(a.paramKey, a.domain);\n    const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n    return { type:'box', layout:'vertical', spacing:'sm', contents:[\n      { type:'text', text: (a.paramLabel||'Alarm') + ' (' + a.severity + ')', weight:'bold', size:'sm' },\n      { type:'text', text: 'Value: ' + (a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))), size:'xs', color:'#64748B' },\n      { type:'text', text: 'Risk: ' + risk, size:'xs', color:'#EF4444', wrap:true },\n      { type:'text', text: '🕒 ' + formatTime(a.ts || a.time || e.time), size:'xxs', color:'#94A3B8' }\n    ]};\n  })},\n  footer: link ? { type:'box', layout:'vertical', contents:[\n    { type:'button', style:'primary', color:'#6366F1', height:'sm',\n      action:{ type:'uri', label:'Open device', uri: link } } ] } : undefined } });\n\n// Telegram\nconst __tgText = '<b>' + __sevEmoji + ' [' + __esc(topSeverity) + '] ' + (isMulti ? alarms.length + ' Alarms' : __esc(e.paramLabel || 'Alarm')) + '</b>\\n'\n  + '⚡️ <b>Device:</b> <code>' + __esc(e.nodeId) + '</code>\\n\\n'\n  + alarms.map(a => {\n      const info = __riskFor(a.paramKey, a.domain);\n      const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n      return '🏷 <b>' + __esc(a.paramLabel || 'Alarm') + '</b> (' + __esc(a.severity) + ')\\n'\n      + '📊 ' + __esc(a.kind==='offline' ? 'Offline' : a.value) + ' (Limit: ' + __esc(a.kind==='offline' ? '—' : a.threshold) + ')\\n'\n      + '💡 <i>' + __esc(risk) + '</i>\\n'\n      + '🕒 <b>Time:</b> ' + formatTime(a.ts || a.time || e.time);\n    }).join('\\n\\n');\n\nconst __tgBody = (chat, link) => ({ chat_id: chat, text: __tgText, parse_mode: 'HTML',\n  reply_markup: link ? { inline_keyboard: [[{ text: 'Open device', url: link }]] } : undefined });\n\n// Google Chat\nconst __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', card: {\n  header: { title: String(e.nodeId) + ' ' + (topSeverity==='CRITICAL'?'🔴 ':'🟡 ') + (isMulti ? alarms.length + ' Alarms' : String(e.paramLabel||'Alarm')), subtitle: String(e.nodeId) },\n  sections: [{ widgets: alarms.map(a => ({\n    decoratedText: {\n      topLabel: (a.paramLabel || 'Alarm') + ' (' + a.severity + ')',\n      text: (a.kind==='offline' ? 'Offline' : (a.value + (a.unit||''))) + ' · ' + __riskFor(a.paramKey, a.domain).warnRisk,\n      bottomLabel: '🕒 ' + formatTime(a.ts || a.time || e.time)\n    }\n  })).concat(link ? [{ buttonList: { buttons: [{ text:'Open device', onClick:{ openLink:{ url: link } } }] } }] : [])\n  }] } }] });\n\n(async () => {\n  try {\n    let orgName = e.orgId;\n    try {\n      const [orgRows] = await controlPool.query(\"SELECT name FROM organizations WHERE id=?\", [e.orgId]);\n      if (orgRows.length && orgRows[0].name) orgName = orgRows[0].name;\n    } catch(_) {}\n\n    let siteName = '';\n    try {\n      if (pool) {\n        const [nodeRows] = await pool.query(\"SELECT s.name as siteName FROM nodes n LEFT JOIN sites s ON s.id=n.site_id WHERE n.id=?\", [e.nodeId]);\n        if (nodeRows && nodeRows.length && nodeRows[0].siteName) siteName = nodeRows[0].siteName;\n      }\n    } catch(_) {}\n\n    let emailTpl = null;\n    try {\n      const [tRows] = await controlPool.query(\"SELECT sval FROM platform_settings WHERE skey=?\", ['email_template.' + e.orgId]);\n      if (tRows.length && tRows[0].sval) emailTpl = JSON.parse(tRows[0].sval);\n    } catch(_) {}\n    if (!emailTpl) {\n      emailTpl = {\n        subjectTemplate: '[{{severity}}] {{org_name}} Alert: {{device_name}}',\n        customHeaderNote: 'Attention: Automated priority alert triggered by {{org_name}} Industrial IoT Monitoring System.',\n        customFooterSop: '',\n        includeActionLink: true,\n        format: 'html',\n      };\n    }\n\n    const __templateVars = {\n      device_name: e.nodeId,\n      node_id: e.nodeId,\n      site_name: siteName || orgName,\n      location: siteName || orgName,\n      org_id: e.orgId,\n      org_name: orgName,\n      severity: topSeverity,\n      category: isMulti ? 'Multiple Alarms' : __riskFor(e.paramKey, e.domain).cat,\n      param_label: isMulti ? 'Multiple Alarms' : e.paramLabel,\n      sevEmoji: __sevEmoji,\n    };\n    const __renderTpl = (str) => String(str || '').replace(/\\{\\{\\s*([a-zA-Z0-9_]+)\\s*\\}\\}/g, (_, k) => (__templateVars[k] !== undefined ? __templateVars[k] : ''));\n\n    const emailSubject = __renderTpl(emailTpl.subjectTemplate || '[{{severity}}] {{org_name}} Alert: {{device_name}}');\n    const emailHeaderNote = __renderTpl(emailTpl.customHeaderNote);\n    const emailFooterSop = __renderTpl(emailTpl.customFooterSop);\n\n    const emailHtml = (link) => '<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head>'\n      + '<body style=\"font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; background-color: #0a0e1a; margin: 0; padding: 24px; color: #f1f5f9;\">'\n      + '<div style=\"max-width: 600px; margin: 0 auto; background-color: #0d1117; border: 1px solid #1e2433; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);\">'\n      + '<div style=\"background-color: ' + __sevColor + '; padding: 18px 24px;\">'\n      + '<div style=\"font-size: 11px; font-weight: 700; text-transform: uppercase; color: #ffffff; letter-spacing: 0.05em;\">' + topSeverity + '</div>'\n      + '<div style=\"font-size: 20px; font-weight: 800; color: #ffffff; margin-top: 4px;\">' + __esc(isMulti ? alarms.length + ' Active Alarms' : (e.paramLabel || 'Industrial Alarm')) + '</div>'\n      + '</div>'\n      + (emailHeaderNote ? '<div style=\"background-color: #1e1b4b; border-bottom: 1px solid #312e81; padding: 12px 24px; font-size: 13px; color: #c7d2fe;\">📌 <strong>Notice:</strong> ' + __esc(emailHeaderNote) + '</div>' : '')\n      + '<div style=\"padding: 24px;\">'\n      + '<div style=\"margin-bottom: 16px; color: #94a3b8; font-size: 14px;\">Device: <strong style=\"color:#fff; font-family:monospace;\">' + __esc(e.nodeId) + '</strong>' + (siteName ? ' &nbsp;·&nbsp; Site: <strong style=\"color:#a5b4fc;\">' + __esc(siteName) + '</strong>' : '') + '</div>'\n      \n      + alarms.map(a => {\n          const info = __riskFor(a.paramKey, a.domain);\n          const risk = a.severity === 'CRITICAL' ? info.critRisk : info.warnRisk;\n          const aColor = a.severity === 'CRITICAL' ? '#EF4444' : '#FBBF24';\n          return '<div style=\"margin-bottom: 16px; padding: 12px; background-color: #111827; border-left: 4px solid '+aColor+'; border-radius: 4px;\">'\n            + '<div style=\"font-weight: bold; color: #fff; margin-bottom: 4px;\">' + __esc(a.paramLabel || 'Alarm') + ' <span style=\"color:'+aColor+'; font-size:11px;\">['+a.severity+']</span></div>'\n            + '<div style=\"color: #cbd5e1; font-size: 13px; margin-bottom: 4px;\">Value: <strong style=\"color:'+aColor+';\">' + __esc(a.kind==='offline' ? 'Offline' : (a.value+(a.unit||''))) + '</strong> (Limit: ' + __esc(a.kind==='offline'?'—':(a.threshold+(a.unit||''))) + ')</div>'\n            + '<div style=\"color: #f59e0b; font-size: 12px;\">💡 ' + __esc(risk) + '</div>'\n            + '<div style=\"color: #94a3b8; font-size: 11px; margin-top: 4px;\">🕒 ' + __esc(formatTime(a.ts || a.time || e.time)) + '</div>'\n            + '</div>';\n        }).join('')\n      \n      + (emailFooterSop ? '<div style=\"margin-top: 20px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; font-size: 13px; color: #fca5a5;\"><div style=\"font-weight: 700; color: #ef4444; margin-bottom: 4px;\">⚠️ Emergency Response / SOP Protocol:</div><div style=\"line-height: 1.5; color: #fecaca;\">' + __esc(emailFooterSop) + '</div></div>' : '')\n      + (emailTpl.includeActionLink && link ? '<div style=\"margin-top: 24px; text-align: center;\"><a href=\"' + link + '\" style=\"display: inline-block; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);\">Open Device &amp; Acknowledge</a></div>' : '')\n      + '</div>'\n      + '<div style=\"background-color: #070a12; border-top: 1px solid #1e2433; padding: 14px 24px; font-size: 11px; color: #475569; text-align: center;\">Automated alert from ONEOPS Unified Industrial Monitoring Platform.</div>'\n      + '</div></body></html>';\n\n    const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');\n\n    let channels = [];\n    if (pool && e.orgId) {\n      try {\n        const [r] = await pool.query(\n          \"SELECT channel,target,min_severity,department_id,user_id FROM notification_channels WHERE org_id=? AND enabled=1 AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND (user_id IN (SELECT user_id FROM user_departments WHERE department_id=?) OR user_id IN (SELECT id FROM users WHERE department_id=? OR (department_id IS NULL AND (role='admin' OR role='superadmin'))))) )\",\n          [e.orgId, e.departmentId || null, e.departmentId || null, e.departmentId || null]\n        );\n        // If a department has its own specific channel configured, it overrides the org-level fallback for that channel\n        const deptTypes = new Set(r.filter(c => c.department_id && (!c.user_id || c.user_id === '')).map(c => c.channel));\n        channels = r.filter(c => {\n          if (!c.department_id && (!c.user_id || c.user_id === '')) {\n            return !deptTypes.has(c.channel);\n          }\n          return true;\n        });\n      } catch(err) {\n        const [r] = await pool.query(\n          \"SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)\",\n          [e.orgId, e.departmentId || null]\n        );\n        channels = r;\n      }\n    }\n    const nc = await global.get('notifyConfig')();\n    // Fall back to platform-wide notify credentials for any channel NOT configured in this org.\n    // The previous all-or-nothing check (if (!channels.length)) silenced chat whenever an email\n    // channel was enabled: in UAT, mail-sink-guard disables per-org chat channels so test alarms\n    // route to the operator's test Telegram/GoogleChat — but because the org still had an email\n    // channel, channels.length was never 0, so Telegram, Google Chat, and LINE platform fallbacks\n    // were completely suppressed!\n    const _hasChan = (ch) => channels.some(c => c.channel === ch);\n    if (!_hasChan('line') && nc.lineToken) channels.push({ channel:'line', target:'' });\n    if (!_hasChan('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });\n    if (!_hasChan('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });\n    for (const c of channels) {\n      if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL') continue;\n      try {\n        if (c.channel === 'email') {\n          const mc = await global.get('mailConfig')();\n          if (!mc.transport || !c.target) continue;\n          await mc.transport.sendMail({ from: mc.from, to: c.target, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')) });\n        } else if (c.channel === 'line') {\n          const raw = String(c.target || nc.lineToken || '');\n          const at = raw.lastIndexOf('@');\n          const tok = at > 0 ? raw.slice(0, at) : raw;\n          const to  = at > 0 ? raw.slice(at + 1) : '';\n          if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});\n          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});\n        } else if (c.channel === 'telegram') {\n          const raw = String(c.target || nc.telegramChatId || '').trim();\n          const at = raw.lastIndexOf('@');\n          const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));\n          const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);\n          if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});\n        } else if (c.channel === 'googlechat') {\n          const url = c.target || nc.googleChatWebhook;\n          if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});\n        } else if (c.channel === 'webhook') {\n          const url = (c.target && c.target.startsWith('http')) ? c.target : '';\n          if (url) {\n            await fetch(url, {\n              method: 'POST',\n              headers: { 'content-type': 'application/json' },\n              body: JSON.stringify({\n                event: 'alarm.alert',\n                orgId: e.orgId,\n                orgName,\n                nodeId: e.nodeId,\n                severity: topSeverity,\n                alarms: alarms.map(a => ({\n                  paramKey: a.paramKey,\n                  paramLabel: a.paramLabel,\n                  severity: a.severity,\n                  value: a.value,\n                  unit: a.unit,\n                  threshold: a.threshold,\n                  time: a.ts || a.time || e.time\n                })),\n                link: __linkFor('admin'),\n                timestamp: new Date().toISOString()\n              })\n            });\n          }\n        }\n      } catch(err) { node.error('notify:'+c.channel+' '+err.message); }\n    }\n\n    // --- Deduplication: track targets already dispatched via notification_channels\n    // to prevent double-alerting users who appear in BOTH notification_channels (user_id scoped)\n    // and user_prefs. A user configured in both gets one alert, not two.\n    const _sentEmails = new Set();\n    const _sentTgChats = new Set();\n    const _sentLineIds = new Set();\n    const _sentGchatUrls = new Set();\n    for (const _c of channels) {\n      if (!_c.user_id) continue;\n      if (_c.channel === 'email' && _c.target) _sentEmails.add(_c.target.toLowerCase());\n      if (_c.channel === 'telegram' && _c.target) {\n        const _at = _c.target.lastIndexOf('@');\n        _sentTgChats.add(_at > 0 ? _c.target.slice(_at + 1) : _c.target);\n      }\n      if (_c.channel === 'line' && _c.target) {\n        const _at = _c.target.lastIndexOf('@');\n        _sentLineIds.add(_at > 0 ? _c.target.slice(_at + 1) : _c.target);\n      }\n      if (_c.channel === 'googlechat' && _c.target) _sentGchatUrls.add(_c.target);\n    }\n\n    // Per-user channels\n    try {\n      const [urows] = await controlPool.query(\"SELECT u.id,u.email,u.role,u.department_id,p.prefs FROM users u JOIN user_prefs p ON p.user_id=u.id WHERE u.org_id=?\", [e.orgId]);\n      for (const u of urows) {\n        let pf = {};\n        try { pf = typeof u.prefs === 'string' ? JSON.parse(u.prefs || '{}') : (u.prefs || {}); } catch(_) { continue; }\n        const sel = (pf.alertChannels || {})[e.nodeId];\n        if (!sel) continue;\n        const isAdmin = u.role === 'admin' || u.role === 'superadmin';\n        if (!isAdmin && u.department_id && e.departmentId && u.department_id !== e.departmentId) continue;\n\n        // Log Personal Alarm Event for the in-app console & auditability.\n        //\n        // personal_alarm_events (migrate-v59), NOT alarm_events. This used to\n        // write into alarm_events tagged by putting 'PERSONAL:<userId>' in the\n        // `source` column — which is ENUM('edge','cloud'), so the value did not\n        // fit, and INSERT IGNORE turned the truncation error into a warning and\n        // stored the empty ENUM member. The console filters on\n        // source === 'PERSONAL:<userId>' and so was permanently empty, while the\n        // row itself stayed in alarm_events looking like an ordinary org alarm:\n        // visible to the whole organization in /admin/alarms, counted in the\n        // sidebar badge, and — being CRITICAL, unacknowledged and uncleared —\n        // picked up by escalationFunc, which re-alerted one person's private\n        // early-warning threshold to their entire department.\n        //\n        // A personal breach must not appear anywhere others can see it. A\n        // separate table makes that true by construction instead of relying on\n        // every org-wide query to remember to exclude it.\n        if (u.id && (sel.email || sel.telegram || sel.line || sel.googlechat)) {\n          try {\n            for (const a of alarms) {\n              // Second-resolution + param key, so a redelivery inside the same\n              // second is deduped by the primary key rather than inserting a\n              // near-duplicate row on every notification.\n              const pevtId = 'pevt_' + String(u.id).slice(0, 24) + '_' + String(a.paramKey) + '_' + Math.floor(Date.now() / 1000);\n              await pool.query(\n                \"INSERT IGNORE INTO personal_alarm_events (id, user_id, node_id, org_id, param_key, param_label, severity, kind, value, threshold, unit, raised_at) \" +\n                \"VALUES (?, ?, ?, ?, ?, ?, ?, 'threshold', ?, ?, ?, NOW(3))\",\n                [pevtId, u.id, e.nodeId, e.orgId, a.paramKey, a.paramLabel, a.severity, a.value, a.threshold, a.unit]\n              );\n            }\n          } catch(err) { node.warn('notify:personal-event-log ' + err.message); }\n        }\n\n        if (sel.email && u.email && !_sentEmails.has(u.email.toLowerCase())) {\n          try {\n            const mc = await global.get('mailConfig')();\n            const link = __linkFor(u.role);\n            if (mc.transport) await mc.transport.sendMail({ from: mc.from, to: u.email, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(link) });\n          } catch(err) { node.error('notify:user-email '+err.message); }\n        }\n        let rawTg = String(pf.telegramChatId || pf.telegramBotApi || '').trim();\n        if (!rawTg && u.id) {\n          try {\n            const [uCh] = await controlPool.query(\"SELECT target FROM notification_channels WHERE user_id=? AND channel='telegram' AND enabled=1 LIMIT 1\", [u.id]);\n            if (uCh.length && uCh[0].target) rawTg = uCh[0].target.trim();\n          } catch(_) {}\n        }\n        if (sel.telegram && rawTg) {\n          try {\n            const at = rawTg.lastIndexOf('@');\n            let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));\n            const chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);\n            if (!tok && e.orgId) {\n              try {\n                const [orgTg] = await controlPool.query(\"SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1\", [e.orgId]);\n                if (orgTg.length && orgTg[0].target) {\n                  const ot = orgTg[0].target;\n                  const oAt = ot.lastIndexOf('@');\n                  if (oAt > 0) tok = ot.slice(0, oAt);\n                }\n              } catch(_) {}\n            }\n            if (tok && chat && !_sentTgChats.has(String(chat))) {\n              await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor(u.role)))});\n            }\n          } catch(err) { node.error('notify:user-telegram '+err.message); }\n        }\n        let rawLine = String(pf.lineUserId || pf.lineMsgApi || '').trim();\n        if (!rawLine && u.id) {\n          try {\n            const [uCh] = await controlPool.query(\"SELECT target FROM notification_channels WHERE user_id=? AND channel='line' AND enabled=1 LIMIT 1\", [u.id]);\n            if (uCh.length && uCh[0].target) rawLine = uCh[0].target.trim();\n          } catch(_) {}\n        }\n        if (sel.line && rawLine) {\n          try {\n            const at = rawLine.lastIndexOf('@');\n            let tok = at > 0 ? rawLine.slice(0, at) : '';\n            let to  = at > 0 ? rawLine.slice(at + 1) : '';\n            if (at <= 0) {\n              if (rawLine.startsWith('U') || rawLine.startsWith('C') || rawLine.startsWith('R')) {\n                to = rawLine;\n                tok = nc.lineToken || '';\n              } else {\n                tok = rawLine;\n              }\n            }\n            if (!tok && e.orgId) {\n              try {\n                const [orgLine] = await controlPool.query(\"SELECT target FROM notification_channels WHERE org_id=? AND channel='line' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1\", [e.orgId]);\n                if (orgLine.length && orgLine[0].target) {\n                  const ot = orgLine[0].target;\n                  const oAt = ot.lastIndexOf('@');\n                  if (oAt > 0) tok = ot.slice(0, oAt);\n                }\n              } catch(_) {}\n            }\n            if (tok && to && !_sentLineIds.has(to) && (to.startsWith('U') || to.startsWith('C') || to.startsWith('R'))) {\n              await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor(u.role))]})});\n            } else if (tok && to && !_sentLineIds.has(to)) {\n              await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});\n            } else if (tok && !to) {\n              await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});\n            }\n          } catch(err) { node.error('notify:user-line '+err.message); }\n        }\n        let rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || '').trim();\n        if (!rawGchat && u.id) {\n          try {\n            const [uCh] = await controlPool.query(\"SELECT target FROM notification_channels WHERE user_id=? AND channel='googlechat' AND enabled=1 LIMIT 1\", [u.id]);\n            if (uCh.length && uCh[0].target) rawGchat = uCh[0].target.trim();\n          } catch(_) {}\n        }\n        if (sel.googlechat && rawGchat && !_sentGchatUrls.has(rawGchat)) {\n          try {\n            await fetch(rawGchat,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor(u.role)))});\n          } catch(err) { node.error('notify:user-googlechat '+err.message); }\n        }\n        const rawWebhook = String(pf.webhookApi || pf.webhookUrl || '').trim();\n        if (sel.webhook && rawWebhook && rawWebhook.startsWith('http')) {\n          try {\n            await fetch(rawWebhook, {\n              method: 'POST',\n              headers: { 'content-type': 'application/json' },\n              body: JSON.stringify({\n                event: 'user_alarm',\n                nodeId: e.nodeId,\n                severity: topSeverity,\n                alarms: alarms.map(a => ({\n                  paramKey: a.paramKey,\n                  paramLabel: a.paramLabel,\n                  severity: a.severity,\n                  value: a.value,\n                  unit: a.unit,\n                  threshold: a.threshold,\n                  time: a.ts || a.time || e.time\n                })),\n                link: __linkFor(u.role),\n                timestamp: new Date().toISOString()\n              })\n            });\n          } catch(err) { node.error('notify:user-webhook '+err.message); }\n        }\n      }\n    } catch(err) { node.warn('notify:user-prefs '+err.message); }\n  } catch(err) { node.error('notify: '+err.message); }\n})();\nreturn null;",
     "outputs": 1,
     "libs": [
       {
@@ -619,7 +619,7 @@
     "type": "function",
     "z": "be",
     "name": "escalation scan",
-    "func": "\nconst ctl = global.get('pool'); if(!ctl || typeof ctl.query !== 'function') return null;\nconst ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);\n(async () => {\n  for (const __org of await global.get('sweepOrgs')()) {\n    const pool = global.get('resolvePool')(__org);\n\n    // LEVEL 1: Un-ACK'd CRITICAL alarms > ESCALATE_MIN (15m) -> Dept Lead\n    const [l1Rows] = await pool.query(\n      \"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL \" +\n      \"AND (escalated = 0 OR escalated IS NULL) AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100\",\n      [ESCALATE_MIN]\n    );\n    for (const r of l1Rows) {\n      node.send({\n        payload: {\n          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,\n          paramLabel: '⚡ [ESCALATION L1 - Dept Lead] ' + r.param_label,\n          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),\n          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),\n          escalationLevel: 1\n        }\n      });\n    }\n    if (l1Rows.length) {\n      await pool.query(\"UPDATE alarm_events SET escalated = 1 WHERE id IN (\" + l1Rows.map(r => pool.escape(r.id)).join(\",\") + \")\");\n    }\n\n    // LEVEL 2: Un-ACK'd CRITICAL alarms > 2 * ESCALATE_MIN (30m) -> Duty Engineer\n    const [l2Rows] = await pool.query(\n      \"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL \" +\n      \"AND escalated = 1 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100\",\n      [ESCALATE_MIN * 2]\n    );\n    for (const r of l2Rows) {\n      node.send({\n        payload: {\n          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,\n          paramLabel: '🔥 [ESCALATION L2 - Duty Engineer] ' + r.param_label,\n          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),\n          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),\n          escalationLevel: 2\n        }\n      });\n    }\n    if (l2Rows.length) {\n      await pool.query(\"UPDATE alarm_events SET escalated = 2 WHERE id IN (\" + l2Rows.map(r => pool.escape(r.id)).join(\",\") + \")\");\n    }\n\n    // LEVEL 3: Un-ACK'd CRITICAL alarms > 4 * ESCALATE_MIN (60m) -> Executive Admin\n    const [l3Rows] = await pool.query(\n      \"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL \" +\n      \"AND escalated = 2 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100\",\n      [ESCALATE_MIN * 4]\n    );\n    for (const r of l3Rows) {\n      node.send({\n        payload: {\n          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,\n          paramLabel: '💥 [ESCALATION L3 - Executive Admin / Emergency] ' + r.param_label,\n          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),\n          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),\n          escalationLevel: 3\n        }\n      });\n    }\n    if (l3Rows.length) {\n      await pool.query(\"UPDATE alarm_events SET escalated = 3 WHERE id IN (\" + l3Rows.map(r => pool.escape(r.id)).join(\",\") + \")\");\n    }\n  }\n})().catch(e => node.error('escalation: ' + e.message));\nreturn null;\n",
+    "func": "\nconst ctl = global.get('pool'); if(!ctl || typeof ctl.query !== 'function') return null;\nconst ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);\n(async () => {\n  for (const __org of await global.get('sweepOrgs')()) {\n    const pool = global.get('resolvePool')(__org);\n\n    // Three re-alert tiers at ESCALATE_MIN / x2 / x4, then silence. This is a\n    // real improvement on the previous single escalation, which set escalated=1\n    // once and then never spoke again however long the CRITICAL stayed\n    // unacknowledged.\n    //\n    // What it is NOT is per-tier routing. All three node.send() calls go to the\n    // same 'notify' node, which routes by orgId/departmentId exactly as the\n    // first alert did; nothing anywhere reads escalationLevel, and the platform\n    // has no concept of a dept-lead, duty-engineer or executive recipient. The\n    // labels therefore say WHEN, not WHO — naming tiers of people who do not\n    // exist would put a false statement in a message an engineer receives and\n    // acts on at 3am.\n    //\n    // LEVEL 1: unacknowledged CRITICAL older than ESCALATE_MIN\n    const [l1Rows] = await pool.query(\n      \"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL \" +\n      \"AND (escalated = 0 OR escalated IS NULL) AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100\",\n      [ESCALATE_MIN]\n    );\n    for (const r of l1Rows) {\n      node.send({\n        payload: {\n          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,\n          paramLabel: '⚡ [ESCALATION L1 · unacknowledged ' + ESCALATE_MIN + 'm] ' + r.param_label,\n          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),\n          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),\n          escalationLevel: 1\n        }\n      });\n    }\n    if (l1Rows.length) {\n      await pool.query(\"UPDATE alarm_events SET escalated = 1 WHERE id IN (\" + l1Rows.map(r => pool.escape(r.id)).join(\",\") + \")\");\n    }\n\n    // LEVEL 2: still unacknowledged at 2x ESCALATE_MIN\n    const [l2Rows] = await pool.query(\n      \"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL \" +\n      \"AND escalated = 1 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100\",\n      [ESCALATE_MIN * 2]\n    );\n    for (const r of l2Rows) {\n      node.send({\n        payload: {\n          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,\n          paramLabel: '🔥 [ESCALATION L2 · still unacknowledged ' + (ESCALATE_MIN*2) + 'm] ' + r.param_label,\n          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),\n          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),\n          escalationLevel: 2\n        }\n      });\n    }\n    if (l2Rows.length) {\n      await pool.query(\"UPDATE alarm_events SET escalated = 2 WHERE id IN (\" + l2Rows.map(r => pool.escape(r.id)).join(\",\") + \")\");\n    }\n\n    // LEVEL 3: final re-alert at 4x ESCALATE_MIN; escalated=3 ends the chain\n    const [l3Rows] = await pool.query(\n      \"SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL \" +\n      \"AND escalated = 2 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100\",\n      [ESCALATE_MIN * 4]\n    );\n    for (const r of l3Rows) {\n      node.send({\n        payload: {\n          nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,\n          paramLabel: '💥 [ESCALATION L3 · FINAL · unacknowledged ' + (ESCALATE_MIN*4) + 'm] ' + r.param_label,\n          kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),\n          severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),\n          escalationLevel: 3\n        }\n      });\n    }\n    if (l3Rows.length) {\n      await pool.query(\"UPDATE alarm_events SET escalated = 3 WHERE id IN (\" + l3Rows.map(r => pool.escape(r.id)).join(\",\") + \")\");\n    }\n  }\n})().catch(e => node.error('escalation: ' + e.message));\nreturn null;\n",
     "outputs": 1,
     "libs": [
       {
@@ -1979,6 +1979,96 @@
     "wires": []
   },
   {
+    "id": "personalevents_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/personal-events",
+    "method": "get",
+    "x": 150,
+    "y": 1710,
+    "wires": [
+      [
+        "personalevents_fn"
+      ]
+    ]
+  },
+  {
+    "id": "personalevents_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/nodes/:id/personal-events",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||'';\nif(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authentication required'};return msg;}\n(async()=>{\n  const ctl=global.get('pool');\n  const [n]=await ctl.query('SELECT org_id FROM nodes WHERE id=?',[id]);\n  if(!n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'device not found'};node.send(msg);return;}\n  const pool=global.get('resolvePool')(n[0].org_id);\n  let rows=[];\n  try{\n    const [r]=await pool.query(\n      \"SELECT id,node_id,param_key,param_label,severity,value,threshold,unit,raised_at,acknowledged_at,acknowledged_by \" +\n      \"FROM personal_alarm_events WHERE user_id=? AND node_id=? ORDER BY raised_at DESC LIMIT 200\",[uid,id]);\n    rows=r||[];\n  }catch(err){\n    // Table absent until migrate-v59 has run — an empty history is the honest\n    // answer, not a 500 that makes the whole settings panel look broken.\n    node.warn('personalEvents: '+err.message);\n  }\n  msg.headers=__CORS; msg.payload=rows; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1710,
+    "wires": [
+      [
+        "personalevents_resp"
+      ]
+    ]
+  },
+  {
+    "id": "personalevents_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1710,
+    "wires": []
+  },
+  {
+    "id": "personaleventack_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/nodes/:id/personal-events/:eventId/ack",
+    "method": "post",
+    "x": 150,
+    "y": 1760,
+    "wires": [
+      [
+        "personaleventack_fn"
+      ]
+    ]
+  },
+  {
+    "id": "personaleventack_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/nodes/:id/personal-events/:eventId/ack",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','node',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst id=msg.req.params.id; const evId=msg.req.params.eventId; const uid=(msg.auth&&msg.auth.userId)||'';\nconst by=((msg.payload&&msg.payload.by)||'')||'';\nif(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authentication required'};return msg;}\n(async()=>{\n  const ctl=global.get('pool');\n  const [n]=await ctl.query('SELECT org_id FROM nodes WHERE id=?',[id]);\n  if(!n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'device not found'};node.send(msg);return;}\n  const pool=global.get('resolvePool')(n[0].org_id);\n  const [r]=await pool.query(\n    \"UPDATE personal_alarm_events SET acknowledged_at=NOW(3), acknowledged_by=? WHERE id=? AND user_id=? AND node_id=? AND acknowledged_at IS NULL\",\n    [String(by).slice(0,120), evId, uid, id]);\n  if(!r.affectedRows){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found or already acknowledged'};node.send(msg);return;}\n  msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 1760,
+    "wires": [
+      [
+        "personaleventack_resp"
+      ]
+    ]
+  },
+  {
+    "id": "personaleventack_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 1760,
+    "wires": []
+  },
+  {
     "id": "chartsget_in",
     "type": "http in",
     "z": "be",
@@ -1986,7 +2076,7 @@
     "url": "/api/nodes/:id/charts",
     "method": "get",
     "x": 150,
-    "y": 1710,
+    "y": 1810,
     "wires": [
       [
         "chartsget_fn"
@@ -2007,7 +2097,7 @@
       }
     ],
     "x": 420,
-    "y": 1710,
+    "y": 1810,
     "wires": [
       [
         "chartsget_resp"
@@ -2020,7 +2110,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1710,
+    "y": 1810,
     "wires": []
   },
   {
@@ -2031,7 +2121,7 @@
     "url": "/api/nodes/:id/charts",
     "method": "post",
     "x": 150,
-    "y": 1760,
+    "y": 1860,
     "wires": [
       [
         "chartspost_fn"
@@ -2052,7 +2142,7 @@
       }
     ],
     "x": 420,
-    "y": 1760,
+    "y": 1860,
     "wires": [
       [
         "chartspost_resp"
@@ -2065,7 +2155,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1760,
+    "y": 1860,
     "wires": []
   },
   {
@@ -2076,7 +2166,7 @@
     "url": "/api/nodes/:id/charts/:chartId",
     "method": "put",
     "x": 150,
-    "y": 1810,
+    "y": 1910,
     "wires": [
       [
         "chartsput_fn"
@@ -2097,7 +2187,7 @@
       }
     ],
     "x": 420,
-    "y": 1810,
+    "y": 1910,
     "wires": [
       [
         "chartsput_resp"
@@ -2110,7 +2200,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1810,
+    "y": 1910,
     "wires": []
   },
   {
@@ -2121,7 +2211,7 @@
     "url": "/api/nodes/:id/charts/:chartId",
     "method": "delete",
     "x": 150,
-    "y": 1860,
+    "y": 1960,
     "wires": [
       [
         "chartsdel_fn"
@@ -2142,7 +2232,7 @@
       }
     ],
     "x": 420,
-    "y": 1860,
+    "y": 1960,
     "wires": [
       [
         "chartsdel_resp"
@@ -2155,7 +2245,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1860,
+    "y": 1960,
     "wires": []
   },
   {
@@ -2166,7 +2256,7 @@
     "url": "/api/nodes/:id/events",
     "method": "get",
     "x": 150,
-    "y": 1910,
+    "y": 2010,
     "wires": [
       [
         "events_fn"
@@ -2187,7 +2277,7 @@
       }
     ],
     "x": 420,
-    "y": 1910,
+    "y": 2010,
     "wires": [
       [
         "events_resp"
@@ -2200,7 +2290,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1910,
+    "y": 2010,
     "wires": []
   },
   {
@@ -2211,7 +2301,7 @@
     "url": "/api/orgs/:orgId/alarms",
     "method": "get",
     "x": 150,
-    "y": 1960,
+    "y": 2060,
     "wires": [
       [
         "orgalarms_fn"
@@ -2232,7 +2322,7 @@
       }
     ],
     "x": 420,
-    "y": 1960,
+    "y": 2060,
     "wires": [
       [
         "orgalarms_resp"
@@ -2245,7 +2335,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 1960,
+    "y": 2060,
     "wires": []
   },
   {
@@ -2256,7 +2346,7 @@
     "url": "/api/nodes/:id/transport",
     "method": "get",
     "x": 150,
-    "y": 2010,
+    "y": 2110,
     "wires": [
       [
         "transport_fn"
@@ -2277,7 +2367,7 @@
       }
     ],
     "x": 420,
-    "y": 2010,
+    "y": 2110,
     "wires": [
       [
         "transport_resp"
@@ -2290,7 +2380,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2010,
+    "y": 2110,
     "wires": []
   },
   {
@@ -2301,7 +2391,7 @@
     "url": "/api/events/:id/ack",
     "method": "post",
     "x": 150,
-    "y": 2060,
+    "y": 2160,
     "wires": [
       [
         "ack_fn"
@@ -2322,7 +2412,7 @@
       }
     ],
     "x": 420,
-    "y": 2060,
+    "y": 2160,
     "wires": [
       [
         "ack_resp"
@@ -2335,7 +2425,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2060,
+    "y": 2160,
     "wires": []
   },
   {
@@ -2346,7 +2436,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "get",
     "x": 150,
-    "y": 2110,
+    "y": 2210,
     "wires": [
       [
         "readget_fn"
@@ -2367,7 +2457,7 @@
       }
     ],
     "x": 420,
-    "y": 2110,
+    "y": 2210,
     "wires": [
       [
         "readget_resp"
@@ -2380,7 +2470,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2110,
+    "y": 2210,
     "wires": []
   },
   {
@@ -2391,7 +2481,7 @@
     "url": "/api/nodes/:id/report",
     "method": "get",
     "x": 150,
-    "y": 2160,
+    "y": 2260,
     "wires": [
       [
         "nodereport_fn"
@@ -2412,7 +2502,7 @@
       }
     ],
     "x": 420,
-    "y": 2160,
+    "y": 2260,
     "wires": [
       [
         "nodereport_resp"
@@ -2425,7 +2515,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2160,
+    "y": 2260,
     "wires": []
   },
   {
@@ -2436,7 +2526,7 @@
     "url": "/api/nodes/:id/documents",
     "method": "get",
     "x": 150,
-    "y": 2210,
+    "y": 2310,
     "wires": [
       [
         "docsget_fn"
@@ -2457,7 +2547,7 @@
       }
     ],
     "x": 420,
-    "y": 2210,
+    "y": 2310,
     "wires": [
       [
         "docsget_resp"
@@ -2470,7 +2560,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2210,
+    "y": 2310,
     "wires": []
   },
   {
@@ -2481,7 +2571,7 @@
     "url": "/api/nodes/:id/documents",
     "method": "post",
     "x": 150,
-    "y": 2260,
+    "y": 2360,
     "wires": [
       [
         "docspost_fn"
@@ -2502,7 +2592,7 @@
       }
     ],
     "x": 420,
-    "y": 2260,
+    "y": 2360,
     "wires": [
       [
         "docspost_resp"
@@ -2515,7 +2605,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2260,
+    "y": 2360,
     "wires": []
   },
   {
@@ -2526,7 +2616,7 @@
     "url": "/api/nodes/:id/documents/:docId",
     "method": "get",
     "x": 150,
-    "y": 2310,
+    "y": 2410,
     "wires": [
       [
         "docsdl_fn"
@@ -2547,7 +2637,7 @@
       }
     ],
     "x": 420,
-    "y": 2310,
+    "y": 2410,
     "wires": [
       [
         "docsdl_resp"
@@ -2560,7 +2650,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2310,
+    "y": 2410,
     "wires": []
   },
   {
@@ -2571,7 +2661,7 @@
     "url": "/api/nodes/:id/send-export",
     "method": "post",
     "x": 150,
-    "y": 2360,
+    "y": 2460,
     "wires": [
       [
         "sendexport_fn"
@@ -2604,7 +2694,7 @@
       }
     ],
     "x": 420,
-    "y": 2360,
+    "y": 2460,
     "wires": [
       [
         "sendexport_resp"
@@ -2617,7 +2707,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2360,
+    "y": 2460,
     "wires": []
   },
   {
@@ -2628,7 +2718,7 @@
     "url": "/api/nodes/:id/image",
     "method": "get",
     "x": 150,
-    "y": 2410,
+    "y": 2510,
     "wires": [
       [
         "nodeimgget_fn"
@@ -2649,7 +2739,7 @@
       }
     ],
     "x": 420,
-    "y": 2410,
+    "y": 2510,
     "wires": [
       [
         "nodeimgget_resp"
@@ -2662,7 +2752,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2410,
+    "y": 2510,
     "wires": []
   },
   {
@@ -2673,7 +2763,7 @@
     "url": "/api/nodes/:id/image",
     "method": "put",
     "x": 150,
-    "y": 2460,
+    "y": 2560,
     "wires": [
       [
         "nodeimgput_fn"
@@ -2694,7 +2784,7 @@
       }
     ],
     "x": 420,
-    "y": 2460,
+    "y": 2560,
     "wires": [
       [
         "nodeimgput_resp"
@@ -2707,7 +2797,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2460,
+    "y": 2560,
     "wires": []
   },
   {
@@ -2718,7 +2808,7 @@
     "url": "/api/nodes/:id/image",
     "method": "delete",
     "x": 150,
-    "y": 2510,
+    "y": 2610,
     "wires": [
       [
         "nodeimgdel_fn"
@@ -2739,7 +2829,7 @@
       }
     ],
     "x": 420,
-    "y": 2510,
+    "y": 2610,
     "wires": [
       [
         "nodeimgdel_resp"
@@ -2752,7 +2842,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2510,
+    "y": 2610,
     "wires": []
   },
   {
@@ -2763,7 +2853,7 @@
     "url": "/api/nodes/:id/photos",
     "method": "get",
     "x": 150,
-    "y": 2560,
+    "y": 2660,
     "wires": [
       [
         "photolist_fn"
@@ -2784,7 +2874,7 @@
       }
     ],
     "x": 420,
-    "y": 2560,
+    "y": 2660,
     "wires": [
       [
         "photolist_resp"
@@ -2797,7 +2887,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2560,
+    "y": 2660,
     "wires": []
   },
   {
@@ -2808,7 +2898,7 @@
     "url": "/api/nodes/:id/photos",
     "method": "post",
     "x": 150,
-    "y": 2610,
+    "y": 2710,
     "wires": [
       [
         "photoadd_fn"
@@ -2829,7 +2919,7 @@
       }
     ],
     "x": 420,
-    "y": 2610,
+    "y": 2710,
     "wires": [
       [
         "photoadd_resp"
@@ -2842,7 +2932,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2610,
+    "y": 2710,
     "wires": []
   },
   {
@@ -2853,7 +2943,7 @@
     "url": "/api/nodes/:id/photos/order",
     "method": "put",
     "x": 150,
-    "y": 2660,
+    "y": 2760,
     "wires": [
       [
         "photoorder_fn"
@@ -2874,7 +2964,7 @@
       }
     ],
     "x": 420,
-    "y": 2660,
+    "y": 2760,
     "wires": [
       [
         "photoorder_resp"
@@ -2887,7 +2977,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2660,
+    "y": 2760,
     "wires": []
   },
   {
@@ -2898,7 +2988,7 @@
     "url": "/api/nodes/:id/photos/:photoId",
     "method": "get",
     "x": 150,
-    "y": 2710,
+    "y": 2810,
     "wires": [
       [
         "photobytes_fn"
@@ -2919,7 +3009,7 @@
       }
     ],
     "x": 420,
-    "y": 2710,
+    "y": 2810,
     "wires": [
       [
         "photobytes_resp"
@@ -2932,7 +3022,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2710,
+    "y": 2810,
     "wires": []
   },
   {
@@ -2943,7 +3033,7 @@
     "url": "/api/nodes/:id/photos/:photoId",
     "method": "put",
     "x": 150,
-    "y": 2760,
+    "y": 2860,
     "wires": [
       [
         "photopatch_fn"
@@ -2964,7 +3054,7 @@
       }
     ],
     "x": 420,
-    "y": 2760,
+    "y": 2860,
     "wires": [
       [
         "photopatch_resp"
@@ -2977,7 +3067,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2760,
+    "y": 2860,
     "wires": []
   },
   {
@@ -2988,7 +3078,7 @@
     "url": "/api/nodes/:id/photos/:photoId",
     "method": "delete",
     "x": 150,
-    "y": 2810,
+    "y": 2910,
     "wires": [
       [
         "photodel_fn"
@@ -3009,7 +3099,7 @@
       }
     ],
     "x": 420,
-    "y": 2810,
+    "y": 2910,
     "wires": [
       [
         "photodel_resp"
@@ -3022,7 +3112,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2810,
+    "y": 2910,
     "wires": []
   },
   {
@@ -3033,7 +3123,7 @@
     "url": "/api/orgs/:orgId/photo-covers",
     "method": "get",
     "x": 150,
-    "y": 2860,
+    "y": 2960,
     "wires": [
       [
         "orgphotocovers_fn"
@@ -3054,7 +3144,7 @@
       }
     ],
     "x": 420,
-    "y": 2860,
+    "y": 2960,
     "wires": [
       [
         "orgphotocovers_resp"
@@ -3067,7 +3157,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2860,
+    "y": 2960,
     "wires": []
   },
   {
@@ -3078,7 +3168,7 @@
     "url": "/api/orgs/:orgId/kinds",
     "method": "get",
     "x": 150,
-    "y": 2910,
+    "y": 3010,
     "wires": [
       [
         "kindsget_fn"
@@ -3094,7 +3184,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 2910,
+    "y": 3010,
     "wires": [
       [
         "kindsget_resp"
@@ -3107,7 +3197,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2910,
+    "y": 3010,
     "wires": []
   },
   {
@@ -3118,7 +3208,7 @@
     "url": "/api/orgs/:orgId/kinds",
     "method": "post",
     "x": 150,
-    "y": 2960,
+    "y": 3060,
     "wires": [
       [
         "kindspost_fn"
@@ -3139,7 +3229,7 @@
       }
     ],
     "x": 420,
-    "y": 2960,
+    "y": 3060,
     "wires": [
       [
         "kindspost_resp"
@@ -3152,7 +3242,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 2960,
+    "y": 3060,
     "wires": []
   },
   {
@@ -3163,7 +3253,7 @@
     "url": "/api/orgs/:orgId/kinds/:scope/:key",
     "method": "delete",
     "x": 150,
-    "y": 3010,
+    "y": 3110,
     "wires": [
       [
         "kindsdel_fn"
@@ -3184,7 +3274,7 @@
       }
     ],
     "x": 420,
-    "y": 3010,
+    "y": 3110,
     "wires": [
       [
         "kindsdel_resp"
@@ -3197,7 +3287,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3010,
+    "y": 3110,
     "wires": []
   },
   {
@@ -3208,7 +3298,7 @@
     "url": "/api/nodes/:id/nameplate",
     "method": "get",
     "x": 150,
-    "y": 3060,
+    "y": 3160,
     "wires": [
       [
         "nodenpget_fn"
@@ -3229,7 +3319,7 @@
       }
     ],
     "x": 420,
-    "y": 3060,
+    "y": 3160,
     "wires": [
       [
         "nodenpget_resp"
@@ -3242,7 +3332,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3060,
+    "y": 3160,
     "wires": []
   },
   {
@@ -3253,7 +3343,7 @@
     "url": "/api/nodes/:id/nameplate",
     "method": "put",
     "x": 150,
-    "y": 3110,
+    "y": 3210,
     "wires": [
       [
         "nodenpput_fn"
@@ -3274,7 +3364,7 @@
       }
     ],
     "x": 420,
-    "y": 3110,
+    "y": 3210,
     "wires": [
       [
         "nodenpput_resp"
@@ -3287,7 +3377,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3110,
+    "y": 3210,
     "wires": []
   },
   {
@@ -3298,7 +3388,7 @@
     "url": "/api/orgs/:orgId/nameplates",
     "method": "get",
     "x": 150,
-    "y": 3160,
+    "y": 3260,
     "wires": [
       [
         "orgnpget_fn"
@@ -3319,7 +3409,7 @@
       }
     ],
     "x": 420,
-    "y": 3160,
+    "y": 3260,
     "wires": [
       [
         "orgnpget_resp"
@@ -3332,7 +3422,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3160,
+    "y": 3260,
     "wires": []
   },
   {
@@ -3343,7 +3433,7 @@
     "url": "/api/orgs/:orgId/transformer-models",
     "method": "get",
     "x": 150,
-    "y": 3210,
+    "y": 3310,
     "wires": [
       [
         "tmlist_fn"
@@ -3364,7 +3454,7 @@
       }
     ],
     "x": 420,
-    "y": 3210,
+    "y": 3310,
     "wires": [
       [
         "tmlist_resp"
@@ -3377,7 +3467,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3210,
+    "y": 3310,
     "wires": []
   },
   {
@@ -3388,7 +3478,7 @@
     "url": "/api/orgs/:orgId/transformer-models",
     "method": "post",
     "x": 150,
-    "y": 3260,
+    "y": 3360,
     "wires": [
       [
         "tmsave_fn"
@@ -3409,7 +3499,7 @@
       }
     ],
     "x": 420,
-    "y": 3260,
+    "y": 3360,
     "wires": [
       [
         "tmsave_resp"
@@ -3422,7 +3512,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3260,
+    "y": 3360,
     "wires": []
   },
   {
@@ -3433,7 +3523,7 @@
     "url": "/api/orgs/:orgId/transformer-models/:id/active",
     "method": "put",
     "x": 150,
-    "y": 3310,
+    "y": 3410,
     "wires": [
       [
         "tmactive_fn"
@@ -3454,7 +3544,7 @@
       }
     ],
     "x": 420,
-    "y": 3310,
+    "y": 3410,
     "wires": [
       [
         "tmactive_resp"
@@ -3467,7 +3557,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3310,
+    "y": 3410,
     "wires": []
   },
   {
@@ -3478,7 +3568,7 @@
     "url": "/api/orgs/:orgId/transformer-models/:id",
     "method": "delete",
     "x": 150,
-    "y": 3360,
+    "y": 3460,
     "wires": [
       [
         "tmdel_fn"
@@ -3499,7 +3589,7 @@
       }
     ],
     "x": 420,
-    "y": 3360,
+    "y": 3460,
     "wires": [
       [
         "tmdel_resp"
@@ -3512,7 +3602,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3360,
+    "y": 3460,
     "wires": []
   },
   {
@@ -3523,7 +3613,7 @@
     "url": "/api/bloodbox/transits/:id/journey",
     "method": "get",
     "x": 150,
-    "y": 3410,
+    "y": 3510,
     "wires": [
       [
         "bbjourneyget_fn"
@@ -3544,7 +3634,7 @@
       }
     ],
     "x": 420,
-    "y": 3410,
+    "y": 3510,
     "wires": [
       [
         "bbjourneyget_resp"
@@ -3557,7 +3647,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3410,
+    "y": 3510,
     "wires": []
   },
   {
@@ -3568,7 +3658,7 @@
     "url": "/api/bloodbox/transits/:id/journey",
     "method": "post",
     "x": 150,
-    "y": 3460,
+    "y": 3560,
     "wires": [
       [
         "bbjourneypost_fn"
@@ -3589,7 +3679,7 @@
       }
     ],
     "x": 420,
-    "y": 3460,
+    "y": 3560,
     "wires": [
       [
         "bbjourneypost_resp"
@@ -3605,7 +3695,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3460,
+    "y": 3560,
     "wires": []
   },
   {
@@ -3616,7 +3706,7 @@
     "url": "/api/bloodbox/transits/:id/temp",
     "method": "post",
     "x": 150,
-    "y": 3510,
+    "y": 3610,
     "wires": [
       [
         "bbtemp_fn"
@@ -3637,7 +3727,7 @@
       }
     ],
     "x": 420,
-    "y": 3510,
+    "y": 3610,
     "wires": [
       [
         "bbtemp_resp"
@@ -3653,7 +3743,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3510,
+    "y": 3610,
     "wires": []
   },
   {
@@ -3664,7 +3754,7 @@
     "url": "/api/bloodbox/transits/:id",
     "method": "get",
     "x": 150,
-    "y": 3560,
+    "y": 3660,
     "wires": [
       [
         "bbtransit_fn"
@@ -3685,7 +3775,7 @@
       }
     ],
     "x": 420,
-    "y": 3560,
+    "y": 3660,
     "wires": [
       [
         "bbtransit_resp"
@@ -3698,7 +3788,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3560,
+    "y": 3660,
     "wires": []
   },
   {
@@ -3709,7 +3799,7 @@
     "url": "/api/bloodbox/transits",
     "method": "get",
     "x": 150,
-    "y": 3610,
+    "y": 3710,
     "wires": [
       [
         "bbtransits_fn"
@@ -3730,7 +3820,7 @@
       }
     ],
     "x": 420,
-    "y": 3610,
+    "y": 3710,
     "wires": [
       [
         "bbtransits_resp"
@@ -3743,7 +3833,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3610,
+    "y": 3710,
     "wires": []
   },
   {
@@ -3754,7 +3844,7 @@
     "url": "/api/bloodbox/floors",
     "method": "get",
     "x": 150,
-    "y": 3660,
+    "y": 3760,
     "wires": [
       [
         "bbfloors_fn"
@@ -3775,7 +3865,7 @@
       }
     ],
     "x": 420,
-    "y": 3660,
+    "y": 3760,
     "wires": [
       [
         "bbfloors_resp"
@@ -3788,7 +3878,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3660,
+    "y": 3760,
     "wires": []
   },
   {
@@ -3799,7 +3889,7 @@
     "url": "/api/bloodbox/beacons/:id",
     "method": "delete",
     "x": 150,
-    "y": 3710,
+    "y": 3810,
     "wires": [
       [
         "bbbeacondel_fn"
@@ -3820,7 +3910,7 @@
       }
     ],
     "x": 420,
-    "y": 3710,
+    "y": 3810,
     "wires": [
       [
         "bbbeacondel_resp"
@@ -3833,7 +3923,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3710,
+    "y": 3810,
     "wires": []
   },
   {
@@ -3844,7 +3934,7 @@
     "url": "/api/bloodbox/beacons",
     "method": "get",
     "x": 150,
-    "y": 3760,
+    "y": 3860,
     "wires": [
       [
         "bbbeaconsget_fn"
@@ -3865,7 +3955,7 @@
       }
     ],
     "x": 420,
-    "y": 3760,
+    "y": 3860,
     "wires": [
       [
         "bbbeaconsget_resp"
@@ -3878,7 +3968,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3760,
+    "y": 3860,
     "wires": []
   },
   {
@@ -3889,7 +3979,7 @@
     "url": "/api/bloodbox/beacons",
     "method": "post",
     "x": 150,
-    "y": 3810,
+    "y": 3910,
     "wires": [
       [
         "bbbeaconspost_fn"
@@ -3910,7 +4000,7 @@
       }
     ],
     "x": 420,
-    "y": 3810,
+    "y": 3910,
     "wires": [
       [
         "bbbeaconspost_resp"
@@ -3923,7 +4013,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3810,
+    "y": 3910,
     "wires": []
   },
   {
@@ -3934,7 +4024,7 @@
     "url": "/api/bloodbox/boxes/:id/location",
     "method": "get",
     "x": 150,
-    "y": 3860,
+    "y": 3960,
     "wires": [
       [
         "bblocget_fn"
@@ -3955,7 +4045,7 @@
       }
     ],
     "x": 420,
-    "y": 3860,
+    "y": 3960,
     "wires": [
       [
         "bblocget_resp"
@@ -3968,7 +4058,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3860,
+    "y": 3960,
     "wires": []
   },
   {
@@ -3979,7 +4069,7 @@
     "url": "/api/bloodbox/boxes/:id/location",
     "method": "post",
     "x": 150,
-    "y": 3910,
+    "y": 4010,
     "wires": [
       [
         "bblocpost_fn"
@@ -4000,7 +4090,7 @@
       }
     ],
     "x": 420,
-    "y": 3910,
+    "y": 4010,
     "wires": [
       [
         "bblocpost_resp"
@@ -4013,7 +4103,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3910,
+    "y": 4010,
     "wires": []
   },
   {
@@ -4024,7 +4114,7 @@
     "url": "/api/fleet/:id/latest",
     "method": "get",
     "x": 150,
-    "y": 3960,
+    "y": 4060,
     "wires": [
       [
         "fleetlatest_fn"
@@ -4045,7 +4135,7 @@
       }
     ],
     "x": 420,
-    "y": 3960,
+    "y": 4060,
     "wires": [
       [
         "fleetlatest_resp"
@@ -4058,7 +4148,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 3960,
+    "y": 4060,
     "wires": []
   },
   {
@@ -4069,7 +4159,7 @@
     "url": "/api/fleet",
     "method": "get",
     "x": 150,
-    "y": 4010,
+    "y": 4110,
     "wires": [
       [
         "fleetlist_fn"
@@ -4090,7 +4180,7 @@
       }
     ],
     "x": 420,
-    "y": 4010,
+    "y": 4110,
     "wires": [
       [
         "fleetlist_resp"
@@ -4103,7 +4193,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4010,
+    "y": 4110,
     "wires": []
   },
   {
@@ -4114,7 +4204,7 @@
     "url": "/api/telemetry/aliases",
     "method": "get",
     "x": 150,
-    "y": 4060,
+    "y": 4160,
     "wires": [
       [
         "telemetryaliases_fn"
@@ -4130,7 +4220,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 4060,
+    "y": 4160,
     "wires": [
       [
         "telemetryaliases_resp"
@@ -4143,7 +4233,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4060,
+    "y": 4160,
     "wires": []
   },
   {
@@ -4154,7 +4244,7 @@
     "url": "/api/reports/schedules",
     "method": "get",
     "x": 150,
-    "y": 4110,
+    "y": 4210,
     "wires": [
       [
         "rptlist_fn"
@@ -4175,7 +4265,7 @@
       }
     ],
     "x": 420,
-    "y": 4110,
+    "y": 4210,
     "wires": [
       [
         "rptlist_resp"
@@ -4188,7 +4278,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4110,
+    "y": 4210,
     "wires": []
   },
   {
@@ -4199,7 +4289,7 @@
     "url": "/api/reports/schedules",
     "method": "post",
     "x": 150,
-    "y": 4160,
+    "y": 4260,
     "wires": [
       [
         "rptpost_fn"
@@ -4220,7 +4310,7 @@
       }
     ],
     "x": 420,
-    "y": 4160,
+    "y": 4260,
     "wires": [
       [
         "rptpost_resp"
@@ -4233,7 +4323,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4160,
+    "y": 4260,
     "wires": []
   },
   {
@@ -4244,7 +4334,7 @@
     "url": "/api/reports/schedules/:id",
     "method": "delete",
     "x": 150,
-    "y": 4210,
+    "y": 4310,
     "wires": [
       [
         "rptdel_fn"
@@ -4265,7 +4355,7 @@
       }
     ],
     "x": 420,
-    "y": 4210,
+    "y": 4310,
     "wires": [
       [
         "rptdel_resp"
@@ -4278,7 +4368,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4210,
+    "y": 4310,
     "wires": []
   },
   {
@@ -4289,7 +4379,7 @@
     "url": "/api/event-problems",
     "method": "get",
     "x": 150,
-    "y": 4260,
+    "y": 4360,
     "wires": [
       [
         "eplist_fn"
@@ -4310,7 +4400,7 @@
       }
     ],
     "x": 420,
-    "y": 4260,
+    "y": 4360,
     "wires": [
       [
         "eplist_resp"
@@ -4323,7 +4413,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4260,
+    "y": 4360,
     "wires": []
   },
   {
@@ -4334,7 +4424,7 @@
     "url": "/api/event-problems",
     "method": "post",
     "x": 150,
-    "y": 4310,
+    "y": 4410,
     "wires": [
       [
         "eppost_fn"
@@ -4355,7 +4445,7 @@
       }
     ],
     "x": 420,
-    "y": 4310,
+    "y": 4410,
     "wires": [
       [
         "eppost_resp"
@@ -4368,7 +4458,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4310,
+    "y": 4410,
     "wires": []
   },
   {
@@ -4379,7 +4469,7 @@
     "url": "/api/event-problems/:id",
     "method": "delete",
     "x": 150,
-    "y": 4360,
+    "y": 4460,
     "wires": [
       [
         "epdel_fn"
@@ -4400,7 +4490,7 @@
       }
     ],
     "x": 420,
-    "y": 4360,
+    "y": 4460,
     "wires": [
       [
         "epdel_resp"
@@ -4413,7 +4503,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4360,
+    "y": 4460,
     "wires": []
   },
   {
@@ -4424,7 +4514,7 @@
     "url": "/api/me/config",
     "method": "get",
     "x": 150,
-    "y": 4410,
+    "y": 4510,
     "wires": [
       [
         "meget_fn"
@@ -4445,7 +4535,7 @@
       }
     ],
     "x": 420,
-    "y": 4410,
+    "y": 4510,
     "wires": [
       [
         "meget_resp"
@@ -4458,7 +4548,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4410,
+    "y": 4510,
     "wires": []
   },
   {
@@ -4469,7 +4559,7 @@
     "url": "/api/me/config",
     "method": "put",
     "x": 150,
-    "y": 4460,
+    "y": 4560,
     "wires": [
       [
         "meput_fn"
@@ -4490,7 +4580,7 @@
       }
     ],
     "x": 420,
-    "y": 4460,
+    "y": 4560,
     "wires": [
       [
         "meput_resp"
@@ -4503,7 +4593,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4460,
+    "y": 4560,
     "wires": []
   },
   {
@@ -4514,7 +4604,7 @@
     "url": "/api/orgs",
     "method": "get",
     "x": 150,
-    "y": 4510,
+    "y": 4610,
     "wires": [
       [
         "orgsget_fn"
@@ -4535,7 +4625,7 @@
       }
     ],
     "x": 420,
-    "y": 4510,
+    "y": 4610,
     "wires": [
       [
         "orgsget_resp"
@@ -4548,7 +4638,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4510,
+    "y": 4610,
     "wires": []
   },
   {
@@ -4559,7 +4649,7 @@
     "url": "/api/orgs",
     "method": "post",
     "x": 150,
-    "y": 4560,
+    "y": 4660,
     "wires": [
       [
         "orgspost_fn"
@@ -4596,7 +4686,7 @@
       }
     ],
     "x": 420,
-    "y": 4560,
+    "y": 4660,
     "wires": [
       [
         "orgspost_resp"
@@ -4609,7 +4699,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4560,
+    "y": 4660,
     "wires": []
   },
   {
@@ -4620,7 +4710,7 @@
     "url": "/api/platform/migrations",
     "method": "get",
     "x": 150,
-    "y": 4610,
+    "y": 4710,
     "wires": [
       [
         "migstatus_fn"
@@ -4632,7 +4722,7 @@
     "type": "function",
     "z": "be",
     "name": "GET /api/platform/migrations",
-    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool');\nconst EXPECTED=[\"schema.sql\",\"bloodbox.sql\",\"migrate-v2.sql\",\"migrate-v3.sql\",\"migrate-v4.sql\",\"migrate-v5.sql\",\"migrate-v6.sql\",\"migrate-v7.sql\",\"migrate-v8.sql\",\"migrate-v9.sql\",\"migrate-v10.sql\",\"migrate-v11.sql\",\"migrate-v12.sql\",\"migrate-v13.sql\",\"migrate-v14.sql\",\"migrate-v15.sql\",\"migrate-v16.sql\",\"migrate-v17.sql\",\"migrate-v18.sql\",\"migrate-v19.sql\",\"migrate-v20.sql\",\"migrate-v21.sql\",\"migrate-v22.sql\",\"migrate-v23.sql\",\"migrate-v24.sql\",\"migrate-v25.sql\",\"migrate-v26.sql\",\"migrate-v27.sql\",\"migrate-v28.sql\",\"migrate-v29.sql\",\"migrate-v30.sql\",\"migrate-v31.sql\",\"migrate-v32.sql\",\"migrate-v33.sql\",\"migrate-v34.sql\",\"migrate-v35.sql\",\"migrate-v36.sql\",\"migrate-v37.sql\",\"migrate-v38.sql\",\"migrate-v39.sql\",\"migrate-v40.sql\",\"migrate-v41.sql\",\"migrate-v42.sql\",\"migrate-v43.sql\",\"migrate-v44.sql\",\"migrate-v45.sql\",\"migrate-v46.sql\",\"migrate-v47.sql\",\"migrate-v48.sql\",\"migrate-v49.sql\",\"migrate-v50.sql\",\"migrate-v51.sql\",\"migrate-v52.sql\",\"migrate-v53.sql\",\"migrate-v54.sql\",\"migrate-v55.sql\",\"migrate-v56.sql\",\"migrate-v57.sql\",\"migrate-v58.sql\"];\nconst CONTROL_ORGS=String(env.get('CONTROL_ORG_IDS')||'org-1,org-2,org-3').split(',').map(s=>s.trim()).filter(Boolean);\n(async()=>{\n  const tenantMode = !!global.get('tenantMode');\n  const appliedIn = async (p) => {\n    try{ const[r]=await p.query(\"SELECT filename FROM schema_migrations\"); return r.map(x=>x.filename); }\n    catch(e){ if(String(e&&e.message||'').indexOf('schema_migrations')<0) throw e; return []; }\n  };\n  const pendingOf = (applied) => { const has=new Set(applied); return EXPECTED.filter(f=>!has.has(f)); };\n\n  const controlApplied = await appliedIn(pool);\n  const control = { db: env.get('DB_NAME')||'iothub', applied: controlApplied.length, pending: pendingOf(controlApplied) };\n\n  const orgs=[];\n  if(tenantMode){\n    // Suspended orgs, and the '__unassigned__' sentinel used for unclaimed\n    // pending devices (itself always suspended), are not tenants to migrate —\n    // same filter platformStatsFunc uses below, for the same reason.\n    const[rows]=await pool.query(\"SELECT id,name FROM organizations WHERE (status IS NULL OR status<>'suspended') ORDER BY name\");\n    for(const o of rows){\n      // org-1/2/3 share the control database — resolvePool returns the control\n      // pool for them, so reporting them separately would double-count the\n      // control row as three \"tenants\" that are always in whatever state it is.\n      if(CONTROL_ORGS.indexOf(o.id)>=0){ orgs.push({orgId:o.id,name:o.name,db:control.db,onControlDb:true,applied:control.applied,pending:[],error:null}); continue; }\n      const db=global.get('orgDbName')(o.id);\n      try{\n        const p=global.get('resolvePool')(o.id);\n        const ap=await appliedIn(p);\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:ap.length,pending:pendingOf(ap),error:null});\n      }catch(e){\n        // An unreachable/absent tenant DB is itself the finding — report it\n        // rather than failing the whole status call.\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:0,pending:EXPECTED.slice(),error:String(e&&e.message||e)});\n      }\n    }\n  }\n  const behind = orgs.filter(o=>!o.onControlDb && (o.pending.length || o.error));\n  msg.headers=__CORS; msg.payload={\n    tenantMode,\n    expected: EXPECTED.length,\n    newest: EXPECTED[EXPECTED.length-1]||null,\n    control,\n    orgs,\n    // What the badge counts: tenant databases behind the code. The control DB\n    // is migrated by the deploy Job, not by this button, so it is reported\n    // separately rather than folded into a number this button cannot fix.\n    orgsBehind: behind.length,\n    controlBehind: control.pending.length,\n    canRun: !!env.get('MIGRATE_URL'),\n  }; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool');\nconst EXPECTED=[\"schema.sql\",\"bloodbox.sql\",\"migrate-v2.sql\",\"migrate-v3.sql\",\"migrate-v4.sql\",\"migrate-v5.sql\",\"migrate-v6.sql\",\"migrate-v7.sql\",\"migrate-v8.sql\",\"migrate-v9.sql\",\"migrate-v10.sql\",\"migrate-v11.sql\",\"migrate-v12.sql\",\"migrate-v13.sql\",\"migrate-v14.sql\",\"migrate-v15.sql\",\"migrate-v16.sql\",\"migrate-v17.sql\",\"migrate-v18.sql\",\"migrate-v19.sql\",\"migrate-v20.sql\",\"migrate-v21.sql\",\"migrate-v22.sql\",\"migrate-v23.sql\",\"migrate-v24.sql\",\"migrate-v25.sql\",\"migrate-v26.sql\",\"migrate-v27.sql\",\"migrate-v28.sql\",\"migrate-v29.sql\",\"migrate-v30.sql\",\"migrate-v31.sql\",\"migrate-v32.sql\",\"migrate-v33.sql\",\"migrate-v34.sql\",\"migrate-v35.sql\",\"migrate-v36.sql\",\"migrate-v37.sql\",\"migrate-v38.sql\",\"migrate-v39.sql\",\"migrate-v40.sql\",\"migrate-v41.sql\",\"migrate-v42.sql\",\"migrate-v43.sql\",\"migrate-v44.sql\",\"migrate-v45.sql\",\"migrate-v46.sql\",\"migrate-v47.sql\",\"migrate-v48.sql\",\"migrate-v49.sql\",\"migrate-v50.sql\",\"migrate-v51.sql\",\"migrate-v52.sql\",\"migrate-v53.sql\",\"migrate-v54.sql\",\"migrate-v55.sql\",\"migrate-v56.sql\",\"migrate-v57.sql\",\"migrate-v58.sql\",\"migrate-v59.sql\"];\nconst CONTROL_ORGS=String(env.get('CONTROL_ORG_IDS')||'org-1,org-2,org-3').split(',').map(s=>s.trim()).filter(Boolean);\n(async()=>{\n  const tenantMode = !!global.get('tenantMode');\n  const appliedIn = async (p) => {\n    try{ const[r]=await p.query(\"SELECT filename FROM schema_migrations\"); return r.map(x=>x.filename); }\n    catch(e){ if(String(e&&e.message||'').indexOf('schema_migrations')<0) throw e; return []; }\n  };\n  const pendingOf = (applied) => { const has=new Set(applied); return EXPECTED.filter(f=>!has.has(f)); };\n\n  const controlApplied = await appliedIn(pool);\n  const control = { db: env.get('DB_NAME')||'iothub', applied: controlApplied.length, pending: pendingOf(controlApplied) };\n\n  const orgs=[];\n  if(tenantMode){\n    // Suspended orgs, and the '__unassigned__' sentinel used for unclaimed\n    // pending devices (itself always suspended), are not tenants to migrate —\n    // same filter platformStatsFunc uses below, for the same reason.\n    const[rows]=await pool.query(\"SELECT id,name FROM organizations WHERE (status IS NULL OR status<>'suspended') ORDER BY name\");\n    for(const o of rows){\n      // org-1/2/3 share the control database — resolvePool returns the control\n      // pool for them, so reporting them separately would double-count the\n      // control row as three \"tenants\" that are always in whatever state it is.\n      if(CONTROL_ORGS.indexOf(o.id)>=0){ orgs.push({orgId:o.id,name:o.name,db:control.db,onControlDb:true,applied:control.applied,pending:[],error:null}); continue; }\n      const db=global.get('orgDbName')(o.id);\n      try{\n        const p=global.get('resolvePool')(o.id);\n        const ap=await appliedIn(p);\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:ap.length,pending:pendingOf(ap),error:null});\n      }catch(e){\n        // An unreachable/absent tenant DB is itself the finding — report it\n        // rather than failing the whole status call.\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:0,pending:EXPECTED.slice(),error:String(e&&e.message||e)});\n      }\n    }\n  }\n  const behind = orgs.filter(o=>!o.onControlDb && (o.pending.length || o.error));\n  msg.headers=__CORS; msg.payload={\n    tenantMode,\n    expected: EXPECTED.length,\n    newest: EXPECTED[EXPECTED.length-1]||null,\n    control,\n    orgs,\n    // What the badge counts: tenant databases behind the code. The control DB\n    // is migrated by the deploy Job, not by this button, so it is reported\n    // separately rather than folded into a number this button cannot fix.\n    orgsBehind: behind.length,\n    controlBehind: control.pending.length,\n    canRun: !!env.get('MIGRATE_URL'),\n  }; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
     "outputs": 1,
     "libs": [
       {
@@ -4641,7 +4731,7 @@
       }
     ],
     "x": 420,
-    "y": 4610,
+    "y": 4710,
     "wires": [
       [
         "migstatus_resp"
@@ -4654,7 +4744,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4610,
+    "y": 4710,
     "wires": []
   },
   {
@@ -4665,7 +4755,7 @@
     "url": "/api/platform/migrations/run",
     "method": "post",
     "x": 150,
-    "y": 4660,
+    "y": 4760,
     "wires": [
       [
         "migrun_fn"
@@ -4681,7 +4771,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 4660,
+    "y": 4760,
     "wires": [
       [
         "migrun_resp"
@@ -4694,7 +4784,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4660,
+    "y": 4760,
     "wires": []
   },
   {
@@ -4705,7 +4795,7 @@
     "url": "/api/platform/stats",
     "method": "get",
     "x": 150,
-    "y": 4710,
+    "y": 4810,
     "wires": [
       [
         "platstats_fn"
@@ -4726,7 +4816,7 @@
       }
     ],
     "x": 420,
-    "y": 4710,
+    "y": 4810,
     "wires": [
       [
         "platstats_resp"
@@ -4739,7 +4829,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4710,
+    "y": 4810,
     "wires": []
   },
   {
@@ -4750,7 +4840,7 @@
     "url": "/api/platform/sql",
     "method": "post",
     "x": 150,
-    "y": 4760,
+    "y": 4860,
     "wires": [
       [
         "sqlrun_fn"
@@ -4771,7 +4861,7 @@
       }
     ],
     "x": 420,
-    "y": 4760,
+    "y": 4860,
     "wires": [
       [
         "sqlrun_resp"
@@ -4784,7 +4874,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4760,
+    "y": 4860,
     "wires": []
   },
   {
@@ -4795,7 +4885,7 @@
     "url": "/api/platform/sql/schema",
     "method": "get",
     "x": 150,
-    "y": 4810,
+    "y": 4910,
     "wires": [
       [
         "sqlschema_fn"
@@ -4816,7 +4906,7 @@
       }
     ],
     "x": 420,
-    "y": 4810,
+    "y": 4910,
     "wires": [
       [
         "sqlschema_resp"
@@ -4829,7 +4919,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4810,
+    "y": 4910,
     "wires": []
   },
   {
@@ -4840,7 +4930,7 @@
     "url": "/api/orgs/:orgId/data-quality",
     "method": "get",
     "x": 150,
-    "y": 4860,
+    "y": 4960,
     "wires": [
       [
         "dataquality_fn"
@@ -4861,7 +4951,7 @@
       }
     ],
     "x": 420,
-    "y": 4860,
+    "y": 4960,
     "wires": [
       [
         "dataquality_resp"
@@ -4874,7 +4964,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4860,
+    "y": 4960,
     "wires": []
   },
   {
@@ -4885,7 +4975,7 @@
     "url": "/api/platform/settings",
     "method": "get",
     "x": 150,
-    "y": 4910,
+    "y": 5010,
     "wires": [
       [
         "settingsget_fn"
@@ -4906,7 +4996,7 @@
       }
     ],
     "x": 420,
-    "y": 4910,
+    "y": 5010,
     "wires": [
       [
         "settingsget_resp"
@@ -4919,7 +5009,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4910,
+    "y": 5010,
     "wires": []
   },
   {
@@ -4930,7 +5020,7 @@
     "url": "/api/platform/settings",
     "method": "put",
     "x": 150,
-    "y": 4960,
+    "y": 5060,
     "wires": [
       [
         "settingsput_fn"
@@ -4951,7 +5041,7 @@
       }
     ],
     "x": 420,
-    "y": 4960,
+    "y": 5060,
     "wires": [
       [
         "settingsput_resp"
@@ -4964,7 +5054,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 4960,
+    "y": 5060,
     "wires": []
   },
   {
@@ -4975,7 +5065,7 @@
     "url": "/api/platform/settings/test",
     "method": "post",
     "x": 150,
-    "y": 5010,
+    "y": 5110,
     "wires": [
       [
         "settingstest_fn"
@@ -4996,7 +5086,7 @@
       }
     ],
     "x": 420,
-    "y": 5010,
+    "y": 5110,
     "wires": [
       [
         "settingstest_resp"
@@ -5009,7 +5099,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5010,
+    "y": 5110,
     "wires": []
   },
   {
@@ -5020,7 +5110,7 @@
     "url": "/api/platform/mqtt",
     "method": "get",
     "x": 150,
-    "y": 5060,
+    "y": 5160,
     "wires": [
       [
         "mqttconnget_fn"
@@ -5041,7 +5131,7 @@
       }
     ],
     "x": 420,
-    "y": 5060,
+    "y": 5160,
     "wires": [
       [
         "mqttconnget_resp"
@@ -5054,7 +5144,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5060,
+    "y": 5160,
     "wires": []
   },
   {
@@ -5065,7 +5155,7 @@
     "url": "/api/platform/mqtt",
     "method": "put",
     "x": 150,
-    "y": 5110,
+    "y": 5210,
     "wires": [
       [
         "mqttconnput_fn"
@@ -5086,7 +5176,7 @@
       }
     ],
     "x": 420,
-    "y": 5110,
+    "y": 5210,
     "wires": [
       [
         "mqttconnput_resp"
@@ -5099,7 +5189,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5110,
+    "y": 5210,
     "wires": []
   },
   {
@@ -5110,7 +5200,7 @@
     "url": "/api/orgs/:orgId/entitlements",
     "method": "get",
     "x": 150,
-    "y": 5160,
+    "y": 5260,
     "wires": [
       [
         "entget_fn"
@@ -5131,7 +5221,7 @@
       }
     ],
     "x": 420,
-    "y": 5160,
+    "y": 5260,
     "wires": [
       [
         "entget_resp"
@@ -5144,7 +5234,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5160,
+    "y": 5260,
     "wires": []
   },
   {
@@ -5155,7 +5245,7 @@
     "url": "/api/orgs/:orgId/entitlements",
     "method": "put",
     "x": 150,
-    "y": 5210,
+    "y": 5310,
     "wires": [
       [
         "entput_fn"
@@ -5176,7 +5266,7 @@
       }
     ],
     "x": 420,
-    "y": 5210,
+    "y": 5310,
     "wires": [
       [
         "entput_resp"
@@ -5189,7 +5279,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5210,
+    "y": 5310,
     "wires": []
   },
   {
@@ -5200,7 +5290,7 @@
     "url": "/api/orgs/:orgId/status",
     "method": "put",
     "x": 150,
-    "y": 5260,
+    "y": 5360,
     "wires": [
       [
         "orgstatus_fn"
@@ -5221,7 +5311,7 @@
       }
     ],
     "x": 420,
-    "y": 5260,
+    "y": 5360,
     "wires": [
       [
         "orgstatus_resp"
@@ -5234,7 +5324,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5260,
+    "y": 5360,
     "wires": []
   },
   {
@@ -5245,7 +5335,7 @@
     "url": "/api/orgs/:orgId/3d-fallback",
     "method": "put",
     "x": 150,
-    "y": 5310,
+    "y": 5410,
     "wires": [
       [
         "org3dfallback_fn"
@@ -5266,7 +5356,7 @@
       }
     ],
     "x": 420,
-    "y": 5310,
+    "y": 5410,
     "wires": [
       [
         "org3dfallback_resp"
@@ -5279,7 +5369,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5310,
+    "y": 5410,
     "wires": []
   },
   {
@@ -5290,7 +5380,7 @@
     "url": "/api/platform/audit",
     "method": "get",
     "x": 150,
-    "y": 5360,
+    "y": 5460,
     "wires": [
       [
         "auditget_fn"
@@ -5311,7 +5401,7 @@
       }
     ],
     "x": 420,
-    "y": 5360,
+    "y": 5460,
     "wires": [
       [
         "auditget_resp"
@@ -5324,7 +5414,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5360,
+    "y": 5460,
     "wires": []
   },
   {
@@ -5335,7 +5425,7 @@
     "url": "/api/orgs/:orgId/departments",
     "method": "get",
     "x": 150,
-    "y": 5410,
+    "y": 5510,
     "wires": [
       [
         "deptget_fn"
@@ -5356,7 +5446,7 @@
       }
     ],
     "x": 420,
-    "y": 5410,
+    "y": 5510,
     "wires": [
       [
         "deptget_resp"
@@ -5369,7 +5459,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5410,
+    "y": 5510,
     "wires": []
   },
   {
@@ -5380,7 +5470,7 @@
     "url": "/api/orgs/:orgId/departments",
     "method": "post",
     "x": 150,
-    "y": 5460,
+    "y": 5560,
     "wires": [
       [
         "deptpost_fn"
@@ -5401,7 +5491,7 @@
       }
     ],
     "x": 420,
-    "y": 5460,
+    "y": 5560,
     "wires": [
       [
         "deptpost_resp"
@@ -5414,7 +5504,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5460,
+    "y": 5560,
     "wires": []
   },
   {
@@ -5425,7 +5515,7 @@
     "url": "/api/orgs/:orgId/users",
     "method": "get",
     "x": 150,
-    "y": 5510,
+    "y": 5610,
     "wires": [
       [
         "usrget_fn"
@@ -5446,7 +5536,7 @@
       }
     ],
     "x": 420,
-    "y": 5510,
+    "y": 5610,
     "wires": [
       [
         "usrget_resp"
@@ -5459,7 +5549,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5510,
+    "y": 5610,
     "wires": []
   },
   {
@@ -5470,7 +5560,7 @@
     "url": "/api/orgs/:orgId/users",
     "method": "post",
     "x": 150,
-    "y": 5560,
+    "y": 5660,
     "wires": [
       [
         "usrpost_fn"
@@ -5495,7 +5585,7 @@
       }
     ],
     "x": 420,
-    "y": 5560,
+    "y": 5660,
     "wires": [
       [
         "usrpost_resp"
@@ -5508,7 +5598,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5560,
+    "y": 5660,
     "wires": []
   },
   {
@@ -5519,7 +5609,7 @@
     "url": "/api/orgs/:id",
     "method": "delete",
     "x": 150,
-    "y": 5610,
+    "y": 5710,
     "wires": [
       [
         "orgsdel_fn"
@@ -5540,7 +5630,7 @@
       }
     ],
     "x": 420,
-    "y": 5610,
+    "y": 5710,
     "wires": [
       [
         "orgsdel_resp"
@@ -5553,7 +5643,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5610,
+    "y": 5710,
     "wires": []
   },
   {
@@ -5564,7 +5654,7 @@
     "url": "/api/departments/:id",
     "method": "delete",
     "x": 150,
-    "y": 5660,
+    "y": 5760,
     "wires": [
       [
         "deptdel_fn"
@@ -5585,7 +5675,7 @@
       }
     ],
     "x": 420,
-    "y": 5660,
+    "y": 5760,
     "wires": [
       [
         "deptdel_resp"
@@ -5598,7 +5688,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5660,
+    "y": 5760,
     "wires": []
   },
   {
@@ -5609,7 +5699,7 @@
     "url": "/api/users/:id",
     "method": "delete",
     "x": 150,
-    "y": 5710,
+    "y": 5810,
     "wires": [
       [
         "usrdel_fn"
@@ -5630,7 +5720,7 @@
       }
     ],
     "x": 420,
-    "y": 5710,
+    "y": 5810,
     "wires": [
       [
         "usrdel_resp"
@@ -5643,7 +5733,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5710,
+    "y": 5810,
     "wires": []
   },
   {
@@ -5654,7 +5744,7 @@
     "url": "/api/product-access",
     "method": "get",
     "x": 150,
-    "y": 5760,
+    "y": 5860,
     "wires": [
       [
         "paget_fn"
@@ -5675,7 +5765,7 @@
       }
     ],
     "x": 420,
-    "y": 5760,
+    "y": 5860,
     "wires": [
       [
         "paget_resp"
@@ -5688,7 +5778,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5760,
+    "y": 5860,
     "wires": []
   },
   {
@@ -5699,7 +5789,7 @@
     "url": "/api/product-access",
     "method": "put",
     "x": 150,
-    "y": 5810,
+    "y": 5910,
     "wires": [
       [
         "paput_fn"
@@ -5720,7 +5810,7 @@
       }
     ],
     "x": 420,
-    "y": 5810,
+    "y": 5910,
     "wires": [
       [
         "paput_resp"
@@ -5733,7 +5823,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5810,
+    "y": 5910,
     "wires": []
   },
   {
@@ -5744,7 +5834,7 @@
     "url": "/api/orgs/:orgId/product-access",
     "method": "get",
     "x": 150,
-    "y": 5860,
+    "y": 5960,
     "wires": [
       [
         "paorgget_fn"
@@ -5765,7 +5855,7 @@
       }
     ],
     "x": 420,
-    "y": 5860,
+    "y": 5960,
     "wires": [
       [
         "paorgget_resp"
@@ -5778,7 +5868,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5860,
+    "y": 5960,
     "wires": []
   },
   {
@@ -5789,7 +5879,7 @@
     "url": "/api/nodes",
     "method": "post",
     "x": 150,
-    "y": 5910,
+    "y": 6010,
     "wires": [
       [
         "nodeprov_fn"
@@ -5810,7 +5900,7 @@
       }
     ],
     "x": 420,
-    "y": 5910,
+    "y": 6010,
     "wires": [
       [
         "nodeprov_resp"
@@ -5823,7 +5913,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5910,
+    "y": 6010,
     "wires": []
   },
   {
@@ -5834,7 +5924,7 @@
     "url": "/api/nodes/pending",
     "method": "get",
     "x": 150,
-    "y": 5960,
+    "y": 6060,
     "wires": [
       [
         "nodepending_fn"
@@ -5855,7 +5945,7 @@
       }
     ],
     "x": 420,
-    "y": 5960,
+    "y": 6060,
     "wires": [
       [
         "nodepending_resp"
@@ -5868,7 +5958,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 5960,
+    "y": 6060,
     "wires": []
   },
   {
@@ -5879,7 +5969,7 @@
     "url": "/api/nodes/:id/approve",
     "method": "post",
     "x": 150,
-    "y": 6010,
+    "y": 6110,
     "wires": [
       [
         "nodeapprove_fn"
@@ -5900,7 +5990,7 @@
       }
     ],
     "x": 420,
-    "y": 6010,
+    "y": 6110,
     "wires": [
       [
         "nodeapprove_resp"
@@ -5913,7 +6003,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6010,
+    "y": 6110,
     "wires": []
   },
   {
@@ -5924,7 +6014,7 @@
     "url": "/api/nodes/:id/reject",
     "method": "post",
     "x": 150,
-    "y": 6060,
+    "y": 6160,
     "wires": [
       [
         "nodereject_fn"
@@ -5945,7 +6035,7 @@
       }
     ],
     "x": 420,
-    "y": 6060,
+    "y": 6160,
     "wires": [
       [
         "nodereject_resp"
@@ -5958,7 +6048,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6060,
+    "y": 6160,
     "wires": []
   },
   {
@@ -5969,7 +6059,7 @@
     "url": "/api/nodes/:id/merge",
     "method": "put",
     "x": 150,
-    "y": 6110,
+    "y": 6210,
     "wires": [
       [
         "nodemerge_fn"
@@ -5990,7 +6080,7 @@
       }
     ],
     "x": 420,
-    "y": 6110,
+    "y": 6210,
     "wires": [
       [
         "nodemerge_resp"
@@ -6003,7 +6093,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6110,
+    "y": 6210,
     "wires": []
   },
   {
@@ -6014,7 +6104,7 @@
     "url": "/api/nodes/move",
     "method": "post",
     "x": 150,
-    "y": 6160,
+    "y": 6260,
     "wires": [
       [
         "nodesmove_fn"
@@ -6035,7 +6125,7 @@
       }
     ],
     "x": 420,
-    "y": 6160,
+    "y": 6260,
     "wires": [
       [
         "nodesmove_resp"
@@ -6048,7 +6138,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6160,
+    "y": 6260,
     "wires": []
   },
   {
@@ -6059,7 +6149,7 @@
     "url": "/api/nodes/repair-orphans",
     "method": "post",
     "x": 150,
-    "y": 6210,
+    "y": 6310,
     "wires": [
       [
         "nodesrepair_fn"
@@ -6075,7 +6165,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 6210,
+    "y": 6310,
     "wires": [
       [
         "nodesrepair_resp"
@@ -6088,7 +6178,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6210,
+    "y": 6310,
     "wires": []
   },
   {
@@ -6099,7 +6189,7 @@
     "url": "/api/nodes/:id/location",
     "method": "put",
     "x": 150,
-    "y": 6260,
+    "y": 6360,
     "wires": [
       [
         "nodeloc_fn"
@@ -6120,7 +6210,7 @@
       }
     ],
     "x": 420,
-    "y": 6260,
+    "y": 6360,
     "wires": [
       [
         "nodeloc_resp"
@@ -6133,7 +6223,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6260,
+    "y": 6360,
     "wires": []
   },
   {
@@ -6144,7 +6234,7 @@
     "url": "/api/nodes/:id/profile",
     "method": "put",
     "x": 150,
-    "y": 6310,
+    "y": 6410,
     "wires": [
       [
         "nodeprofile_fn"
@@ -6165,7 +6255,7 @@
       }
     ],
     "x": 420,
-    "y": 6310,
+    "y": 6410,
     "wires": [
       [
         "nodeprofile_resp"
@@ -6178,7 +6268,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6310,
+    "y": 6410,
     "wires": []
   },
   {
@@ -6189,7 +6279,7 @@
     "url": "/api/nodes/:id/feeds",
     "method": "get",
     "x": 150,
-    "y": 6360,
+    "y": 6460,
     "wires": [
       [
         "nodefeeds_fn"
@@ -6210,7 +6300,7 @@
       }
     ],
     "x": 420,
-    "y": 6360,
+    "y": 6460,
     "wires": [
       [
         "nodefeeds_resp"
@@ -6223,7 +6313,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6360,
+    "y": 6460,
     "wires": []
   },
   {
@@ -6234,7 +6324,7 @@
     "url": "/api/nodes/:id/departments",
     "method": "get",
     "x": 150,
-    "y": 6410,
+    "y": 6510,
     "wires": [
       [
         "nodedeptsget_fn"
@@ -6255,7 +6345,7 @@
       }
     ],
     "x": 420,
-    "y": 6410,
+    "y": 6510,
     "wires": [
       [
         "nodedeptsget_resp"
@@ -6268,7 +6358,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6410,
+    "y": 6510,
     "wires": []
   },
   {
@@ -6279,7 +6369,7 @@
     "url": "/api/nodes/:id/departments",
     "method": "put",
     "x": 150,
-    "y": 6460,
+    "y": 6560,
     "wires": [
       [
         "nodedeptsput_fn"
@@ -6300,7 +6390,7 @@
       }
     ],
     "x": 420,
-    "y": 6460,
+    "y": 6560,
     "wires": [
       [
         "nodedeptsput_resp"
@@ -6313,7 +6403,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6460,
+    "y": 6560,
     "wires": []
   },
   {
@@ -6324,7 +6414,7 @@
     "url": "/api/orgs/:orgId/node-visibility",
     "method": "get",
     "x": 150,
-    "y": 6510,
+    "y": 6610,
     "wires": [
       [
         "nodevisget_fn"
@@ -6345,7 +6435,7 @@
       }
     ],
     "x": 420,
-    "y": 6510,
+    "y": 6610,
     "wires": [
       [
         "nodevisget_resp"
@@ -6358,7 +6448,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6510,
+    "y": 6610,
     "wires": []
   },
   {
@@ -6369,7 +6459,7 @@
     "url": "/api/users/:id/visible-nodes",
     "method": "put",
     "x": 150,
-    "y": 6560,
+    "y": 6660,
     "wires": [
       [
         "nodevisput_fn"
@@ -6390,7 +6480,7 @@
       }
     ],
     "x": 420,
-    "y": 6560,
+    "y": 6660,
     "wires": [
       [
         "nodevisput_resp"
@@ -6403,7 +6493,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6560,
+    "y": 6660,
     "wires": []
   },
   {
@@ -6414,7 +6504,7 @@
     "url": "/api/me/access",
     "method": "get",
     "x": 150,
-    "y": 6610,
+    "y": 6710,
     "wires": [
       [
         "meaccess_fn"
@@ -6435,7 +6525,7 @@
       }
     ],
     "x": 420,
-    "y": 6610,
+    "y": 6710,
     "wires": [
       [
         "meaccess_resp"
@@ -6448,7 +6538,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6610,
+    "y": 6710,
     "wires": []
   },
   {
@@ -6459,7 +6549,7 @@
     "url": "/api/orgs/:orgId/display-params",
     "method": "get",
     "x": 150,
-    "y": 6660,
+    "y": 6760,
     "wires": [
       [
         "dpget_fn"
@@ -6480,7 +6570,7 @@
       }
     ],
     "x": 420,
-    "y": 6660,
+    "y": 6760,
     "wires": [
       [
         "dpget_resp"
@@ -6493,7 +6583,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6660,
+    "y": 6760,
     "wires": []
   },
   {
@@ -6504,7 +6594,7 @@
     "url": "/api/orgs/:orgId/display-params",
     "method": "put",
     "x": 150,
-    "y": 6710,
+    "y": 6810,
     "wires": [
       [
         "dpput_fn"
@@ -6525,7 +6615,7 @@
       }
     ],
     "x": 420,
-    "y": 6710,
+    "y": 6810,
     "wires": [
       [
         "dpput_resp"
@@ -6538,7 +6628,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6710,
+    "y": 6810,
     "wires": []
   },
   {
@@ -6549,7 +6639,7 @@
     "url": "/api/orgs/:orgId/param-labels",
     "method": "get",
     "x": 150,
-    "y": 6760,
+    "y": 6860,
     "wires": [
       [
         "plget_fn"
@@ -6570,7 +6660,7 @@
       }
     ],
     "x": 420,
-    "y": 6760,
+    "y": 6860,
     "wires": [
       [
         "plget_resp"
@@ -6583,7 +6673,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6760,
+    "y": 6860,
     "wires": []
   },
   {
@@ -6594,7 +6684,7 @@
     "url": "/api/orgs/:orgId/param-labels",
     "method": "put",
     "x": 150,
-    "y": 6810,
+    "y": 6910,
     "wires": [
       [
         "plput_fn"
@@ -6615,7 +6705,7 @@
       }
     ],
     "x": 420,
-    "y": 6810,
+    "y": 6910,
     "wires": [
       [
         "plput_resp"
@@ -6628,7 +6718,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6810,
+    "y": 6910,
     "wires": []
   },
   {
@@ -6639,7 +6729,7 @@
     "url": "/api/orgs/:orgId/channels",
     "method": "get",
     "x": 150,
-    "y": 6860,
+    "y": 6960,
     "wires": [
       [
         "chget_fn"
@@ -6660,7 +6750,7 @@
       }
     ],
     "x": 420,
-    "y": 6860,
+    "y": 6960,
     "wires": [
       [
         "chget_resp"
@@ -6673,7 +6763,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6860,
+    "y": 6960,
     "wires": []
   },
   {
@@ -6684,7 +6774,7 @@
     "url": "/api/orgs/:orgId/channels",
     "method": "put",
     "x": 150,
-    "y": 6910,
+    "y": 7010,
     "wires": [
       [
         "chput_fn"
@@ -6705,7 +6795,7 @@
       }
     ],
     "x": 420,
-    "y": 6910,
+    "y": 7010,
     "wires": [
       [
         "chput_resp"
@@ -6718,7 +6808,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6910,
+    "y": 7010,
     "wires": []
   },
   {
@@ -6729,7 +6819,7 @@
     "url": "/api/orgs/:orgId/email-template",
     "method": "get",
     "x": 150,
-    "y": 6960,
+    "y": 7060,
     "wires": [
       [
         "emailtplget_fn"
@@ -6750,7 +6840,7 @@
       }
     ],
     "x": 420,
-    "y": 6960,
+    "y": 7060,
     "wires": [
       [
         "emailtplget_resp"
@@ -6763,7 +6853,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 6960,
+    "y": 7060,
     "wires": []
   },
   {
@@ -6774,7 +6864,7 @@
     "url": "/api/orgs/:orgId/email-template",
     "method": "put",
     "x": 150,
-    "y": 7010,
+    "y": 7110,
     "wires": [
       [
         "emailtplput_fn"
@@ -6795,7 +6885,7 @@
       }
     ],
     "x": 420,
-    "y": 7010,
+    "y": 7110,
     "wires": [
       [
         "emailtplput_resp"
@@ -6808,7 +6898,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7010,
+    "y": 7110,
     "wires": []
   },
   {
@@ -6819,7 +6909,7 @@
     "url": "/api/orgs/:orgId/email-template/test",
     "method": "post",
     "x": 150,
-    "y": 7060,
+    "y": 7160,
     "wires": [
       [
         "emailtpltest_fn"
@@ -6840,7 +6930,7 @@
       }
     ],
     "x": 420,
-    "y": 7060,
+    "y": 7160,
     "wires": [
       [
         "emailtpltest_resp"
@@ -6853,7 +6943,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7060,
+    "y": 7160,
     "wires": []
   },
   {
@@ -6864,7 +6954,7 @@
     "url": "/api/orgs/:orgId/department-themes",
     "method": "get",
     "x": 150,
-    "y": 7110,
+    "y": 7210,
     "wires": [
       [
         "dtget_fn"
@@ -6885,7 +6975,7 @@
       }
     ],
     "x": 420,
-    "y": 7110,
+    "y": 7210,
     "wires": [
       [
         "dtget_resp"
@@ -6898,7 +6988,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7110,
+    "y": 7210,
     "wires": []
   },
   {
@@ -6909,7 +6999,7 @@
     "url": "/api/orgs/:orgId/department-themes",
     "method": "put",
     "x": 150,
-    "y": 7160,
+    "y": 7260,
     "wires": [
       [
         "dtput_fn"
@@ -6930,7 +7020,7 @@
       }
     ],
     "x": 420,
-    "y": 7160,
+    "y": 7260,
     "wires": [
       [
         "dtput_resp"
@@ -6943,7 +7033,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7160,
+    "y": 7260,
     "wires": []
   },
   {
@@ -6954,7 +7044,7 @@
     "url": "/api/orgs/:orgId/theme-grants",
     "method": "get",
     "x": 150,
-    "y": 7210,
+    "y": 7310,
     "wires": [
       [
         "tgget_fn"
@@ -6975,7 +7065,7 @@
       }
     ],
     "x": 420,
-    "y": 7210,
+    "y": 7310,
     "wires": [
       [
         "tgget_resp"
@@ -6988,7 +7078,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7210,
+    "y": 7310,
     "wires": []
   },
   {
@@ -6999,7 +7089,7 @@
     "url": "/api/orgs/:orgId/theme-grants",
     "method": "put",
     "x": 150,
-    "y": 7260,
+    "y": 7360,
     "wires": [
       [
         "tgput_fn"
@@ -7020,7 +7110,7 @@
       }
     ],
     "x": 420,
-    "y": 7260,
+    "y": 7360,
     "wires": [
       [
         "tgput_resp"
@@ -7033,7 +7123,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7260,
+    "y": 7360,
     "wires": []
   },
   {
@@ -7044,7 +7134,7 @@
     "url": "/api/orgs/:orgId/department-sites",
     "method": "get",
     "x": 150,
-    "y": 7310,
+    "y": 7410,
     "wires": [
       [
         "dsget_fn"
@@ -7065,7 +7155,7 @@
       }
     ],
     "x": 420,
-    "y": 7310,
+    "y": 7410,
     "wires": [
       [
         "dsget_resp"
@@ -7078,7 +7168,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7310,
+    "y": 7410,
     "wires": []
   },
   {
@@ -7089,7 +7179,7 @@
     "url": "/api/orgs/:orgId/department-sites",
     "method": "put",
     "x": 150,
-    "y": 7360,
+    "y": 7460,
     "wires": [
       [
         "dsput_fn"
@@ -7110,7 +7200,7 @@
       }
     ],
     "x": 420,
-    "y": 7360,
+    "y": 7460,
     "wires": [
       [
         "dsput_resp"
@@ -7123,7 +7213,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7360,
+    "y": 7460,
     "wires": []
   },
   {
@@ -7134,7 +7224,7 @@
     "url": "/api/orgs/:orgId/sites",
     "method": "get",
     "x": 150,
-    "y": 7410,
+    "y": 7510,
     "wires": [
       [
         "sitesget_fn"
@@ -7155,7 +7245,7 @@
       }
     ],
     "x": 420,
-    "y": 7410,
+    "y": 7510,
     "wires": [
       [
         "sitesget_resp"
@@ -7168,7 +7258,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7410,
+    "y": 7510,
     "wires": []
   },
   {
@@ -7179,7 +7269,7 @@
     "url": "/api/orgs/:orgId/sites",
     "method": "post",
     "x": 150,
-    "y": 7460,
+    "y": 7560,
     "wires": [
       [
         "sitespost_fn"
@@ -7200,7 +7290,7 @@
       }
     ],
     "x": 420,
-    "y": 7460,
+    "y": 7560,
     "wires": [
       [
         "sitespost_resp"
@@ -7213,7 +7303,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7460,
+    "y": 7560,
     "wires": []
   },
   {
@@ -7224,7 +7314,7 @@
     "url": "/api/sites/:id",
     "method": "delete",
     "x": 150,
-    "y": 7510,
+    "y": 7610,
     "wires": [
       [
         "sitesdel_fn"
@@ -7245,7 +7335,7 @@
       }
     ],
     "x": 420,
-    "y": 7510,
+    "y": 7610,
     "wires": [
       [
         "sitesdel_resp"
@@ -7258,7 +7348,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7510,
+    "y": 7610,
     "wires": []
   },
   {
@@ -7269,7 +7359,7 @@
     "url": "/api/orgs/:orgId/floorplans/:floorId/geo",
     "method": "put",
     "x": 150,
-    "y": 7560,
+    "y": 7660,
     "wires": [
       [
         "fpgeo_fn"
@@ -7290,7 +7380,7 @@
       }
     ],
     "x": 420,
-    "y": 7560,
+    "y": 7660,
     "wires": [
       [
         "fpgeo_resp"
@@ -7303,7 +7393,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7560,
+    "y": 7660,
     "wires": []
   },
   {
@@ -7314,7 +7404,7 @@
     "url": "/api/nodes/:id/config",
     "method": "put",
     "x": 150,
-    "y": 7610,
+    "y": 7710,
     "wires": [
       [
         "cfgput_fn"
@@ -7335,7 +7425,7 @@
       }
     ],
     "x": 420,
-    "y": 7610,
+    "y": 7710,
     "wires": [
       [
         "cfgput_resp"
@@ -7352,7 +7442,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7610,
+    "y": 7710,
     "wires": []
   },
   {
@@ -7363,7 +7453,7 @@
     "url": "/api/nodes/:id/cmd",
     "method": "post",
     "x": 150,
-    "y": 7660,
+    "y": 7760,
     "wires": [
       [
         "cmdpost_fn"
@@ -7384,7 +7474,7 @@
       }
     ],
     "x": 420,
-    "y": 7660,
+    "y": 7760,
     "wires": [
       [
         "cmdpost_resp"
@@ -7401,7 +7491,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7660,
+    "y": 7760,
     "wires": []
   },
   {
@@ -7412,7 +7502,7 @@
     "url": "/api/nodes/:id/ota",
     "method": "post",
     "x": 150,
-    "y": 7710,
+    "y": 7810,
     "wires": [
       [
         "otapost_fn"
@@ -7433,7 +7523,7 @@
       }
     ],
     "x": 420,
-    "y": 7710,
+    "y": 7810,
     "wires": [
       [
         "otapost_resp"
@@ -7450,7 +7540,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7710,
+    "y": 7810,
     "wires": []
   },
   {
@@ -7461,7 +7551,7 @@
     "url": "/api/ota/releases",
     "method": "get",
     "x": 150,
-    "y": 7760,
+    "y": 7860,
     "wires": [
       [
         "otarellist_fn"
@@ -7482,7 +7572,7 @@
       }
     ],
     "x": 420,
-    "y": 7760,
+    "y": 7860,
     "wires": [
       [
         "otarellist_resp"
@@ -7495,7 +7585,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7760,
+    "y": 7860,
     "wires": []
   },
   {
@@ -7506,7 +7596,7 @@
     "url": "/api/ota/releases",
     "method": "post",
     "x": 150,
-    "y": 7810,
+    "y": 7910,
     "wires": [
       [
         "otarelpost_fn"
@@ -7527,7 +7617,7 @@
       }
     ],
     "x": 420,
-    "y": 7810,
+    "y": 7910,
     "wires": [
       [
         "otarelpost_resp"
@@ -7540,7 +7630,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7810,
+    "y": 7910,
     "wires": []
   },
   {
@@ -7551,7 +7641,7 @@
     "url": "/api/ota/releases/:id",
     "method": "delete",
     "x": 150,
-    "y": 7860,
+    "y": 7960,
     "wires": [
       [
         "otareldel_fn"
@@ -7572,7 +7662,7 @@
       }
     ],
     "x": 420,
-    "y": 7860,
+    "y": 7960,
     "wires": [
       [
         "otareldel_resp"
@@ -7585,7 +7675,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7860,
+    "y": 7960,
     "wires": []
   },
   {
@@ -7596,7 +7686,7 @@
     "url": "/api/ota/deployments",
     "method": "get",
     "x": 150,
-    "y": 7910,
+    "y": 8010,
     "wires": [
       [
         "otadeplist_fn"
@@ -7617,7 +7707,7 @@
       }
     ],
     "x": 420,
-    "y": 7910,
+    "y": 8010,
     "wires": [
       [
         "otadeplist_resp"
@@ -7630,7 +7720,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7910,
+    "y": 8010,
     "wires": []
   },
   {
@@ -7641,7 +7731,7 @@
     "url": "/api/ota/deploy-fleet",
     "method": "post",
     "x": 150,
-    "y": 7960,
+    "y": 8060,
     "wires": [
       [
         "otafleet_fn"
@@ -7662,7 +7752,7 @@
       }
     ],
     "x": 420,
-    "y": 7960,
+    "y": 8060,
     "wires": [
       [
         "otafleet_resp"
@@ -7679,7 +7769,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7960,
+    "y": 8060,
     "wires": []
   },
   {
@@ -7690,7 +7780,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 8010,
+    "y": 8110,
     "wires": [
       [
         "cors_fn"
@@ -7706,7 +7796,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 8010,
+    "y": 8110,
     "wires": [
       [
         "cors_resp"
@@ -7719,7 +7809,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8010,
+    "y": 8110,
     "wires": []
   },
   {
@@ -7730,7 +7820,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 8060,
+    "y": 8160,
     "wires": [
       [
         "readpost_fn"
@@ -7746,7 +7836,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 8060,
+    "y": 8160,
     "wires": [
       [
         "ingest"
@@ -7759,7 +7849,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8060,
+    "y": 8160,
     "wires": []
   }
 ]

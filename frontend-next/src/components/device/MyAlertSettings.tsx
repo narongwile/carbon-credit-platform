@@ -50,32 +50,52 @@ export default function MyAlertSettings({
   const [showAdminThresholds, setShowAdminThresholds] = useState(false)
   const [showPersonalThresholds, setShowPersonalThresholds] = useState(false)
   const [showPersonalHistory, setShowPersonalHistory] = useState(false)
-  const [personalEvents, setPersonalEvents] = useState<Array<{ id: string; param_key: string; param_label?: string; severity?: string; value: number; unit?: string; threshold: number; raised_at: string; acknowledged_at?: string }>>([])
+  // Mirrors the endpoint's row shape exactly. The previous declaration used
+  // `unit?: string` / `acknowledged_at?: string` against an API that returns
+  // `string | null`, and the mismatch was hidden by an `as any` on the
+  // setState — so nothing checked that the console and the endpoint agreed.
+  type PersonalEvent = {
+    id: string; node_id: string; param_key: string; param_label: string
+    severity: 'WARNING' | 'CRITICAL'; value: number; threshold: number; unit: string | null
+    raised_at: string; acknowledged_at: string | null; acknowledged_by: string | null
+  }
+  const [personalEvents, setPersonalEvents] = useState<PersonalEvent[]>([])
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [testing, setTesting] = useState(false)
 
+  // api.myPersonalEvents, not api.events + a client-side filter on `source`.
+  //
+  // These rows used to be written into the shared alarm_events table with
+  // 'PERSONAL:<userId>' stuffed into `source` — a column declared
+  // ENUM('edge','cloud'). The value did not fit, INSERT IGNORE downgraded the
+  // truncation to a warning, and the row was stored with the empty ENUM
+  // member. So this filter could never match and the history was always empty,
+  // while the row itself sat in alarm_events indistinguishable from a real org
+  // alarm: visible to the whole organization and escalated to the department
+  // by escalationFunc. They now live in their own table (migrate-v59), read
+  // through an endpoint scoped to msg.auth.userId — the filter is not
+  // client-side any more, because "only mine" is a privacy boundary and must
+  // not be enforced in the browser.
   const fetchPersonalEvents = useCallback(async () => {
     if (!apiEnabled || !nodeId) return
     try {
-      const rows = await api.events(nodeId)
-      if (Array.isArray(rows)) {
-        const userPrefix = 'PERSONAL:' + (session?.id || '')
-        const filtered = rows.filter((r: any) => r.source === userPrefix || String(r.source || '').startsWith('PERSONAL'))
-        setPersonalEvents(filtered as any)
-      }
+      const rows = await api.myPersonalEvents(nodeId)
+      if (Array.isArray(rows)) setPersonalEvents(rows)
     } catch (_) {}
-  }, [nodeId, session?.id])
+  }, [nodeId])
 
   const handleAckPersonal = useCallback(async (evtId: string) => {
     try {
-      await api.ackEvent(evtId, { by: session?.name || session?.email || 'User' })
+      // The personal-event ack endpoint, not the org ackEvent one: its WHERE
+      // clause carries user_id, so one user cannot acknowledge another's.
+      await api.ackMyPersonalEvent(nodeId, evtId, { by: session?.name || session?.email || 'User' })
       toast.success('Personal alarm acknowledged')
       fetchPersonalEvents()
     } catch (_) {
       toast.error('Could not acknowledge alarm')
     }
-  }, [session?.name, session?.email, fetchPersonalEvents])
+  }, [nodeId, session?.name, session?.email, fetchPersonalEvents])
 
   useEffect(() => {
     if (showPersonalHistory) {

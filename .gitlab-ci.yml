@@ -151,6 +151,15 @@ test_proofs_and_integrity:
     # parameter now, not a filter over an already-truncated newest-300 page.
     # Verified to fail 26/34 on the pre-fix code.
     - node e2e/proofs/test-alarms-time-range.mjs
+    # A personal alarm threshold is private. Its breaches were being logged
+    # into the SHARED alarm_events table, tagged by writing 'PERSONAL:<uid>'
+    # into `source` — a column declared ENUM('edge','cloud'). INSERT IGNORE
+    # downgraded the truncation to a warning and stored '', so the personal
+    # console could never match its own rows AND the row stayed in
+    # alarm_events looking like an org alarm: visible org-wide, counted in the
+    # badge, and escalated to the whole department by escalationFunc.
+    # Verified to fail 13/24 on the pre-fix code.
+    - node e2e/proofs/test-personal-alarm-privacy.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see
