@@ -3053,10 +3053,15 @@ const USER_NODE_RULES_DDL = "CREATE TABLE IF NOT EXISTS user_node_rules (user_id
 
 const getPersonalRuleFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||'';
 (async()=>{
+  const controlPool=global.get('pool');
   const pool=await global.get('poolForNode')(id, msg.auth);
   let r=[];
   try{ [r]=await pool.query('SELECT rule_json FROM user_node_rules WHERE node_id=? AND user_id=?',[id,uid]); }
   catch(e){ if(String(e&&e.message||'').indexOf('user_node_rules')<0) throw e; }
+  if(!r.length && controlPool && controlPool !== pool){
+    try{ [r]=await controlPool.query('SELECT rule_json FROM user_node_rules WHERE node_id=? AND user_id=?',[id,uid]); }
+    catch(_){}
+  }
   if(!r.length){ msg.headers=__CORS; msg.payload={rule:null}; node.send(msg); return; }
   const rule=typeof r[0].rule_json==='string'?JSON.parse(r[0].rule_json):r[0].rule_json;
   msg.headers=__CORS; msg.payload={rule}; node.send(msg);
@@ -3065,18 +3070,28 @@ const getPersonalRuleFunc = CORS + `const id=msg.req.params.id; const uid=(msg.a
 // org_id/domain resolved from a direct nodes query (control pool), not
 // trusted from the request body — same reasoning as putRuleFunc: this must
 // reflect the device's real CURRENT org, not whatever the caller's client
-// state happened to think it was.
+// state happened to think it was. Dual-writes to both controlPool and tenantPool.
 const putPersonalRuleFunc = CORS + `const id=msg.req.params.id; const uid=(msg.auth&&msg.auth.userId)||''; const {rule}=msg.payload||{};
 if(!rule){msg.headers=__CORS;msg.statusCode=400;msg.payload={error:'rule required'};return msg;}
 if(!uid){msg.headers=__CORS;msg.statusCode=401;msg.payload={error:'authentication required'};return msg;}
 (async()=>{
-  const[__n]=await global.get('pool').query('SELECT org_id,domain FROM nodes WHERE id=?',[id]);
+  const controlPool=global.get('pool');
+  const[__n]=await controlPool.query('SELECT org_id,domain FROM nodes WHERE id=?',[id]);
   if(!__n.length){msg.headers=__CORS;msg.statusCode=404;msg.payload={error:'not found'};node.send(msg);return;}
   const org=__n[0].org_id; const domain=__n[0].domain;
-  const pool=global.get('resolvePool')(org);
-  await pool.query(${JSON.stringify(USER_NODE_RULES_DDL)});
+  const tenantPool=global.get('resolvePool')(org);
+  
+  const ddl=${JSON.stringify(USER_NODE_RULES_DDL)};
   const ruleJson=JSON.stringify(rule);
-  await pool.query('INSERT INTO user_node_rules (user_id,node_id,org_id,domain,rule_json) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain)',[uid,id,org,domain,ruleJson]);
+  const q='INSERT INTO user_node_rules (user_id,node_id,org_id,domain,rule_json) VALUES (?,?,?,?,?) ON DUPLICATE KEY UPDATE rule_json=VALUES(rule_json),domain=VALUES(domain)';
+  const args=[uid,id,org,domain,ruleJson];
+
+  if(controlPool){
+    try{ await controlPool.query(ddl); await controlPool.query(q,args); }catch(_){}
+  }
+  if(tenantPool && tenantPool !== controlPool){
+    try{ await tenantPool.query(ddl); await tenantPool.query(q,args); }catch(_){}
+  }
   msg.headers=__CORS; msg.payload={ok:true}; node.send(msg);
 })().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;`
 

@@ -1422,7 +1422,7 @@ func getAlarmRule(tenantDB *sql.DB, nodeID, orgID, domain string) (AlarmRule, bo
 }
 
 // getPersonalRules returns every user's personal rule for this node.
-// Checks controlDB (where user_node_rules is created by migrate-v53) with fallback to tenantDB.
+// Queries both controlDB and tenantDB to ensure no personal rule is missed regardless of where Node-RED persisted it.
 func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
 	if cached, ok := personalRulesCache.Load(nodeID); ok {
 		entry := cached.(PersonalRulesCacheEntry)
@@ -1431,26 +1431,34 @@ func getPersonalRules(tenantDB *sql.DB, nodeID string) []PersonalRule {
 		}
 	}
 
-	var rows *sql.Rows
-	var err error
-	if controlDB != nil {
-		rows, err = controlDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
-	}
-	if (err != nil || rows == nil) && tenantDB != nil && tenantDB != controlDB {
-		rows, err = tenantDB.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
-	}
-	if err != nil || rows == nil {
-		return nil
-	}
-	defer rows.Close()
-
 	var out []PersonalRule
-	for rows.Next() {
-		var pr PersonalRule
-		if err := rows.Scan(&pr.UserID, &pr.Domain, &pr.RuleJSON); err != nil {
-			continue
+	seenUser := make(map[string]bool)
+
+	queryDB := func(db *sql.DB) {
+		if db == nil {
+			return
 		}
-		out = append(out, pr)
+		rows, err := db.Query("SELECT user_id, domain, rule_json FROM user_node_rules WHERE node_id=?", nodeID)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var pr PersonalRule
+			if err := rows.Scan(&pr.UserID, &pr.Domain, &pr.RuleJSON); err == nil {
+				if !seenUser[pr.UserID] {
+					seenUser[pr.UserID] = true
+					out = append(out, pr)
+				}
+			}
+		}
+	}
+
+	if controlDB != nil {
+		queryDB(controlDB)
+	}
+	if tenantDB != nil && tenantDB != controlDB {
+		queryDB(tenantDB)
 	}
 
 	personalRulesCache.Store(nodeID, PersonalRulesCacheEntry{
