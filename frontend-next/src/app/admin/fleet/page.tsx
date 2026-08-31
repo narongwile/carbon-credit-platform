@@ -30,6 +30,8 @@ import { useState, useEffect } from 'react'
 import { useAppStore } from '@/lib/store'
 import { useFleetHosts } from '@/lib/useManagedDevices'
 import { api, useIsLive, type DevicePresence } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
+import { useFleetLive } from '@/lib/useFleetLive'
 import {
   Cpu, Wifi, WifiOff, Battery, Signal, History, CheckCircle, RotateCcw, XCircle, Stethoscope, ArrowRightLeft, Loader2, Plug, Construction, ListChecks,
 } from 'lucide-react'
@@ -76,6 +78,7 @@ export default function FleetPage() {
   const { selectedOrgId } = useAppStore()
   const orgId = selectedOrgId || 'org-1'
   const { hosts, loaded: fleetLoaded } = useFleetHosts(orgId)
+  const { byId: liveNodes } = useFleetLive(orgId)
 
   const [activeId, setActiveId] = useState('')
   const [fleetView, setFleetView] = useState<'connectivity' | 'risk'>('connectivity')
@@ -119,7 +122,27 @@ export default function FleetPage() {
     return () => { cancelled = true }
   }, [activeId, live])
 
-  const online = presence?.online === 1
+  // Sub-second real-time telemetry overlay via WebSocket
+  useEffect(() => {
+    if (!live || !activeId) return
+    const unsubscribe = subscribeTelemetry((f) => {
+      if (f.id !== activeId) return
+      if (f.values && Object.keys(f.values).length > 0) {
+        setValues((prev) => ({ ...prev, ...f.values }))
+      }
+      setPresence((prev) => ({
+        ...(prev ?? { node_id: activeId }),
+        online: 1,
+        last_seen: f.timestamp || new Date().toISOString(),
+      }))
+      if (f.timestamp) {
+        setLastReadingAt(f.timestamp)
+      }
+    })
+    return () => unsubscribe()
+  }, [live, activeId])
+
+  const online = presence?.online === 1 || (presence?.online as any) === '1' || (presence?.online as any) === true
 
   // Actual-vs-expected payload, the same cross-check admin/pending runs at
   // approval time. It belongs here too, and arguably matters MORE here: at

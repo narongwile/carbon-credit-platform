@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { api, type DevicePresence } from '@/lib/api'
+import { subscribeTelemetry } from '@/lib/telemetryBus'
 import { fmtDateTime } from '@/lib/displayTime'
 import { schemaLabel } from '@/lib/useParamLabels'
 import { ALARM_SCHEMA } from '@/lib/alarmParams'
@@ -81,6 +82,26 @@ export default function SensorDetailsModal({
     setLastReadingAt(initialLastReadingAt)
   }, [initialPresence, initialValues, initialLastReadingAt])
 
+  // Sub-second real-time WebSocket telemetry listener
+  useEffect(() => {
+    if (!isOpen || !nodeId) return
+    const unsubscribe = subscribeTelemetry((f) => {
+      if (f.id !== nodeId) return
+      if (f.values && Object.keys(f.values).length > 0) {
+        setValues((prev) => ({ ...(prev ?? {}), ...f.values }))
+      }
+      setPresence((prev) => ({
+        ...(prev ?? { node_id: nodeId }),
+        online: 1,
+        last_seen: f.timestamp || new Date().toISOString(),
+      }))
+      if (f.timestamp) {
+        setLastReadingAt(f.timestamp)
+      }
+    })
+    return () => unsubscribe()
+  }, [isOpen, nodeId])
+
   // Live polling effect
   useEffect(() => {
     if (!isOpen || !nodeId || !isPolling) return
@@ -113,7 +134,7 @@ export default function SensorDetailsModal({
     }
   }, [nodeId])
 
-  const online = presence?.online === 1
+  const online = presence?.online === 1 || (presence?.online as any) === '1' || (presence?.online as any) === true
   const rssi = presence?.rssi ?? null
   const batt = presence?.batt ?? null
   const hasConflict = Boolean(presence?.identity_conflict_at)
