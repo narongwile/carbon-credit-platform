@@ -738,12 +738,15 @@ export default function AlarmParamConfig({
    * gets SAVED and validated must not depend on which rows are on screen.
    */
   const scopedParams = useMemo(() => {
-    // When in personal alarm mode: strictly scope to the parameters permitted for this user/department
+    // When editing a specific single device (nodeId set), scope strictly to what THAT device actually reports
+    const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (mode === 'personal') {
+      if (nodeId && activeKeys.size > 0) {
+        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key))
+      }
       if (configuredDisplayKeys.length > 0) {
         return allParams.filter((p) => configuredDisplayKeys.includes(p.key))
       }
-      const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key))
       }
@@ -753,16 +756,15 @@ export default function AlarmParamConfig({
     }
 
     // When scoped to what devices in scope actually report (default "Reported by device" / "Active in selection"):
-    // Only parameters present in telemetry/lastSample, configured sensor readings, or existing rules are shown.
-    // Full catalog parameters are revealed when the operator switches to "Full catalog".
     if (scopeFilter === 'reported') {
-      const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
+      if (nodeId && activeKeys.size > 0) {
+        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key))
+      }
       if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
         return allParams.filter(
           (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
         )
       }
-      // Demo / fallback for single device when no live stream yet:
       if (!isLive() && nodeId && domain === 'transformer') {
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key))
       }
@@ -771,11 +773,14 @@ export default function AlarmParamConfig({
   }, [allParams, scopeFilter, nodeId, reportedKeys, activeKeysAcrossScope, configuredDisplayKeys, ruleKeys, mode, domain])
 
   const activeParamsCount = useMemo(() => {
+    const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
     if (mode === 'personal') {
+      if (nodeId && activeKeys.size > 0) {
+        return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key)).length
+      }
       if (configuredDisplayKeys.length > 0) {
         return allParams.filter((p) => configuredDisplayKeys.includes(p.key)).length
       }
-      const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
       if (activeKeys.size > 0) {
         return allParams.filter((p) => activeKeys.has(p.key)).length
       }
@@ -783,7 +788,9 @@ export default function AlarmParamConfig({
         return allParams.filter((p) => DEFAULT_TRANSFORMER_KEYS.includes(p.key)).length
       }
     }
-    const activeKeys = nodeId ? (reportedKeys || new Set<string>()) : activeKeysAcrossScope
+    if (nodeId && activeKeys.size > 0) {
+      return allParams.filter((p) => activeKeys.has(p.key) || ruleKeys.has(p.key)).length
+    }
     if (activeKeys.size > 0 || configuredDisplayKeys.length > 0 || ruleKeys.size > 0) {
       return allParams.filter(
         (p) => activeKeys.has(p.key) || configuredDisplayKeys.includes(p.key) || ruleKeys.has(p.key)
