@@ -1296,7 +1296,7 @@ function ReportsPageContent() {
                   Target Scope ({generatorFilteredDevices.length} assets targeted)
                 </label>
                 <div className="flex gap-1.5">
-                  {([['all', 'All Fleet Assets'], ['site', 'Site Facility'], ['department', 'Department Scope'], ['device', 'Selected Devices']] as const).map(([sc, label]) => (
+                  {([['all', 'All Fleet Assets'], ['department', 'Department Scope'], ['device', 'Selected Devices']] as const).map(([sc, label]) => (
                     <button
                       key={sc}
                       onClick={() => setGeneratorScope(sc)}
@@ -1312,26 +1312,6 @@ function ReportsPageContent() {
               </div>
 
               {/* Sub-selectors based on generatorScope */}
-              {generatorScope === 'site' && (
-                <div>
-                  <label className="block text-[11px] text-slate-400 uppercase tracking-wider mb-1.5 font-semibold flex items-center gap-1">
-                    <Building2 size={12} className="text-indigo-400" />
-                    Select Site Facility
-                  </label>
-                  <select
-                    value={selectedSite}
-                    onChange={(e) => setSelectedSite(e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none focus:ring-2 focus:ring-indigo-500"
-                    style={inset}
-                  >
-                    <option value="all">All Sites ({devices.length} assets)</option>
-                    {availableSites.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.count} assets)</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
               {generatorScope === 'department' && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-[10px] text-slate-400">
@@ -1838,7 +1818,7 @@ function ReportsPageContent() {
                 <div>
                   <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1 font-semibold">Target Scope</label>
                   <div className="flex gap-1.5 mb-2">
-                    {([['org', 'All Assets'], ['site', 'Site Facility'], ['department', 'Department'], ['device', 'Per Device']] as const).map(([sc, label]) => (
+                    {([['org', 'All Assets'], ['department', 'Department'], ['device', 'Per Device']] as const).map(([sc, label]) => (
                       <button
                         key={sc}
                         onClick={() => setDraft((d) => ({ ...d, scope: sc, scopeId: '' }))}

@@ -28,9 +28,19 @@ node e2e/proofs/test-personal-alarm-privacy.mjs
 node e2e/proofs/test-alarms-time-range.mjs
 ```
 
-### 6. Production Container Build & Push (Deploy to Registry & ArgoCD)
+### 6. Production Container Images Build & Push (GitLab Registry & ArgoCD Release)
 ```bash
+# Frontend Next.js Web App
 GITLAB_REGISTRY_USER=oauth2 GITLAB_REGISTRY_TOKEN='glpat-lxTRJgWKtpwWFD9wuMjEbmM6MQpvOjEKdTpuaDlqNw8.01.171jfngrv' bash infra/scripts/build-push-frontend.sh
+
+# Go Telemetry Ingest Worker
+GITLAB_REGISTRY_USER=oauth2 GITLAB_REGISTRY_TOKEN='glpat-lxTRJgWKtpwWFD9wuMjEbmM6MQpvOjEKdTpuaDlqNw8.01.171jfngrv' bash infra/scripts/build-push-worker.sh
+
+# Node.js Database Migration Service & Job
+GITLAB_REGISTRY_USER=oauth2 GITLAB_REGISTRY_TOKEN='glpat-lxTRJgWKtpwWFD9wuMjEbmM6MQpvOjEKdTpuaDlqNw8.01.171jfngrv' bash infra/scripts/build-push-migrate.sh
+
+# Kubernetes SQL Schema & Migration ConfigMap Sync
+bash infra/scripts/sync-sql-configmap.sh
 ```
 
 ## Architecture & Tenancy Norms
