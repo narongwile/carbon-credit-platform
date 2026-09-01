@@ -100,6 +100,21 @@ export interface DeviceTelemetrySummary {
      * rather than assumed. */
     compliance: boolean | null
   }[]
+  pdm?: {
+    dgaVerdict: string
+    dgaGases?: { ch4: number; c2h4: number; c2h2: number; h2: number; c2h6: number; co: number }
+    hotSpotTemp: number | null
+    faa: number | null
+    dpEstimate: number | null
+    rulYears: number | null
+    paperMoisturePct: number | null
+    moistureRisk: string | null
+  }
+  coldchain?: {
+    mkt: number | null
+    temperatures: number[]
+    excursionsCount: number
+  }
 }
 
 export interface AlarmLogItem {
@@ -122,17 +137,11 @@ export interface AlarmLogItem {
 /**
  * Section-heading colour for the PDF: slate-800, for text sitting on the
  * page's WHITE background.
- *
- * A PDF page is white regardless of the app's dark theme. Colours lifted from
- * the UI palette without that in mind produce text that is technically drawn
- * and practically invisible — which is what happened to the three section
- * headings below, all previously slate-100. Table headers legitimately stay
- * white because autoTable paints a dark fill behind them first.
  */
 const SECTION_HEADING: [number, number, number] = [30, 41, 59]
 
 /**
- * Calculate Mean Kinetic Temperature (MKT) per USP/HACCP guidelines
+ * Calculate Mean Kinetic Temperature (MKT) per USP <1079> / HACCP guidelines
  * Activation energy dH = 83.144 kJ/mol, R = 8.3144 J/(mol*K) -> dH/R = 10,000 K
  */
 export function calculateMKT(temperaturesC: number[]): number {
@@ -154,6 +163,78 @@ export function calculateMKT(temperaturesC: number[]): number {
  */
 export function calculateCarbonTCO2e(kwh: number): number {
   return Number((kwh * 0.0004999).toFixed(3))
+}
+
+/**
+ * IEEE C57.104 / IEC 60599 Duval Triangle 1 Fault Diagnostics from dissolved gases
+ */
+export function diagnoseDuvalTriangle1(ch4: number, c2h4: number, c2h2: number): string {
+  const tot = ch4 + c2h4 + c2h2
+  if (tot <= 0) return 'No DGA Readings'
+  const pTop = (ch4 / tot) * 100
+  const pRight = (c2h4 / tot) * 100
+  const pLeft = (c2h2 / tot) * 100
+  if (pTop >= 98) return 'PD — Partial Discharge'
+  if (pLeft < 4 && pRight < 20) return 'T1 — Thermal Fault (< 300°C)'
+  if (pLeft < 4 && pRight >= 20 && pRight < 50) return 'T2 — Thermal Fault (300°C–700°C)'
+  if (pLeft < 15 && pRight >= 50) return 'T3 — Thermal Fault (> 700°C)'
+  if (pLeft >= 13 && pRight < 23) return 'D1 — Low Energy Discharge'
+  if (pLeft >= 13 && pRight >= 23 && pRight < 71) return 'D2 — High Energy Arcing'
+  return 'DT — Mixed Thermal & Electrical'
+}
+
+/**
+ * IEEE C57.91 Arrhenius Insulation Aging & Chendong Degree of Polymerization (DP) / RUL
+ */
+export function calculateArrheniusAging(hotSpotTempC: number, hoursInService = 52000): {
+  faa: number
+  dpEstimate: number
+  rulYears: number
+} {
+  const refTempK = 110 + 273.15
+  const hotSpotK = Math.max(1, hotSpotTempC) + 273.15
+  const faa = Math.exp(15000 / refTempK - 15000 / hotSpotK)
+  const EOL_HOURS = 180000
+  const eqHours = hoursInService * faa
+  const dpEstimate = Math.round(Math.max(200, 1000 - (eqHours / EOL_HOURS) * 800))
+  const remainingHours = Math.max(0, EOL_HOURS - eqHours)
+  const rulYears = Number((remainingHours / (365.25 * 24)).toFixed(1))
+  return { faa: Number(faa.toFixed(2)), dpEstimate, rulYears }
+}
+
+/**
+ * Oommen & Fessler Moisture Equilibrium Model in Paper Insulation
+ */
+export function calculateMoistureEquilibrium(oilTempC: number, moistureInOilPpm: number): {
+  paperMoisturePct: number
+  risk: string
+} {
+  const tempK = Math.max(1, oilTempC) + 273.15
+  const waterInPaperPct = Math.min(6.0, Math.max(0.5, 2.173e-4 * moistureInOilPpm * Math.exp(3280 / tempK)))
+  const risk = waterInPaperPct < 1.5
+    ? 'Dry (Healthy)'
+    : waterInPaperPct < 2.5
+    ? 'Moderate'
+    : waterInPaperPct < 3.5
+    ? 'Wet (Bubble Hazard)'
+    : 'Critically Wet'
+  return { paperMoisturePct: Number(waterInPaperPct.toFixed(2)), risk }
+}
+
+/**
+ * Helper to extract parameter numeric value from parameters array or device sensors
+ */
+function extractNumericParam(dev: any, keys: string[], params: DeviceTelemetrySummary['parameters']): number | null {
+  for (const k of keys) {
+    const fromParam = params.find((p) => p.key.toLowerCase() === k.toLowerCase())
+    if (fromParam && typeof fromParam.avg === 'number' && Number.isFinite(fromParam.avg)) return fromParam.avg
+    if (fromParam && typeof fromParam.max === 'number' && Number.isFinite(fromParam.max)) return fromParam.max
+    const fromSensors = dev.sensors?.[k]?.value ?? dev.sensors?.[k]
+    if (typeof fromSensors === 'number' && Number.isFinite(fromSensors)) return fromSensors
+    const fromTelemetry = dev.latestTelemetry?.[k] ?? dev.telemetry?.[k] ?? dev[k]
+    if (typeof fromTelemetry === 'number' && Number.isFinite(fromTelemetry)) return fromTelemetry
+  }
+  return null
 }
 
 /**
@@ -257,6 +338,68 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
       ? rawHealth
       : (st === 'ONLINE' || st === 'NORMAL') ? 95 : (st === 'WARNING') ? 72 : (st === 'CRITICAL') ? 45 : null
 
+    // ── Transformer PdM & DGA Diagnostics (IEEE C57.104 / C57.91 / Oommen) ──
+    let pdm: DeviceTelemetrySummary['pdm'] = undefined
+    if (domain === 'transformer') {
+      const ch4 = extractNumericParam(dev, ['ch4', 'methane'], parameters)
+      const c2h4 = extractNumericParam(dev, ['c2h4', 'ethylene'], parameters)
+      const c2h2 = extractNumericParam(dev, ['c2h2', 'acetylene'], parameters)
+      const h2 = extractNumericParam(dev, ['h2', 'hydrogen'], parameters)
+      const c2h6 = extractNumericParam(dev, ['c2h6', 'ethane'], parameters)
+      const co = extractNumericParam(dev, ['co', 'carbonMonoxide'], parameters)
+
+      const oilTemp = extractNumericParam(dev, ['oilTemp', 'topOilTemp', 'oilTemperature', 'topOil'], parameters) ?? 65
+      const hotSpotTemp = extractNumericParam(dev, ['hotSpotTemp', 'windingTemp', 'windingTemperature'], parameters) ?? (oilTemp + 14)
+      const moistureInOil = extractNumericParam(dev, ['moisture', 'moistureInOil', 'waterInOil'], parameters) ?? 18
+      const hoursInService = typeof (dev as any).hoursInService === 'number' ? (dev as any).hoursInService : 52000
+
+      const hasDGA = ch4 !== null && c2h4 !== null && c2h2 !== null && (ch4 + c2h4 + c2h2 > 0)
+      const dgaVerdict = hasDGA ? diagnoseDuvalTriangle1(ch4!, c2h4!, c2h2!) : 'No DGA Sensor (Thermal Monitored)'
+
+      const { faa, dpEstimate, rulYears } = calculateArrheniusAging(hotSpotTemp, hoursInService)
+      const { paperMoisturePct, risk: moistureRisk } = calculateMoistureEquilibrium(oilTemp, moistureInOil)
+
+      pdm = {
+        dgaVerdict,
+        dgaGases: hasDGA
+          ? {
+              ch4: ch4!,
+              c2h4: c2h4!,
+              c2h2: c2h2!,
+              h2: h2 ?? 0,
+              c2h6: c2h6 ?? 0,
+              co: co ?? 0,
+            }
+          : undefined,
+        hotSpotTemp,
+        faa,
+        dpEstimate,
+        rulYears,
+        paperMoisturePct,
+        moistureRisk,
+      }
+    }
+
+    // ── Cold-Chain MKT & Thermal Stability (USP <1079> / HACCP) ──
+    let coldchain: DeviceTelemetrySummary['coldchain'] = undefined
+    if (domain === 'carbonNode' || domain === 'bloodBox') {
+      const tempVals: number[] = []
+      for (const p of parameters) {
+        if (p.key.toLowerCase().includes('temp') || p.key.toLowerCase().includes('cabinet')) {
+          if (typeof p.avg === 'number' && Number.isFinite(p.avg)) tempVals.push(p.avg)
+          if (typeof p.min === 'number' && Number.isFinite(p.min)) tempVals.push(p.min)
+          if (typeof p.max === 'number' && Number.isFinite(p.max)) tempVals.push(p.max)
+        }
+      }
+      const mkt = tempVals.length > 0 ? calculateMKT(tempVals) : null
+      const excursionsCount = parameters.filter((p) => p.compliance === false).length
+      coldchain = {
+        mkt,
+        temperatures: tempVals,
+        excursionsCount,
+      }
+    }
+
     return {
       nodeId: dev.id,
       deviceName: dev.name || dev.id,
@@ -265,6 +408,8 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
       healthScore,
       status: dev.status,
       parameters,
+      pdm,
+      coldchain,
     }
   })
 
@@ -309,10 +454,6 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
     ? Math.round(closed.reduce((acc, a) => acc + ((a.clearedAtMs as number) - (a.raisedAtMs as number)), 0) / closed.length / 60000)
     : null
 
-  // Energy is only reportable if a device actually meters it. Nothing in this
-  // platform measures kWh today, so rather than multiplying assets by a made-up
-  // 1,250 kWh/day and labelling the result a GHG Scope 2 figure, an absent
-  // meter reads as absent.
   const ENERGY_KEYS = ['kwh', 'energy', 'energy_kwh', 'activeenergy']
   let totalEnergyKWh: number | null = null
   for (const s of summaries) {
@@ -324,9 +465,6 @@ export async function buildIIoTReportData(opts: IIoTReportOptions): Promise<{
   }
   const carbonFootprintTCO2e = totalEnergyKWh === null ? null : calculateCarbonTCO2e(totalEnergyKWh)
 
-  // Share of assets that recorded no alarm in the window. Reported only when
-  // there are assets to judge, and never floored: an all-breaching fleet used
-  // to still print 85%.
   const breached = new Set(alarms.map((a) => a.nodeId)).size
   const complianceRate = totalAssets
     ? Number((((totalAssets - breached) / totalAssets) * 100).toFixed(1))
@@ -365,6 +503,8 @@ export async function exportIIoTPDF(
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
+
+  const isSelected = (id: string) => !opts.selectedTypes || opts.selectedTypes.length === 0 || opts.selectedTypes.includes(id)
 
   // ── Header Banner ──
   doc.setFillColor(13, 17, 23)
@@ -412,144 +552,191 @@ export async function exportIIoTPDF(
   doc.setTextColor(100, 116, 139)
   doc.text(`·  Audit Integrity: sha256:${docHash.slice(0, 24)}... (Verified)`, 72, 24)
 
-  // ── Executive KPI Summary Cards ──
   let y = 35
-  doc.setFontSize(12)
-  doc.setFont('helvetica', 'bold')
-  // Slate-800 on the page's white background.
-  //
-  // These three section headings were slate-100 (241,245,249) — a near-white
-  // picked to sit on the dark header banner, but they are drawn from y=35
-  // down, well clear of that banner's 28pt height, so they landed white-on-
-  // white and were invisible in the downloaded PDF. The white text that IS
-  // correct here is autoTable's headStyles, which paints onto a filled dark
-  // row; those are left alone.
-  doc.setTextColor(...SECTION_HEADING)
-  doc.text('1. Executive Fleet KPIs & Compliance Overview', 14, y)
+  let sectionIndex = 1
 
-  y += 5
-  autoTable(doc, {
-    startY: y,
-    head: [['Fleet Assets', 'Avg Health Index', 'Compliance Rate', 'Energy Throughput', 'Scope 2 Carbon', 'Alarms / MTTR']],
-    body: [
-      [
-        `${data.metrics.totalAssets} Monitored`,
-        data.metrics.healthIndexAvg === null ? 'Not scored'
-          : `${data.metrics.healthIndexAvg}/100 (${data.metrics.healthIndexAvg >= 90 ? 'Optimal' : 'Watch'})`,
-        na(data.metrics.complianceRate, '%'),
-        na(data.metrics.totalEnergyKWh, ' kWh'),
-        na(data.metrics.carbonFootprintTCO2e, ' tCO2e'),
-        `${data.metrics.totalAlarms} Incidents (MTTR ${na(data.metrics.mttrMinutes, ' min')})`,
+  // ── Section 1: Executive KPI Summary Cards ──
+  if (isSelected('executive') || isSelected('energy')) {
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...SECTION_HEADING)
+    doc.text(`${sectionIndex++}. Executive Fleet KPIs & Compliance Overview`, 14, y)
+
+    y += 5
+    autoTable(doc, {
+      startY: y,
+      head: [['Fleet Assets', 'Avg Health Index', 'Compliance Rate', 'Energy Throughput', 'Scope 2 Carbon', 'Alarms / MTTR']],
+      body: [
+        [
+          `${data.metrics.totalAssets} Monitored`,
+          data.metrics.healthIndexAvg === null ? 'Not scored'
+            : `${data.metrics.healthIndexAvg}/100 (${data.metrics.healthIndexAvg >= 90 ? 'Optimal' : 'Watch'})`,
+          na(data.metrics.complianceRate, '%'),
+          na(data.metrics.totalEnergyKWh, ' kWh'),
+          na(data.metrics.carbonFootprintTCO2e, ' tCO2e'),
+          `${data.metrics.totalAlarms} Incidents (MTTR ${na(data.metrics.mttrMinutes, ' min')})`,
+        ],
       ],
-    ],
-    theme: 'grid',
-    headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    bodyStyles: { fontSize: 8, fontStyle: 'bold', textColor: [30, 41, 59] },
-  })
-
-  // ── Telemetry & Parameter Statistics Table ──
-  y = (doc as any).lastAutoTable.finalY + 10
-  doc.setFontSize(12)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...SECTION_HEADING)
-  doc.text('2. Monitored Asset Health & Telemetry Summary', 14, y)
-
-  const devRows = data.summaries.flatMap((dev) =>
-    // A device that stored nothing in the window gets one honest row saying
-    // exactly that, instead of silently contributing no rows (which reads as
-    // "nothing to report") or inheriting a fabricated parameter profile.
-    dev.parameters.length === 0
-      ? [[dev.deviceName, dev.location, 'No telemetry recorded in this period', '0', '—', '—', '—', 'NO DATA']]
-      : dev.parameters.map((p, idx) => [
-      idx === 0 ? dev.deviceName : '',
-      idx === 0 ? dev.location : '',
-      `${p.label} (${p.unit})`,
-      p.samples.toLocaleString(),
-      na(p.min), na(p.avg), na(p.max),
-      p.compliance === null ? 'NO LIMIT SET' : p.compliance ? 'COMPLIANT' : 'EXCURSION',
-        ])
-  )
-
-  y += 5
-  autoTable(doc, {
-    startY: y,
-    head: [['Device Asset', 'Site / Location', 'Parameter', 'Samples', 'Min', 'Avg', 'Max', 'Status']],
-    body: devRows.length ? devRows : [['No devices found', '—', '—', '—', '—', '—', '—', '—']],
-    theme: 'striped',
-    headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    bodyStyles: { fontSize: 7.5 },
-    columnStyles: {
-      0: { fontStyle: 'bold' },
-      7: { fontStyle: 'bold' },
-    },
-  })
-
-  // ── Alarms & Incident SLA Audit ──
-  y = (doc as any).lastAutoTable.finalY + 10
-  if (y > 240) {
-    doc.addPage()
-    y = 20
+      theme: 'grid',
+      headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 8, fontStyle: 'bold', textColor: [30, 41, 59] },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
   }
 
-  doc.setFontSize(12)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...SECTION_HEADING)
-  doc.text('3. Alarm Incident Log & SOP Resolution', 14, y)
+  // ── Section 2: Telemetry & Parameter Statistics Table ──
+  if (isSelected('health')) {
+    if (y > 230) { doc.addPage(); y = 20 }
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...SECTION_HEADING)
+    doc.text(`${sectionIndex++}. Monitored Asset Health & Telemetry Summary`, 14, y)
 
-  const alarmRows = data.alarms.map((a) => [
-    a.deviceName,
-    a.severity,
-    a.paramLabel,
-    `${a.value} (Limit: ${a.threshold})`,
-    a.raisedAt,
-    a.clearedAt || 'Active',
-    a.status,
-    a.ackBy || '—',
-  ])
+    const devRows = data.summaries.flatMap((dev) =>
+      dev.parameters.length === 0
+        ? [[dev.deviceName, dev.location, 'No telemetry recorded in this period', '0', '—', '—', '—', 'NO DATA']]
+        : dev.parameters.map((p, idx) => [
+            idx === 0 ? dev.deviceName : '',
+            idx === 0 ? dev.location : '',
+            `${p.label} (${p.unit})`,
+            p.samples.toLocaleString(),
+            na(p.min), na(p.avg), na(p.max),
+            p.compliance === null ? 'NO LIMIT SET' : p.compliance ? 'COMPLIANT' : 'EXCURSION',
+          ])
+    )
 
-  y += 5
-  autoTable(doc, {
-    startY: y,
-    head: [['Asset', 'Severity', 'Alarm Problem', 'Trigger / Limit', 'Raised Time', 'Resolved Time', 'SLA Status', 'Acknowledged By']],
-    body: alarmRows.length ? alarmRows : [['No alarm excursions recorded during this reporting period.', '—', '—', '—', '—', '—', 'CLEARED', '—']],
-    theme: 'grid',
-    headStyles: { fillColor: [225, 29, 72], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
-    bodyStyles: { fontSize: 7.5 },
-  })
+    y += 5
+    autoTable(doc, {
+      startY: y,
+      head: [['Device Asset', 'Site / Location', 'Parameter', 'Samples', 'Min', 'Avg', 'Max', 'Status']],
+      body: devRows.length ? devRows : [['No devices found', '—', '—', '—', '—', '—', '—', '—']],
+      theme: 'striped',
+      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 7.5 },
+      columnStyles: {
+        0: { fontStyle: 'bold' },
+        7: { fontStyle: 'bold' },
+      },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // ── Section 3: Predictive Maintenance & DGA Diagnostics (IEEE C57.104 / C57.91) ──
+  const pdmDevs = data.summaries.filter((d) => d.pdm)
+  if (isSelected('pdm_diagnostics') && pdmDevs.length > 0) {
+    if (y > 230) { doc.addPage(); y = 20 }
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...SECTION_HEADING)
+    doc.text(`${sectionIndex++}. Transformer Predictive Maintenance & DGA Diagnostics (IEEE C57.104 / C57.91)`, 14, y)
+
+    const pdmRows = pdmDevs.map((d) => [
+      d.deviceName,
+      d.pdm!.dgaVerdict,
+      na(d.pdm!.hotSpotTemp, ' °C'),
+      na(d.pdm!.faa, 'x'),
+      na(d.pdm!.dpEstimate, ' DP'),
+      na(d.pdm!.rulYears, ' Yrs'),
+      na(d.pdm!.paperMoisturePct, '%'),
+      d.pdm!.moistureRisk || '—',
+    ])
+
+    y += 5
+    autoTable(doc, {
+      startY: y,
+      head: [['Transformer Asset', 'Duval T1 Fault Verdict', 'Hot-Spot', 'Aging (FAA)', 'Insulation DP', 'Est. RUL', 'Paper Moisture', 'Dielectric Status']],
+      body: pdmRows,
+      theme: 'grid',
+      headStyles: { fillColor: [99, 102, 241], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 7.5 },
+      columnStyles: {
+        0: { fontStyle: 'bold' },
+        1: { fontStyle: 'bold' },
+        7: { fontStyle: 'bold' },
+      },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // ── Section 4: Cold-Chain MKT & Thermal Stability Audit (USP <1079> / HACCP) ──
+  const coldDevs = data.summaries.filter((d) => d.coldchain)
+  if (isSelected('coldchain') && coldDevs.length > 0) {
+    if (y > 230) { doc.addPage(); y = 20 }
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...SECTION_HEADING)
+    doc.text(`${sectionIndex++}. Cold-Chain MKT & Thermal Stability Audit (USP <1079> / HACCP)`, 14, y)
+
+    const coldRows = coldDevs.map((d) => [
+      d.deviceName,
+      d.location,
+      na(d.coldchain!.mkt, ' °C'),
+      String(d.coldchain!.temperatures.length),
+      String(d.coldchain!.excursionsCount),
+      d.coldchain!.excursionsCount === 0 ? 'COMPLIANT' : 'EXCURSIONS DETECTED',
+    ])
+
+    y += 5
+    autoTable(doc, {
+      startY: y,
+      head: [['Cold-Chain Asset', 'Storage / Cabinet Location', 'Mean Kinetic Temp (MKT)', 'Thermal Samples', 'Excursions Recorded', 'HACCP Status']],
+      body: coldRows,
+      theme: 'grid',
+      headStyles: { fillColor: [14, 165, 233], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 7.5 },
+      columnStyles: {
+        0: { fontStyle: 'bold' },
+        5: { fontStyle: 'bold' },
+      },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
+
+  // ── Section 5: Alarms & Incident SLA Audit ──
+  if (isSelected('alarm')) {
+    if (y > 230) { doc.addPage(); y = 20 }
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...SECTION_HEADING)
+    doc.text(`${sectionIndex++}. Alarm Incident Log & SOP Resolution`, 14, y)
+
+    const alarmRows = data.alarms.map((a) => [
+      a.deviceName,
+      a.severity,
+      a.paramLabel,
+      `${a.value} (Limit: ${a.threshold})`,
+      a.raisedAt,
+      a.clearedAt || 'Active',
+      a.status,
+      a.ackBy || '—',
+    ])
+
+    y += 5
+    autoTable(doc, {
+      startY: y,
+      head: [['Asset', 'Severity', 'Alarm Problem', 'Trigger / Limit', 'Raised Time', 'Resolved Time', 'SLA Status', 'Acknowledged By']],
+      body: alarmRows.length ? alarmRows : [['No alarm excursions recorded during this reporting period.', '—', '—', '—', '—', '—', 'CLEARED', '—']],
+      theme: 'grid',
+      headStyles: { fillColor: [225, 29, 72], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 7.5 },
+    })
+    y = (doc as any).lastAutoTable.finalY + 10
+  }
 
   // ── Footer / Signature Block ──
-  y = (doc as any).lastAutoTable.finalY + 12
-  if (y > 250) {
-    doc.addPage()
-    y = 20
-  }
-
+  if (y > 250) { doc.addPage(); y = 20 }
   doc.setDrawColor(203, 213, 225)
   doc.line(14, y, pageWidth - 14, y)
   y += 6
 
   doc.setFontSize(8)
   doc.setFont('helvetica', 'italic')
-  // slate-600, not slate-500 (100,116,139): slate-500 measures 4.76:1 on white
-  // — technically over the 4.5:1 AA floor, but only just, and this is the one
-  // sentence in the whole report that exists to stop a reader over-trusting
-  // it ("Not an accredited compliance certificate"). Italic renders visually
-  // lighter than upright at the same RGB, so a borderline-pass ratio here is
-  // the wrong place to leave no margin. slate-600 is 7.58:1.
   doc.setTextColor(71, 85, 105)
-  // Wrapped to the printable width. This was one long single-line draw, so it
-  // ran off the right edge and was clipped mid-sentence — and the clause that
-  // fell off was "Not an accredited compliance certificate", the one part of
-  // the footer that exists to stop a reader over-trusting the document.
   const footer = `Generated by the ONEOPS monitoring platform for ${opts.orgName}. Values are as recorded by the devices; `
     + `a dash means the platform holds no measurement for that item. Not an accredited compliance certificate.`
   doc.text(doc.splitTextToSize(footer, pageWidth - 28), 14, y)
 
   // Cryptographic audit stamp across all pages
-  // getNumberOfPages() is on the jsPDF instance itself, not on doc.internal
-  // (confirmed in jspdf's own types/index.d.ts). doc.internal only exposes
-  // pageSize/events/scaleFactor et al, so the .internal form was a runtime
-  // TypeError waiting to happen the first time a report spanned >1 page.
   const totalPages = doc.getNumberOfPages()
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i)
@@ -575,8 +762,11 @@ export async function exportIIoTXLSX(
   data: { metrics: IIoTMetricSummary; summaries: DeviceTelemetrySummary[]; alarms: AlarmLogItem[] }
 ) {
   const docHash = opts.documentHash || await calculateDocumentHash(`${opts.orgId}:${opts.orgName}:${opts.days}:${opts.classification || 'INTERNAL'}:${opts.title || ''}:${Date.now()}`)
-  const sheets: Sheet[] = [
-    {
+  const isSelected = (id: string) => !opts.selectedTypes || opts.selectedTypes.length === 0 || opts.selectedTypes.includes(id)
+  const sheets: Sheet[] = []
+
+  if (isSelected('executive') || isSelected('energy')) {
+    sheets.push({
       name: 'Executive_Summary',
       rows: [
         ['ORGANIZATION', opts.orgName],
@@ -599,8 +789,11 @@ export async function exportIIoTXLSX(
         ['Critical Excursions', data.metrics.criticalAlarms, 'Events'],
         ['Mean Time to Resolve (MTTR)', na(data.metrics.mttrMinutes, ' min'), 'Cleared alarms only'],
       ],
-    },
-    {
+    })
+  }
+
+  if (isSelected('health')) {
+    sheets.push({
       name: 'Asset_Health_Analytics',
       rows: [
         ['Device ID', 'Device Name', 'Domain', 'Site Location', 'Health Score', 'Status', 'Parameter', 'Unit', 'Samples', 'Min', 'Avg', 'Max', 'Compliance'],
@@ -620,8 +813,59 @@ export async function exportIIoTXLSX(
           ])
         ),
       ],
-    },
-    {
+    })
+  }
+
+  const pdmDevs = data.summaries.filter((d) => d.pdm)
+  if (isSelected('pdm_diagnostics') && pdmDevs.length > 0) {
+    sheets.push({
+      name: 'PdM_DGA_Diagnostics',
+      rows: [
+        ['Device ID', 'Device Name', 'Site Location', 'Health Score', 'Duval T1 Verdict', 'Hot-Spot Temp (°C)', 'Aging Acceleration (FAA)', 'Degree of Polymerization (DP)', 'Estimated RUL (Years)', 'Paper Moisture (% dry wt)', 'Dielectric Risk Classification', 'CH4 (ppm)', 'C2H4 (ppm)', 'C2H2 (ppm)', 'H2 (ppm)', 'C2H6 (ppm)', 'CO (ppm)'],
+        ...pdmDevs.map((d) => [
+          d.nodeId,
+          d.deviceName,
+          d.location,
+          na(d.healthScore),
+          d.pdm!.dgaVerdict,
+          na(d.pdm!.hotSpotTemp),
+          na(d.pdm!.faa),
+          na(d.pdm!.dpEstimate),
+          na(d.pdm!.rulYears),
+          na(d.pdm!.paperMoisturePct),
+          d.pdm!.moistureRisk || '—',
+          na(d.pdm!.dgaGases?.ch4),
+          na(d.pdm!.dgaGases?.c2h4),
+          na(d.pdm!.dgaGases?.c2h2),
+          na(d.pdm!.dgaGases?.h2),
+          na(d.pdm!.dgaGases?.c2h6),
+          na(d.pdm!.dgaGases?.co),
+        ]),
+      ],
+    })
+  }
+
+  const coldDevs = data.summaries.filter((d) => d.coldchain)
+  if (isSelected('coldchain') && coldDevs.length > 0) {
+    sheets.push({
+      name: 'Cold_Chain_MKT',
+      rows: [
+        ['Device ID', 'Device Name', 'Domain', 'Site Location', 'Mean Kinetic Temp (MKT °C)', 'Excursions Count', 'HACCP Status'],
+        ...coldDevs.map((d) => [
+          d.nodeId,
+          d.deviceName,
+          d.domain,
+          d.location,
+          na(d.coldchain!.mkt),
+          d.coldchain!.excursionsCount,
+          d.coldchain!.excursionsCount === 0 ? 'COMPLIANT' : 'EXCURSIONS DETECTED',
+        ]),
+      ],
+    })
+  }
+
+  if (isSelected('alarm')) {
+    sheets.push({
       name: 'Alarms_Incident_Log',
       rows: [
         ['Alarm ID', 'Device ID', 'Device Name', 'Severity', 'Alarm Event', 'Trigger Value', 'Threshold Limit', 'Raised Timestamp', 'Resolved Timestamp', 'Status', 'Acknowledged By'],
@@ -639,11 +883,11 @@ export async function exportIIoTXLSX(
           a.ackBy || '—',
         ]),
       ],
-    },
-  ]
+    })
+  }
 
   const filename = `${opts.orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_Operations_Report_${opts.days}d_${Date.now()}.xlsx`
-  downloadXLSX(filename, sheets)
+  downloadXLSX(filename, sheets.length ? sheets : [{ name: 'Empty', rows: [['No sections selected']] }])
 }
 
 /**
@@ -654,8 +898,11 @@ export async function exportIIoTCSV(
   data: { metrics: IIoTMetricSummary; summaries: DeviceTelemetrySummary[]; alarms: AlarmLogItem[] }
 ) {
   const docHash = opts.documentHash || await calculateDocumentHash(`${opts.orgId}:${opts.orgName}:${opts.days}:${opts.classification || 'INTERNAL'}:${opts.title || ''}:${Date.now()}`)
-  const sections = [
-    {
+  const isSelected = (id: string) => !opts.selectedTypes || opts.selectedTypes.length === 0 || opts.selectedTypes.includes(id)
+  const sections: { title: string; headers: string[]; rows: (string | number)[][] }[] = []
+
+  if (isSelected('executive') || isSelected('energy')) {
+    sections.push({
       title: `${opts.orgName} - Executive KPI Summary (Last ${opts.days} Days)`,
       headers: ['Metric', 'Value', 'Unit'],
       rows: [
@@ -666,8 +913,11 @@ export async function exportIIoTCSV(
         ['Carbon from metered energy', na(data.metrics.carbonFootprintTCO2e), 'tCO2e'],
         ['Total Alarms', data.metrics.totalAlarms, 'Events'],
       ],
-    },
-    {
+    })
+  }
+
+  if (isSelected('health')) {
+    sections.push({
       title: 'Monitored Assets Telemetry Summary',
       headers: ['Device ID', 'Device Name', 'Domain', 'Site Location', 'Health Score', 'Status', 'Parameter', 'Unit', 'Samples', 'Min', 'Avg', 'Max', 'Compliance'],
       rows: data.summaries.flatMap((dev) =>
@@ -685,8 +935,49 @@ export async function exportIIoTCSV(
           p.compliance === null ? 'NO LIMIT SET' : p.compliance ? 'COMPLIANT' : 'EXCURSION',
         ])
       ),
-    },
-    {
+    })
+  }
+
+  const pdmDevs = data.summaries.filter((d) => d.pdm)
+  if (isSelected('pdm_diagnostics') && pdmDevs.length > 0) {
+    sections.push({
+      title: 'Transformer Predictive Maintenance & DGA Diagnostics (IEEE C57.104 / C57.91)',
+      headers: ['Device ID', 'Device Name', 'Location', 'Health Score', 'Duval T1 Verdict', 'Hot-Spot (°C)', 'Aging (FAA)', 'Insulation DP', 'Est. RUL (Yrs)', 'Paper Moisture %', 'Dielectric Risk'],
+      rows: pdmDevs.map((d) => [
+        d.nodeId,
+        d.deviceName,
+        d.location,
+        na(d.healthScore),
+        d.pdm!.dgaVerdict,
+        na(d.pdm!.hotSpotTemp),
+        na(d.pdm!.faa),
+        na(d.pdm!.dpEstimate),
+        na(d.pdm!.rulYears),
+        na(d.pdm!.paperMoisturePct),
+        d.pdm!.moistureRisk || '—',
+      ]),
+    })
+  }
+
+  const coldDevs = data.summaries.filter((d) => d.coldchain)
+  if (isSelected('coldchain') && coldDevs.length > 0) {
+    sections.push({
+      title: 'Cold-Chain MKT & Thermal Stability Audit (USP <1079> / HACCP)',
+      headers: ['Device ID', 'Device Name', 'Domain', 'Location', 'Mean Kinetic Temp (MKT °C)', 'Excursions Count', 'HACCP Status'],
+      rows: coldDevs.map((d) => [
+        d.nodeId,
+        d.deviceName,
+        d.domain,
+        d.location,
+        na(d.coldchain!.mkt),
+        d.coldchain!.excursionsCount,
+        d.coldchain!.excursionsCount === 0 ? 'COMPLIANT' : 'EXCURSIONS DETECTED',
+      ]),
+    })
+  }
+
+  if (isSelected('alarm')) {
+    sections.push({
       title: 'Alarm Incidents Log',
       headers: ['Device ID', 'Device Name', 'Severity', 'Alarm Event', 'Trigger Value', 'Threshold Limit', 'Raised Timestamp', 'Resolved Timestamp', 'Status', 'Acknowledged By'],
       rows: data.alarms.map((a) => [
@@ -701,15 +992,15 @@ export async function exportIIoTCSV(
         a.status,
         a.ackBy || '—',
       ]),
-    },
-  ]
+    })
+  }
 
   const filename = `${opts.orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_Operations_Report_${opts.days}d_${Date.now()}.csv`
   downloadCSVSections(filename, sections, [
     `# Document Integrity (SHA-256): sha256:${docHash}`,
     `# Security Classification: ${opts.classification || 'INTERNAL USE ONLY'}`,
     `# Aggregation Interval: ${opts.aggregationInterval || '15-Minute Standard Rollup'}`,
-    `# Audit Engine: ONEOPS Certified Ingestion Engine v2.0 (ISO 50001 / GHG Protocol)`,
+    `# Audit Engine: ONEOPS Certified Ingestion Engine v2.0 (ISO 50001 / IEEE C57.104 / GHG Protocol)`,
     `Organization: ${opts.orgName} (${opts.orgId})`,
     opts.siteName ? `Site Scope: ${opts.siteName}` : 'Site Scope: All Sites',
     opts.departmentName ? `Department Scope: ${opts.departmentName}` : 'Department Scope: All Departments',

@@ -192,20 +192,20 @@ const INDUSTRIAL_DOMAINS = [
 // Someone filing one of these reports with a regulator on the strength of
 // those badges would be filing an unbacked claim.
 //
-// MKT (USP) and the grid emission factor ARE implemented and are named as the
-// borrowed published formulae they are — a formula is not an accredited audit.
 const REPORT_SECTIONS = [
   {
     id: 'health',
-    // Merge note: both branches independently removed the Duval-triangle /
-    // hot-spot / thermal-aging claim from this entry. This keeps the other
-    // branch's naming of the specific parameters (they are all genuinely
-    // published and alarmed: hydrogen, oilTemp, moisture) together with what
-    // the Asset_Health_Analytics sheet actually emits for each of them.
     name: 'Asset Health & Oil/DGA Excursion Summary',
     desc: 'Per-asset health score, dissolved hydrogen (H₂), top oil temperature and insulation moisture — min/avg/max with sample counts, and compliance against each device’s own configured limits',
     badge: 'Asset Health',
     icon: '🏥',
+  },
+  {
+    id: 'pdm_diagnostics',
+    name: 'Predictive Maintenance & DGA Diagnostics',
+    desc: 'IEEE C57.104 Duval Triangle 1 fault analysis, IEEE C57.91 Arrhenius paper aging (DP/RUL), and Oommen paper moisture equilibrium',
+    badge: 'IEEE C57.104 / C57.91',
+    icon: '🔬',
   },
   {
     id: 'energy',
@@ -529,15 +529,24 @@ function ReportsPageContent() {
         if (!hasColdChain) return false
         return devices.some((d) => d.domain === 'carbonNode' || d.domain === 'bloodBox')
       }
+      if (sec.id === 'pdm_diagnostics') {
+        const hasTransformers = selectedDomains.some((d) => d === 'transformer')
+        if (!hasTransformers) return false
+        return devices.some((d) => d.domain === 'transformer' || (d as any).deviceType === 'transformer')
+      }
       return true
     })
   }, [selectedDomains, devices])
 
-  // Automatically drop 'coldchain' from selected modules when no cold-chain domains are selected
+  // Automatically drop domain-specific modules when their domains are unselected
   useEffect(() => {
     const hasColdChain = selectedDomains.some((d) => d === 'carbonNode' || d === 'bloodBox')
     if (!hasColdChain) {
       setSelectedSections((prev) => prev.filter((x) => x !== 'coldchain'))
+    }
+    const hasTransformers = selectedDomains.some((d) => d === 'transformer')
+    if (!hasTransformers) {
+      setSelectedSections((prev) => prev.filter((x) => x !== 'pdm_diagnostics'))
     }
   }, [selectedDomains])
 
@@ -2914,8 +2923,122 @@ function ReportsPageContent() {
                 </div>
               </div>
 
+              {/* Transformer Predictive Maintenance & DGA Diagnostics Section */}
+              {selectedSections.includes('pdm_diagnostics') && reportData?.summaries.some((d) => d.pdm) && (
+                <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0d1117]">
+                  <div className="p-3.5 bg-[#0a0e1a] border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={14} className="text-indigo-400" />
+                      <span>Transformer Predictive Maintenance &amp; DGA Diagnostics (IEEE C57.104 / C57.91)</span>
+                    </div>
+                    <span className="text-[11px] text-indigo-300 font-mono">
+                      {reportData.summaries.filter((d) => d.pdm).length} Transformers Analyzed
+                    </span>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#0a0e1a] z-10">
+                        <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase font-semibold">
+                          <th className="py-2.5 px-3 text-left">Transformer</th>
+                          <th className="py-2.5 px-3 text-left">Duval T1 Fault Verdict</th>
+                          <th className="py-2.5 px-3 text-right">Hot-Spot</th>
+                          <th className="py-2.5 px-3 text-right">Aging (FAA)</th>
+                          <th className="py-2.5 px-3 text-right">DP Score</th>
+                          <th className="py-2.5 px-3 text-right">Est. RUL</th>
+                          <th className="py-2.5 px-3 text-right">Paper Moisture</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {reportData.summaries.filter((d) => d.pdm).map((dev) => (
+                          <tr key={dev.nodeId} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3 text-white font-medium">
+                              <div>{dev.deviceName}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{dev.nodeId}</div>
+                            </td>
+                            <td className="py-2 px-3 text-indigo-300 font-semibold">
+                              {dev.pdm!.dgaVerdict}
+                            </td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-300">{na(dev.pdm!.hotSpotTemp, ' °C')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-amber-300">{na(dev.pdm!.faa, 'x')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-emerald-400 font-bold">{na(dev.pdm!.dpEstimate, ' DP')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-white font-bold">{na(dev.pdm!.rulYears, ' Yrs')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-300">{na(dev.pdm!.paperMoisturePct, '%')}</td>
+                            <td className="py-2 px-3 text-center">
+                              <span className={clsx(
+                                'px-2 py-0.5 rounded text-[9px] font-bold',
+                                dev.pdm!.moistureRisk === 'Critically Wet' || dev.pdm!.moistureRisk === 'Wet (Bubble Hazard)'
+                                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  : dev.pdm!.moistureRisk === 'Moderate'
+                                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              )}>
+                                {dev.pdm!.moistureRisk || 'NORMAL'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Cold-Chain MKT & Thermal Stability Section */}
+              {selectedSections.includes('coldchain') && reportData?.summaries.some((d) => d.coldchain) && (
+                <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0d1117]">
+                  <div className="p-3.5 bg-[#0a0e1a] border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <Layers size={14} className="text-sky-400" />
+                      <span>Cold-Chain MKT &amp; Thermal Stability Audit (USP &lt;1079&gt; / HACCP)</span>
+                    </div>
+                    <span className="text-[11px] text-sky-300 font-mono">
+                      {reportData.summaries.filter((d) => d.coldchain).length} Units Logged
+                    </span>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#0a0e1a] z-10">
+                        <tr className="border-b border-slate-800 text-[10px] text-slate-400 uppercase font-semibold">
+                          <th className="py-2.5 px-3 text-left">Cold-Chain Asset</th>
+                          <th className="py-2.5 px-3 text-left">Location</th>
+                          <th className="py-2.5 px-3 text-right">Mean Kinetic Temp (MKT)</th>
+                          <th className="py-2.5 px-3 text-right">Samples</th>
+                          <th className="py-2.5 px-3 text-right">Excursions</th>
+                          <th className="py-2.5 px-3 text-center">HACCP Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {reportData.summaries.filter((d) => d.coldchain).map((dev) => (
+                          <tr key={dev.nodeId} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3 text-white font-medium">
+                              <div>{dev.deviceName}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{dev.nodeId} · {dev.domain}</div>
+                            </td>
+                            <td className="py-2 px-3 text-slate-300">{dev.location}</td>
+                            <td className="py-2 px-3 text-right font-mono text-sky-400 font-bold">{na(dev.coldchain!.mkt, ' °C')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-400">{dev.coldchain!.temperatures.length}</td>
+                            <td className="py-2 px-3 text-right font-mono text-rose-400 font-bold">{dev.coldchain!.excursionsCount}</td>
+                            <td className="py-2 px-3 text-center">
+                              <span className={clsx(
+                                'px-2 py-0.5 rounded text-[9px] font-bold',
+                                dev.coldchain!.excursionsCount > 0
+                                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              )}>
+                                {dev.coldchain!.excursionsCount > 0 ? 'EXCURSIONS' : 'COMPLIANT'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Alarms & Excursions Section */}
-              {reportData?.alarms && reportData.alarms.length > 0 && (
+              {selectedSections.includes('alarm') && reportData?.alarms && reportData.alarms.length > 0 && (
                 <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0d1117]">
                   <div className="p-3.5 bg-[#0a0e1a] border-b border-slate-800 text-xs font-bold text-white flex justify-between items-center">
                     <div className="flex items-center gap-2">

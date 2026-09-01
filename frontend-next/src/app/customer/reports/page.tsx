@@ -74,11 +74,25 @@ const REPORT_SECTIONS = [
     badge: 'Operations',
   },
   {
+    id: 'pdm_diagnostics',
+    name: 'Predictive Maintenance & DGA Diagnostics',
+    desc: 'IEEE C57.104 Duval Triangle 1 fault analysis, IEEE C57.91 Arrhenius paper aging (DP/RUL), and Oommen paper moisture equilibrium',
+    icon: '🔬',
+    badge: 'IEEE C57.104 / C57.91',
+  },
+  {
     id: 'energy',
     name: 'Energy Usage & Carbon',
     desc: 'Electricity consumption (kWh), power factor & Scope 2 GHG',
     icon: '🌱',
     badge: 'ESG Audit',
+  },
+  {
+    id: 'coldchain',
+    name: 'Cold-Chain Temperature Stability',
+    desc: 'Mean kinetic temperature (MKT °C, USP formula) and recorded temperature excursions against configured limits',
+    icon: '❄️',
+    badge: 'MKT (USP)',
   },
   {
     id: 'alarm',
@@ -111,7 +125,14 @@ export default function CustomerReportsPage() {
     return d.toISOString().slice(0, 10)
   })
   const [customEndDate, setCustomEndDate] = useState(() => new Date().toISOString().slice(0, 10))
-  const [selectedSections, setSelectedSections] = useState<string[]>(['health', 'energy', 'alarm', 'executive'])
+  const [selectedSections, setSelectedSections] = useState<string[]>([
+    'health',
+    'pdm_diagnostics',
+    'energy',
+    'coldchain',
+    'alarm',
+    'executive',
+  ])
   const [selectedFormats, setSelectedFormats] = useState<('PDF' | 'XLSX' | 'CSV')[]>(['PDF'])
   const [aggregationInterval, setAggregationInterval] = useState<'raw' | '15m' | '1h' | 'daily'>('15m')
   const [busy, setBusy] = useState(false)
@@ -121,6 +142,18 @@ export default function CustomerReportsPage() {
   // Search & Status filters for preview table
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'alarm' | 'offline'>('all')
+
+  const visibleSections = useMemo(() => {
+    return REPORT_SECTIONS.filter((sec) => {
+      if (sec.id === 'coldchain') {
+        return devices.some((d) => d.domain === 'carbonNode' || d.domain === 'bloodBox')
+      }
+      if (sec.id === 'pdm_diagnostics') {
+        return devices.some((d) => d.domain === 'transformer' || (d as any).deviceType === 'transformer')
+      }
+      return true
+    })
+  }, [devices])
 
   const effectiveDays = useMemo(() => {
     if (!isCustomRange) return days
@@ -415,12 +448,12 @@ export default function CustomerReportsPage() {
         <div>
           <div className="flex items-center justify-between mb-2">
             <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-              Include Report Modules ({selectedSections.length} of {REPORT_SECTIONS.length})
+              Include Report Modules ({selectedSections.filter((s) => visibleSections.some((v) => v.id === s)).length} of {visibleSections.length})
             </label>
             <div className="flex gap-2 text-[10px]">
               <button
                 type="button"
-                onClick={() => setSelectedSections(REPORT_SECTIONS.map((s) => s.id))}
+                onClick={() => setSelectedSections(visibleSections.map((s) => s.id))}
                 className="text-indigo-400 hover:text-indigo-300 font-semibold"
               >
                 Select All
@@ -436,7 +469,7 @@ export default function CustomerReportsPage() {
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {REPORT_SECTIONS.map((sec) => {
+            {visibleSections.map((sec) => {
               const on = selectedSections.includes(sec.id)
               return (
                 <div
@@ -760,6 +793,118 @@ export default function CustomerReportsPage() {
                   </table>
                 </div>
               </div>
+
+              {/* Transformer Predictive Maintenance & DGA Diagnostics Section */}
+              {selectedSections.includes('pdm_diagnostics') && reportData?.summaries.some((d) => d.pdm) && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck size={13} className="text-indigo-400" />
+                      <span>Transformer Predictive Maintenance &amp; DGA Diagnostics (IEEE C57.104 / C57.91)</span>
+                    </h4>
+                    <span className="text-[11px] text-indigo-300 font-mono">
+                      {reportData.summaries.filter((d) => d.pdm).length} Transformers Analyzed
+                    </span>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 overflow-hidden max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#0a0e1a] text-slate-400 border-b border-slate-800">
+                        <tr>
+                          <th className="py-2 px-3 text-left">Transformer</th>
+                          <th className="py-2 px-3 text-left">Duval Fault Verdict</th>
+                          <th className="py-2 px-3 text-right">Hot-Spot</th>
+                          <th className="py-2 px-3 text-right">Aging (FAA)</th>
+                          <th className="py-2 px-3 text-right">DP Score</th>
+                          <th className="py-2 px-3 text-right">Est. RUL</th>
+                          <th className="py-2 px-3 text-right">Paper Moisture</th>
+                          <th className="py-2 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 bg-[#0d1117]">
+                        {reportData.summaries.filter((d) => d.pdm).map((s) => (
+                          <tr key={s.nodeId} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3 font-semibold text-white">
+                              <div>{s.deviceName}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{s.nodeId}</div>
+                            </td>
+                            <td className="py-2 px-3 text-indigo-300 font-semibold">{s.pdm!.dgaVerdict}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-300">{na(s.pdm!.hotSpotTemp, ' °C')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-amber-300">{na(s.pdm!.faa, 'x')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-emerald-400 font-bold">{na(s.pdm!.dpEstimate, ' DP')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-white font-bold">{na(s.pdm!.rulYears, ' Yrs')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-300">{na(s.pdm!.paperMoisturePct, '%')}</td>
+                            <td className="py-2 px-3 text-center">
+                              <span className={clsx(
+                                'px-2 py-0.5 rounded text-[9px] font-bold',
+                                s.pdm!.moistureRisk === 'Critically Wet' || s.pdm!.moistureRisk === 'Wet (Bubble Hazard)'
+                                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  : s.pdm!.moistureRisk === 'Moderate'
+                                  ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              )}>
+                                {s.pdm!.moistureRisk || 'NORMAL'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Cold-Chain MKT Stability Section */}
+              {selectedSections.includes('coldchain') && reportData?.summaries.some((d) => d.coldchain) && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-sky-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <ShieldCheck size={13} className="text-sky-400" />
+                      <span>Cold-Chain MKT &amp; Thermal Stability (USP &lt;1079&gt; / HACCP)</span>
+                    </h4>
+                    <span className="text-[11px] text-sky-300 font-mono">
+                      {reportData.summaries.filter((d) => d.coldchain).length} Units Logged
+                    </span>
+                  </div>
+                  <div className="rounded-lg border border-slate-800 overflow-hidden max-h-60 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="sticky top-0 bg-[#0a0e1a] text-slate-400 border-b border-slate-800">
+                        <tr>
+                          <th className="py-2 px-3 text-left">Asset</th>
+                          <th className="py-2 px-3 text-left">Location</th>
+                          <th className="py-2 px-3 text-right">Mean Kinetic Temp (MKT)</th>
+                          <th className="py-2 px-3 text-right">Samples</th>
+                          <th className="py-2 px-3 text-right">Excursions</th>
+                          <th className="py-2 px-3 text-center">HACCP Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60 bg-[#0d1117]">
+                        {reportData.summaries.filter((d) => d.coldchain).map((s) => (
+                          <tr key={s.nodeId} className="hover:bg-white/[0.02]">
+                            <td className="py-2 px-3 font-semibold text-white">
+                              <div>{s.deviceName}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{s.nodeId}</div>
+                            </td>
+                            <td className="py-2 px-3 text-slate-300">{s.location}</td>
+                            <td className="py-2 px-3 text-right font-mono text-sky-400 font-bold">{na(s.coldchain!.mkt, ' °C')}</td>
+                            <td className="py-2 px-3 text-right font-mono text-slate-400">{s.coldchain!.temperatures.length}</td>
+                            <td className="py-2 px-3 text-right font-mono text-rose-400 font-bold">{s.coldchain!.excursionsCount}</td>
+                            <td className="py-2 px-3 text-center">
+                              <span className={clsx(
+                                'px-2 py-0.5 rounded text-[9px] font-bold',
+                                s.coldchain!.excursionsCount > 0
+                                  ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                  : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                              )}>
+                                {s.coldchain!.excursionsCount > 0 ? 'EXCURSIONS' : 'COMPLIANT'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Modal Footer */}
