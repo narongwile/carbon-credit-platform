@@ -2002,23 +2002,23 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
       try {
         if (c.channel === 'email') {
           const mc = await global.get('mailConfig')();
-          if (!mc.transport || !c.target) continue;
+          if (!mc.transport || !c.target || !c.target.includes('@')) continue;
           await mc.transport.sendMail({ from: mc.from, to: c.target, subject: emailSubject, text: emailPlain, html: emailTpl.format === 'text' ? undefined : emailHtml(__linkFor('admin')) });
         } else if (c.channel === 'line') {
-          const raw = String(c.target || nc.lineToken || '');
+          const raw = String(c.target || (c.isPlatformFallback ? nc.lineToken : '') || '').trim();
           const at = raw.lastIndexOf('@');
-          const tok = at > 0 ? raw.slice(0, at) : raw;
+          const tok = at > 0 ? raw.slice(0, at) : (c.isPlatformFallback ? nc.lineToken : raw);
           const to  = at > 0 ? raw.slice(at + 1) : '';
           if (tok && to) await fetch('https://api.line.me/v2/bot/message/push',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},body:JSON.stringify({to,messages:[__flex(__linkFor('admin'))]})});
-          else if (tok) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
+          else if (tok && c.isPlatformFallback) await fetch('https://notify-api.line.me/api/notify',{method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/x-www-form-urlencoded'},body:'message='+encodeURIComponent(' '+text)});
         } else if (c.channel === 'telegram') {
-          const raw = String(c.target || nc.telegramChatId || '').trim();
+          const raw = String(c.target || (c.isPlatformFallback ? nc.telegramChatId : '') || '').trim();
           const at = raw.lastIndexOf('@');
           const tok = at > 0 ? raw.slice(0, at) : (nc.telegramToken || (raw.includes(':') ? raw : ''));
-          const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? (nc.telegramChatId || '') : raw);
+          const chat = at > 0 ? raw.slice(at + 1) : (raw.includes(':') ? '' : (c.isPlatformFallback ? (nc.telegramChatId || '') : raw));
           if (tok && chat) await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__tgBody(chat, __linkFor('admin')))});
         } else if (c.channel === 'googlechat') {
-          const url = c.target || nc.googleChatWebhook;
+          const url = (c.target && c.target.startsWith('http')) ? c.target : (c.isPlatformFallback ? nc.googleChatWebhook : '');
           if (url) await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(__gchat(__linkFor('admin')))});
         } else if (c.channel === 'webhook') {
           const url = (c.target && c.target.startsWith('http')) ? c.target : '';
@@ -2420,7 +2420,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
       try {
         const at = rawTg.lastIndexOf('@');
         let tok = at > 0 ? rawTg.slice(0, at) : (nc.telegramToken || (rawTg.includes(':') ? rawTg : ''));
-        let chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? (nc.telegramChatId || '') : rawTg);
+        let chat = at > 0 ? rawTg.slice(at + 1) : (rawTg.includes(':') ? '' : rawTg);
         if ((!tok || !chat) && (e.orgId || e.org_id)) {
           const oid = e.orgId || e.org_id;
           let orgTgRows = [];
@@ -2446,7 +2446,6 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
           }
         }
         if (!tok && nc.telegramToken) tok = nc.telegramToken.trim();
-        if (!chat && nc.telegramChatId) chat = nc.telegramChatId.trim();
         if (tok && chat) {
           await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{
             method:'POST',
@@ -2565,8 +2564,7 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
           }
           if (orgGcRows.length && orgGcRows[0].target) rawGchat = orgGcRows[0].target.trim();
         }
-        if (!rawGchat && nc.googleChatWebhook) rawGchat = nc.googleChatWebhook.trim();
-        if (rawGchat) {
+        if (rawGchat && rawGchat.startsWith('http')) {
           const personalGchat = {
             text: subject,
             cardsV2: [{
@@ -3413,7 +3411,7 @@ if(!uid) return __err(401,'authentication required');
     try{
       const at=rawTg.lastIndexOf('@');
       let tok=at>0?rawTg.slice(0,at):(nc.telegramToken||(rawTg.includes(':')?rawTg:''));
-      let chat=at>0?rawTg.slice(at+1):(rawTg.includes(':')?(nc.telegramChatId||''):rawTg);
+      let chat=at>0?rawTg.slice(at+1):(rawTg.includes(':')?'':rawTg);
       if(!tok&&orgId){
         try{
           const [orgTg]=await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='telegram' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') AND target LIKE '%@%' ORDER BY id LIMIT 1",[orgId]);
@@ -3425,7 +3423,6 @@ if(!uid) return __err(401,'authentication required');
         }catch(_){}
       }
       if(!tok&&nc.telegramToken) tok=nc.telegramToken.trim();
-      if(!chat&&nc.telegramChatId) chat=nc.telegramChatId.trim();
       if(tok&&chat){
         const r=await fetch('https://api.telegram.org/bot'+tok+'/sendMessage',{
           method:'POST',
@@ -3455,8 +3452,7 @@ if(!uid) return __err(401,'authentication required');
           if(orgGc.length&&orgGc[0].target) rawGchat=orgGc[0].target.trim();
         }catch(_){}
       }
-      if(!rawGchat&&nc.googleChatWebhook) rawGchat=nc.googleChatWebhook.trim();
-      if(rawGchat){
+      if(rawGchat && rawGchat.startsWith('http')){
         const r=await fetch(rawGchat,{
           method:'POST',
           headers:{'content-type':'application/json'},
