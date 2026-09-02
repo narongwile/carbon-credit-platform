@@ -355,7 +355,12 @@ function ReportsPageContent() {
     }
   }, [orgDomains])
 
-  const [selectedSite, setSelectedSite] = useState<string>(urlSiteId || 'all')
+  // A const, not state: 396c647e streamlined the Target Scope picker to three
+  // levels (All Fleet / Department / Selected Devices) and dropped the Site
+  // button, so nothing calls a setter any more. Declaring it as state left
+  // setSelectedSite computed and never used, and — more to the point — hid
+  // that the value is now fixed for the life of the page.
+  const selectedSite: string = urlSiteId || 'all'
 
   // Keep the URL in sync with the filters, not just read it once on mount.
   // useRouter() was imported and called here and its result never used, so
@@ -386,7 +391,14 @@ function ReportsPageContent() {
   const [generating, setGenerating] = useState(false)
 
   // Custom Range & Generator Scoping
-  const [generatorScope, setGeneratorScope] = useState<'all' | 'site' | 'department' | 'device'>('all')
+  // Initialised from the URL so a ?siteId= deep link still scopes the report.
+  // The site-filtering code below all survived 396c647e, but 'site' became
+  // unreachable — the picker no longer offers it and nothing else assigns it —
+  // so an existing bookmarked site report silently produced an ALL-FLEET one
+  // instead, over more assets than the link asked for, while the page went on
+  // accepting ?siteId= and echoing it back into the URL as if it had been
+  // honoured. Clicking any scope button still switches away normally.
+  const [generatorScope, setGeneratorScope] = useState<'all' | 'site' | 'department' | 'device'>(urlSiteId ? 'site' : 'all')
   const [generatorDeviceIds, setGeneratorDeviceIds] = useState<string[]>([])
   const [isCustomRange, setIsCustomRange] = useState(false)
   const [customStartDate, setCustomStartDate] = useState(() => {

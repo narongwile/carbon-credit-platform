@@ -1988,14 +1988,14 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
     const _isBlocked = (ch) => orgDisabledChannels.has(ch) || channels.some(c => c.channel === ch);
     if (!orgConfiguredChannels.size) {
       // If the org has NEVER configured notification_channels at all, use platform defaults
-      if (nc.lineToken) channels.push({ channel:'line', target:'' });
-      if ((nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });
-      if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
+      if (nc.lineToken) channels.push({ channel:'line', target:'', isPlatformFallback:true });
+      if ((nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'', isPlatformFallback:true });
+      if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'', isPlatformFallback:true });
     } else {
       // Org has configured channels: only fall back for channels that are NOT in DB at all (neither enabled nor disabled)
-      if (!_isBlocked('line') && !orgConfiguredChannels.has('line') && nc.lineToken) channels.push({ channel:'line', target:'' });
-      if (!_isBlocked('telegram') && !orgConfiguredChannels.has('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });
-      if (!_isBlocked('googlechat') && !orgConfiguredChannels.has('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
+      if (!_isBlocked('line') && !orgConfiguredChannels.has('line') && nc.lineToken) channels.push({ channel:'line', target:'', isPlatformFallback:true });
+      if (!_isBlocked('telegram') && !orgConfiguredChannels.has('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'', isPlatformFallback:true });
+      if (!_isBlocked('googlechat') && !orgConfiguredChannels.has('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'', isPlatformFallback:true });
     }
     for (const c of channels) {
       if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL') continue;
@@ -2549,21 +2549,18 @@ const tgText = '<b>' + __sevEmoji + ' [Your Personal Alert · ' + __esc(topSever
     let rawGchat = String(pf.googleChatWebhook || pf.googleChatApi || (dbGchat ? dbGchat.target : '') || '').trim();
     if (sel.googlechat) {
       try {
-        if (!rawGchat && (e.orgId || e.org_id)) {
-          const oid = e.orgId || e.org_id;
-          let orgGcRows = [];
-          try {
-            const [r1] = await tenantPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='googlechat' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
-            orgGcRows = r1;
-          } catch(_) {}
-          if (!orgGcRows.length) {
-            try {
-              const [r2] = await controlPool.query("SELECT target FROM notification_channels WHERE org_id=? AND channel='googlechat' AND enabled=1 AND department_id IS NULL AND (user_id IS NULL OR user_id='') ORDER BY id LIMIT 1", [oid]);
-              orgGcRows = r2;
-            } catch(_) {}
-          }
-          if (orgGcRows.length && orgGcRows[0].target) rawGchat = orgGcRows[0].target.trim();
-        }
+        // NO org-level fallback for Google Chat on the personal path.
+        //
+        // Telegram and LINE above fall back to the ORG's row for the bot TOKEN
+        // only, and still deliver to the user's own chat id — the org's bot
+        // messaging that one person. A Google Chat webhook has no such split:
+        // the target IS a room address, so falling back to the org's webhook
+        // posts this user's PRIVATE threshold breach into the shared org room,
+        // for everyone to read. That is the same leak that moved personal
+        // events out of alarm_events (migrate-v59); there is no way to derive a
+        // personal destination from a shared room URL, so the fallback cannot
+        // be made safe and is simply absent. No personal webhook configured
+        // means no Google Chat for that user's personal alarm.
         if (rawGchat && rawGchat.startsWith('http')) {
           const personalGchat = {
             text: subject,

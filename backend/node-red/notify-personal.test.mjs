@@ -182,8 +182,25 @@ const fn = flows.find(n => n.id === 'notifypersonal').func
   console.log('PASS - Case 3: the same channels do fire on a genuine CRITICAL')
 }
 
-// Test Case 4: Default fallback when alertChannels[nodeId] is not yet customized in user_prefs,
-// and platform fallback for Google Chat & Telegram credentials.
+// Test Case 4: a fresh user (no alertChannels yet) gets Email by default, and
+// a personal breach NEVER reaches a shared destination.
+//
+// This case used to assert the opposite — that a personal alarm falls back to
+// the platform Google Chat webhook and the platform Telegram chat id. That is
+// a leak, not a feature: a personal threshold is private to one user ("it does
+// not change the device's official alarm state that others see"), and both of
+// those destinations belong to the PLATFORM OPERATOR, not the recipient. The
+// test was written from the implementation instead of from the privacy rule,
+// so it passed while publishing every personal breach to a third party.
+//
+// Email is different and stays: u.email IS the user's own address, so it is a
+// personal destination, not a shared one.
+//
+// Telegram and LINE may still take the org row's BOT TOKEN as a fallback —
+// that only changes which bot sends, while the destination stays the user's
+// own chat id. Google Chat has no such split (its target is a room URL, so
+// there is no way to address one person through it), which is why the personal
+// path has no Google Chat fallback at all.
 {
   const posts = [], mails = []
   const userFresh = [
@@ -219,15 +236,66 @@ const fn = flows.find(n => n.id === 'notifypersonal').func
     console.error('FAIL - Case 4: Fresh user with undefined alertChannels did not receive Email by default')
     process.exit(1)
   }
-  if (!posts.some(p => p.url === 'https://chat.googleapis.com/v1/spaces/platform_space')) {
-    console.error('FAIL - Case 4: Personal alarm did not fall back to platform Google Chat webhook')
+  if (posts.some(p => p.url === 'https://chat.googleapis.com/v1/spaces/platform_space')) {
+    console.error('FAIL - Case 4: a personal breach was posted to the PLATFORM Google Chat room')
     process.exit(1)
   }
-  if (!posts.some(p => p.url.includes('/botPLAT_BOT_TOKEN/sendMessage') && String(p.body).includes('"chat_id":"PLAT_CHAT_ID"'))) {
-    console.error('FAIL - Case 4: Personal alarm did not fall back to platform Telegram credentials')
+  if (posts.some(p => String(p.body).includes('"chat_id":"PLAT_CHAT_ID"'))) {
+    console.error('FAIL - Case 4: a personal breach was sent to the PLATFORM Telegram chat')
     process.exit(1)
   }
-  console.log('PASS - Case 4: Fresh user defaults & platform credentials fallback work cleanly')
+  console.log('PASS - Case 4: fresh user gets Email; no personal breach reaches a platform destination')
+}
+
+// Test Case 5: a personal breach must not be posted into the ORG's shared
+// Google Chat room either.
+//
+// The personal path used to fall back to the org's googlechat row when the
+// user had no personal webhook. Telegram and LINE do something that LOOKS
+// similar but is not: they take only the org's BOT TOKEN and still deliver to
+// the user's own chat id. A Google Chat webhook is a ROOM ADDRESS, so the same
+// fallback published one user's private threshold breach into the shared org
+// room for everyone to read — the same class of leak that moved personal
+// events out of alarm_events (migrate-v59).
+{
+  const posts = [], mails = []
+  const user5 = [
+    { id: 'u-5', email: 'solo@example.com', role: 'viewer', prefs: JSON.stringify({ alertChannels: { 'tr-001': { email: true, googlechat: true } } }) }
+  ]
+  const pool = { query: async (sql) => {
+    if (sql.includes('FROM users u LEFT JOIN user_prefs')) return [user5]
+    // No PERSONAL channel row for this user...
+    if (sql.includes('FROM notification_channels WHERE user_id=?')) return [[]]
+    // ...but the ORG has a shared Google Chat room configured.
+    if (sql.includes("channel='googlechat'")) return [[{ target: 'https://chat.googleapis.com/v1/spaces/ORG_SHARED_ROOM' }]]
+    return [[]]
+  }}
+  const globalCtx = { get: (k) => ({
+    pool: pool,
+    resolvePool: () => pool,
+    mailConfig: async () => ({ from: 'noreply@x', transport: { sendMail: async (m) => { mails.push(m) } } }),
+    notifyConfig: async () => ({}),
+  }[k]) }
+  const node = { warn: () => {}, error: () => {} }
+  const fetchMock = async (url, opt) => { posts.push({ url, body: opt?.body }); return { ok: true } }
+  const msg = { payload: [{
+    nodeId: 'tr-001', orgId: 'org-1', personalUserId: 'u-5', paramKey: 'oilTemp',
+    paramLabel: 'Oil Temperature', value: 92, unit: '\u00b0C', threshold: 85, severity: 'WARNING', time: new Date(0).toISOString()
+  }]}
+
+  new Function('env', 'node', 'global', 'msg', 'fetch', fn)({ get: () => '' }, node, globalCtx, msg, fetchMock)
+  await new Promise(r => setTimeout(r, 200))
+
+  if (posts.some(p => p.url === 'https://chat.googleapis.com/v1/spaces/ORG_SHARED_ROOM')) {
+    console.error('FAIL - Case 5: a personal breach was posted into the ORG shared Google Chat room')
+    process.exit(1)
+  }
+  // The user's own channel must still work — this must not be "nothing sends".
+  if (!mails.some(m => m.to === 'solo@example.com')) {
+    console.error('FAIL - Case 5: the user stopped receiving their own personal alert entirely')
+    process.exit(1)
+  }
+  console.log('PASS - Case 5: no personal breach reaches the org shared Google Chat room')
 }
 
 console.log('All Personal Alarm coverage tests (Email, Telegram, LINE, Google Chat) passed!')

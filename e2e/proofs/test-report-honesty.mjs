@@ -10,8 +10,21 @@ let pass = 0, fail = 0;
 const t = (name, ok, detail='') => { console.log(`${ok?'PASS':'FAIL'} ${name}${detail?'  '+detail:''}`); ok?pass++:fail++; };
 
 // The exact fabricated constants that used to be printed as measurements.
+//
+// Matched on a NUMBER boundary, not as a bare substring. '65.2' as a substring
+// also matches inside '365.25' — the days-per-year term in the RUL conversion
+// `remainingHours / (365.25 * 24)` — so this reported a fabricated measurement
+// against a correct astronomical constant. A false positive here is expensive:
+// it costs the next reader the time to disprove it, and it teaches them to
+// distrust the gate.
 const GHOSTS = ['42.5','65.2','84.1','72.8','91.4','228.4','231.5','234.8','92.4°C','90.0°C','Duty Engineer','Substation 1'];
-for (const g of GHOSTS) t(`no fabricated value ${JSON.stringify(g)}`, !src.includes(g));
+for (const g of GHOSTS) {
+  const numeric = /^[\d.]+$/.test(g);
+  const re = numeric
+    ? new RegExp(`(?<![\\d.])${g.replace(/\./g, '\\.')}(?![\\d.])`)
+    : new RegExp(g.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  t(`no fabricated value ${JSON.stringify(g)}`, !re.test(src));
+}
 
 t('no alarm-count floors (|| 2 / || 1)', !/alarms\.length \|\| 2|\|\| 1\b/.test(src));
 t('no hardcoded MTTR of 35', !/mttrMinutes = 35/.test(src));
@@ -46,18 +59,64 @@ t('no "certified" claim left in generator footer', !/certified by/.test(src));
 // This is checked on the UI copy, not the generator: the lie was never in the
 // maths, it was in what the screen promised the maths would do.
 // ---------------------------------------------------------------------------
+// Still unimplemented — grep the generator and there is nothing to find, so
+// the UI must not name them at all.
 const PHANTOM_ANALYSES = [
-  ['Duval triangle', /duval/i],
   ['thermal aging factor', /aging factor/i],
   ['IEEE 519 harmonic analysis', /IEEE ?519/i],
   ['IEC 60076 conformance', /IEC ?60076/i],
-  ['IEEE C57.104 conformance', /C57\.?104/i],
   ['FDA 21 CFR conformance', /21 ?CFR/i],
 ];
 for (const [label, re] of PHANTOM_ANALYSES) {
   t(`admin reports page does not advertise ${label}`, !re.test(adm));
   t(`customer reports page does not advertise ${label}`, !re.test(cus));
 }
+
+// Duval Triangle 1 and the C57.91 aging model USED to be in the list above.
+// 2189cf43 actually implemented them, so naming the method is now truthful and
+// the old assertion was pinning the UI to a stale fact.
+//
+// The permission is tied to the implementation rather than simply granted: the
+// UI may name one of these only while the generator still contains the
+// function that computes it. Delete the maths and the advertisement becomes a
+// phantom again, and this fails.
+const BACKED_ANALYSES = [
+  ['Duval Triangle 1', /duval/i, /function diagnoseDuvalTriangle1\s*\(/],
+  ['IEEE C57.91 paper aging', /C57\.?91/i, /arrhenius/i],
+];
+for (const [label, uiRe, implRe] of BACKED_ANALYSES) {
+  const advertised = uiRe.test(adm) || uiRe.test(cus);
+  t(`${label} is implemented in the generator if the UI names it`,
+    !advertised || implRe.test(src),
+    advertised ? 'the UI advertises it — the generator must compute it' : 'not advertised');
+}
+
+// A DGA verdict must never be produced for an asset with no gas sensors. The
+// studios had exactly this problem: catalogue constants substituted for
+// missing channels, rendered indistinguishably from measurements, then turned
+// into an engineering verdict.
+t('the DGA verdict is gated on the asset actually reporting gases',
+  /hasDGA \? diagnoseDuvalTriangle1\([^)]*\) : '/.test(src),
+  'without the guard, a transformer with no DGA sensor gets an invented fault type');
+
+// ---------------------------------------------------------------------------
+// Implementing a published formula is not conformance to the standard that
+// publishes it, and it is certainly not certification. This distinction is the
+// whole point: the maths may be named, the accreditation may not.
+//
+// The exported artifact header carried
+//   "# Audit Engine: ONEOPS Certified Ingestion Engine v2.0
+//    (ISO 50001 / IEEE C57.104 / GHG Protocol)"
+// — printed into a document an auditor may read. Nothing there is certified by
+// anyone, ISO 50001 appeared nowhere else in the file, and the module's own
+// header disclaims the GHG Protocol.
+// ---------------------------------------------------------------------------
+t('no artifact claims to be a CERTIFIED engine',
+  !/Certified Ingestion Engine/i.test(src));
+t('no artifact claims ISO 50001, which is implemented nowhere',
+  !/50001/.test(src));
+t('the exported header states that no conformance is asserted',
+  /Conformance: none asserted/.test(src));
 
 // The generator genuinely implements these two published formulae, so the UI
 // is allowed to name them — this asserts the honest copy stayed, guarding the

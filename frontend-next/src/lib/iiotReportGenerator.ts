@@ -7,11 +7,19 @@
 // readings aggregate, real alarm history, and thresholds from each device's own
 // configured limits.
 //
-// It does NOT implement or certify against IEEE C57.104, IEC 60076, IEEE 519,
+// It CERTIFIES against nothing. It does not implement IEC 60076, IEEE 519,
 // HACCP/GDP/21 CFR Part 11 or the GHG Protocol, and this header used to claim
-// all five. Two helpers below borrow published formulae — MKT (USP) and a grid
-// emission factor — and are labelled as such where they are used, but a
-// formula is not an accredited audit. Overstating that on an artifact someone
+// all of them.
+//
+// It DOES now implement several published formulae, and this list has to stay
+// accurate in both directions — a disclaimer that denies working code is as
+// misleading as a badge that invents it: Duval Triangle 1 fault diagnosis
+// (diagnoseDuvalTriangle1, IEC 60599 / IEEE C57.104 Annex), Arrhenius paper
+// aging and DP/RUL (IEEE C57.91), Oommen paper-moisture equilibrium, MKT
+// (USP <1160>) and a grid emission factor. Each is labelled where it is used,
+// and the DGA verdict is gated on hasDGA so a transformer with no gas sensors
+// gets "No DGA Sensor", never an invented fault. But a formula is not an
+// accredited audit. Overstating that on an artifact someone
 // files with a regulator is a liability, not a feature.
 // ---------------------------------------------------------------------------
 
@@ -1000,7 +1008,15 @@ export async function exportIIoTCSV(
     `# Document Integrity (SHA-256): sha256:${docHash}`,
     `# Security Classification: ${opts.classification || 'INTERNAL USE ONLY'}`,
     `# Aggregation Interval: ${opts.aggregationInterval || '15-Minute Standard Rollup'}`,
-    `# Audit Engine: ONEOPS Certified Ingestion Engine v2.0 (ISO 50001 / IEEE C57.104 / GHG Protocol)`,
+    // Methods applied, not certifications held. The previous line read
+    // "ONEOPS Certified Ingestion Engine v2.0 (ISO 50001 / IEEE C57.104 / GHG
+    // Protocol)" — printed into the header of an exported artifact an auditor
+    // may read. Nothing here is certified by anyone; ISO 50001 appears nowhere
+    // else in this file, and this module's own header disclaims the GHG
+    // Protocol. Implementing a published formula is not conformance to the
+    // standard that publishes it, and only the formulae are ours to claim.
+    `# Analysis Methods: Duval Triangle 1 (IEC 60599 / IEEE C57.104 Annex), Arrhenius paper aging (IEEE C57.91), Oommen moisture equilibrium, MKT (USP <1160>)`,
+    `# Conformance: none asserted — this document is not a certified or accredited audit`,
     `Organization: ${opts.orgName} (${opts.orgId})`,
     opts.siteName ? `Site Scope: ${opts.siteName}` : 'Site Scope: All Sites',
     opts.departmentName ? `Department Scope: ${opts.departmentName}` : 'Department Scope: All Departments',
