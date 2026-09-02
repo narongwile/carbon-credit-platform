@@ -1836,9 +1836,6 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
                 <div className="flex items-center gap-2">
                   <ShieldCheck size={18} className="text-indigo-400" />
                   <h3 className="text-sm font-bold text-white">Predictive Maintenance &amp; Asset Intelligence Studio</h3>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-500/30 font-mono">
-                    Tier-1 Advanced IIoT
-                  </span>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <button
                       onClick={() => setShowPdmStudioModal(true)}
