@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { getSession } from './auth'
+import { api } from './api'
 
 export type AuditAction =
   | 'THRESHOLD_CHANGE'
@@ -286,5 +287,22 @@ export async function recordAuditAction(params: {
   }
 
   useAuditStore.getState().addRecord(record)
+
+  // Persist to server-side MySQL audit trail ledger (21 CFR Part 11 / ISA-84)
+  if (typeof window !== 'undefined') {
+    const session = getSession()
+    const orgId = session?.orgId
+    if (orgId) {
+      api.postAuditLog(orgId, {
+        action: params.action,
+        target: params.target,
+        before: params.before,
+        after: params.after,
+        justification: params.justification,
+        workOrderId: params.workOrderId,
+      }).catch(err => console.warn('Server audit sync fallback:', err))
+    }
+  }
+
   return record
 }

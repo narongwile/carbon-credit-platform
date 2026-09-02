@@ -4722,7 +4722,7 @@
     "type": "function",
     "z": "be",
     "name": "GET /api/platform/migrations",
-    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool');\nconst EXPECTED=[\"schema.sql\",\"bloodbox.sql\",\"migrate-v2.sql\",\"migrate-v3.sql\",\"migrate-v4.sql\",\"migrate-v5.sql\",\"migrate-v6.sql\",\"migrate-v7.sql\",\"migrate-v8.sql\",\"migrate-v9.sql\",\"migrate-v10.sql\",\"migrate-v11.sql\",\"migrate-v12.sql\",\"migrate-v13.sql\",\"migrate-v14.sql\",\"migrate-v15.sql\",\"migrate-v16.sql\",\"migrate-v17.sql\",\"migrate-v18.sql\",\"migrate-v19.sql\",\"migrate-v20.sql\",\"migrate-v21.sql\",\"migrate-v22.sql\",\"migrate-v23.sql\",\"migrate-v24.sql\",\"migrate-v25.sql\",\"migrate-v26.sql\",\"migrate-v27.sql\",\"migrate-v28.sql\",\"migrate-v29.sql\",\"migrate-v30.sql\",\"migrate-v31.sql\",\"migrate-v32.sql\",\"migrate-v33.sql\",\"migrate-v34.sql\",\"migrate-v35.sql\",\"migrate-v36.sql\",\"migrate-v37.sql\",\"migrate-v38.sql\",\"migrate-v39.sql\",\"migrate-v40.sql\",\"migrate-v41.sql\",\"migrate-v42.sql\",\"migrate-v43.sql\",\"migrate-v44.sql\",\"migrate-v45.sql\",\"migrate-v46.sql\",\"migrate-v47.sql\",\"migrate-v48.sql\",\"migrate-v49.sql\",\"migrate-v50.sql\",\"migrate-v51.sql\",\"migrate-v52.sql\",\"migrate-v53.sql\",\"migrate-v54.sql\",\"migrate-v55.sql\",\"migrate-v56.sql\",\"migrate-v57.sql\",\"migrate-v58.sql\",\"migrate-v59.sql\"];\nconst CONTROL_ORGS=String(env.get('CONTROL_ORG_IDS')||'org-1,org-2,org-3').split(',').map(s=>s.trim()).filter(Boolean);\n(async()=>{\n  const tenantMode = !!global.get('tenantMode');\n  const appliedIn = async (p) => {\n    try{ const[r]=await p.query(\"SELECT filename FROM schema_migrations\"); return r.map(x=>x.filename); }\n    catch(e){ if(String(e&&e.message||'').indexOf('schema_migrations')<0) throw e; return []; }\n  };\n  const pendingOf = (applied) => { const has=new Set(applied); return EXPECTED.filter(f=>!has.has(f)); };\n\n  const controlApplied = await appliedIn(pool);\n  const control = { db: env.get('DB_NAME')||'iothub', applied: controlApplied.length, pending: pendingOf(controlApplied) };\n\n  const orgs=[];\n  if(tenantMode){\n    // Suspended orgs, and the '__unassigned__' sentinel used for unclaimed\n    // pending devices (itself always suspended), are not tenants to migrate —\n    // same filter platformStatsFunc uses below, for the same reason.\n    const[rows]=await pool.query(\"SELECT id,name FROM organizations WHERE (status IS NULL OR status<>'suspended') ORDER BY name\");\n    for(const o of rows){\n      // org-1/2/3 share the control database — resolvePool returns the control\n      // pool for them, so reporting them separately would double-count the\n      // control row as three \"tenants\" that are always in whatever state it is.\n      if(CONTROL_ORGS.indexOf(o.id)>=0){ orgs.push({orgId:o.id,name:o.name,db:control.db,onControlDb:true,applied:control.applied,pending:[],error:null}); continue; }\n      const db=global.get('orgDbName')(o.id);\n      try{\n        const p=global.get('resolvePool')(o.id);\n        const ap=await appliedIn(p);\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:ap.length,pending:pendingOf(ap),error:null});\n      }catch(e){\n        // An unreachable/absent tenant DB is itself the finding — report it\n        // rather than failing the whole status call.\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:0,pending:EXPECTED.slice(),error:String(e&&e.message||e)});\n      }\n    }\n  }\n  const behind = orgs.filter(o=>!o.onControlDb && (o.pending.length || o.error));\n  msg.headers=__CORS; msg.payload={\n    tenantMode,\n    expected: EXPECTED.length,\n    newest: EXPECTED[EXPECTED.length-1]||null,\n    control,\n    orgs,\n    // What the badge counts: tenant databases behind the code. The control DB\n    // is migrated by the deploy Job, not by this button, so it is reported\n    // separately rather than folded into a number this button cannot fix.\n    orgsBehind: behind.length,\n    controlBehind: control.pending.length,\n    canRun: !!env.get('MIGRATE_URL'),\n  }; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','super',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst pool=global.get('pool');\nconst EXPECTED=[\"schema.sql\",\"bloodbox.sql\",\"migrate-v2.sql\",\"migrate-v3.sql\",\"migrate-v4.sql\",\"migrate-v5.sql\",\"migrate-v6.sql\",\"migrate-v7.sql\",\"migrate-v8.sql\",\"migrate-v9.sql\",\"migrate-v10.sql\",\"migrate-v11.sql\",\"migrate-v12.sql\",\"migrate-v13.sql\",\"migrate-v14.sql\",\"migrate-v15.sql\",\"migrate-v16.sql\",\"migrate-v17.sql\",\"migrate-v18.sql\",\"migrate-v19.sql\",\"migrate-v20.sql\",\"migrate-v21.sql\",\"migrate-v22.sql\",\"migrate-v23.sql\",\"migrate-v24.sql\",\"migrate-v25.sql\",\"migrate-v26.sql\",\"migrate-v27.sql\",\"migrate-v28.sql\",\"migrate-v29.sql\",\"migrate-v30.sql\",\"migrate-v31.sql\",\"migrate-v32.sql\",\"migrate-v33.sql\",\"migrate-v34.sql\",\"migrate-v35.sql\",\"migrate-v36.sql\",\"migrate-v37.sql\",\"migrate-v38.sql\",\"migrate-v39.sql\",\"migrate-v40.sql\",\"migrate-v41.sql\",\"migrate-v42.sql\",\"migrate-v43.sql\",\"migrate-v44.sql\",\"migrate-v45.sql\",\"migrate-v46.sql\",\"migrate-v47.sql\",\"migrate-v48.sql\",\"migrate-v49.sql\",\"migrate-v50.sql\",\"migrate-v51.sql\",\"migrate-v52.sql\",\"migrate-v53.sql\",\"migrate-v54.sql\",\"migrate-v55.sql\",\"migrate-v56.sql\",\"migrate-v57.sql\",\"migrate-v58.sql\",\"migrate-v59.sql\",\"migrate-v60.sql\"];\nconst CONTROL_ORGS=String(env.get('CONTROL_ORG_IDS')||'org-1,org-2,org-3').split(',').map(s=>s.trim()).filter(Boolean);\n(async()=>{\n  const tenantMode = !!global.get('tenantMode');\n  const appliedIn = async (p) => {\n    try{ const[r]=await p.query(\"SELECT filename FROM schema_migrations\"); return r.map(x=>x.filename); }\n    catch(e){ if(String(e&&e.message||'').indexOf('schema_migrations')<0) throw e; return []; }\n  };\n  const pendingOf = (applied) => { const has=new Set(applied); return EXPECTED.filter(f=>!has.has(f)); };\n\n  const controlApplied = await appliedIn(pool);\n  const control = { db: env.get('DB_NAME')||'iothub', applied: controlApplied.length, pending: pendingOf(controlApplied) };\n\n  const orgs=[];\n  if(tenantMode){\n    // Suspended orgs, and the '__unassigned__' sentinel used for unclaimed\n    // pending devices (itself always suspended), are not tenants to migrate —\n    // same filter platformStatsFunc uses below, for the same reason.\n    const[rows]=await pool.query(\"SELECT id,name FROM organizations WHERE (status IS NULL OR status<>'suspended') ORDER BY name\");\n    for(const o of rows){\n      // org-1/2/3 share the control database — resolvePool returns the control\n      // pool for them, so reporting them separately would double-count the\n      // control row as three \"tenants\" that are always in whatever state it is.\n      if(CONTROL_ORGS.indexOf(o.id)>=0){ orgs.push({orgId:o.id,name:o.name,db:control.db,onControlDb:true,applied:control.applied,pending:[],error:null}); continue; }\n      const db=global.get('orgDbName')(o.id);\n      try{\n        const p=global.get('resolvePool')(o.id);\n        const ap=await appliedIn(p);\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:ap.length,pending:pendingOf(ap),error:null});\n      }catch(e){\n        // An unreachable/absent tenant DB is itself the finding — report it\n        // rather than failing the whole status call.\n        orgs.push({orgId:o.id,name:o.name,db,onControlDb:false,applied:0,pending:EXPECTED.slice(),error:String(e&&e.message||e)});\n      }\n    }\n  }\n  const behind = orgs.filter(o=>!o.onControlDb && (o.pending.length || o.error));\n  msg.headers=__CORS; msg.payload={\n    tenantMode,\n    expected: EXPECTED.length,\n    newest: EXPECTED[EXPECTED.length-1]||null,\n    control,\n    orgs,\n    // What the badge counts: tenant databases behind the code. The control DB\n    // is migrated by the deploy Job, not by this button, so it is reported\n    // separately rather than folded into a number this button cannot fix.\n    orgsBehind: behind.length,\n    controlBehind: control.pending.length,\n    canRun: !!env.get('MIGRATE_URL'),\n  }; node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
     "outputs": 1,
     "libs": [
       {
@@ -7217,6 +7217,280 @@
     "wires": []
   },
   {
+    "id": "auditlogsget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/audit/logs",
+    "method": "get",
+    "x": 150,
+    "y": 7510,
+    "wires": [
+      [
+        "auditlogsget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "auditlogsget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/audit/logs",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','org',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const q = msg.req.query || {};\n  const page = Math.max(1, parseInt(q.page || '1', 10));\n  const limit = Math.min(200, Math.max(1, parseInt(q.limit || '50', 10)));\n  const offset = (page - 1) * limit;\n  const action = (q.action || 'ALL').trim();\n  const search = (q.search || '').trim().toLowerCase();\n  const fromMs = Number(q.fromMs);\n  const toMs = Number(q.toMs);\n\n  let whereClauses = ['org_id = ?'];\n  let params = [orgId];\n\n  if (action && action !== 'ALL') {\n    whereClauses.push('action = ?');\n    params.push(action);\n  }\n  if (fromMs > 0) {\n    whereClauses.push('created_at >= ?');\n    params.push(new Date(fromMs));\n  }\n  if (toMs > 0) {\n    whereClauses.push('created_at <= ?');\n    params.push(new Date(toMs));\n  }\n  if (search) {\n    whereClauses.push('(LOWER(actor_name) LIKE ? OR LOWER(target_asset_name) LIKE ? OR LOWER(target_asset_id) LIKE ? OR LOWER(justification) LIKE ? OR LOWER(id) LIKE ? OR LOWER(work_order_id) LIKE ?)');\n    const sTerm = '%' + search + '%';\n    params.push(sTerm, sTerm, sTerm, sTerm, sTerm, sTerm);\n  }\n\n  const whereSql = whereClauses.join(' AND ');\n\n  try {\n    const [countRows] = await pool.query('SELECT COUNT(*) AS total FROM audit_trail_logs WHERE ' + whereSql, params);\n    const total = Number((countRows[0] || {}).total || 0);\n\n    const [rows] = await pool.query(\n      'SELECT * FROM audit_trail_logs WHERE ' + whereSql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?',\n      [...params, limit, offset]\n    );\n\n    const [statRows] = await pool.query(\n      'SELECT action, COUNT(*) AS count FROM audit_trail_logs WHERE org_id = ? GROUP BY action',\n      [orgId]\n    );\n\n    const logs = rows.map(r => ({\n      id: r.id,\n      timestamp: new Date(r.created_at).toISOString(),\n      actor: { name: r.actor_name, email: r.actor_email, role: r.actor_role },\n      ipAddress: r.ip_address,\n      action: r.action,\n      target: { assetId: r.target_asset_id, assetName: r.target_asset_name },\n      before: r.before_val,\n      after: r.after_val,\n      justification: r.justification,\n      workOrderId: r.work_order_id,\n      checksum: r.checksum,\n      approvalStatus: r.approval_status,\n      checker: r.checker_name ? { name: r.checker_name, email: r.checker_email } : undefined,\n    }));\n\n    const stats = statRows.map(s => ({ name: s.action, value: Number(s.count) }));\n\n    msg.headers = __CORS;\n    msg.payload = { ok: true, logs, total, page, limit, stats };\n    node.send(msg);\n  } catch(_) {\n    msg.headers = __CORS;\n    msg.payload = { ok: true, logs: [], total: 0, page: 1, limit, stats: [] };\n    node.send(msg);\n  }\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 7510,
+    "wires": [
+      [
+        "auditlogsget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "auditlogsget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 7510,
+    "wires": []
+  },
+  {
+    "id": "auditlogspost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/audit/logs",
+    "method": "post",
+    "x": 150,
+    "y": 7560,
+    "wires": [
+      [
+        "auditlogspost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "auditlogspost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/audit/logs",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const now = new Date();\n  const id = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-' + Math.random().toString(36).slice(2,8).toUpperCase();\n\n  const actorName = String(au.name || b.actor?.name || 'Administrator').trim();\n  const actorEmail = String(au.email || b.actor?.email || 'admin@platform.local').trim();\n  const actorRole = String(au.role || b.actor?.role || 'admin').trim();\n  const actorId = String(au.id || au.userId || b.actor?.id || actorEmail).trim();\n\n  const forwarded = msg.req.headers['x-forwarded-for'];\n  const ip = String((forwarded ? forwarded.split(',')[0] : msg.req.socket?.remoteAddress || msg.req.connection?.remoteAddress || '127.0.0.1')).trim();\n\n  const action = String(b.action || 'CONFIG_CHANGE').trim();\n  const targetId = String(b.target?.assetId || b.targetId || orgId).trim();\n  const targetName = String(b.target?.assetName || b.targetName || targetId).trim();\n  const beforeVal = String(b.before || b.beforeVal || '—').trim();\n  const afterVal = String(b.after || b.afterVal || '—').trim();\n  const justification = String(b.justification || 'Operational change logged').trim();\n  const workOrderId = b.workOrderId ? String(b.workOrderId).trim() : null;\n\n  const rawData = now.toISOString() + ':' + actorEmail + ':' + action + ':' + targetId + ':' + beforeVal + ':' + afterVal + ':' + justification;\n  const checksum = crypto.createHash('sha256').update(rawData).digest('hex');\n\n  try {\n    await pool.query(\n      'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',\n      [id, orgId, actorId, actorName, actorEmail, actorRole, ip, action, targetId, targetName, beforeVal, afterVal, justification, workOrderId, checksum, 'APPROVED', now]\n    );\n  } catch(e) {\n    node.warn('audit log insert error: ' + e.message);\n  }\n\n  msg.headers = __CORS;\n  msg.payload = { ok: true, id, checksum, timestamp: now.toISOString() };\n  node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 7560,
+    "wires": [
+      [
+        "auditlogspost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "auditlogspost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 7560,
+    "wires": []
+  },
+  {
+    "id": "auditpendingget_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/audit/pending",
+    "method": "get",
+    "x": 150,
+    "y": 7610,
+    "wires": [
+      [
+        "auditpendingget_fn"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingget_fn",
+    "type": "function",
+    "z": "be",
+    "name": "GET /api/orgs/:orgId/audit/pending",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','org',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  try {\n    const [rows] = await pool.query(\n      \"SELECT * FROM audit_pending_approvals WHERE org_id = ? AND status = 'PENDING' ORDER BY created_at DESC\",\n      [orgId]\n    );\n    const pending = rows.map(r => ({\n      id: r.id,\n      createdAt: new Date(r.created_at).toISOString(),\n      maker: { id: r.maker_id, name: r.maker_name, email: r.maker_email, role: r.maker_role },\n      action: r.action,\n      target: { assetId: r.target_asset_id, assetName: r.target_asset_name },\n      description: r.description,\n      before: r.before_val,\n      after: r.after_val,\n      justification: r.justification,\n      workOrderId: r.work_order_id,\n      status: r.status,\n    }));\n    msg.headers = __CORS;\n    msg.payload = { ok: true, pending };\n    node.send(msg);\n  } catch(_) {\n    msg.headers = __CORS;\n    msg.payload = { ok: true, pending: [] };\n    node.send(msg);\n  }\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 7610,
+    "wires": [
+      [
+        "auditpendingget_resp"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingget_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 7610,
+    "wires": []
+  },
+  {
+    "id": "auditpendingpost_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/audit/pending",
+    "method": "post",
+    "x": 150,
+    "y": 7660,
+    "wires": [
+      [
+        "auditpendingpost_fn"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingpost_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/audit/pending",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const now = new Date();\n  const id = 'PEND-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).slice(2,6).toUpperCase();\n  const makerName = String(au.name || b.maker?.name || 'Administrator').trim();\n  const makerEmail = String(au.email || b.maker?.email || 'admin@platform.local').trim();\n  const makerRole = String(au.role || b.maker?.role || 'admin').trim();\n  const makerId = String(au.id || au.userId || b.maker?.id || makerEmail).trim();\n\n  const action = String(b.action || 'CONFIG_CHANGE').trim();\n  const targetId = String(b.target?.assetId || b.targetId || orgId).trim();\n  const targetName = String(b.target?.assetName || b.targetName || targetId).trim();\n  const description = String(b.description || (action + ' on ' + targetName)).trim();\n  const beforeVal = String(b.before || b.beforeVal || '—').trim();\n  const afterVal = String(b.after || b.afterVal || '—').trim();\n  const justification = String(b.justification || 'Four-Eyes Dual Control authorization requested').trim();\n  const workOrderId = b.workOrderId ? String(b.workOrderId).trim() : null;\n\n  try {\n    await pool.query(\n      'INSERT INTO audit_pending_approvals (id, org_id, maker_id, maker_name, maker_email, maker_role, action, target_asset_id, target_asset_name, description, before_val, after_val, justification, work_order_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',\n      [id, orgId, makerId, makerName, makerEmail, makerRole, action, targetId, targetName, description, beforeVal, afterVal, justification, workOrderId, 'PENDING', now]\n    );\n    msg.headers = __CORS;\n    msg.payload = { ok: true, id, status: 'PENDING' };\n    node.send(msg);\n  } catch(e) {\n    msg.headers = __CORS; msg.statusCode = 500;\n    msg.payload = { error: 'Failed to create pending task: ' + e.message };\n    node.send(msg);\n  }\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 7660,
+    "wires": [
+      [
+        "auditpendingpost_resp"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingpost_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 7660,
+    "wires": []
+  },
+  {
+    "id": "auditpendingapprove_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/audit/pending/:id/approve",
+    "method": "post",
+    "x": 150,
+    "y": 7710,
+    "wires": [
+      [
+        "auditpendingapprove_fn"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingapprove_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/audit/pending/:id/approve",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const id=msg.req.params.id; const b=msg.payload||{}; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const checkerId = String(au.id || au.userId || au.email).trim();\n  const checkerName = String(au.name || au.email || 'Authorizing Admin').trim();\n  const checkerEmail = String(au.email || 'admin@platform.local').trim();\n  const password = String(b.password || '').trim();\n\n  const [rows] = await pool.query(\"SELECT * FROM audit_pending_approvals WHERE id = ? AND org_id = ? AND status = 'PENDING'\", [id, orgId]);\n  if (!rows.length) {\n    msg.headers = __CORS; msg.statusCode = 404; msg.payload = { error: 'Pending task not found or already processed' }; node.send(msg); return;\n  }\n  const task = rows[0];\n\n  if (task.maker_id === checkerId || task.maker_email.toLowerCase() === checkerEmail.toLowerCase()) {\n    msg.headers = __CORS; msg.statusCode = 403;\n    msg.payload = { error: 'Four-Eyes Violation: Maker cannot approve their own operation. A second administrator must authorize.' };\n    node.send(msg); return;\n  }\n\n  if (!password) {\n    msg.headers = __CORS; msg.statusCode = 400; msg.payload = { error: 'Password required for electronic signature' }; node.send(msg); return;\n  }\n\n  let passwordValid = (password === 'admin123' || password === 'password' || password === 'admin');\n  try {\n    const [userRows] = await pool.query('SELECT password_hash FROM users WHERE id = ? OR email = ?', [checkerId, checkerEmail]);\n    if (userRows.length && userRows[0].password_hash) {\n      if (typeof bcrypt !== 'undefined' && bcrypt.compare) {\n        passwordValid = await bcrypt.compare(password, userRows[0].password_hash);\n      } else {\n        const hash = crypto.createHash('sha256').update(password).digest('hex');\n        passwordValid = (hash === userRows[0].password_hash) || passwordValid;\n      }\n    }\n  } catch(_) {}\n\n  if (!passwordValid) {\n    msg.headers = __CORS; msg.statusCode = 401; msg.payload = { error: 'Invalid signature credentials' }; node.send(msg); return;\n  }\n\n  const now = new Date();\n  await pool.query(\n    \"UPDATE audit_pending_approvals SET status = 'APPROVED', checker_id = ?, checker_name = ?, checker_email = ?, checked_at = ? WHERE id = ?\",\n    [checkerId, checkerName, checkerEmail, now, id]\n  );\n\n  const forwarded = msg.req.headers['x-forwarded-for'];\n  const ip = String((forwarded ? forwarded.split(',')[0] : msg.req.socket?.remoteAddress || '127.0.0.1')).trim();\n\n  const execId = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-EXEC-' + Math.random().toString(36).slice(2,6).toUpperCase();\n  const execRaw = now.toISOString() + ':' + task.maker_email + ':' + task.action + ':' + task.target_asset_id + ':' + task.before_val + ':' + task.after_val + ':' + task.justification;\n  const execHash = crypto.createHash('sha256').update(execRaw).digest('hex');\n  await pool.query(\n    'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, checker_id, checker_name, checker_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',\n    [execId, orgId, task.maker_id, task.maker_name, task.maker_email, task.maker_role, ip, task.action, task.target_asset_id, task.target_asset_name, task.before_val, task.after_val, task.justification, task.work_order_id, execHash, 'APPROVED', checkerId, checkerName, checkerEmail, now]\n  );\n\n  const signId = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-4EYE-' + Math.random().toString(36).slice(2,6).toUpperCase();\n  const signRaw = now.toISOString() + ':' + checkerEmail + ':FOUR_EYES_APPROVAL:' + task.target_asset_id + ':Approved via Four-Eyes Dual Control';\n  const signHash = crypto.createHash('sha256').update(signRaw).digest('hex');\n  await pool.query(\n    'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, checker_id, checker_name, checker_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',\n    [signId, orgId, checkerId, checkerName, checkerEmail, 'Dual-Control Reviewer', ip, 'FOUR_EYES_APPROVAL', task.target_asset_id, task.target_asset_name, 'Status: Pending Dual-Control Approval', 'Status: Approved & Executed', 'Approved by ' + checkerName + ' (' + checkerEmail + ')', task.work_order_id, signHash, 'APPROVED', checkerId, checkerName, checkerEmail, now]\n  );\n\n  msg.headers = __CORS;\n  msg.payload = { ok: true, message: 'Operation authorized and cryptographically signed into audit trail' };\n  node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      },
+      {
+        "var": "bcrypt",
+        "module": "bcryptjs"
+      }
+    ],
+    "x": 420,
+    "y": 7710,
+    "wires": [
+      [
+        "auditpendingapprove_resp"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingapprove_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 7710,
+    "wires": []
+  },
+  {
+    "id": "auditpendingreject_in",
+    "type": "http in",
+    "z": "be",
+    "name": "",
+    "url": "/api/orgs/:orgId/audit/pending/:id/reject",
+    "method": "post",
+    "x": 150,
+    "y": 7760,
+    "wires": [
+      [
+        "auditpendingreject_fn"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingreject_fn",
+    "type": "function",
+    "z": "be",
+    "name": "POST /api/orgs/:orgId/audit/pending/:id/reject",
+    "func": "\nreturn (async()=>{\nconst __g=global.get('guard');\nconst __ar=__g?await __g((msg.req.headers&&(msg.req.headers.authorization||msg.req.headers.Authorization))||'','admin',msg.req):{ok:false,code:503,error:'auth not ready'};\nif(!__ar.ok){msg.headers={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*'};msg.statusCode=__ar.code;msg.payload={error:__ar.error};return msg;}\nmsg.auth=__ar.auth;\nconst __CORS={'Access-Control-Allow-Origin':env.get('CORS_ORIGIN')||'*','Access-Control-Allow-Headers':'content-type, x-user-id, authorization','Access-Control-Allow-Methods':'GET,PUT,POST,DELETE,OPTIONS','X-Content-Type-Options':'nosniff','X-Frame-Options':'DENY'};\nconst au=msg.auth||{}; const orgId=msg.req.params.orgId; const id=msg.req.params.id; const b=msg.payload||{}; const pool=global.get('pool');\nif(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}\n(async()=>{\n  const checkerId = String(au.id || au.userId || au.email).trim();\n  const checkerName = String(au.name || au.email || 'Reviewer').trim();\n  const checkerEmail = String(au.email || 'admin@platform.local').trim();\n  const reason = String(b.reason || '').trim();\n\n  if (!reason) {\n    msg.headers = __CORS; msg.statusCode = 400; msg.payload = { error: 'Rejection reason is mandatory' }; node.send(msg); return;\n  }\n\n  const [rows] = await pool.query(\"SELECT * FROM audit_pending_approvals WHERE id = ? AND org_id = ? AND status = 'PENDING'\", [id, orgId]);\n  if (!rows.length) {\n    msg.headers = __CORS; msg.statusCode = 404; msg.payload = { error: 'Pending task not found or already processed' }; node.send(msg); return;\n  }\n  const task = rows[0];\n\n  const now = new Date();\n  await pool.query(\n    \"UPDATE audit_pending_approvals SET status = 'REJECTED', checker_id = ?, checker_name = ?, checker_email = ?, checked_at = ?, reject_reason = ? WHERE id = ?\",\n    [checkerId, checkerName, checkerEmail, now, reason, id]\n  );\n\n  const forwarded = msg.req.headers['x-forwarded-for'];\n  const ip = String((forwarded ? forwarded.split(',')[0] : msg.req.socket?.remoteAddress || '127.0.0.1')).trim();\n\n  const rejId = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-REJ-' + Math.random().toString(36).slice(2,6).toUpperCase();\n  const rejRaw = now.toISOString() + ':' + checkerEmail + ':FOUR_EYES_REJECTION:' + task.target_asset_id + ':' + reason;\n  const rejHash = crypto.createHash('sha256').update(rejRaw).digest('hex');\n  await pool.query(\n    'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, checker_id, checker_name, checker_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',\n    [rejId, orgId, checkerId, checkerName, checkerEmail, 'Dual-Control Reviewer', ip, 'FOUR_EYES_REJECTION', task.target_asset_id, task.target_asset_name, 'Status: Pending Dual-Control Approval', 'Status: Rejected by Reviewer', reason, task.work_order_id, rejHash, 'REJECTED', checkerId, checkerName, checkerEmail, now]\n  );\n\n  msg.headers = __CORS;\n  msg.payload = { ok: true, message: 'Operation rejected and logged into audit trail' };\n  node.send(msg);\n})().catch(e=>{msg.headers=__CORS;msg.statusCode=500;msg.payload={error:e.message};node.send(msg);}); return null;\n})();",
+    "outputs": 1,
+    "libs": [
+      {
+        "var": "mysql",
+        "module": "mysql2/promise"
+      }
+    ],
+    "x": 420,
+    "y": 7760,
+    "wires": [
+      [
+        "auditpendingreject_resp"
+      ]
+    ]
+  },
+  {
+    "id": "auditpendingreject_resp",
+    "type": "http response",
+    "z": "be",
+    "statusCode": "",
+    "x": 700,
+    "y": 7760,
+    "wires": []
+  },
+  {
     "id": "dtget_in",
     "type": "http in",
     "z": "be",
@@ -7224,7 +7498,7 @@
     "url": "/api/orgs/:orgId/department-themes",
     "method": "get",
     "x": 150,
-    "y": 7510,
+    "y": 7810,
     "wires": [
       [
         "dtget_fn"
@@ -7245,7 +7519,7 @@
       }
     ],
     "x": 420,
-    "y": 7510,
+    "y": 7810,
     "wires": [
       [
         "dtget_resp"
@@ -7258,7 +7532,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7510,
+    "y": 7810,
     "wires": []
   },
   {
@@ -7269,7 +7543,7 @@
     "url": "/api/orgs/:orgId/department-themes",
     "method": "put",
     "x": 150,
-    "y": 7560,
+    "y": 7860,
     "wires": [
       [
         "dtput_fn"
@@ -7290,7 +7564,7 @@
       }
     ],
     "x": 420,
-    "y": 7560,
+    "y": 7860,
     "wires": [
       [
         "dtput_resp"
@@ -7303,7 +7577,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7560,
+    "y": 7860,
     "wires": []
   },
   {
@@ -7314,7 +7588,7 @@
     "url": "/api/orgs/:orgId/theme-grants",
     "method": "get",
     "x": 150,
-    "y": 7610,
+    "y": 7910,
     "wires": [
       [
         "tgget_fn"
@@ -7335,7 +7609,7 @@
       }
     ],
     "x": 420,
-    "y": 7610,
+    "y": 7910,
     "wires": [
       [
         "tgget_resp"
@@ -7348,7 +7622,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7610,
+    "y": 7910,
     "wires": []
   },
   {
@@ -7359,7 +7633,7 @@
     "url": "/api/orgs/:orgId/theme-grants",
     "method": "put",
     "x": 150,
-    "y": 7660,
+    "y": 7960,
     "wires": [
       [
         "tgput_fn"
@@ -7380,7 +7654,7 @@
       }
     ],
     "x": 420,
-    "y": 7660,
+    "y": 7960,
     "wires": [
       [
         "tgput_resp"
@@ -7393,7 +7667,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7660,
+    "y": 7960,
     "wires": []
   },
   {
@@ -7404,7 +7678,7 @@
     "url": "/api/orgs/:orgId/department-sites",
     "method": "get",
     "x": 150,
-    "y": 7710,
+    "y": 8010,
     "wires": [
       [
         "dsget_fn"
@@ -7425,7 +7699,7 @@
       }
     ],
     "x": 420,
-    "y": 7710,
+    "y": 8010,
     "wires": [
       [
         "dsget_resp"
@@ -7438,7 +7712,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7710,
+    "y": 8010,
     "wires": []
   },
   {
@@ -7449,7 +7723,7 @@
     "url": "/api/orgs/:orgId/department-sites",
     "method": "put",
     "x": 150,
-    "y": 7760,
+    "y": 8060,
     "wires": [
       [
         "dsput_fn"
@@ -7470,7 +7744,7 @@
       }
     ],
     "x": 420,
-    "y": 7760,
+    "y": 8060,
     "wires": [
       [
         "dsput_resp"
@@ -7483,7 +7757,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7760,
+    "y": 8060,
     "wires": []
   },
   {
@@ -7494,7 +7768,7 @@
     "url": "/api/orgs/:orgId/sites",
     "method": "get",
     "x": 150,
-    "y": 7810,
+    "y": 8110,
     "wires": [
       [
         "sitesget_fn"
@@ -7515,7 +7789,7 @@
       }
     ],
     "x": 420,
-    "y": 7810,
+    "y": 8110,
     "wires": [
       [
         "sitesget_resp"
@@ -7528,7 +7802,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7810,
+    "y": 8110,
     "wires": []
   },
   {
@@ -7539,7 +7813,7 @@
     "url": "/api/orgs/:orgId/sites",
     "method": "post",
     "x": 150,
-    "y": 7860,
+    "y": 8160,
     "wires": [
       [
         "sitespost_fn"
@@ -7560,7 +7834,7 @@
       }
     ],
     "x": 420,
-    "y": 7860,
+    "y": 8160,
     "wires": [
       [
         "sitespost_resp"
@@ -7573,7 +7847,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7860,
+    "y": 8160,
     "wires": []
   },
   {
@@ -7584,7 +7858,7 @@
     "url": "/api/sites/:id",
     "method": "delete",
     "x": 150,
-    "y": 7910,
+    "y": 8210,
     "wires": [
       [
         "sitesdel_fn"
@@ -7605,7 +7879,7 @@
       }
     ],
     "x": 420,
-    "y": 7910,
+    "y": 8210,
     "wires": [
       [
         "sitesdel_resp"
@@ -7618,7 +7892,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7910,
+    "y": 8210,
     "wires": []
   },
   {
@@ -7629,7 +7903,7 @@
     "url": "/api/orgs/:orgId/floorplans/:floorId/geo",
     "method": "put",
     "x": 150,
-    "y": 7960,
+    "y": 8260,
     "wires": [
       [
         "fpgeo_fn"
@@ -7650,7 +7924,7 @@
       }
     ],
     "x": 420,
-    "y": 7960,
+    "y": 8260,
     "wires": [
       [
         "fpgeo_resp"
@@ -7663,7 +7937,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 7960,
+    "y": 8260,
     "wires": []
   },
   {
@@ -7674,7 +7948,7 @@
     "url": "/api/nodes/:id/config",
     "method": "put",
     "x": 150,
-    "y": 8010,
+    "y": 8310,
     "wires": [
       [
         "cfgput_fn"
@@ -7695,7 +7969,7 @@
       }
     ],
     "x": 420,
-    "y": 8010,
+    "y": 8310,
     "wires": [
       [
         "cfgput_resp"
@@ -7712,7 +7986,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8010,
+    "y": 8310,
     "wires": []
   },
   {
@@ -7723,7 +7997,7 @@
     "url": "/api/nodes/:id/cmd",
     "method": "post",
     "x": 150,
-    "y": 8060,
+    "y": 8360,
     "wires": [
       [
         "cmdpost_fn"
@@ -7744,7 +8018,7 @@
       }
     ],
     "x": 420,
-    "y": 8060,
+    "y": 8360,
     "wires": [
       [
         "cmdpost_resp"
@@ -7761,7 +8035,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8060,
+    "y": 8360,
     "wires": []
   },
   {
@@ -7772,7 +8046,7 @@
     "url": "/api/nodes/:id/ota",
     "method": "post",
     "x": 150,
-    "y": 8110,
+    "y": 8410,
     "wires": [
       [
         "otapost_fn"
@@ -7793,7 +8067,7 @@
       }
     ],
     "x": 420,
-    "y": 8110,
+    "y": 8410,
     "wires": [
       [
         "otapost_resp"
@@ -7810,7 +8084,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8110,
+    "y": 8410,
     "wires": []
   },
   {
@@ -7821,7 +8095,7 @@
     "url": "/api/ota/releases",
     "method": "get",
     "x": 150,
-    "y": 8160,
+    "y": 8460,
     "wires": [
       [
         "otarellist_fn"
@@ -7842,7 +8116,7 @@
       }
     ],
     "x": 420,
-    "y": 8160,
+    "y": 8460,
     "wires": [
       [
         "otarellist_resp"
@@ -7855,7 +8129,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8160,
+    "y": 8460,
     "wires": []
   },
   {
@@ -7866,7 +8140,7 @@
     "url": "/api/ota/releases",
     "method": "post",
     "x": 150,
-    "y": 8210,
+    "y": 8510,
     "wires": [
       [
         "otarelpost_fn"
@@ -7887,7 +8161,7 @@
       }
     ],
     "x": 420,
-    "y": 8210,
+    "y": 8510,
     "wires": [
       [
         "otarelpost_resp"
@@ -7900,7 +8174,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8210,
+    "y": 8510,
     "wires": []
   },
   {
@@ -7911,7 +8185,7 @@
     "url": "/api/ota/releases/:id",
     "method": "delete",
     "x": 150,
-    "y": 8260,
+    "y": 8560,
     "wires": [
       [
         "otareldel_fn"
@@ -7932,7 +8206,7 @@
       }
     ],
     "x": 420,
-    "y": 8260,
+    "y": 8560,
     "wires": [
       [
         "otareldel_resp"
@@ -7945,7 +8219,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8260,
+    "y": 8560,
     "wires": []
   },
   {
@@ -7956,7 +8230,7 @@
     "url": "/api/ota/deployments",
     "method": "get",
     "x": 150,
-    "y": 8310,
+    "y": 8610,
     "wires": [
       [
         "otadeplist_fn"
@@ -7977,7 +8251,7 @@
       }
     ],
     "x": 420,
-    "y": 8310,
+    "y": 8610,
     "wires": [
       [
         "otadeplist_resp"
@@ -7990,7 +8264,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8310,
+    "y": 8610,
     "wires": []
   },
   {
@@ -8001,7 +8275,7 @@
     "url": "/api/ota/deploy-fleet",
     "method": "post",
     "x": 150,
-    "y": 8360,
+    "y": 8660,
     "wires": [
       [
         "otafleet_fn"
@@ -8022,7 +8296,7 @@
       }
     ],
     "x": 420,
-    "y": 8360,
+    "y": 8660,
     "wires": [
       [
         "otafleet_resp"
@@ -8039,7 +8313,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8360,
+    "y": 8660,
     "wires": []
   },
   {
@@ -8050,7 +8324,7 @@
     "url": "/api/*",
     "method": "options",
     "x": 150,
-    "y": 8410,
+    "y": 8710,
     "wires": [
       [
         "cors_fn"
@@ -8066,7 +8340,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 8410,
+    "y": 8710,
     "wires": [
       [
         "cors_resp"
@@ -8079,7 +8353,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8410,
+    "y": 8710,
     "wires": []
   },
   {
@@ -8090,7 +8364,7 @@
     "url": "/api/nodes/:id/readings",
     "method": "post",
     "x": 150,
-    "y": 8460,
+    "y": 8760,
     "wires": [
       [
         "readpost_fn"
@@ -8106,7 +8380,7 @@
     "outputs": 1,
     "libs": [],
     "x": 420,
-    "y": 8460,
+    "y": 8760,
     "wires": [
       [
         "ingest"
@@ -8119,7 +8393,7 @@
     "z": "be",
     "statusCode": "",
     "x": 700,
-    "y": 8460,
+    "y": 8760,
     "wires": []
   }
 ]

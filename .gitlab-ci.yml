@@ -191,6 +191,8 @@ test_proofs_and_integrity:
     # EXECUTES the handler rather than pattern-matching it, because a TDZ bug
     # is invisible to a regex. Verified to fail 9/19 on the pre-fix code.
     - node e2e/proofs/test-escalation-and-shelving.mjs
+    # 21 CFR Part 11 / ISA-84 Audit Trail & Four-Eyes Dual Control governance gate
+    - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see

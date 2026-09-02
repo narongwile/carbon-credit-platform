@@ -511,6 +511,85 @@ export const api = {
     req<{ ok: boolean; shelves: any[] }>(
       `/api/orgs/${orgId}/shelving/unshelve`, { method: 'POST', body: JSON.stringify({ nodeId, paramKey }) }),
   /**
+   * Enterprise Security Audit Trail & Four-Eyes Dual Control (21 CFR Part 11 / ISA-84)
+   */
+  auditLogs: (orgId: string, params?: { page?: number; limit?: number; action?: string; search?: string; fromMs?: number; toMs?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.page) q.set('page', String(params.page))
+    if (params?.limit) q.set('limit', String(params.limit))
+    if (params?.action && params.action !== 'ALL') q.set('action', params.action)
+    if (params?.search) q.set('search', params.search)
+    if (params?.fromMs) q.set('fromMs', String(params.fromMs))
+    if (params?.toMs) q.set('toMs', String(params.toMs))
+    const qs = q.toString()
+    return req<{
+      ok: boolean
+      logs: Array<{
+        id: string
+        timestamp: string
+        actor: { name: string; email: string; role: string }
+        ipAddress: string
+        action: string
+        target: { assetId: string; assetName: string }
+        before: string
+        after: string
+        justification: string
+        workOrderId?: string
+        checksum: string
+        approvalStatus?: string
+        checker?: { name: string; email: string }
+      }>
+      total: number
+      page: number
+      limit: number
+      stats: Array<{ name: string; value: number }>
+    }>(`/api/orgs/${orgId}/audit/logs${qs ? '?' + qs : ''}`)
+  },
+  postAuditLog: (orgId: string, record: {
+    action: string
+    target?: { assetId: string; assetName: string }
+    before?: string
+    after?: string
+    justification: string
+    workOrderId?: string
+  }) =>
+    req<{ ok: boolean; id: string; checksum: string; timestamp: string }>(
+      `/api/orgs/${orgId}/audit/logs`, { method: 'POST', body: JSON.stringify(record) }),
+  auditPending: (orgId: string) =>
+    req<{
+      ok: boolean
+      pending: Array<{
+        id: string
+        createdAt: string
+        maker: { id: string; name: string; email: string; role: string }
+        action: string
+        target: { assetId: string; assetName: string }
+        description: string
+        before: string
+        after: string
+        justification: string
+        workOrderId?: string
+        status: 'PENDING' | 'APPROVED' | 'REJECTED'
+      }>
+    }>(`/api/orgs/${orgId}/audit/pending`),
+  postAuditPending: (orgId: string, task: {
+    action: string
+    target: { assetId: string; assetName: string }
+    description?: string
+    before: string
+    after: string
+    justification: string
+    workOrderId?: string
+  }) =>
+    req<{ ok: boolean; id: string; status: string }>(
+      `/api/orgs/${orgId}/audit/pending`, { method: 'POST', body: JSON.stringify(task) }),
+  approveAuditPending: (orgId: string, id: string, password?: string) =>
+    req<{ ok: boolean; message: string }>(
+      `/api/orgs/${orgId}/audit/pending/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({ password }) }),
+  rejectAuditPending: (orgId: string, id: string, reason: string) =>
+    req<{ ok: boolean; message: string }>(
+      `/api/orgs/${orgId}/audit/pending/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  /**
    * Which parameters SENSOR READINGS shows. Resolved per department, most
    * specific first: device+department -> device -> organization+department ->
    * organization -> none. A user in several departments gets the union, the
