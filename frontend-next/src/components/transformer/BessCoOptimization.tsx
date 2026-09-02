@@ -14,6 +14,7 @@ import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 import { recordAuditAction } from '@/lib/auditStore'
+import LocalOnlyNotice from '@/components/transformer/LocalOnlyNotice'
 
 export interface TouTariffConfig {
   currency: string
@@ -230,6 +231,7 @@ export default function BessCoOptimization({
         title="ตัวเลขกำไรต่อวันและคาร์บอนที่ลดได้ เป็นค่าประมาณจากสมมุติฐานคงที่"
         detail="พิกัดหม้อแปลง โหลดปัจจุบัน และ Hot-Spot เป็นค่าจริงจากอุปกรณ์ แต่รูปแบบโหลด 24 ชม. อัตราค่าไฟ TOU (2.6 / 4.3 บาท) ช่วงพีค 3.5 ชม. อัตราแลกเปลี่ยน และค่า 0.20 kgCO₂e/kWh ล้วนเป็นค่าคงที่ในโค้ด ไม่ได้มาจากสัญญาซื้อไฟหรือ emission factor จริงขององค์กร ห้ามใช้ตัวเลขนี้ประกอบการลงทุน BESS หรือรายงานคาร์บอน โดยไม่ตรวจสอบกับอัตราจริง"
       />
+      <LocalOnlyNotice what="ค่าอัตราค่าไฟ TOU ที่แก้ไข" />
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div>

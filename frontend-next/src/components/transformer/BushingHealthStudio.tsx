@@ -13,6 +13,7 @@ import {
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { recordAuditAction } from '@/lib/auditStore'
+import LocalOnlyNotice from '@/components/transformer/LocalOnlyNotice'
 
 interface BushingData {
   phase: 'A' | 'B' | 'C'
@@ -259,6 +260,7 @@ export default function BushingHealthStudio({
 
   return (
     <div className="rounded-2xl p-5 space-y-6 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      <LocalOnlyNotice what="ค่า baseline บุชชิงที่แก้ไข" />
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-4">
         <div>

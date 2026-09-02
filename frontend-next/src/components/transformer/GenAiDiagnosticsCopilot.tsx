@@ -10,6 +10,7 @@ import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { useSession } from '@/lib/auth'
 import { recordAuditAction } from '@/lib/auditStore'
+import LocalOnlyNotice from '@/components/transformer/LocalOnlyNotice'
 
 interface GenAiDiagnosticsCopilotProps {
   assetId?: string
@@ -256,6 +257,7 @@ export default function GenAiDiagnosticsCopilot({
 
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
+      <LocalOnlyNotice what="ประวัติการสนทนา" />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
         <div className="flex items-center gap-2.5">

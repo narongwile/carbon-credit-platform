@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 import { recordAuditAction } from '@/lib/auditStore'
+import LocalOnlyNotice from '@/components/transformer/LocalOnlyNotice'
 
 interface InsulationAgingRulProps {
   /** true only when hot-spot AND service hours are real for this asset. */
@@ -68,16 +69,26 @@ export default function InsulationAgingRul({
       localStorage.setItem(storageKey, JSON.stringify(editForm))
     } catch {}
 
+    // The audit entry has to describe what actually happened. This wrote
+    // action 'CONFIG_CHANGE' against the asset, which reads as a platform-level
+    // configuration change — but the value never leaves localStorage, so no
+    // other user's view of this transformer changes and the record points at
+    // something they cannot see. It also supplied a fixed justification,
+    // 'Calibrated ... per factory test record', attributing to the operator a
+    // reason they never gave and citing a document that may not exist. A
+    // fabricated justification in an audit trail is worse than an empty one:
+    // it is exactly the field a reviewer relies on.
     recordAuditAction({
       action: 'CONFIG_CHANGE',
       target: { assetId, assetName },
-      before: `Paper: ${config.paperType}, DP0: ${config.initialDp}, Year: ${config.commissioningYear}`,
-      after: `Paper: ${editForm.paperType}, DP0: ${editForm.initialDp}, Year: ${editForm.commissioningYear}`,
-      justification: 'Calibrated nameplate insulation commissioning year and paper grade per factory test record.',
+      before: `[browser-local] Paper: ${config.paperType}, DP0: ${config.initialDp}, Year: ${config.commissioningYear}`,
+      after: `[browser-local] Paper: ${editForm.paperType}, DP0: ${editForm.initialDp}, Year: ${editForm.commissioningYear}`,
+      justification:
+        'RUL baseline edited in the Insulation Aging studio. Stored in this browser only — not applied to the asset for other users. No justification was captured from the operator.',
     })
 
     setShowConfigModal(false)
-    toast.success('บันทึกการตั้งค่าเริ่มต้นและเกรดกระดาษฉนวนเรียบร้อยแล้ว')
+    toast.success('บันทึกไว้ในเบราว์เซอร์นี้แล้ว — ยังไม่ได้บันทึกขึ้นระบบส่วนกลาง')
   }
 
   // Derived effective hours based on commissioning year if provided
@@ -185,6 +196,9 @@ export default function InsulationAgingRul({
           detail="ชั่วโมงใช้งานสะสมถูกกำหนดเป็นค่าคงที่ (52,000 ชม.) และอุณหภูมิ Hot-Spot ประมาณจาก 'อุณหภูมิน้ำมัน + 14°C' เมื่อไม่มีเซนเซอร์วัดขดลวดจริง เนื่องจากสมการ Arrhenius เป็นเอ็กซ์โพเนนเชียล ความคลาดเคลื่อนของ Hot-Spot เพียงไม่กี่องศาทำให้ RUL เปลี่ยนเป็นปี ห้ามใช้ตัวเลขนี้ตั้งงบเปลี่ยนหม้อแปลง"
         />
       )}
+      {/* Outside the !inputsMeasured guard on purpose: the browser-only storage
+          applies whether or not the telemetry behind the RUL figure is real. */}
+      <LocalOnlyNotice what="ค่าตั้งต้นอายุฉนวนที่แก้ไข" />
       {/* Header with Title and Calibrate button */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>

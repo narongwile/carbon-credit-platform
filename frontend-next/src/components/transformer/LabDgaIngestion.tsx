@@ -22,6 +22,7 @@ import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 import { recordAuditAction } from '@/lib/auditStore'
+import LocalOnlyNotice from '@/components/transformer/LocalOnlyNotice'
 
 export interface LabDgaRecord {
   id: string
@@ -243,6 +244,7 @@ export default function LabDgaIngestion({
         title="รายการผลแล็บด้านล่างเป็นตัวอย่างจำลอง ไม่ใช่ผลตรวจของหม้อแปลงเครื่องนี้"
         detail="ระบบยังไม่ได้เชื่อมต่อกับห้องปฏิบัติการใดๆ — เลขที่ใบรายงาน ชื่อแล็บ หมายเลข syringe สถานะ CERTIFIED และค่าคุณภาพน้ำมัน (BDV / IFT / Acidity / Furan) ทั้งหมดเป็นข้อมูลตัวอย่างที่ฝังไว้ในหน้าจอ ห้ามใช้อ้างอิงแทนใบรายงานผลจริง กรุณาอัปโหลดผลตรวจฉบับจริงของหม้อแปลงเครื่องนี้ก่อนนำไปตัดสินใจ"
       />
+      <LocalOnlyNotice what="ผลแล็บที่บันทึกเอง" />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">

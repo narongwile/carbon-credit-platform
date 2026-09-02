@@ -19,7 +19,7 @@
 //
 // Run from the repo root: node e2e/proofs/test-studio-data-provenance.mjs
 
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 
 let pass = 0, fail = 0;
 const t = (name, ok, detail = '') => { console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? '  ' + detail : ''}`); ok ? pass++ : fail++; };
@@ -111,6 +111,61 @@ t('admin/carbon does not re-roll its intensity curve with Math.random()',
 const bess = read('BessCoOptimization.tsx');
 t('BessCoOptimization names its tariff/FX/emission-factor assumptions',
   /TOU/.test(bess) && /kgCO/.test(bess));
+
+// ── 7. A studio that SAVES what the engineer types must say where ────────
+// a96fe4cc / 91dae605 "productionize[d]" these tabs "for multi-tenant customer
+// go-live" by adding edit forms — lab DGA certificates, bushing nameplate
+// baselines, RUL service hours, the TOU tariff — persisted with
+// localStorage.setItem and no API call anywhere. Those are precisely the inputs
+// the studios turn into engineering verdicts: fault type, remaining life in
+// years, replacement budget, daily profit.
+//
+// localStorage supports none of that claim. It is per BROWSER, not per
+// organization, so a colleague opening the same transformer sees the built-in
+// samples rather than the certificate their teammate entered; it is lost when
+// site data is cleared or another device is used; and nothing server-side
+// records who entered what.
+//
+// The DemoDataBanner above says the SAMPLE rows are fabricated — true before
+// these commits and still true. This is the separate thing the edit forms
+// introduced, and it needs saying on screen: what YOU save does not leave this
+// browser. Delete the notice when the panel writes through an API instead.
+{
+  const dir = new URL('../../frontend-next/src/components/transformer/', import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith('.tsx'));
+  for (const file of files) {
+    const body = readFileSync(new URL(file, dir), 'utf8');
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const persistsLocally = /localStorage\.setItem/.test(code);
+    const callsApi = /\bapi\.[a-zA-Z]+\(/.test(code);
+    if (!persistsLocally || callsApi) continue;
+    t(`${file} discloses that what the operator saves stays in this browser`,
+      /<LocalOnlyNotice/.test(code),
+      'it writes operator input to localStorage and makes no API call');
+  }
+
+  const notice = readFileSync(new URL('LocalOnlyNotice.tsx', dir), 'utf8');
+  t('LocalOnlyNotice states the three things that actually bite',
+    /เบราว์เซอร์เครื่องนี้เท่านั้น/.test(notice) &&
+    /เพื่อนร่วมงาน/.test(notice) &&
+    /หายเมื่อล้างข้อมูลเว็บไซต์|เปลี่ยนเครื่อง/.test(notice),
+    'not shared, not durable, not the org record');
+}
+
+// ── 8. No audit entry may invent the operator's justification ────────────
+// InsulationAgingRul logged action CONFIG_CHANGE against the asset with a fixed
+// justification — "Calibrated nameplate insulation commissioning year and paper
+// grade per factory test record" — attributing to the operator a reason they
+// never gave, and citing a document that may not exist. The justification field
+// is the one a reviewer leans on hardest.
+{
+  const rul = readFileSync(new URL('../../frontend-next/src/components/transformer/InsulationAgingRul.tsx', import.meta.url), 'utf8');
+  const code = rul.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  t('InsulationAgingRul does not fabricate a justification for the operator',
+    !/per factory test record/.test(code));
+  t('its audit entry says the change is browser-local, not applied for others',
+    /browser-local/.test(code) && /Stored in this browser only/.test(code));
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
