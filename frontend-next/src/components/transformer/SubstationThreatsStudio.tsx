@@ -4,18 +4,21 @@ import React, { useState, useMemo } from 'react'
 import {
   Zap, ShieldAlert, AlertTriangle, CheckCircle2, Activity,
   Sliders, ArrowUpRight, Clock, RefreshCw, Layers, ShieldCheck,
-  TrendingUp, Sparkles, Battery, Thermometer
+  TrendingUp, Sparkles, Battery, Thermometer, Wrench
 } from 'lucide-react'
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine
 } from 'recharts'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface SubstationThreatsStudioProps {
   assetId?: string
   assetName?: string
   orgName?: string
+  orgId?: string
   voltageKv?: number
   mainOilTemp?: number
   bushingTanDelta?: number
@@ -44,6 +47,7 @@ export default function SubstationThreatsStudio({
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
   orgName = 'Industrial Substation',
+  orgId = 'default',
   voltageKv = 115,
   mainOilTemp = 64,
   bushingTanDelta = 0.82,
@@ -55,6 +59,7 @@ export default function SubstationThreatsStudio({
   oltcOilTempDeltaLive = null,
 }: SubstationThreatsStudioProps) {
   const [activeSection, setActiveSection] = useState<'surge' | 'oltc' | 'wildlife'>('surge')
+  const [dispatchedWo, setDispatchedWo] = useState<string | null>(null)
   // Whether a surge-arrester CT or an OLTC monitoring kit is fitted is a fact
   // about the DEVICE, not a view option.
   const arresterInstalled = hasArresterSensor
@@ -110,6 +115,51 @@ export default function SubstationThreatsStudio({
   const [arcFlashStatus, setArcFlashStatus] = useState<'armed' | 'triggered'>('armed')
   const [enclosureTemp, setEnclosureTemp] = useState(38.2) // °C
   const [enclosureHumidity, setEnclosureHumidity] = useState(64) // %
+
+  const handleTapStep = async (delta: number) => {
+    const nextPos = Math.max(1, Math.min(33, oltcTapPosition + delta))
+    if (nextPos === oltcTapPosition) return
+    const prevPos = oltcTapPosition
+    setOltcTapPosition(nextPos)
+    setOltcOperationsCount((c) => c + 1)
+    
+    await recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName },
+      before: `OLTC Tap Position: Step ${prevPos} / 33`,
+      after: `OLTC Tap Position: Step ${nextPos} / 33 (Total Operations: ${(oltcOperationsCount + 1).toLocaleString()})`,
+      justification: `Manual Supervisory Tap Step Command on ${assetName} (Org: ${orgId})`,
+    })
+    toast.success(`OLTC Tap stepped to Position ${nextPos} / 33`)
+  }
+
+  const handleQueueOltcWorkOrder = async () => {
+    const woNumber = `WO-OLTC-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4)}-${Date.now().toString(36).toUpperCase().slice(-5)}`
+    setDispatchedWo(woNumber)
+    await recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName },
+      before: `OLTC Operations: ${oltcOperationsCount.toLocaleString()}, Coking Risk: ${oltcCokingRisk.level}`,
+      after: `Dispatched CMMS Work Order ${woNumber} (Priority: HIGH · OLTC Diverter Switch Inspection & Vacuum Bottle Check)`,
+      justification: `OLTC Compartment Service dispatched for ${assetName} (Org: ${orgId})`,
+      workOrderId: woNumber,
+    })
+    toast.success(`Work Order ${woNumber} dispatched to CMMS`)
+  }
+
+  const handleQueueArresterWorkOrder = async (phase: 'A' | 'B' | 'C', ir3: number) => {
+    const woNumber = `WO-MOV-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4)}-${phase}-${Date.now().toString(36).toUpperCase().slice(-5)}`
+    setDispatchedWo(woNumber)
+    await recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName },
+      before: `Phase ${phase} Surge Arrester Ir3: ${ir3} µA`,
+      after: `Dispatched CMMS Work Order ${woNumber} (Priority: HIGH · Zinc-Oxide MOV Block Replacement)`,
+      justification: `Elevated Resistive Leakage Current Ir3 (${ir3} µA) on Phase ${phase} Arrester for ${assetName} (Org: ${orgId})`,
+      workOrderId: woNumber,
+    })
+    toast.success(`Work Order ${woNumber} dispatched for Phase ${phase} Surge Arrester`)
+  }
 
   // Co-Calculation 1: OLTC Diverter Compartment vs Main Tank Delta T
   const deltaT = useMemo(() => {
@@ -350,6 +400,16 @@ export default function SubstationThreatsStudio({
                     />
                   </div>
                 </div>
+
+                {arr.resistiveCurrentUa > 45 && (
+                  <button
+                    type="button"
+                    onClick={() => handleQueueArresterWorkOrder(arr.phase, arr.resistiveCurrentUa)}
+                    className="mt-2.5 w-full py-1.5 rounded-lg bg-amber-600/30 hover:bg-amber-600/40 text-amber-300 border border-amber-500/40 text-[11px] font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm"
+                  >
+                    <Wrench size={12} /> สั่งเปิดใบแจ้งซ่อม MOV (Phase {arr.phase})
+                  </button>
+                )}
               </div>
             ))}
           </div>
@@ -485,6 +545,19 @@ export default function SubstationThreatsStudio({
                   {deltaT === null && ' This unit has no OLTC compartment temperature sensor, so ΔT is not available and no coking assessment is made.'}
                 </p>
               </div>
+
+              <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleQueueOltcWorkOrder}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/50 text-rose-300 border border-rose-500/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                >
+                  <Wrench size={12} /> สั่งเปิดใบแจ้งซ่อม OLTC (Dispatch CMMS)
+                </button>
+                {dispatchedWo && dispatchedWo.startsWith('WO-OLTC') && (
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold">✓ {dispatchedWo}</span>
+                )}
+              </div>
             </div>
 
             {/* Motor Drive & Mechanism Metrics */}
@@ -501,8 +574,33 @@ export default function SubstationThreatsStudio({
 
               <div className="grid grid-cols-2 gap-3 font-mono text-xs">
                 <div className="p-2.5 rounded-lg bg-[#0a0e1a] border border-slate-800">
-                  <div className="text-[10px] text-slate-500 uppercase">Current Tap Step</div>
-                  <div className="text-base font-bold text-white">Step {oltcTapPosition} / 33</div>
+                  <div className="text-[10px] text-slate-500 uppercase flex items-center justify-between">
+                    <span>Current Tap Step</span>
+                    <span className="text-indigo-400 font-bold">1.25%/step</span>
+                  </div>
+                  <div className="text-base font-bold text-white flex items-center justify-between mt-0.5">
+                    <span>Step {oltcTapPosition} / 33</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleTapStep(-1)}
+                        disabled={oltcTapPosition <= 1}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-white font-bold disabled:opacity-30 cursor-pointer"
+                        title="Step Down Tap"
+                      >
+                        ▼
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTapStep(1)}
+                        disabled={oltcTapPosition >= 33}
+                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-xs text-white font-bold disabled:opacity-30 cursor-pointer"
+                        title="Step Up Tap"
+                      >
+                        ▲
+                      </button>
+                    </div>
+                  </div>
                 </div>
                 <div className="p-2.5 rounded-lg bg-[#0a0e1a] border border-slate-800">
                   <div className="text-[10px] text-slate-500 uppercase">Drive Motor RMS</div>

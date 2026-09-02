@@ -4,18 +4,42 @@ import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   Battery, BatteryCharging, Zap, Leaf, DollarSign, TrendingDown,
   Clock, ShieldCheck, ArrowDownRight, RefreshCw, CheckCircle2,
-  Sliders, AlertTriangle, Sparkles
+  Sliders, AlertTriangle, Sparkles, Settings, Check, Download
 } from 'lucide-react'
 import {
   AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip,
   ResponsiveContainer, ReferenceLine, CartesianGrid
 } from 'recharts'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
+import { recordAuditAction } from '@/lib/auditStore'
+
+export interface TouTariffConfig {
+  currency: string
+  currencySymbol: string
+  onPeakRate: number
+  offPeakRate: number
+  peakHours: number
+  fxToUsd: number
+  gridDifferentialKgCo2: number // Scope 2 kgCO2e/kWh differential
+}
+
+export const DEFAULT_TARIFF: TouTariffConfig = {
+  currency: 'THB',
+  currencySymbol: '฿',
+  onPeakRate: 4.3,
+  offPeakRate: 2.6,
+  peakHours: 3.5,
+  fxToUsd: 36,
+  gridDifferentialKgCo2: 0.20,
+}
 
 interface BessCoOptimizationProps {
   transformerName?: string
   orgName?: string
+  assetId?: string
+  orgId?: string
   nameplateKva?: number
   currentLoadKva?: number
   hotSpotTemp?: number
@@ -25,20 +49,42 @@ interface BessCoOptimizationProps {
 export default function BessCoOptimization({
   transformerName = 'Main Substation TR-01',
   orgName = 'Industrial Substation',
+  assetId = 'TR-01',
+  orgId = 'default',
   nameplateKva = 2500,
   currentLoadKva = 1850,
   hotSpotTemp = 78,
   dtrHeadroomKva = 1015,
 }: BessCoOptimizationProps) {
   const [bessMode, setBessMode] = useState<'peak-shave' | 'tou-arbitrage' | 'preservation'>('peak-shave')
+  const tariffStorageKey = `pdm_bess_tariff_${orgId}`
+  const [tariff, setTariff] = useState<TouTariffConfig>(DEFAULT_TARIFF)
+  const [showTariffModal, setShowTariffModal] = useState(false)
+  const [isApplying, setIsApplying] = useState(false)
+
+  // Load persistent TOU tariff settings
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const saved = localStorage.getItem(tariffStorageKey)
+      if (saved) {
+        setTariff(JSON.parse(saved))
+      }
+    } catch (e) {
+      console.error('Failed to load TOU tariff', e)
+    }
+  }, [tariffStorageKey])
+
+  const saveTariff = (updated: TouTariffConfig) => {
+    setTariff(updated)
+    try {
+      localStorage.setItem(tariffStorageKey, JSON.stringify(updated))
+    } catch (e) {
+      console.error('Failed to persist TOU tariff', e)
+    }
+  }
+
   // Slider RANGES have to scale with the asset too, not just the seeded value.
-  // They were fixed at 250–1000 kWh and 1500–2400 kVA while the seeds were
-  // derived from nameplate, so for any transformer under 1,875 kVA the seeded
-  // threshold fell below the slider's own minimum (a 500 kVA unit seeded 400
-  // kVA against a 1500 kVA floor) and under 1,250 kVA the capacity did too.
-  // The readout showed the real seed while the thumb sat pinned at the floor,
-  // and the first drag snapped the value up by a factor of three — on the
-  // control that decides when the battery discharges.
   const capacityMin = Math.max(50, Math.round(nameplateKva * 0.05 / 50) * 50)
   const capacityMax = Math.max(capacityMin + 200, Math.round(nameplateKva * 0.4 / 50) * 50)
   const thresholdMin = Math.max(50, Math.round(nameplateKva * 0.5 / 50) * 50)
@@ -47,11 +93,7 @@ export default function BessCoOptimization({
   const defaultCapacity = clamp(Math.round(nameplateKva * 0.2), capacityMin, capacityMax)
   const defaultThreshold = clamp(Math.round(nameplateKva * 0.8), thresholdMin, thresholdMax)
   const [bessCapacityKwh, setBessCapacityKwh] = useState(defaultCapacity)
-  // The detail page does not remount when ?id= changes, so these two seeded
-  // once and then kept the PREVIOUS asset's numbers — and since the slider
-  // bounds are derived from nameplate, the retained value could land outside
-  // the new asset's range, reproducing the out-of-range bug this component
-  // just had. Re-seed whenever the nameplate changes.
+
   const seededFor = useRef(nameplateKva)
   useEffect(() => {
     if (seededFor.current === nameplateKva) return
@@ -59,9 +101,7 @@ export default function BessCoOptimization({
     setBessCapacityKwh(defaultCapacity)
     setShaveThresholdKva(defaultThreshold)
   }, [nameplateKva, defaultCapacity, defaultThreshold])
-  // No BESS telemetry reaches this platform, so state-of-charge is a assumed
-  // planning figure, not a battery reading. Kept as a constant (its setter was
-  // never called anyway) and labelled as assumed in the KPI card below.
+
   const batterySocPct = 82
   const [shaveThresholdKva, setShaveThresholdKva] = useState(defaultThreshold)
   const [autoDispatchActive, setAutoDispatchActive] = useState(true)
@@ -73,13 +113,6 @@ export default function BessCoOptimization({
   // Real-time BESS Dispatch Metrics
   const dispatchMetrics = useMemo(() => {
     const isExceeding = currentLoadKva > shaveThresholdKva
-    // Math.max(0, …) is load-bearing: with manual injection on and the load
-    // BELOW the shave threshold this evaluated negative (e.g. 1850 kVA against
-    // a 2000 kVA threshold gave -142 kW). The negative then flowed into
-    // shavedLoadKva (raising the modelled load), hotSpotReliefC (rendered as
-    // "-{-5.7}°C", i.e. a temperature INCREASE shown as relief), and the
-    // revenue and carbon figures, which displayed negative kWh and tCO2e
-    // behind a "+" prefix.
     const dischargePowerKw = manualDischarging || (autoDispatchActive && isExceeding)
       ? Math.max(0, Math.min(maxDischargeKw, Math.round((currentLoadKva - shaveThresholdKva) * 0.95)))
       : 0
@@ -90,13 +123,14 @@ export default function BessCoOptimization({
     const hotSpotReliefC = Number((Math.round(dischargePowerKw / 0.95) * 0.04).toFixed(1))
     const effectiveHotSpotC = Number((hotSpotTemp - hotSpotReliefC).toFixed(1))
 
-    // Economic & Carbon Arbitrage (TOU Tariff: Off-peak 2.6 THB vs On-peak 4.3 THB)
-    const dailyKwhDispatched = Math.round(dischargePowerKw * 3.5) // 3.5 peak hours
-    const touProfitThb = Math.round(dailyKwhDispatched * (4.3 - 2.6))
-    const touProfitUsd = Number((touProfitThb / 36).toFixed(2))
+    // Economic & Carbon Arbitrage (TOU Tariff: Off-peak vs On-peak)
+    const dailyKwhDispatched = Math.round(dischargePowerKw * tariff.peakHours)
+    const rateDiff = Math.max(0, tariff.onPeakRate - tariff.offPeakRate)
+    const touProfitLocal = Math.round(dailyKwhDispatched * rateDiff)
+    const touProfitUsd = Number((touProfitLocal / tariff.fxToUsd).toFixed(2))
 
-    // Scope 2 Carbon Emissions Avoided: 0.20 kgCO2e/kWh differential
-    const carbonOffsetKg = Math.round(dailyKwhDispatched * 0.20)
+    // Scope 2 Carbon Emissions Avoided: kgCO2e/kWh differential
+    const carbonOffsetKg = Math.round(dailyKwhDispatched * tariff.gridDifferentialKgCo2)
     const carbonOffsetTons = Number((carbonOffsetKg / 1000).toFixed(2))
 
     return {
@@ -104,21 +138,27 @@ export default function BessCoOptimization({
       shavedLoadKva,
       hotSpotReliefC,
       effectiveHotSpotC,
-      touProfitThb,
+      touProfitLocal,
       touProfitUsd,
       carbonOffsetTons,
       isExceeding,
     }
-  }, [currentLoadKva, shaveThresholdKva, manualDischarging, autoDispatchActive, maxDischargeKw, hotSpotTemp])
+  }, [currentLoadKva, shaveThresholdKva, manualDischarging, autoDispatchActive, maxDischargeKw, hotSpotTemp, tariff])
+
+  const handleApplyStrategy = async () => {
+    setIsApplying(true)
+    await recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName: transformerName },
+      before: `BESS Shave Threshold: ${defaultThreshold} kVA, Mode: PEAK-SHAVE`,
+      after: `BESS Mode: ${bessMode.toUpperCase()}, Shave Threshold: ${shaveThresholdKva} kVA, Capacity: ${bessCapacityKwh} kWh, Tariff: ${tariff.currency} ${tariff.onPeakRate}/${tariff.offPeakRate}`,
+      justification: `Optimization strategy updated for ${transformerName} (Est. Daily TOU saving: ${tariff.currencySymbol}${dispatchMetrics.touProfitLocal.toLocaleString()})`,
+    })
+    setIsApplying(false)
+    toast.success('BESS Co-Optimization Strategy Applied & Logged to Audit Trail')
+  }
 
   // 24-Hour Diurnal Load vs BESS Shaved Profile.
-  //
-  // This is a TYPICAL diurnal SHAPE, not this transformer's recorded history —
-  // the platform does not feed 24h load history into this component. The raw
-  // kVA figures were previously absolute literals (1,320–2,450 kVA), so a
-  // 500 kVA unit rendered a chart peaking at five times its own nameplate. The
-  // shape is now expressed as a fraction of THIS asset's nameplate so the axis
-  // is at least dimensionally sane, and the heading says it is a model.
   const profile24h = useMemo(() => {
     const shape = [
       { t: '00:00', frac: 0.58, soc: 45 },
@@ -148,6 +188,33 @@ export default function BessCoOptimization({
       }
     })
   }, [shaveThresholdKva, maxDischargeKw, nameplateKva])
+
+  const handleExportSchedule = () => {
+    const rows = [
+      ['Time', 'Raw_Load_kVA', 'BESS_Discharge_kW', 'Shaved_Load_kVA', 'Battery_SOC_Pct', 'TOU_Rate_Type', 'Tariff_Rate'],
+      ...profile24h.map((d) => {
+        const isPeak = d.time >= '09:00' && d.time <= '22:00'
+        return [
+          d.time,
+          d.rawLoad,
+          d.bessPower,
+          d.shavedLoad,
+          d.batterySoc,
+          isPeak ? 'ON_PEAK' : 'OFF_PEAK',
+          isPeak ? tariff.onPeakRate : tariff.offPeakRate,
+        ]
+      }),
+    ]
+    const csvContent = 'data:text/csv;charset=utf-8,' + rows.map((e) => e.join(',')).join('\n')
+    const encodedUri = encodeURI(csvContent)
+    const link = document.createElement('a')
+    link.setAttribute('href', encodedUri)
+    link.setAttribute('download', `bess_dispatch_schedule_${assetId}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    toast.success('24-Hour BESS Dispatch Schedule Exported (CSV)')
+  }
 
   return (
     <div className="rounded-2xl p-5 space-y-6 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -182,26 +249,57 @@ export default function BessCoOptimization({
           </p>
         </div>
 
-        {/* Mode Selector */}
-        <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 self-start lg:self-auto">
-          {[
-            { id: 'peak-shave' as const, label: '⚡ Peak Shave' },
-            { id: 'tou-arbitrage' as const, label: '💰 TOU Arbitrage' },
-            { id: 'preservation' as const, label: '🛡️ Asset Life Guard' },
-          ].map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setBessMode(m.id)}
-              className={clsx(
-                'text-xs px-3 py-1.5 rounded-md font-semibold transition-all',
-                bessMode === m.id
-                  ? 'bg-emerald-600 text-white font-bold shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              )}
-            >
-              {m.label}
-            </button>
-          ))}
+        {/* Actions & Mode Selector */}
+        <div className="flex items-center gap-2 flex-wrap self-start lg:self-auto">
+          <button
+            type="button"
+            onClick={() => setShowTariffModal(true)}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+          >
+            <Settings size={13} className="text-amber-400" />
+            <span>ตั้งค่า TOU ({tariff.currency})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportSchedule}
+            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Export 24-Hour Dispatch Schedule to CSV"
+          >
+            <Download size={13} className="text-cyan-400" />
+            <span>Export CSV</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleApplyStrategy}
+            disabled={isApplying}
+            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-slate-950 transition-all flex items-center gap-1.5 cursor-pointer shadow disabled:opacity-50"
+          >
+            <Check size={13} />
+            <span>{isApplying ? 'กำลังบันทึก...' : 'ปรับใช้กลยุทธ์ (Apply)'}</span>
+          </button>
+
+          <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800">
+            {[
+              { id: 'peak-shave' as const, label: '⚡ Peak Shave' },
+              { id: 'tou-arbitrage' as const, label: '💰 TOU Arbitrage' },
+              { id: 'preservation' as const, label: '🛡️ Asset Life Guard' },
+            ].map((m) => (
+              <button
+                key={m.id}
+                onClick={() => setBessMode(m.id)}
+                className={clsx(
+                  'text-xs px-3 py-1.5 rounded-md font-semibold transition-all',
+                  bessMode === m.id
+                    ? 'bg-emerald-600 text-white font-bold shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                )}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -235,7 +333,7 @@ export default function BessCoOptimization({
         <div className="p-3.5 rounded-xl border border-amber-500/30 bg-amber-950/15 space-y-1">
           <div className="text-[10px] text-amber-300 uppercase font-semibold">Daily TOU Arbitrage</div>
           <div className="text-xl font-black text-amber-400 font-mono">
-            +{dispatchMetrics.touProfitThb.toLocaleString()} <span className="text-xs font-normal text-slate-400">THB</span>
+            +{dispatchMetrics.touProfitLocal.toLocaleString()} <span className="text-xs font-normal text-slate-400">{tariff.currency}</span>
           </div>
           <div className="text-[10px] text-slate-400">
             Approx. +${dispatchMetrics.touProfitUsd} USD / day
@@ -386,6 +484,173 @@ export default function BessCoOptimization({
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* TOU Tariff Settings Modal */}
+      {showTariffModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5 max-w-lg w-full space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Settings size={18} className="text-amber-400" />
+                <h4 className="text-sm font-bold text-white">กำหนดค่าอัตราค่าไฟฟ้า TOU &amp; การคำนวณคาร์บอน</h4>
+              </div>
+              <button
+                onClick={() => setShowTariffModal(false)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Presets */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] text-slate-400 font-medium">ชุดอัตราค่าไฟฟ้ามาตรฐาน (Regional Tariff Presets)</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {[
+                  { label: '🇹🇭 THB (MEA/PEA)', curr: 'THB', sym: '฿', on: 4.30, off: 2.60, hrs: 3.5, fx: 36, co2: 0.20 },
+                  { label: '🇸🇬 SGD (EMA)', curr: 'SGD', sym: 'S$', on: 0.32, off: 0.19, hrs: 4.0, fx: 1.35, co2: 0.16 },
+                  { label: '🇻🇳 VND (EVN)', curr: 'VND', sym: '₫', on: 3100, off: 1600, hrs: 3.5, fx: 25000, co2: 0.25 },
+                  { label: '🇺🇸 USD (US/Global)', curr: 'USD', sym: '$', on: 0.24, off: 0.10, hrs: 4.0, fx: 1.0, co2: 0.18 },
+                ].map((preset) => (
+                  <button
+                    key={preset.curr}
+                    type="button"
+                    onClick={() => {
+                      setTariff({
+                        currency: preset.curr,
+                        currencySymbol: preset.sym,
+                        onPeakRate: preset.on,
+                        offPeakRate: preset.off,
+                        peakHours: preset.hrs,
+                        fxToUsd: preset.fx,
+                        gridDifferentialKgCo2: preset.co2,
+                      })
+                    }}
+                    className={clsx(
+                      'text-[10px] p-2 rounded-lg border text-left font-medium transition-all cursor-pointer',
+                      tariff.currency === preset.curr
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        : 'bg-[#0a0e1a] text-slate-400 border-slate-800 hover:text-slate-200'
+                    )}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                saveTariff(tariff)
+                setShowTariffModal(false)
+                toast.success('บันทึกการตั้งค่า TOU & Carbon Factor สำเร็จ')
+              }}
+              className="space-y-3 text-xs"
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">รหัสสกุลเงิน (Currency Code)</label>
+                  <input
+                    type="text"
+                    required
+                    value={tariff.currency}
+                    onChange={(e) => setTariff({ ...tariff, currency: e.target.value.toUpperCase() })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">สัญลักษณ์สกุลเงิน (Symbol)</label>
+                  <input
+                    type="text"
+                    required
+                    value={tariff.currencySymbol}
+                    onChange={(e) => setTariff({ ...tariff, currencySymbol: e.target.value })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">อัตรา On-Peak ({tariff.currency}/kWh)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={tariff.onPeakRate}
+                    onChange={(e) => setTariff({ ...tariff, onPeakRate: Number(e.target.value) })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">อัตรา Off-Peak ({tariff.currency}/kWh)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={tariff.offPeakRate}
+                    onChange={(e) => setTariff({ ...tariff, offPeakRate: Number(e.target.value) })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-slate-400 mb-1">ช่วงชั่วโมง Peak (ชม./วัน)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    required
+                    value={tariff.peakHours}
+                    onChange={(e) => setTariff({ ...tariff, peakHours: Number(e.target.value) })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">อัตราแลกเปลี่ยน (ต่อ USD)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={tariff.fxToUsd}
+                    onChange={(e) => setTariff({ ...tariff, fxToUsd: Number(e.target.value) })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Scope 2 Diff (kgCO₂e/kWh)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={tariff.gridDifferentialKgCo2}
+                    onChange={(e) => setTariff({ ...tariff, gridDifferentialKgCo2: Number(e.target.value) })}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-amber-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowTariffModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold text-slate-950 rounded-lg bg-amber-500 hover:bg-amber-400 cursor-pointer shadow"
+                >
+                  บันทึกการตั้งค่า (Save Settings)
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -1422,6 +1422,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             assetId={transformer.id}
             assetName={transformer.name}
             orgName={currentOrgName}
+            orgId={orgId}
             isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
             bushingTanDeltaLive={transformer.sensors?.bushingTanDelta?.value ?? null}
             partialDischargeLive={transformer.sensors?.partialDischarge?.value ?? null}
@@ -1434,6 +1435,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             assetId={transformer.id}
             assetName={transformer.name}
             orgName={currentOrgName}
+            orgId={orgId}
             voltageKv={liveTelemetry.voltageKv}
             mainOilTemp={liveTelemetry.oilTemp}
             bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
@@ -2257,6 +2259,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           assetId={transformer.id}
           assetName={transformer.name}
           orgName={currentOrgName}
+          orgId={orgId}
           isSensorInstalled={Boolean(transformer.sensors?.bushingTanDelta || transformer.sensors?.partialDischarge)}
         />
       </StudyModal>
@@ -2273,6 +2276,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
           assetId={transformer.id}
           assetName={transformer.name}
           orgName={currentOrgName}
+          orgId={orgId}
           voltageKv={liveTelemetry.voltageKv}
           mainOilTemp={liveTelemetry.oilTemp}
           bushingTanDelta={transformer.sensors?.bushingTanDelta?.value ?? 0}
@@ -2292,6 +2296,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
         <BessCoOptimization
           transformerName={transformer.name}
           orgName={currentOrgName}
+          assetId={transformer.id}
+          orgId={orgId}
           nameplateKva={liveTelemetry.ratedKva}
           currentLoadKva={liveTelemetry.loadKva}
           hotSpotTemp={liveTelemetry.hotSpotTemp}
@@ -2316,6 +2322,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
             c2h6: liveTelemetry.c2h6,
           }}
           assetId={transformer.id || 'TRF-01'}
+          assetName={transformer.name}
+          orgId={orgId}
         />
       </StudyModal>
 

@@ -1,15 +1,18 @@
 'use client'
 
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   Activity, Zap, AlertTriangle, ShieldCheck, TrendingUp,
-  Radio, CheckCircle2, ArrowUpRight, Gauge, Info, Layers, Download
+  Radio, CheckCircle2, ArrowUpRight, Gauge, Info, Layers, Download,
+  Sliders, Wrench, Check
 } from 'lucide-react'
 import {
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer,
   ReferenceLine, CartesianGrid, Cell
 } from 'recharts'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface BushingData {
   phase: 'A' | 'B' | 'C'
@@ -68,6 +71,7 @@ interface BushingHealthStudioProps {
   assetId?: string
   assetName?: string
   orgName?: string
+  orgId?: string
   isSensorInstalled?: boolean
   bushingTanDeltaLive?: number | null
   partialDischargeLive?: number | null
@@ -78,20 +82,55 @@ export default function BushingHealthStudio({
   assetId = 'TR-01',
   assetName = 'Main Substation TR-01',
   orgName = 'Industrial Substation',
+  orgId = 'default',
   isSensorInstalled = false,
   bushingTanDeltaLive = null,
   partialDischargeLive = null,
 }: BushingHealthStudioProps) {
-  // Whether a bushing adapter is fitted is a fact about the DEVICE, not a view
-  // option. This used to be local state behind a button, so any user could flip
-  // the badge to "ONLINE SENSOR ADAPTER" over the same static table below.
   const sensorInstalled = isSensorInstalled
+  const storageKey = `pdm_bushing_${assetId}`
+  const [baseBushings, setBaseBushings] = useState<BushingData[]>(DEFAULT_BUSHINGS)
   const [selectedPhase, setSelectedPhase] = useState<'A' | 'B' | 'C'>('B')
   const [pdFilter, setPdFilter] = useState<'all' | 'corona' | 'internal' | 'surface'>('all')
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [dispatchedWo, setDispatchedWo] = useState<string | null>(null)
+
+  // Edit form state
+  const [editC1Nom, setEditC1Nom] = useState('380.0')
+  const [editC1Meas, setEditC1Meas] = useState('393.8')
+  const [editTanDelta, setEditTanDelta] = useState('0.82')
+  const [editBaseline, setEditBaseline] = useState('0.33')
+  const [editPd, setEditPd] = useState('195')
+
+  // Load persistent bushing baselines
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed) && parsed.length === 3) {
+          setBaseBushings(parsed)
+          return
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load bushing data', e)
+    }
+  }, [storageKey])
+
+  const saveBushings = (updated: BushingData[]) => {
+    setBaseBushings(updated)
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(updated))
+    } catch (e) {
+      console.error('Failed to persist bushing data', e)
+    }
+  }
 
   const bushings = useMemo<BushingData[]>(() => {
-    if (!sensorInstalled || bushingTanDeltaLive == null) return DEFAULT_BUSHINGS
-    return DEFAULT_BUSHINGS.map((b) => {
+    if (!sensorInstalled || bushingTanDeltaLive == null) return baseBushings
+    return baseBushings.map((b) => {
       if (b.phase === 'B') {
         const td = bushingTanDeltaLive
         const pd = partialDischargeLive ?? b.pdMagnitudePc
@@ -105,7 +144,7 @@ export default function BushingHealthStudio({
       }
       return b
     })
-  }, [sensorInstalled, bushingTanDeltaLive, partialDischargeLive])
+  }, [baseBushings, sensorInstalled, bushingTanDeltaLive, partialDischargeLive])
 
   const activeBushing = useMemo(
     () => bushings.find((b) => b.phase === selectedPhase) || bushings[0],
@@ -118,20 +157,88 @@ export default function BushingHealthStudio({
     return Number(delta.toFixed(2))
   }, [activeBushing])
 
-  // Synthetic Phase-Resolved Partial Discharge (PRPD) Scatter Cloud (0° to 360° phase angle)
+  const handleOpenEdit = (phase: 'A' | 'B' | 'C') => {
+    const b = bushings.find((item) => item.phase === phase) || bushings[0]
+    setEditC1Nom(String(b.c1NominalPf))
+    setEditC1Meas(String(b.c1MeasuredPf))
+    setEditTanDelta(String(b.tanDeltaPct))
+    setEditBaseline(String(b.tanDeltaBaselinePct))
+    setEditPd(String(b.pdMagnitudePc))
+    setShowEditModal(true)
+  }
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const nom = Math.max(10, Number(editC1Nom) || 380)
+    const meas = Math.max(10, Number(editC1Meas) || 380)
+    const td = Math.max(0.01, Number(editTanDelta) || 0.35)
+    const base = Math.max(0.01, Number(editBaseline) || 0.30)
+    const pd = Math.max(0, Number(editPd) || 30)
+    const drift = ((meas - nom) / nom) * 100
+    const status: 'good' | 'warning' | 'critical' =
+      td > 1.0 || pd > 250 || Math.abs(drift) > 5 ? 'critical' : td > 0.5 || pd > 100 || Math.abs(drift) > 3 ? 'warning' : 'good'
+
+    const updated = baseBushings.map((b) => {
+      if (b.phase === selectedPhase) {
+        return {
+          ...b,
+          c1NominalPf: nom,
+          c1MeasuredPf: meas,
+          tanDeltaPct: Number(td.toFixed(3)),
+          tanDeltaBaselinePct: Number(base.toFixed(3)),
+          pdMagnitudePc: Math.round(pd),
+          status,
+        }
+      }
+      return b
+    })
+
+    saveBushings(updated)
+    setShowEditModal(false)
+
+    await recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName },
+      before: `Phase ${selectedPhase} C1: ${activeBushing.c1MeasuredPf}pF, tan δ: ${activeBushing.tanDeltaPct}%`,
+      after: `Phase ${selectedPhase} C1: ${meas}pF (${drift.toFixed(2)}%), tan δ: ${td}%, PD: ${pd}pC`,
+      justification: `Offline Doble / Power Factor Bushing Test Bench Update for ${assetName} (Phase ${selectedPhase}, Org: ${orgId})`,
+    })
+
+    toast.success(`Phase ${selectedPhase} test bench readings saved & logged to Audit Trail`)
+  }
+
+  const handleQueueWorkOrder = async () => {
+    const woNumber = `WO-BSH-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 4)}-${selectedPhase}-${Date.now().toString(36).toUpperCase().slice(-5)}`
+    setDispatchedWo(woNumber)
+
+    await recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName },
+      before: `Phase ${selectedPhase} Status: ${activeBushing.status.toUpperCase()}`,
+      after: `Dispatched CMMS Work Order ${woNumber} (Priority: HIGH · Bushing Insulation Inspection)`,
+      justification: `Elevated tan δ (${activeBushing.tanDeltaPct}%) / Capacitance Drift (${c1DriftPct}%) on Phase ${selectedPhase}`,
+      workOrderId: woNumber,
+    })
+
+    toast.success(`Work Order ${woNumber} queued to CMMS for Phase ${selectedPhase}`)
+  }
+
+  // Deterministic Phase-Resolved Partial Discharge (PRPD) Scatter Cloud (0° to 360° phase angle)
   const prpdData = useMemo(() => {
     const points: { phaseAngle: number; magnitude: number; count: number; type: string }[] = []
     const isPhaseB = selectedPhase === 'B'
-    const pointCount = isPhaseB ? 140 : 45
+    const pdMag = activeBushing.pdMagnitudePc
+    const pointCount = isPhaseB || pdMag > 100 ? 120 : 40
 
     for (let i = 0; i < pointCount; i++) {
-      // Cluster around 45°-90° (positive half-cycle) and 225°-270° (negative half-cycle)
-      const isPos = Math.random() > 0.5
-      const centerAngle = isPos ? 70 : 250
-      const phaseAngle = Math.round(centerAngle + (Math.random() - 0.5) * 60)
-      const baseMag = isPhaseB ? (80 + Math.random() * 140) : (20 + Math.random() * 40)
-      const magnitude = Math.round(baseMag * (0.6 + Math.sin((phaseAngle * Math.PI) / 180) * 0.4))
-      const count = Math.round(1 + Math.random() * 12)
+      const pseudoRand1 = ((i * 137 + (selectedPhase.charCodeAt(0) * 19)) % 100) / 100
+      const pseudoRand2 = ((i * 281 + 47) % 100) / 100
+      const isPos = i % 2 === 0
+      const centerAngle = isPos ? 72 : 252
+      const phaseAngle = Math.round(centerAngle + (pseudoRand1 - 0.5) * 58)
+      const baseMag = (pdMag * 0.6) + (pseudoRand2 * pdMag * 0.7)
+      const magnitude = Math.round(baseMag * (0.65 + Math.sin((phaseAngle * Math.PI) / 180) * 0.35))
+      const count = Math.round(1 + pseudoRand1 * 10)
       const type = phaseAngle > 60 && phaseAngle < 90 ? 'internal' : phaseAngle > 240 && phaseAngle < 270 ? 'surface' : 'corona'
 
       points.push({
@@ -143,7 +250,7 @@ export default function BushingHealthStudio({
     }
 
     return points
-  }, [selectedPhase])
+  }, [selectedPhase, activeBushing.pdMagnitudePc])
 
   const filteredPoints = useMemo(() => {
     if (pdFilter === 'all') return prpdData
@@ -184,8 +291,15 @@ export default function BushingHealthStudio({
           </p>
         </div>
 
-        {/* Phase Selector */}
+        {/* Phase Selector & Update Button */}
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => handleOpenEdit(selectedPhase)}
+            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-600/30 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+          >
+            <Sliders size={13} /> อัปเดตผลทดสอบ Phase {selectedPhase}
+          </button>
+
           <span className="text-[11px] px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 font-medium">
             Adapter: {sensorInstalled ? 'Fitted' : 'Not fitted'}
           </span>
@@ -374,20 +488,33 @@ export default function BushingHealthStudio({
             </div>
           </div>
 
-          {/* Action Callout */}
-          {activeBushing.status === 'warning' ? (
-            <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-950/20 text-amber-300 space-y-1">
+          {/* Action Callout & CMMS Work Order Dispatch */}
+          {activeBushing.status !== 'good' ? (
+            <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-950/25 text-amber-300 space-y-2.5">
               <div className="flex items-center gap-1.5 font-bold text-xs">
-                <AlertTriangle size={13} className="shrink-0" />
+                <AlertTriangle size={15} className="shrink-0 text-amber-400" />
                 <span>Action Required: Phase {selectedPhase} Bushing Degradation</span>
               </div>
               <p className="text-[11px] text-amber-200/90 leading-relaxed">
                 Recommend off-line C1/C2 sweep frequency dielectric testing and ultrasonic inspection during next scheduled outage.
               </p>
+              <div className="pt-1 flex items-center justify-between flex-wrap gap-2">
+                <button
+                  onClick={handleQueueWorkOrder}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-slate-950 transition-all flex items-center gap-1.5 cursor-pointer shadow"
+                >
+                  <Wrench size={13} /> สั่งเปิดใบแจ้งซ่อม CMMS (Dispatch Work Order)
+                </button>
+                {dispatchedWo && (
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold">
+                    ✓ {dispatchedWo}
+                  </span>
+                )}
+              </div>
             </div>
           ) : (
-            <div className="p-3 rounded-lg border border-emerald-500/30 bg-emerald-950/15 text-emerald-300 flex items-center gap-2 text-xs">
-              <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+            <div className="p-3.5 rounded-xl border border-emerald-500/30 bg-emerald-950/15 text-emerald-300 flex items-center gap-2 text-xs">
+              <ShieldCheck size={18} className="text-emerald-400 shrink-0" />
               <span>Phase {selectedPhase} insulation is healthy. Dielectric loss and capacitance within IEEE limits.</span>
             </div>
           )}
@@ -485,6 +612,103 @@ export default function BushingHealthStudio({
           </div>
         </div>
       </div>
+
+      {/* Edit Modal for Offline Doble Test Bench */}
+      {showEditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Zap size={18} className="text-amber-400" />
+                <h4 className="text-sm font-bold text-white">บันทึกผลทดสอบ Doble / Power Factor (Phase {selectedPhase})</h4>
+              </div>
+              <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-white cursor-pointer">
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">C₁ Nameplate (pF)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    required
+                    value={editC1Nom}
+                    onChange={(e) => setEditC1Nom(e.target.value)}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">C₁ Measured (pF)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    required
+                    value={editC1Meas}
+                    onChange={(e) => setEditC1Meas(e.target.value)}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-400 mb-1">Dielectric tan δ (%)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    required
+                    value={editTanDelta}
+                    onChange={(e) => setEditTanDelta(e.target.value)}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-400 mb-1">Baseline tan δ (%)</label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    required
+                    value={editBaseline}
+                    onChange={(e) => setEditBaseline(e.target.value)}
+                    className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 mb-1">Partial Discharge (pC)</label>
+                <input
+                  type="number"
+                  step="1"
+                  required
+                  value={editPd}
+                  onChange={(e) => setEditPd(e.target.value)}
+                  className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg p-2 text-white font-mono text-xs focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowEditModal(false)}
+                  className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
+                >
+                  ยกเลิก (Cancel)
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 text-xs font-bold text-white rounded-lg bg-indigo-600 hover:bg-indigo-500 cursor-pointer shadow"
+                >
+                  บันทึกข้อมูล (Save)
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
