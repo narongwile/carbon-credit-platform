@@ -410,7 +410,14 @@ export default function AuditPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/50">
-                {filteredRecords.map((record) => (
+                {loading && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                      Loading audit ledger...
+                    </td>
+                  </tr>
+                )}
+                {!loading && filteredRecords.map((record) => (
                   <tr key={record.id} className="hover:bg-slate-800/20 transition-colors">
                     <td className="px-4 py-3 align-top whitespace-nowrap">
                       <div className="font-medium text-slate-200">

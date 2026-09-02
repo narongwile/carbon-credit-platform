@@ -807,231 +807,238 @@ export default function LiveSensorMap({
         }
       `}</style>
 
-      {/* Search Bar */}
-      <div className="absolute top-3 left-3 z-[1500] max-w-[240px] sm:max-w-[280px]">
-        <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
-      </div>
+      {/* Unified Top Navigation & Controls Bar */}
+      <div className="absolute top-3 left-3 right-3 z-[1000] flex items-center justify-between gap-3 pointer-events-none">
+        {/* Left: Search Bar & Filters */}
+        <div className="flex items-center gap-2 pointer-events-auto min-w-0 flex-1 overflow-x-auto no-scrollbar py-0.5">
+          <div className="w-[240px] sm:w-[270px] shrink-0">
+            <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
+          </div>
 
-      {/* Quick Filter Chips */}
-      <div className="absolute top-3 left-[255px] sm:left-[300px] right-[240px] z-[1000] overflow-x-auto no-scrollbar hidden md:flex items-center gap-1.5 py-0.5 pointer-events-auto">
-        <button
-          type="button"
-          onClick={() => setStatusFilter('all')}
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-            statusFilter === 'all'
-              ? 'bg-indigo-600 text-white shadow-indigo-500/20'
-              : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
-          }`}
-        >
-          All ({counts.all})
-        </button>
-        {counts.critical > 0 && (
-          <button
-            type="button"
-            onClick={() => setStatusFilter(statusFilter === 'critical' ? 'all' : 'critical')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-              statusFilter === 'critical'
-                ? 'bg-red-600 text-white shadow-red-500/20'
-                : 'bg-[#0d1117]/90 text-red-400 hover:text-red-300 border border-red-500/30'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" /> Critical ({counts.critical})
-          </button>
-        )}
-        {counts.warning > 0 && (
-          <button
-            type="button"
-            onClick={() => setStatusFilter(statusFilter === 'warning' ? 'all' : 'warning')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-              statusFilter === 'warning'
-                ? 'bg-amber-600 text-white shadow-amber-500/20'
-                : 'bg-[#0d1117]/90 text-amber-400 hover:text-amber-300 border border-amber-500/30'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-amber-400" /> Warning ({counts.warning})
-          </button>
-        )}
-        {counts.healthy > 0 && (
-          <button
-            type="button"
-            onClick={() => setStatusFilter(statusFilter === 'healthy' ? 'all' : 'healthy')}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-              statusFilter === 'healthy'
-                ? 'bg-emerald-600 text-white shadow-emerald-500/20'
-                : 'bg-[#0d1117]/90 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400" /> Normal ({counts.healthy})
-          </button>
-        )}
+          {/* 1. Site Filter (Top Hierarchy) */}
+          {availableSites.length > 0 && (
+            <div className="flex items-center gap-1 shrink-0">
+              <div className="relative flex items-center">
+                <Building2 size={12} className="absolute left-2.5 text-indigo-400 pointer-events-none" />
+                <select
+                  value={siteFilter}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setSiteFilter(val)
+                    onSiteChange?.(val)
+                  }}
+                  className={`text-xs font-semibold pl-7 pr-7 py-1 rounded-xl shadow-md border outline-none appearance-none cursor-pointer transition-all ${
+                    siteFilter !== 'all'
+                      ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/40'
+                      : 'bg-[#0d1117]/90 text-slate-300 hover:text-white border-[#1e2433]'
+                  }`}
+                  title="Filter sensors by installation site (กรองเซนเซอร์ตามไซต์)"
+                >
+                  <option value="all">🏢 All Sites ({nodes.length})</option>
+                  {availableSites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      📍 {s.name} ({s.count})
+                    </option>
+                  ))}
+                </select>
+                {siteFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSiteFilter('all')
+                      onSiteChange?.('all')
+                    }}
+                    className="absolute right-1.5 p-0.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                    title="Clear site filter (แสดงทุกไซต์)"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+              <div className="w-px h-4 bg-slate-800 mx-1 shrink-0" />
+            </div>
+          )}
 
-        {hasMultipleDomains && (
-          <>
-            <div className="w-px h-4 bg-slate-800 mx-1 flex-shrink-0" />
+          {/* 2. Domain Filters */}
+          {hasMultipleDomains && (
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setDomainFilter(domainFilter === 'transformer' ? 'all' : 'transformer')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  domainFilter === 'transformer'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                }`}
+              >
+                <Zap size={11} className="text-amber-400" /> Transformers ({counts.transformer})
+              </button>
+              {counts.carbonNode > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDomainFilter(domainFilter === 'carbonNode' ? 'all' : 'carbonNode')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                    domainFilter === 'carbonNode'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                  }`}
+                >
+                  <Thermometer size={11} className="text-emerald-400" /> CarbonBOX ({counts.carbonNode})
+                </button>
+              )}
+              {counts.bloodBox > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDomainFilter(domainFilter === 'bloodBox' ? 'all' : 'bloodBox')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                    domainFilter === 'bloodBox'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                  }`}
+                >
+                  <Droplet size={11} className="text-rose-400" /> BloodBOX ({counts.bloodBox})
+                </button>
+              )}
+              {counts.automobile > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDomainFilter(domainFilter === 'automobile' ? 'all' : 'automobile')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                    domainFilter === 'automobile'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                  }`}
+                >
+                  <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
+                </button>
+              )}
+              <div className="w-px h-4 bg-slate-800 mx-1 shrink-0" />
+            </div>
+          )}
+
+          {/* 3. Status Filters */}
+          <div className="hidden sm:flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={() => setDomainFilter(domainFilter === 'transformer' ? 'all' : 'transformer')}
+              onClick={() => setStatusFilter('all')}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                domainFilter === 'transformer'
-                  ? 'bg-indigo-600 text-white'
+                statusFilter === 'all'
+                  ? 'bg-indigo-600 text-white shadow-indigo-500/20'
                   : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
               }`}
             >
-              <Zap size={11} className="text-amber-400" /> Transformers ({counts.transformer})
+              All ({counts.all})
             </button>
-            {counts.carbonNode > 0 && (
+            {counts.critical > 0 && (
               <button
                 type="button"
-                onClick={() => setDomainFilter(domainFilter === 'carbonNode' ? 'all' : 'carbonNode')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                  domainFilter === 'carbonNode'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                onClick={() => setStatusFilter(statusFilter === 'critical' ? 'all' : 'critical')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  statusFilter === 'critical'
+                    ? 'bg-red-600 text-white shadow-red-500/20'
+                    : 'bg-[#0d1117]/90 text-red-400 hover:text-red-300 border border-red-500/30'
                 }`}
               >
-                <Thermometer size={11} className="text-emerald-400" /> CarbonBOX ({counts.carbonNode})
+                <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" /> Critical ({counts.critical})
               </button>
             )}
-            {counts.bloodBox > 0 && (
+            {counts.warning > 0 && (
               <button
                 type="button"
-                onClick={() => setDomainFilter(domainFilter === 'bloodBox' ? 'all' : 'bloodBox')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                  domainFilter === 'bloodBox'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                onClick={() => setStatusFilter(statusFilter === 'warning' ? 'all' : 'warning')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  statusFilter === 'warning'
+                    ? 'bg-amber-600 text-white shadow-amber-500/20'
+                    : 'bg-[#0d1117]/90 text-amber-400 hover:text-amber-300 border border-amber-500/30'
                 }`}
               >
-                <Droplet size={11} className="text-rose-400" /> BloodBOX ({counts.bloodBox})
+                <span className="w-2 h-2 rounded-full bg-amber-400" /> Warning ({counts.warning})
               </button>
             )}
-            {counts.automobile > 0 && (
+            {counts.healthy > 0 && (
               <button
                 type="button"
-                onClick={() => setDomainFilter(domainFilter === 'automobile' ? 'all' : 'automobile')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                  domainFilter === 'automobile'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                onClick={() => setStatusFilter(statusFilter === 'healthy' ? 'all' : 'healthy')}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  statusFilter === 'healthy'
+                    ? 'bg-emerald-600 text-white shadow-emerald-500/20'
+                    : 'bg-[#0d1117]/90 text-emerald-400 hover:text-emerald-300 border border-emerald-500/30'
                 }`}
               >
-                <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
+                <span className="w-2 h-2 rounded-full bg-emerald-400" /> Normal ({counts.healthy})
               </button>
             )}
-          </>
-        )}
+          </div>
+        </div>
 
-        {availableSites.length > 0 && (
-          <>
-            <div className="w-px h-4 bg-slate-800 mx-1 flex-shrink-0" />
-            <div className="relative flex items-center">
-              <Building2 size={12} className="absolute left-2.5 text-indigo-400 pointer-events-none" />
-              <select
-                value={siteFilter}
-                onChange={(e) => {
-                  const val = e.target.value
-                  setSiteFilter(val)
-                  onSiteChange?.(val)
-                }}
-                className={`text-xs font-semibold pl-7 pr-6 py-1 rounded-xl shadow-md border outline-none appearance-none cursor-pointer transition-all ${
-                  siteFilter !== 'all'
-                    ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/40'
-                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border-[#1e2433]'
-                }`}
-                title="Filter sensors by installation site (กรองเซนเซอร์ตามไซต์)"
-              >
-                <option value="all">All Sites ({nodes.length})</option>
-                {availableSites.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.count})
-                  </option>
-                ))}
-              </select>
-            </div>
-            {siteFilter !== 'all' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSiteFilter('all')
-                  onSiteChange?.('all')
-                }}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                title="Clear site filter (แสดงทุกไซต์)"
-              >
-                <X size={12} />
-              </button>
-            )}
-          </>
-        )}
+        {/* Right: Map Layer Switcher (Streets, Satellite, Dark) */}
+        <div className="shrink-0 pointer-events-auto flex items-center">
+          <div
+            className="flex items-center p-0.5 rounded-xl shadow-lg border border-[#1e2433]"
+            style={{ background: 'rgba(13, 17, 23, 0.95)', backdropFilter: 'blur(8px)' }}
+          >
+            <button
+              type="button"
+              onClick={() => switchLayer('streets')}
+              title="Street map (OpenStreetMap)"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <MapIcon size={12} /> Streets
+            </button>
+            <button
+              type="button"
+              onClick={() => switchLayer('satellite')}
+              title="Satellite imagery (Esri World Imagery / ArcGIS)"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Globe size={12} /> Satellite
+            </button>
+            <button
+              type="button"
+              onClick={() => switchLayer('dark')}
+              title="Dark map (CARTO Dark Matter)"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Moon size={12} /> Dark
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Layer Switcher & Interactive Legend */}
-      <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2">
-        <div
-          className="flex items-center p-0.5 rounded-xl shadow-lg"
-          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
-        >
-          <button
-            type="button"
-            onClick={() => switchLayer('streets')}
-            title="Street map (OpenStreetMap)"
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-              currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <MapIcon size={12} /> Streets
-          </button>
-          <button
-            type="button"
-            onClick={() => switchLayer('satellite')}
-            title="Satellite imagery (Esri World Imagery / ArcGIS)"
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-              currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Globe size={12} /> Satellite
-          </button>
-          <button
-            type="button"
-            onClick={() => switchLayer('dark')}
-            title="Dark map (CARTO Dark Matter)"
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-              currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Moon size={12} /> Dark
-          </button>
-        </div>
-
-        {/* Interactive Legend Pills */}
-        <div
-          className="hidden sm:flex items-center gap-3 px-3.5 py-1.5 rounded-xl shadow-lg"
-          style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)', border: '1px solid #1e2433' }}
-        >
-          {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => {
-            const active = statusFilter === k
-            return (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setStatusFilter(statusFilter === k ? 'all' : k)}
-                className={`flex items-center gap-1.5 text-xs font-semibold transition-all px-1.5 py-0.5 rounded-md ${
-                  active ? 'bg-white/10 text-white font-bold' : 'text-slate-300 hover:text-white'
-                }`}
-                title={`Filter ${label} devices`}
-              >
-                <span
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{
-                    background: healthColor[k],
-                    boxShadow: active ? `0 0 8px ${healthColor[k]}` : undefined,
-                  }}
-                />
-                {label}
-              </button>
-            )
-          })}
-        </div>
+      {/* Floating Status Legend (Bottom-Left) */}
+      <div
+        className="absolute bottom-4 left-4 z-[1000] hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-xl shadow-xl pointer-events-auto border border-slate-800"
+        style={{ background: 'rgba(13, 17, 23, 0.92)', backdropFilter: 'blur(8px)' }}
+      >
+        {([['healthy', 'Healthy'], ['warning', 'Warning'], ['critical', 'Critical']] as const).map(([k, label]) => {
+          const active = statusFilter === k
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setStatusFilter(statusFilter === k ? 'all' : k)}
+              className={`flex items-center gap-1.5 text-xs font-semibold transition-all px-1.5 py-0.5 rounded-md ${
+                active ? 'bg-white/10 text-white font-bold' : 'text-slate-400 hover:text-white'
+              }`}
+              title={`Filter ${label} devices`}
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full"
+                style={{
+                  background: healthColor[k],
+                  boxShadow: active ? `0 0 8px ${healthColor[k]}` : undefined,
+                }}
+              />
+              {label} ({counts[k]})
+            </button>
+          )
+        })}
       </div>
 
       {/* Floating Action Controls (Bottom Right) */}
