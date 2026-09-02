@@ -20,6 +20,10 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
+# Docker CLI 29.3.1 defaults to API v1.54 which fails with 500 on /v1.54/auth in Docker Desktop.
+# Pinning to v1.45 ensures stable auth and build across all environments.
+export DOCKER_API_VERSION="${DOCKER_API_VERSION:-1.45}"
+
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 WORKER_DIR="$REPO_ROOT/worker"
 MANIFEST="$REPO_ROOT/infra/k8s/custom-apps/base/ingest-worker.yaml"
