@@ -815,6 +815,108 @@ export default function LiveSensorMap({
             <MapSearchBar onSelectPlace={handleSearchPlace} placeholder="Search place, city, factory or lat, lng…" />
           </div>
 
+          {/* 1. Site Filter (Top Hierarchy) */}
+          {availableSites.length > 0 && (
+            <div className="flex items-center gap-1 shrink-0">
+              <div className="relative flex items-center">
+                <Building2 size={12} className="absolute left-2.5 text-indigo-400 pointer-events-none" />
+                <select
+                  value={siteFilter}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setSiteFilter(val)
+                    onSiteChange?.(val)
+                  }}
+                  className={`text-xs font-semibold pl-7 pr-7 py-1 rounded-xl shadow-md border outline-none appearance-none cursor-pointer transition-all ${
+                    siteFilter !== 'all'
+                      ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/40'
+                      : 'bg-[#0d1117]/90 text-slate-300 hover:text-white border-[#1e2433]'
+                  }`}
+                  title="Filter sensors by installation site (กรองเซนเซอร์ตามไซต์)"
+                >
+                  <option value="all">🏢 All Sites ({nodes.length})</option>
+                  {availableSites.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      📍 {s.name} ({s.count})
+                    </option>
+                  ))}
+                </select>
+                {siteFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSiteFilter('all')
+                      onSiteChange?.('all')
+                    }}
+                    className="absolute right-1.5 p-0.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                    title="Clear site filter (แสดงทุกไซต์)"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </div>
+              <div className="w-px h-4 bg-slate-800 mx-1 shrink-0" />
+            </div>
+          )}
+
+          {/* 2. Domain Filters */}
+          {hasMultipleDomains && (
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setDomainFilter(domainFilter === 'transformer' ? 'all' : 'transformer')}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                  domainFilter === 'transformer'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                }`}
+              >
+                <Zap size={11} className="text-amber-400" /> Transformers ({counts.transformer})
+              </button>
+              {counts.carbonNode > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDomainFilter(domainFilter === 'carbonNode' ? 'all' : 'carbonNode')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                    domainFilter === 'carbonNode'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                  }`}
+                >
+                  <Thermometer size={11} className="text-emerald-400" /> CarbonBOX ({counts.carbonNode})
+                </button>
+              )}
+              {counts.bloodBox > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDomainFilter(domainFilter === 'bloodBox' ? 'all' : 'bloodBox')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                    domainFilter === 'bloodBox'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                  }`}
+                >
+                  <Droplet size={11} className="text-rose-400" /> BloodBOX ({counts.bloodBox})
+                </button>
+              )}
+              {counts.automobile > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setDomainFilter(domainFilter === 'automobile' ? 'all' : 'automobile')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
+                    domainFilter === 'automobile'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
+                  }`}
+                >
+                  <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
+                </button>
+              )}
+              <div className="w-px h-4 bg-slate-800 mx-1 shrink-0" />
+            </div>
+          )}
+
+          {/* 3. Status Filters */}
           <div className="hidden sm:flex items-center gap-1.5 shrink-0">
             <button
               type="button"
@@ -865,105 +967,6 @@ export default function LiveSensorMap({
               >
                 <span className="w-2 h-2 rounded-full bg-emerald-400" /> Normal ({counts.healthy})
               </button>
-            )}
-
-            {hasMultipleDomains && (
-              <>
-                <div className="w-px h-4 bg-slate-800 mx-1 flex-shrink-0" />
-                <button
-                  type="button"
-                  onClick={() => setDomainFilter(domainFilter === 'transformer' ? 'all' : 'transformer')}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                    domainFilter === 'transformer'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
-                  }`}
-                >
-                  <Zap size={11} className="text-amber-400" /> Transformers ({counts.transformer})
-                </button>
-                {counts.carbonNode > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setDomainFilter(domainFilter === 'carbonNode' ? 'all' : 'carbonNode')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                      domainFilter === 'carbonNode'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
-                    }`}
-                  >
-                    <Thermometer size={11} className="text-emerald-400" /> CarbonBOX ({counts.carbonNode})
-                  </button>
-                )}
-                {counts.bloodBox > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setDomainFilter(domainFilter === 'bloodBox' ? 'all' : 'bloodBox')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                      domainFilter === 'bloodBox'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
-                    }`}
-                  >
-                    <Droplet size={11} className="text-rose-400" /> BloodBOX ({counts.bloodBox})
-                  </button>
-                )}
-                {counts.automobile > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setDomainFilter(domainFilter === 'automobile' ? 'all' : 'automobile')}
-                    className={`flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold shadow-md whitespace-nowrap transition-all ${
-                      domainFilter === 'automobile'
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border border-[#1e2433]'
-                    }`}
-                  >
-                    <Car size={11} className="text-amber-400" /> Formula EV ({counts.automobile})
-                  </button>
-                )}
-              </>
-            )}
-
-            {availableSites.length > 0 && (
-              <>
-                <div className="w-px h-4 bg-slate-800 mx-1 flex-shrink-0" />
-                <div className="relative flex items-center">
-                  <Building2 size={12} className="absolute left-2.5 text-indigo-400 pointer-events-none" />
-                  <select
-                    value={siteFilter}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setSiteFilter(val)
-                      onSiteChange?.(val)
-                    }}
-                    className={`text-xs font-semibold pl-7 pr-6 py-1 rounded-xl shadow-md border outline-none appearance-none cursor-pointer transition-all ${
-                      siteFilter !== 'all'
-                        ? 'bg-indigo-950/90 text-indigo-200 border-indigo-500/60 shadow-indigo-500/20 ring-1 ring-indigo-500/40'
-                        : 'bg-[#0d1117]/90 text-slate-400 hover:text-white border-[#1e2433]'
-                    }`}
-                    title="Filter sensors by installation site (กรองเซนเซอร์ตามไซต์)"
-                  >
-                    <option value="all">All Sites ({nodes.length})</option>
-                    {availableSites.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} ({s.count})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {siteFilter !== 'all' && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSiteFilter('all')
-                      onSiteChange?.('all')
-                    }}
-                    className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                    title="Clear site filter (แสดงทุกไซต์)"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </>
             )}
           </div>
         </div>
