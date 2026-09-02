@@ -100,6 +100,15 @@ test_proofs_and_integrity:
     - node e2e/proofs/test-emailguard.mjs
     - node e2e/proofs/test-riskmap.mjs
     - node e2e/proofs/test-report-honesty.mjs
+    # The exported PdM summary printed "Snapshot SHA-256: (hash unavailabl…".
+    # crypto.subtle is gated on the page being a SECURE CONTEXT, and this
+    # cluster serves the frontend on :30080 as well as :30443, so every export
+    # made over http had no integrity hash. The report and audit-record hashes
+    # were worse: they silently substituted a 32/53-bit non-cryptographic value,
+    # padded to 64 hex chars and labelled "sha256:". All three now use a pure-JS
+    # SHA-256 verified byte-identical to node's, including at the block-padding
+    # boundaries. Verified to fail 8/25 on the pre-fix code.
+    - node e2e/proofs/test-sha256-fallback.mjs
     - node e2e/proofs/test-rate-of-rise.mjs
     - node e2e/proofs/verify-pearson.mjs
     - node e2e/proofs/test-real-device-fieldnames.mjs

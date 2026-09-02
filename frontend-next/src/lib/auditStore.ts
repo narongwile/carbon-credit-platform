@@ -1,6 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
+import { sha256 } from '@/lib/sha256'
 import { persist } from 'zustand/middleware'
 import { getSession } from './auth'
 import { api } from './api'
@@ -59,27 +60,15 @@ export interface PendingApproval {
  * a browser-local store cannot be.
  */
 export async function computeAuditChecksum(content: string): Promise<string> {
-  try {
-    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      const encoder = new TextEncoder()
-      const data = encoder.encode(content)
-      const buffer = await window.crypto.subtle.digest('SHA-256', data)
-      return Array.from(new Uint8Array(buffer))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
-    }
-  } catch {}
-  let h1 = 0xdeadbeef
-  let h2 = 0x41c6ce57
-  for (let i = 0; i < content.length; i++) {
-    const ch = content.charCodeAt(i)
-    h1 = Math.imul(h1 ^ ch, 2654435761)
-    h2 = Math.imul(h2 ^ ch, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  const hex = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(16, '0')
-  return (hex + hex + hex + hex).slice(0, 64)
+  // Was: crypto.subtle when available, otherwise a 53-bit mix rendered as 16
+  // hex chars and REPEATED FOUR TIMES to fill 64 — indistinguishable on sight
+  // from a SHA-256 while carrying a fraction of the entropy. crypto.subtle is
+  // gated on the page being a SECURE CONTEXT, so over plain HTTP (this cluster
+  // serves :30080) every audit record got the substitute. A checksum on an
+  // audit record exists to make tampering detectable; one that silently
+  // degrades to 53 bits, under the same name and the same length, removes that
+  // property without removing the appearance of it.
+  return sha256(content)
 }
 
 const initialBaselineRecords: AuditRecord[] = [

@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { api } from '@/lib/api'
+import { sha256 } from '@/lib/sha256'
 import { downloadXLSX, type Sheet } from '@/lib/xlsx'
 import { downloadCSVSections } from '@/lib/exportFile'
 import { fmtDateTime, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
@@ -51,22 +52,27 @@ export interface IIoTReportOptions {
   documentHash?: string
 }
 
-/** Deterministic SHA-256 cryptographic checksum for immutable audit compliance */
+/**
+ * SHA-256 of the document content, hex-encoded.
+ *
+ * This used to try crypto.subtle and, when unavailable, fall back to
+ *
+ *     hash = ((hash << 5) - hash) + charCodeAt(i)   // 32-bit string hash
+ *     return Math.abs(hash).toString(16).padStart(32, '0')
+ *
+ * and the result was printed as "DOCUMENT INTEGRITY (SHA-256): sha256:<hash>",
+ * with "(Verified)" beside it. crypto.subtle is gated on the page being a
+ * SECURE CONTEXT, so over plain HTTP — which this cluster serves on :30080 —
+ * every exported report carried a 32-bit non-cryptographic value zero-padded to
+ * look like a digest and labelled as SHA-256. That is worse than printing
+ * nothing: an auditor reading "sha256:" has no way to tell, and a 32-bit hash
+ * offers no collision resistance worth the name.
+ *
+ * sha256() keeps crypto.subtle as the fast path and otherwise computes the same
+ * digest in pure JS, so the label is now true in every context.
+ */
 export async function calculateDocumentHash(content: string): Promise<string> {
-  try {
-    if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
-      const encoder = new TextEncoder()
-      const data = encoder.encode(content)
-      const buffer = await window.crypto.subtle.digest('SHA-256', data)
-      return Array.from(new Uint8Array(buffer)).map((b) => b.toString(16).padStart(2, '0')).join('')
-    }
-  } catch {}
-  let hash = 0
-  for (let i = 0; i < content.length; i++) {
-    hash = ((hash << 5) - hash) + content.charCodeAt(i)
-    hash |= 0
-  }
-  return Math.abs(hash).toString(16).padStart(32, '0')
+  return sha256(content)
 }
 
 /** null means NOT MEASURED — render it as a dash, never as a number. */

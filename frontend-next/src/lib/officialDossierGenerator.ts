@@ -1,5 +1,6 @@
 import { fmtDateTime } from '@/lib/displayTime'
 import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
+import { sha256, canonicalJson } from '@/lib/sha256'
 
 export interface DossierData {
   assetId: string
@@ -32,19 +33,9 @@ export interface DossierData {
   }
 }
 
-/** SHA-256 of the exact snapshot this document was built from, hex-encoded. */
-async function digestSnapshot(data: DossierData): Promise<string> {
-  try {
-    const bytes = new TextEncoder().encode(JSON.stringify(data))
-    const hash = await crypto.subtle.digest('SHA-256', bytes)
-    return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('')
-  } catch {
-    return '(hash unavailable in this browser)'
-  }
-}
 
 /**
- * Generate a 5-page engineering summary report from live telemetry.
+ * Generate a 6-page engineering summary report from live telemetry.
  *
  * IMPORTANT — what this document is and is not:
  * This exports what the platform has actually measured or computed for this
@@ -77,7 +68,24 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const generatedAt = fmtDateTime(new Date().toISOString())
-  const snapshotHash = await digestSnapshot(data)
+  // One value, hashed and printed — so Page 6 cannot drift from Page 5's digest.
+  //
+  // sha256() rather than crypto.subtle.digest directly: crypto.subtle is gated
+  // on the page being a SECURE CONTEXT, so over plain HTTP window.crypto.subtle
+  // is undefined and the call threw. The old code caught that and substituted
+  // the string "(hash unavailable in this browser)", which is what operators
+  // saw printed on the exported summary. This cluster serves the frontend on
+  // :30443 (TLS) and :30080 (plain), so reaching it over http is ordinary here
+  // and every such export went out with no integrity hash at all. sha256()
+  // keeps crypto.subtle as the fast path and falls back to an equivalent
+  // pure-JS digest, so the result no longer depends on how the page was served.
+  //
+  // canonicalJson, not JSON.stringify: a hash is only checkable if the reader
+  // can reproduce the exact bytes, and JSON.stringify preserves insertion
+  // order — the same snapshot assembled by two code paths would otherwise hash
+  // differently with nothing on the page to explain it.
+  const snapshotPayload = canonicalJson(data)
+  const snapshotHash = await sha256(snapshotPayload)
 
   // Real Arrhenius relative-aging factor from the real hot-spot temperature —
   // same formula and 110°C/15000 constants DynamicThermalRating.tsx already
@@ -392,7 +400,12 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   )
   doc.text(`GENERATED: ${generatedAt} UTC+07:00`, 20, 76)
   doc.setFont('courier', 'normal'); doc.setFontSize(6.5); doc.setTextColor(148, 163, 184)
-  doc.text('Recompute this hash from the JSON payload above to confirm the document matches its source data.', 20, 84)
+  // Was "Recompute this hash from the JSON payload above" — but no payload was
+  // above it, only the gas line. An instruction to verify something the
+  // document does not contain is worse than no instruction: it implies the
+  // check was possible and quietly shifts the failure onto the reader. The
+  // exact bytes are now printed on Page 6.
+  doc.text('The exact bytes hashed are printed on Page 6. SHA-256 that text to confirm this document matches its source.', 20, 84)
 
   doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30, 41, 59)
   doc.text('Review Status', 14, 100)
@@ -433,6 +446,37 @@ export async function generateOfficialEngineeringDossier(data: DossierData) {
   doc.text(disclaimer, 14, 215, { maxWidth: pageWidth - 28, lineHeightFactor: 1.3 })
 
   addFooter(5)
+
+  // =========================================================================
+  // PAGE 6: The exact bytes the hash on Page 5 was computed over
+  // =========================================================================
+  // Without this the integrity hash is decorative: a reader is told to
+  // recompute it but given nothing to recompute it from. Printing the canonical
+  // serialisation is what turns the hash into something anyone can actually
+  // check, which is the entire purpose of the section.
+  doc.addPage()
+  addHeader(6, 'Section 6: Hashed Snapshot Payload')
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(51, 65, 85)
+  doc.text(
+    doc.splitTextToSize(
+      'This is the exact text whose SHA-256 appears on Page 5, in canonical form — object keys sorted at ' +
+      'every level, no whitespace. Copy it verbatim and hash it as UTF-8 to reproduce that digest. Any ' +
+      'difference means the document and this payload do not correspond.',
+      pageWidth - 28,
+    ),
+    14, 35, { lineHeightFactor: 1.35 },
+  )
+
+  doc.setFillColor(248, 250, 252)
+  doc.setDrawColor(203, 213, 225)
+  doc.setLineWidth(0.3)
+  doc.roundedRect(14, 50, pageWidth - 28, pageHeight - 70, 2, 2, 'FD')
+
+  doc.setFont('courier', 'normal'); doc.setFontSize(6.5); doc.setTextColor(30, 41, 59)
+  doc.text(doc.splitTextToSize(snapshotPayload, pageWidth - 36), 18, 57, { lineHeightFactor: 1.35 })
+
+  addFooter(6)
 
   const filename = `Telemetry_Summary_${data.assetId}_${new Date().toISOString().slice(0, 10)}.pdf`
   doc.save(filename)
