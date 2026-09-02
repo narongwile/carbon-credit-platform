@@ -168,6 +168,15 @@ test_proofs_and_integrity:
     # paying for a 5s poll while every row's online icon stayed frozen at page
     # load. Verified to fail 10/10 on the pre-fix code.
     - node e2e/proofs/test-frontend-fail-open.mjs
+    # The escalation sweep and ISA-18.2 maintenance shelving. The sweep shipped
+    # with a per-org `const ESCALATE_MIN` shadowing the module default in the
+    # same block that seeds it, so it threw
+    #   ReferenceError: Cannot access 'ESCALATE_MIN' before initialization
+    # on the first org of every tick — no tier ever fired, and the trailing
+    # .catch reduced a total outage to one log line a minute. This proof
+    # EXECUTES the handler rather than pattern-matching it, because a TDZ bug
+    # is invisible to a regex. Verified to fail 9/19 on the pre-fix code.
+    - node e2e/proofs/test-escalation-and-shelving.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see

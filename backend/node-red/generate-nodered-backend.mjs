@@ -3005,12 +3005,22 @@ return null;
 
 const escalationFunc = `
 const ctl = global.get('pool'); if(!ctl || typeof ctl.query !== 'function') return null;
-const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
+// Named DEFAULT so the per-org value below can keep the short name every tier
+// query already uses. Both were called ESCALATE_MIN, and the inner one is a
+// const in the SAME block as the line that seeds it from the outer — so
+// \`let orgEscalateMin = ESCALATE_MIN\` read the inner binding inside its
+// temporal dead zone and threw
+//   ReferenceError: Cannot access 'ESCALATE_MIN' before initialization
+// on the FIRST org of every sweep. The escalation sweep therefore did nothing
+// at all — no tier ever fired — and the trailing .catch turned the crash into
+// one node.error line a minute. eslint saw it as "outer ESCALATE_MIN assigned
+// but never used", because every reference in the loop resolved to the shadow.
+const ESCALATE_MIN_DEFAULT = Number(env.get('ESCALATE_AFTER_MIN') || 15);
 (async () => {
   for (const __org of await global.get('sweepOrgs')()) {
     const pool = global.get('resolvePool')(__org);
 
-    let orgEscalateMin = ESCALATE_MIN;
+    let orgEscalateMin = ESCALATE_MIN_DEFAULT;
     let orgEscalateEnabled = true;
     try {
       const [cfgRows] = await ctl.query("SELECT sval FROM platform_settings WHERE skey=?", ['escalation_policy.' + __org]);
@@ -3046,6 +3056,13 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
+          // param_key so notify's maintenance-shelf check can match a
+          // PARAMETER-scoped shelf. Without it e.paramKey is undefined, only a
+          // whole-device shelf ('all') matched, and shelving one parameter
+          // silenced the first alert but let the escalation through at CRITICAL
+          // minutes later — the nuisance alarm the operator thought they had
+          // silenced, arriving louder.
+          paramKey: r.param_key,
           paramLabel: '⚡ [ESCALATION L1 · unacknowledged ' + ESCALATE_MIN + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
@@ -3067,6 +3084,13 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
+          // param_key so notify's maintenance-shelf check can match a
+          // PARAMETER-scoped shelf. Without it e.paramKey is undefined, only a
+          // whole-device shelf ('all') matched, and shelving one parameter
+          // silenced the first alert but let the escalation through at CRITICAL
+          // minutes later — the nuisance alarm the operator thought they had
+          // silenced, arriving louder.
+          paramKey: r.param_key,
           paramLabel: '🔥 [ESCALATION L2 · still unacknowledged ' + (ESCALATE_MIN*2) + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
@@ -3088,6 +3112,13 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
+          // param_key so notify's maintenance-shelf check can match a
+          // PARAMETER-scoped shelf. Without it e.paramKey is undefined, only a
+          // whole-device shelf ('all') matched, and shelving one parameter
+          // silenced the first alert but let the escalation through at CRITICAL
+          // minutes later — the nuisance alarm the operator thought they had
+          // silenced, arriving louder.
+          paramKey: r.param_key,
           paramLabel: '💥 [ESCALATION L3 · FINAL · unacknowledged ' + (orgEscalateMin*4) + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
@@ -5989,10 +6020,72 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
   msg.headers=__CORS; msg.payload={ ok: true, policy }; node.send(msg);
 })()` + bbErr
 
+// POST /api/orgs/:orgId/escalation-policy/test
+//
+// This used to resolve a pool, never query it, and return
+//   { ok: true, message: 'Escalation matrix policy verified for <org>' }
+// unconditionally — a "Test" that could not fail, on a button whose entire
+// job is to tell an admin whether escalation will actually reach anyone. It
+// reported success for an org with no policy stored, with escalation disabled,
+// and with no notification channel to escalate through. eslint flagged the
+// unused pool, which is exactly the shape of a verification that verifies
+// nothing.
+//
+// It now reports what it actually found and lets the caller see the resolved
+// tier schedule, so "verified" means something.
 const escPolicyTestFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');
 if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
 (async()=>{
-  msg.headers=__CORS; msg.payload={ ok: true, message: 'Escalation matrix policy verified for ' + orgId }; node.send(msg);
+  const envDefault = Number(env.get('ESCALATE_AFTER_MIN') || 15);
+  let policy = null;
+  try {
+    const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['escalation_policy.' + orgId]);
+    if(r.length && r[0].sval) policy = JSON.parse(r[0].sval);
+  } catch(err) {
+    msg.headers=__CORS; msg.statusCode=500;
+    msg.payload={ ok:false, message:'Could not read the escalation policy: ' + err.message };
+    node.send(msg); return;
+  }
+
+  const enabled = policy ? policy.enabled !== false : true;
+  const timeoutMins = (policy && Number(policy.timeoutMins) > 0) ? Number(policy.timeoutMins) : envDefault;
+
+  // Escalation delivers through the SAME org/department channels as the first
+  // alert (escalate wires to notify), so with none configured and no platform
+  // fallback available it escalates into nothing. That is the failure an admin
+  // most needs this button to surface.
+  let channelCount = 0;
+  try {
+    const tp = global.get('resolvePool')(orgId);
+    const [c] = await tp.query("SELECT COUNT(*) AS n FROM notification_channels WHERE org_id=? AND enabled=1", [orgId]);
+    channelCount = Number((c[0]||{}).n || 0);
+  } catch(_) {}
+
+  const tiers = [
+    { level:1, afterMin: timeoutMins },
+    { level:2, afterMin: timeoutMins * 2 },
+    { level:3, afterMin: timeoutMins * 4 },
+  ];
+
+  const problems = [];
+  if (!enabled) problems.push('escalation is turned OFF for this organization — no tier will fire');
+  if (!channelCount) problems.push('no enabled notification channel — escalation has nowhere to deliver');
+
+  msg.headers=__CORS;
+  msg.payload={
+    ok: problems.length === 0,
+    configured: !!policy,
+    enabled,
+    timeoutMins,
+    source: (policy && Number(policy.timeoutMins) > 0) ? 'organization policy' : 'platform default (ESCALATE_AFTER_MIN)',
+    enabledChannels: channelCount,
+    tiers,
+    problems,
+    message: problems.length
+      ? problems.join('; ')
+      : 'Escalation will re-alert an unacknowledged CRITICAL at ' + tiers.map(t=>t.afterMin+'m').join(', ') + ' through ' + channelCount + ' enabled channel(s)',
+  };
+  node.send(msg);
 })()` + bbErr
 
 // --- Central Maintenance Silence / Shelving Manager (ISA-18.2 §12) ---------
