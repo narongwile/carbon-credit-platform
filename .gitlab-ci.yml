@@ -75,6 +75,20 @@ test_proofs_and_integrity:
   stage: test
   image: node:20-alpine
   script:
+    # FIRST, because a broken manifest takes the whole app offline regardless
+    # of whether the code is correct. 9e445d5f committed an unresolved merge
+    # conflict into infra/k8s/custom-apps/base/node-red.yaml — both sides
+    # byte-identical, so the conflict was trivial — but the markers made the
+    # file invalid YAML and kustomize refuses to build a directory when any
+    # resource in it fails to parse:
+    #   ComparisonError: ... MalformedYAMLError: yaml: line 24: could not find
+    #   expected ':' in File: node-red.yaml
+    # Nothing covered it: tsc/eslint/build and every proof read TypeScript, SQL
+    # and the Node-RED handler strings, never the manifests — even though
+    # sync-nodered-flow.sh rewrites node-red.yaml on every flow change and
+    # reports success without re-reading the result. It had already happened
+    # once (5cd9af8f). Verified to fail 4/5 on the broken file.
+    - node e2e/proofs/test-k8s-manifests-parse.mjs
     - node backend/node-red/generate-nodered-backend.mjs
     # backend/sql is baked into the migrate-service image and only ever runs
     # against a real MySQL, so a dialect error is invisible until the migrate
