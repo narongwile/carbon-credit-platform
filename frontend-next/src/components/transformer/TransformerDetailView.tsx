@@ -1904,8 +1904,8 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
 
                 <div data-pdm-tabs className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800 overflow-x-auto">
                   {[
-                    { id: 'dga' as const, label: '🔬 Dissolved Gas (Duval)' },
-                    { id: 'dtr' as const, label: '⚡ Live Dynamic Rating' },
+                    { id: 'dga' as const, label: '🔬 ก๊าซในน้ำมัน DGA (Duval)' },
+                    { id: 'dtr' as const, label: '⚡ พิกัดโหลดไดนามิกสด (Dynamic Rating - DTR)' },
                   ].map((sub) => (
                     <button
                       key={sub.id}
@@ -2011,17 +2011,17 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
               <div className="pt-4 mt-4 border-t border-slate-800 space-y-2">
                 <div className="flex items-center gap-2">
                   <Sliders size={13} className="text-slate-400" />
-                  <h4 className="text-xs font-bold text-white">Engineering Studies</h4>
-                  <span className="text-[10px] text-slate-500">opened on demand — not live monitoring</span>
+                  <h4 className="text-xs font-bold text-white">การศึกษาและวิเคราะห์เชิงวิศวกรรม (Engineering Studies)</h4>
+                  <span className="text-[10px] text-slate-500">เปิดดูตามต้องการ (On-Demand) — ไม่ใช่การมอนิเตอร์สด</span>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {([
-                    { id: 'rul' as const, label: 'Insulation Aging & RUL', hint: 'IEEE C57.91' },
+                    { id: 'rul' as const, label: 'อายุฉนวน & RUL (Insulation Aging & RUL)', hint: 'IEEE C57.91' },
                     { id: 'bushing' as const, label: 'Bushing Health (tan δ)', hint: 'IEEE C57.19' },
                     { id: 'threats' as const, label: '5-Threats & OLTC', hint: 'IEC 60099-5 · C57.131' },
                     { id: 'bess' as const, label: 'BESS Peak Shaving', hint: 'what-if study' },
                     { id: 'labdga' as const, label: 'Laboratory DGA', hint: 'ASTM D3612' },
-                    { id: 'fleetrisk' as const, label: 'Fleet Risk Matrix', hint: 'ISO 55000' },
+                    { id: 'fleetrisk' as const, label: 'เมทริกซ์ความเสี่ยง (Fleet Risk Matrix)', hint: 'ISO 55000' },
                   ]).map((st) => (
                     <button
                       key={st.id}
@@ -2227,7 +2227,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       <StudyModal
         open={activeStudy === 'rul'}
         onClose={() => setActiveStudy(null)}
-        title="Insulation Aging & Remaining Life (IEEE C57.91)"
+        title="การประเมินอายุฉนวน & อายุที่เหลือ (Insulation Aging & Remaining Life — IEEE C57.91)"
         subtitle={`Arrhenius aging estimate · ${transformer.name}`}
         icon={<Activity size={20} />}
         accent="amber"
@@ -2330,7 +2330,7 @@ export default function TransformerDetailView({ orgId: orgIdProp, backHref = '/a
       <StudyModal
         open={activeStudy === 'fleetrisk'}
         onClose={() => setActiveStudy(null)}
-        title="Fleet Risk Matrix & Criticality Index (ISO 55000)"
+        title="เมทริกซ์ความเสี่ยงกลุ่มหม้อแปลง (Fleet Risk Matrix & Criticality Index — ISO 55000)"
         subtitle={`Fleet-wide asset risk profile · ${currentOrgName}`}
         icon={<Building2 size={20} />}
         accent="amber"
