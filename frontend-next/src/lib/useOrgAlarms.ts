@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, isLive } from '@/lib/api'
 import { subscribeTelemetry } from '@/lib/telemetryBus'
 import type { SensorDomain } from '@/types/fleet'
+import { useAudioChimeStore } from '@/lib/audioChimeStore'
 
 export interface OrgAlarmRow {
   id: string
@@ -100,6 +101,12 @@ export function useOrgAlarms(
     let timer: ReturnType<typeof setTimeout> | null = null
     const unsubscribe = subscribeTelemetry((f) => {
       if (f?.type !== 'alarm') return
+      // Synthesized Web Audio Chime trigger per-org
+      if (f.severity === 'CRITICAL') {
+        useAudioChimeStore.getState().playChime(orgId, 'critical')
+      } else if (f.severity === 'WARNING') {
+        useAudioChimeStore.getState().playChime(orgId, 'warning')
+      }
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => { timer = null; load() }, 400)
     })

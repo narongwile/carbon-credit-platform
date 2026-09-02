@@ -53,6 +53,7 @@ import {
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { useAudioChimeStore } from '@/lib/audioChimeStore'
+import { recordAuditAction } from '@/lib/auditStore'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -421,36 +422,152 @@ export default function AlarmNotificationPage() {
 
   // Escalation Matrix State (ISA-18.2 §11)
   const [escalationEnabled, setEscalationEnabled] = useState(true)
-  const [escalationTimeoutMins, setEscalationTimeoutMins] = useState(30)
+  const [escalationTimeoutMins, setEscalationTimeoutMins] = useState(15)
   const [escalationCustomNote, setEscalationCustomNote] = useState(
     'ESCALATION ALERT: Critical incident on asset has remained unacknowledged past timeout threshold. Paging duty supervisor.'
   )
+  const [savingEscalation, setSavingEscalation] = useState(false)
+  const [testingEscalation, setTestingEscalation] = useState(false)
 
   // Maintenance Shelving State (ISA-18.2 §12)
-  const [shelvedDevices, setShelvedDevices] = useState([
+  const [shelvedDevices, setShelvedDevices] = useState<Array<{
+    id: string
+    nodeId: string
+    name: string
+    paramKey: string
+    paramLabel: string
+    reason: string
+    workOrderId?: string
+    shelvedBy: string
+    shelvedAt: string
+    expiresAt: string
+    active: boolean
+  }>>([
     {
+      id: 'shlv_demo_1',
       nodeId: 'TRF-SUBSTATION-02',
       name: 'Main Substation TR-02',
       paramKey: 'oilTemp',
       paramLabel: 'Top Oil Temperature',
       reason: 'WO-8491 Bushing replacement & oil degassing',
+      workOrderId: 'WO-8491',
       shelvedBy: 'Somchai (Lead Electrical Engineer)',
       shelvedAt: new Date(Date.now() - 3600000).toISOString(),
       expiresAt: new Date(Date.now() + 7 * 3600000).toISOString(),
       active: true,
     },
   ])
+  const [shelveLoading, setShelveLoading] = useState(false)
+  const [shelveSearch, setShelveSearch] = useState('')
   const [shelveModalOpen, setShelveModalOpen] = useState(false)
   const [newShelveNodeId, setNewShelveNodeId] = useState('')
+  const [newShelveParamKey, setNewShelveParamKey] = useState('all')
   const [newShelveDurationHours, setNewShelveDurationHours] = useState(8)
+  const [newShelveWorkOrder, setNewShelveWorkOrder] = useState('')
   const [newShelveReason, setNewShelveReason] = useState('')
+  const [newShelveOperator, setNewShelveOperator] = useState('')
 
-  const handleUnshelve = (nodeId: string) => {
-    setShelvedDevices((prev) => prev.filter((d) => d.nodeId !== nodeId))
-    toast.success(`Restored alarm monitoring for ${nodeId}!`, { icon: '🔔' })
+  // Load Escalation Policy and Maintenance Shelving from backend
+  useEffect(() => {
+    if (!live || !orgId) return
+    api.escalationPolicy(orgId).then((res) => {
+      if (res?.policy) {
+        setEscalationEnabled(res.policy.enabled !== false)
+        if (res.policy.timeoutMins) setEscalationTimeoutMins(res.policy.timeoutMins)
+        if (res.policy.customNote) setEscalationCustomNote(res.policy.customNote)
+      }
+    }).catch(() => {})
+
+    setShelveLoading(true)
+    api.shelving(orgId).then((res) => {
+      setShelveLoading(false)
+      if (res?.shelves && res.shelves.length > 0) {
+        setShelvedDevices(res.shelves)
+      }
+    }).catch(() => setShelveLoading(false))
+  }, [live, orgId])
+
+  const handleSaveEscalationPolicy = async () => {
+    setSavingEscalation(true)
+    const policy = {
+      enabled: escalationEnabled,
+      timeoutMins: escalationTimeoutMins,
+      customNote: escalationCustomNote.trim(),
+    }
+    if (live) {
+      const res = await api.putEscalationPolicy(orgId, policy)
+      setSavingEscalation(false)
+      if (res?.ok) {
+        toast.success(`Escalation Matrix policy saved (Timeout: ${escalationTimeoutMins}m, Status: ${escalationEnabled ? 'ENABLED' : 'DISABLED'})`, { icon: '⚡' })
+      } else {
+        toast.error('Failed to save escalation policy to backend')
+      }
+    } else {
+      setSavingEscalation(false)
+      toast.success('Escalation Matrix policy saved (demo)', { icon: '⚡' })
+    }
+    // 21 CFR Part 11 Audit Trail
+    const session = getSession()
+    recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId: orgId, assetName: orgName || orgId },
+      before: 'Escalation Policy Previous',
+      after: `Auto-escalate: ${escalationEnabled ? 'ENABLED' : 'DISABLED'} · Timeout: ${escalationTimeoutMins}m · Note: "${escalationCustomNote.slice(0, 60)}"`,
+      justification: 'ISA-18.2 Time-Based Alarm Escalation Policy Update',
+      actor: {
+        name: session?.name || 'Admin Operator',
+        email: session?.email || 'admin@oneops.local',
+        role: session?.role || 'admin',
+      },
+    })
   }
 
-  const handleAddShelve = () => {
+  const handleTestEscalationProtocol = async () => {
+    setTestingEscalation(true)
+    if (live) {
+      const res = await api.testEscalationPolicy(orgId)
+      setTestingEscalation(false)
+      if (res?.ok) {
+        toast.success('⚡ Test escalation event triggered! Dispatched to organization fallback channels.', { duration: 5000 })
+      } else {
+        toast.error('Escalation test dispatch failed')
+      }
+    } else {
+      setTestingEscalation(false)
+      toast.success('⚡ [Demo] Escalation simulation triggered!')
+    }
+  }
+
+  const handleUnshelve = async (nodeId: string, paramKey: string = 'all') => {
+    if (live) {
+      const res = await api.unshelve(orgId, nodeId, paramKey)
+      if (res?.ok) {
+        setShelvedDevices(res.shelves || [])
+        toast.success(`Restored alarm monitoring for ${nodeId}!`, { icon: '🔔' })
+      } else {
+        toast.error('Failed to unshelve asset')
+      }
+    } else {
+      setShelvedDevices((prev) => prev.filter((d) => !(d.nodeId === nodeId && d.paramKey === paramKey)))
+      toast.success(`Restored alarm monitoring for ${nodeId}!`, { icon: '🔔' })
+    }
+    // Audit Trail
+    const session = getSession()
+    recordAuditAction({
+      action: 'ALARM_SHELVE',
+      target: { assetId: nodeId, assetName: nodeId },
+      before: `Shelved for maintenance (${paramKey})`,
+      after: 'Unshelved · Alarm monitoring restored',
+      justification: 'Maintenance completed / operator manual unshelve',
+      actor: {
+        name: session?.name || 'Admin Operator',
+        email: session?.email || 'admin@oneops.local',
+        role: session?.role || 'admin',
+      },
+    })
+  }
+
+  const handleAddShelve = async () => {
     if (!newShelveNodeId) {
       toast.error('Select an asset to shelve')
       return
@@ -460,24 +577,71 @@ export default function AlarmNotificationPage() {
       return
     }
     const dev = devices.find((d) => d.id === newShelveNodeId)
-    setShelvedDevices((prev) => [
-      ...prev,
-      {
-        nodeId: newShelveNodeId,
-        name: dev?.name || newShelveNodeId,
-        paramKey: 'all',
-        paramLabel: 'All Threshold Alarms',
-        reason: newShelveReason.trim(),
-        shelvedBy: 'Admin Operator',
+    const session = getSession()
+    const operatorName = newShelveOperator.trim() || session?.name || 'Admin Operator'
+
+    const shelfPayload = {
+      nodeId: newShelveNodeId,
+      name: dev?.name || newShelveNodeId,
+      paramKey: newShelveParamKey,
+      paramLabel: newShelveParamKey === 'all' ? 'All Threshold Alarms' : newShelveParamKey,
+      reason: newShelveReason.trim(),
+      workOrderId: newShelveWorkOrder.trim() || undefined,
+      shelvedBy: operatorName,
+      durationHours: newShelveDurationHours,
+    }
+
+    if (live) {
+      const res = await api.putShelving(orgId, shelfPayload)
+      if (res?.ok) {
+        setShelvedDevices(res.shelves || [])
+        toast.success(`Silenced alarms for ${dev?.name || newShelveNodeId} for ${newShelveDurationHours} hours`, { icon: '⏸️' })
+      } else {
+        toast.error('Failed to save shelving record to backend')
+      }
+    } else {
+      const mockShelf = {
+        id: 'shlv_' + Date.now().toString(36),
+        ...shelfPayload,
         shelvedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + newShelveDurationHours * 3600000).toISOString(),
         active: true,
+      }
+      setShelvedDevices((prev) => [...prev.filter(s => !(s.nodeId === mockShelf.nodeId && s.paramKey === mockShelf.paramKey)), mockShelf])
+      toast.success(`Silenced alarms for ${dev?.name || newShelveNodeId} for ${newShelveDurationHours} hours`, { icon: '⏸️' })
+    }
+
+    // 21 CFR Part 11 Audit Trail
+    recordAuditAction({
+      action: 'ALARM_SHELVE',
+      target: { assetId: newShelveNodeId, assetName: dev?.name || newShelveNodeId },
+      before: 'Active Alarm Monitoring (Normal)',
+      after: `Shelved for ${newShelveDurationHours}h · Scope: ${shelfPayload.paramLabel} · Reason: ${newShelveReason.trim()}`,
+      justification: `ISA-18.2 Shelving Authorization ${newShelveWorkOrder ? `[${newShelveWorkOrder.trim()}]` : ''}`,
+      workOrderId: newShelveWorkOrder.trim() || undefined,
+      actor: {
+        name: operatorName,
+        email: session?.email || 'admin@oneops.local',
+        role: session?.role || 'admin',
       },
-    ])
+    })
+
     setShelveModalOpen(false)
     setNewShelveReason('')
-    toast.success(`Silenced alarms for ${dev?.name || newShelveNodeId} for ${newShelveDurationHours} hours`, { icon: '⏸️' })
+    setNewShelveWorkOrder('')
   }
+
+  const filteredShelves = useMemo(() => {
+    if (!shelveSearch.trim()) return shelvedDevices
+    const q = shelveSearch.toLowerCase()
+    return shelvedDevices.filter((s) =>
+      s.name.toLowerCase().includes(q) ||
+      s.nodeId.toLowerCase().includes(q) ||
+      (s.workOrderId && s.workOrderId.toLowerCase().includes(q)) ||
+      s.reason.toLowerCase().includes(q) ||
+      s.paramLabel.toLowerCase().includes(q)
+    )
+  }, [shelvedDevices, shelveSearch])
 
   // Filtered lists
   const filteredDepts = useMemo(() => {
@@ -1259,19 +1423,31 @@ export default function AlarmNotificationPage() {
                 onChange={(e) => setEscalationCustomNote(e.target.value)}
                 className="w-full rounded-lg px-3 py-2 text-xs text-white outline-none focus:ring-1 focus:ring-amber-500 bg-[#0d1117] border border-slate-800"
               />
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
                 <span className="text-[11px] text-slate-400">
                   Target Destination: <strong className="text-white">Organization Fallback Channels ({activeOrgCount}/5 Active)</strong>
                 </span>
-                <button
-                  type="button"
-                  onClick={() => toast.success('Escalation Matrix policy saved!', { icon: '⚡' })}
-                  className="px-4 py-2 rounded-lg text-xs font-bold text-white shadow-md flex items-center gap-1.5 transition-transform active:scale-95"
-                  style={gradient}
-                >
-                  <Save size={13} />
-                  <span>Save Escalation Policy</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleTestEscalationProtocol}
+                    disabled={testingEscalation}
+                    className="px-3.5 py-2 rounded-lg text-xs font-semibold text-amber-300 bg-amber-950/40 border border-amber-500/40 hover:bg-amber-900/40 shadow-sm flex items-center gap-1.5 transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    {testingEscalation ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}
+                    <span>⚡ ทดสอบ Escalation (Test Dispatch)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveEscalationPolicy}
+                    disabled={savingEscalation}
+                    className="px-4 py-2 rounded-lg text-xs font-bold text-white shadow-md flex items-center gap-1.5 transition-transform active:scale-95 cursor-pointer disabled:opacity-50"
+                    style={gradient}
+                  >
+                    {savingEscalation ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+                    <span>Save Escalation Policy</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1315,6 +1491,23 @@ export default function AlarmNotificationPage() {
             </p>
           </div>
 
+          {/* Search & Filter Toolbar */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[240px] max-w-md">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                value={shelveSearch}
+                onChange={(e) => setShelveSearch(e.target.value)}
+                placeholder="Search active shelves by asset, node ID, or Work Order..."
+                className="w-full rounded-lg pl-9 pr-3 py-1.5 text-xs text-white bg-[#0a0e1a] border border-slate-800 outline-none focus:border-blue-500"
+              />
+            </div>
+            <div className="text-xs text-slate-400 flex items-center gap-2">
+              <span>Active Shelves: <strong className="text-blue-300 font-mono">{filteredShelves.length}</strong></span>
+              {shelveLoading && <Loader2 size={13} className="animate-spin text-blue-400" />}
+            </div>
+          </div>
+
           {/* Active Shelved Alarms Table */}
           <div className="rounded-xl border border-slate-800 overflow-hidden bg-[#0a0e1a]">
             <table className="w-full text-xs">
@@ -1329,28 +1522,35 @@ export default function AlarmNotificationPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
-                {shelvedDevices.length === 0 ? (
+                {filteredShelves.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-slate-500 italic">
-                      No active alarm shelving. All {devices.length} fleet assets are operating with full alarm monitoring active.
+                      {shelveSearch.trim()
+                        ? `No shelved assets match "${shelveSearch}".`
+                        : `No active alarm shelving. All ${devices.length} fleet assets are operating with full alarm monitoring active.`}
                     </td>
                   </tr>
                 ) : (
-                  shelvedDevices.map((item) => {
+                  filteredShelves.map((item) => {
                     const hoursLeft = Math.max(0, Math.ceil((new Date(item.expiresAt).getTime() - Date.now()) / 3600000))
                     return (
-                      <tr key={item.nodeId} className="hover:bg-white/[0.02] transition-colors">
+                      <tr key={item.nodeId + '_' + item.paramKey} className="hover:bg-white/[0.02] transition-colors">
                         <td className="py-3 px-4">
                           <span className="font-bold text-white block">{item.name}</span>
                           <span className="text-[10px] text-slate-400 font-mono">{item.nodeId}</span>
                         </td>
                         <td className="py-3 px-4">
                           <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-300 border border-blue-500/20">
-                            {item.paramLabel}
+                            {item.paramLabel || item.paramKey}
                           </span>
                         </td>
                         <td className="py-3 px-4 text-slate-300">
-                          {item.reason}
+                          {item.workOrderId && (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-900/40 text-blue-300 border border-blue-700/50 mr-1.5">
+                              {item.workOrderId}
+                            </span>
+                          )}
+                          <span>{item.reason}</span>
                         </td>
                         <td className="py-3 px-4 text-slate-400">
                           {item.shelvedBy}
@@ -1360,14 +1560,14 @@ export default function AlarmNotificationPage() {
                             <Clock size={11} /> {hoursLeft}h remaining
                           </span>
                           <span className="text-[10px] text-slate-500 block">
-                            Until {new Date(item.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                            Until {new Date(item.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} ({new Date(item.expiresAt).toLocaleDateString('en-GB')})
                           </span>
                         </td>
                         <td className="py-3 px-4 text-right">
                           <button
                             type="button"
-                            onClick={() => handleUnshelve(item.nodeId)}
-                            className="px-3 py-1 rounded text-xs font-semibold text-emerald-300 bg-emerald-950/40 border border-emerald-700/60 hover:bg-emerald-900/60 transition-colors"
+                            onClick={() => handleUnshelve(item.nodeId, item.paramKey)}
+                            className="px-3 py-1 rounded text-xs font-semibold text-emerald-300 bg-emerald-950/40 border border-emerald-700/60 hover:bg-emerald-900/60 transition-colors cursor-pointer"
                           >
                             Unshelve Now
                           </button>
@@ -1411,18 +1611,39 @@ export default function AlarmNotificationPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
                   onClick={() => {
                     const played = playChime(activeChimeOrgId, 'conflict')
-                    if (played) toast.success(`🔔 กำลังเล่นเสียงตัวอย่าง Web Audio Chime สำหรับ ${activeChimeOrgName}`)
+                    if (played) toast.success(`🚨 เล่นเสียงจำลอง Hardware Conflict สำหรับ ${activeChimeOrgName}`)
                     else toast('เสียงถูกปิดไว้ หรือติด Cooldown', { icon: '🔕' })
                   }}
-                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 transition-all flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Volume2 size={14} />
-                  <span>🔔 ทดสอบเสียง (Test Chime)</span>
+                  <span>🚨 ทดสอบ Conflict</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const played = playChime(activeChimeOrgId, 'critical')
+                    if (played) toast.success(`🔴 เล่นเสียงจำลอง Critical Alarm สำหรับ ${activeChimeOrgName}`)
+                    else toast('เสียงถูกปิดไว้ หรือติด Cooldown', { icon: '🔕' })
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>🔴 ทดสอบ Critical</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const played = playChime(activeChimeOrgId, 'warning')
+                    if (played) toast.success(`🟡 เล่นเสียงจำลอง Warning Alarm สำหรับ ${activeChimeOrgName}`)
+                    else toast('เสียงถูกปิดไว้ หรือติด Cooldown', { icon: '🔕' })
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>🟡 ทดสอบ Warning</span>
                 </button>
               </div>
             </div>
@@ -1932,41 +2153,67 @@ export default function AlarmNotificationPage() {
       {/* MODAL 3: Proactive Alarm Shelving (ISA-18.2 §12) */}
       {shelveModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-[#0d1117] p-6 space-y-4 shadow-2xl">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0d1117] p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <PauseCircle size={17} className="text-blue-400" />
-                <h3 className="text-sm font-bold text-white">Temporary Alarm Shelving (ISA-18.2)</h3>
+                <PauseCircle size={18} className="text-blue-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-white">Temporary Alarm Shelving (ISA-18.2 §12)</h3>
+                  <p className="text-[11px] text-slate-400">ระงับการส่งเสียงและแจ้งเตือนชั่วคราวระหว่างซ่อมบำรุง</p>
+                </div>
               </div>
               <button onClick={() => setShelveModalOpen(false)} className="text-slate-400 hover:text-white">
                 <X size={16} />
               </button>
             </div>
-            <div className="space-y-3 text-xs">
+            <div className="space-y-3.5 text-xs">
               <div>
-                <label className="text-slate-400 block mb-1 font-semibold">Select Device / Asset</label>
+                <label className="text-slate-300 block mb-1 font-semibold">1. เลือกอุปกรณ์ที่ต้องการซ่อมบำรุง (Asset / Device)</label>
                 <select
                   value={newShelveNodeId}
                   onChange={(e) => setNewShelveNodeId(e.target.value)}
-                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800"
+                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800 focus:border-blue-500 font-mono"
                 >
                   {devices.map((d) => (
-                    <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.id}) — {d.domain || 'transformer'}
+                    </option>
                   ))}
                 </select>
               </div>
+
               <div>
-                <label className="text-slate-400 block mb-1 font-semibold">Shelving Duration (Auto-restores after)</label>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {[2, 4, 8, 24, 72].map((h) => (
+                <label className="text-slate-300 block mb-1 font-semibold">2. ขอบเขตพารามิเตอร์ที่ต้องการระงับ (Suppressed Scope)</label>
+                <select
+                  value={newShelveParamKey}
+                  onChange={(e) => setNewShelveParamKey(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800 focus:border-blue-500"
+                >
+                  <option value="all">🔒 ทุกพารามิเตอร์ (All Threshold Alarms · Full Asset Silence)</option>
+                  <option value="oilTemp">🌡️ อุณหภูมิน้ำมันหม้อแปลง (Top Oil Temperature)</option>
+                  <option value="windingTemp">🔥 อุณหภูมิขดลวด (Winding Temperature)</option>
+                  <option value="dga">🧪 ก๊าซที่ละลายในน้ำมัน (DGA Gases)</option>
+                  <option value="bushing">⚡ บุชชิ่ง &amp; Tan Delta (Bushing Insulation)</option>
+                  <option value="load">⚡ กระแสโหลด &amp; แรงดัน (Current / Voltage Load)</option>
+                  <option value="pressure">🌪️ แรงดันถังน้ำมัน (Tank Pressure)</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-300 font-semibold">3. ระยะเวลาที่ต้องการระงับ (Duration · Auto-Restores)</label>
+                  <span className="text-blue-400 font-mono font-bold">{newShelveDurationHours} ชั่วโมง ({newShelveDurationHours >= 24 ? `${(newShelveDurationHours / 24).toFixed(1)} วัน` : `${newShelveDurationHours}h`})</span>
+                </div>
+                <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 mb-2">
+                  {[1, 2, 4, 8, 12, 24, 48, 72].map((h) => (
                     <button
                       key={h}
                       type="button"
                       onClick={() => setNewShelveDurationHours(h)}
                       className={clsx(
-                        'py-1.5 rounded text-center font-mono font-semibold transition-colors border',
+                        'py-1.5 rounded text-center font-mono font-semibold transition-colors border text-xs cursor-pointer',
                         newShelveDurationHours === h
-                          ? 'bg-blue-600 text-white border-blue-500'
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-sm'
                           : 'bg-[#0a0e1a] text-slate-400 border-slate-800 hover:text-white'
                       )}
                     >
@@ -1975,31 +2222,55 @@ export default function AlarmNotificationPage() {
                   ))}
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 block mb-1 font-semibold">4. หมายเลข Work Order / CMMS</label>
+                  <input
+                    value={newShelveWorkOrder}
+                    onChange={(e) => setNewShelveWorkOrder(e.target.value)}
+                    placeholder="e.g. WO-2026-9021"
+                    className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800 focus:border-blue-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 block mb-1 font-semibold">5. วิศวกรผู้ขออนุมัติ (Authorized By)</label>
+                  <input
+                    value={newShelveOperator}
+                    onChange={(e) => setNewShelveOperator(e.target.value)}
+                    placeholder="e.g. Lead Electrical Engineer"
+                    className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label className="text-slate-400 block mb-1 font-semibold">Maintenance Work Order / Reason</label>
+                <label className="text-slate-300 block mb-1 font-semibold">6. เหตุผลการซ่อมบำรุง / วัตถุประสงค์ (Justification)</label>
                 <input
                   value={newShelveReason}
                   onChange={(e) => setNewShelveReason(e.target.value)}
-                  placeholder="e.g. WO-9021 Scheduled bushing oil testing & cleaning"
-                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800"
+                  placeholder="e.g. เปลี่ยนบุชชิ่งเฟส B, ถ่ายกรองน้ำมัน และทดสอบค่าความเป็นฉนวนตามรอบประจำปี"
+                  className="w-full rounded-lg px-3 py-2 text-white outline-none bg-[#0a0e1a] border border-slate-800 focus:border-blue-500"
                 />
               </div>
             </div>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
               <button
                 type="button"
                 onClick={() => setShelveModalOpen(false)}
-                className="px-3 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800"
+                className="px-3.5 py-2 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800 cursor-pointer"
               >
-                Cancel
+                ยกเลิก (Cancel)
               </button>
               <button
                 type="button"
                 onClick={handleAddShelve}
-                className="px-4 py-1.5 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95"
+                className="px-5 py-2 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
                 style={gradient}
               >
-                Confirm Shelve
+                <ShieldCheck size={14} />
+                <span>ยืนยันระงับชั่วคราว (Confirm Shelve)</span>
               </button>
             </div>
           </div>

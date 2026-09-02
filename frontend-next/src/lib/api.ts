@@ -484,6 +484,33 @@ export const api = {
     req<{ ok: boolean; sentTo: string; subject: string }>(
       `/api/orgs/${orgId}/email-template/test`, { method: 'POST', body: JSON.stringify(payload) }),
   /**
+   * ISA-18.2 Time-Based Alarm Escalation Policy
+   */
+  escalationPolicy: (orgId: string) =>
+    req<{ ok: boolean; policy: { enabled: boolean; timeoutMins: number; customNote: string; updatedAt?: string; updatedBy?: string } }>(
+      `/api/orgs/${orgId}/escalation-policy`),
+  putEscalationPolicy: (orgId: string, policy: { enabled: boolean; timeoutMins: number; customNote: string }) =>
+    req<{ ok: boolean; policy: { enabled: boolean; timeoutMins: number; customNote: string; updatedAt?: string; updatedBy?: string } }>(
+      `/api/orgs/${orgId}/escalation-policy`, { method: 'PUT', body: JSON.stringify(policy) }),
+  testEscalationPolicy: (orgId: string) =>
+    req<{ ok: boolean; message: string }>(
+      `/api/orgs/${orgId}/escalation-policy/test`, { method: 'POST' }),
+  /**
+   * ISA-18.2 Maintenance Silence & Shelving Manager
+   */
+  shelving: (orgId: string) =>
+    req<{ ok: boolean; shelves: Array<{ id: string; nodeId: string; name: string; paramKey: string; paramLabel: string; reason: string; workOrderId?: string; shelvedBy: string; shelvedAt: string; expiresAt: string; active: boolean }> }>(
+      `/api/orgs/${orgId}/shelving`),
+  putShelving: (
+    orgId: string,
+    shelf: { nodeId: string; name: string; paramKey: string; paramLabel: string; reason: string; workOrderId?: string; shelvedBy?: string; durationHours: number }
+  ) =>
+    req<{ ok: boolean; shelf: any; shelves: any[] }>(
+      `/api/orgs/${orgId}/shelving`, { method: 'PUT', body: JSON.stringify(shelf) }),
+  unshelve: (orgId: string, nodeId: string, paramKey?: string) =>
+    req<{ ok: boolean; shelves: any[] }>(
+      `/api/orgs/${orgId}/shelving/unshelve`, { method: 'POST', body: JSON.stringify({ nodeId, paramKey }) }),
+  /**
    * Which parameters SENSOR READINGS shows. Resolved per department, most
    * specific first: device+department -> device -> organization+department ->
    * organization -> none. A user in several departments gets the union, the

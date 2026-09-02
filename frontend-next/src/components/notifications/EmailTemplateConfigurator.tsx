@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { api, useIsLive } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { getSession } from '@/lib/auth'
+import { recordAuditAction } from '@/lib/auditStore'
 import { Mail, Sparkles, Send, Eye, ShieldAlert, RotateCcw, AlertTriangle, Smartphone, Monitor } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
@@ -158,6 +159,20 @@ export default function EmailTemplateConfigurator({ orgId, orgName }: EmailTempl
     setSaving(false)
     if (res && res.ok) {
       toast.success('Email Notification Template saved successfully!')
+      // 21 CFR Part 11 Audit Trail
+      const session = getSession()
+      recordAuditAction({
+        action: 'CONFIG_CHANGE',
+        target: { assetId: orgId, assetName: currentOrgName },
+        before: 'Email & SOP Template Previous',
+        after: `Subject: "${template.subjectTemplate}" · SOP: "${(template.customFooterSop || '').slice(0, 60)}"`,
+        justification: 'Emergency SOP & Email Template Notification Configuration',
+        actor: {
+          name: session?.name || 'Admin Operator',
+          email: session?.email || 'admin@oneops.local',
+          role: session?.role || 'admin',
+        },
+      })
     } else {
       toast.error('Failed to save email template')
     }

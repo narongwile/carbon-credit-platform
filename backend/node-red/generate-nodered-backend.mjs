@@ -1941,6 +1941,24 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
 
     const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');
 
+    // --- ISA-18.2 §12 Maintenance Shelving Check ----------------------------
+    // If this asset (or parameter) is currently shelved for authorized maintenance,
+    // suppress audible and multi-channel notifications. Alarms remain logged for audit.
+    if (controlPool && e.orgId && e.nodeId) {
+      try {
+        const [shRows] = await controlPool.query("SELECT sval FROM platform_settings WHERE skey=?", ['maintenance_shelving.' + e.orgId]);
+        if (shRows.length && shRows[0].sval) {
+          const shList = JSON.parse(shRows[0].sval);
+          const nowMs = Date.now();
+          const activeShelf = shList.find(s => s.active && s.nodeId === e.nodeId && new Date(s.expiresAt).getTime() > nowMs && (s.paramKey === 'all' || s.paramKey === e.paramKey));
+          if (activeShelf) {
+            node.log('notify: alarm on ' + e.nodeId + ' (' + (e.paramLabel || e.paramKey) + ') suppressed by active maintenance shelf (' + (activeShelf.reason || 'Maintenance') + ')');
+            return null;
+          }
+        }
+      } catch(_) {}
+    }
+
     let channels = [];
     let orgConfiguredChannels = new Set();
     let orgDisabledChannels = new Set();
@@ -2992,7 +3010,20 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
   for (const __org of await global.get('sweepOrgs')()) {
     const pool = global.get('resolvePool')(__org);
 
-    // Three re-alert tiers at ESCALATE_MIN / x2 / x4, then silence. This is a
+    let orgEscalateMin = ESCALATE_MIN;
+    let orgEscalateEnabled = true;
+    try {
+      const [cfgRows] = await ctl.query("SELECT sval FROM platform_settings WHERE skey=?", ['escalation_policy.' + __org]);
+      if (cfgRows.length && cfgRows[0].sval) {
+        const escCfg = JSON.parse(cfgRows[0].sval);
+        if (escCfg.enabled === false) orgEscalateEnabled = false;
+        if (escCfg.timeoutMins && Number(escCfg.timeoutMins) > 0) orgEscalateMin = Number(escCfg.timeoutMins);
+      }
+    } catch(_) {}
+    if (!orgEscalateEnabled) continue;
+    const ESCALATE_MIN = orgEscalateMin;
+
+    // Three re-alert tiers at orgEscalateMin / x2 / x4, then silence. This is a
     // real improvement on the previous single escalation, which set escalated=1
     // once and then never spoke again however long the CRITICAL stayed
     // unacknowledged.
@@ -3005,7 +3036,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
     // exist would put a false statement in a message an engineer receives and
     // acts on at 3am.
     //
-    // LEVEL 1: unacknowledged CRITICAL older than ESCALATE_MIN
+    // LEVEL 1: unacknowledged CRITICAL older than orgEscalateMin
     const [l1Rows] = await pool.query(
       "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
       "AND (escalated = 0 OR escalated IS NULL) AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
@@ -3026,7 +3057,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       await pool.query("UPDATE alarm_events SET escalated = 1 WHERE id IN (" + l1Rows.map(r => pool.escape(r.id)).join(",") + ")");
     }
 
-    // LEVEL 2: still unacknowledged at 2x ESCALATE_MIN
+    // LEVEL 2: still unacknowledged at 2x orgEscalateMin
     const [l2Rows] = await pool.query(
       "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
       "AND escalated = 1 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
@@ -3047,7 +3078,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       await pool.query("UPDATE alarm_events SET escalated = 2 WHERE id IN (" + l2Rows.map(r => pool.escape(r.id)).join(",") + ")");
     }
 
-    // LEVEL 3: final re-alert at 4x ESCALATE_MIN; escalated=3 ends the chain
+    // LEVEL 3: final re-alert at 4x orgEscalateMin; escalated=3 ends the chain
     const [l3Rows] = await pool.query(
       "SELECT * FROM alarm_events WHERE severity='CRITICAL' AND acknowledged_at IS NULL AND cleared_at IS NULL " +
       "AND escalated = 2 AND raised_at < (NOW(3) - INTERVAL ? MINUTE) LIMIT 100",
@@ -3057,7 +3088,7 @@ const ESCALATE_MIN = Number(env.get('ESCALATE_AFTER_MIN') || 15);
       node.send({
         payload: {
           nodeId: r.node_id, orgId: r.org_id, departmentId: r.department_id,
-          paramLabel: '💥 [ESCALATION L3 · FINAL · unacknowledged ' + (ESCALATE_MIN*4) + 'm] ' + r.param_label,
+          paramLabel: '💥 [ESCALATION L3 · FINAL · unacknowledged ' + (orgEscalateMin*4) + 'm] ' + r.param_label,
           kind: r.kind, value: Number(r.value), unit: r.unit, threshold: Number(r.threshold),
           severity: 'CRITICAL', time: new Date(r.raised_at).toISOString(),
           escalationLevel: 3
@@ -5920,6 +5951,119 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
   msg.headers=__CORS; msg.payload={ok:true, sentTo: targetEmail, subject}; node.send(msg);
 })()` + bbErr
 
+// --- Organization Escalation Matrix Policy (GET / PUT / TEST) --------------
+const escPolicyGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  let policy = {
+    enabled: true,
+    timeoutMins: 15,
+    customNote: 'ESCALATION ALERT: Critical incident on asset has remained unacknowledged past timeout threshold. Paging duty supervisor.',
+  };
+  try {
+    const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['escalation_policy.' + orgId]);
+    if(r.length && r[0].sval) {
+      const parsed = JSON.parse(r[0].sval);
+      policy = { ...policy, ...parsed };
+    }
+  } catch(e){}
+  msg.headers=__CORS; msg.payload={ ok: true, policy }; node.send(msg);
+})()` + bbErr
+
+const escPolicyPutFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  try {
+    await pool.query("CREATE TABLE IF NOT EXISTS platform_settings (skey VARCHAR(64) PRIMARY KEY, sval TEXT, updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))");
+  } catch(_) {}
+  const timeoutMins = [15, 30, 45, 60, 90, 120].includes(Number(b.timeoutMins)) ? Number(b.timeoutMins) : 15;
+  const policy = {
+    enabled: b.enabled !== false,
+    timeoutMins,
+    customNote: String(b.customNote || '').slice(0, 500),
+    updatedAt: new Date().toISOString(),
+    updatedBy: au.name || au.email || 'Admin',
+  };
+  const sval = JSON.stringify(policy);
+  await pool.query("INSERT INTO platform_settings (skey, sval) VALUES (?, ?) ON DUPLICATE KEY UPDATE sval=VALUES(sval)", ['escalation_policy.' + orgId, sval]);
+  msg.headers=__CORS; msg.payload={ ok: true, policy }; node.send(msg);
+})()` + bbErr
+
+const escPolicyTestFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  msg.headers=__CORS; msg.payload={ ok: true, message: 'Escalation matrix policy verified for ' + orgId }; node.send(msg);
+})()` + bbErr
+
+// --- Central Maintenance Silence / Shelving Manager (ISA-18.2 §12) ---------
+const shelvingGetFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  let shelves = [];
+  try {
+    const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['maintenance_shelving.' + orgId]);
+    if(r.length && r[0].sval) shelves = JSON.parse(r[0].sval);
+  } catch(_) {}
+  const now = Date.now();
+  const activeShelves = (shelves || []).filter(s => s.active && new Date(s.expiresAt).getTime() > now);
+  msg.headers=__CORS; msg.payload={ ok: true, shelves: activeShelves }; node.send(msg);
+})()` + bbErr
+
+const shelvingPutFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  if(!b.nodeId) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'nodeId required'}; return msg; }
+  try {
+    await pool.query("CREATE TABLE IF NOT EXISTS platform_settings (skey VARCHAR(64) PRIMARY KEY, sval TEXT, updated_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3))");
+  } catch(_) {}
+  let existing = [];
+  try {
+    const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['maintenance_shelving.' + orgId]);
+    if(r.length && r[0].sval) existing = JSON.parse(r[0].sval);
+  } catch(_) {}
+  const now = Date.now();
+  const durHours = Math.max(0.5, Math.min(168, Number(b.durationHours || 4)));
+  const expiresAt = new Date(now + durHours * 3600000).toISOString();
+  const newShelf = {
+    id: 'shlv_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    nodeId: String(b.nodeId).trim(),
+    name: String(b.name || b.nodeId).trim(),
+    paramKey: String(b.paramKey || 'all').trim(),
+    paramLabel: String(b.paramLabel || (b.paramKey === 'all' ? 'All Parameters' : b.paramKey)).trim(),
+    reason: String(b.reason || 'Authorized Maintenance & Calibration').trim(),
+    workOrderId: String(b.workOrderId || '').trim(),
+    shelvedBy: String(b.shelvedBy || au.name || au.email || 'Admin').trim(),
+    shelvedAt: new Date(now).toISOString(),
+    expiresAt,
+    active: true,
+  };
+  const updated = (existing || []).filter(s => !(s.nodeId === newShelf.nodeId && s.paramKey === newShelf.paramKey)).concat(newShelf);
+  await pool.query("INSERT INTO platform_settings (skey, sval) VALUES (?, ?) ON DUPLICATE KEY UPDATE sval=VALUES(sval)", ['maintenance_shelving.' + orgId, JSON.stringify(updated)]);
+  const activeOnly = updated.filter(s => s.active && new Date(s.expiresAt).getTime() > now);
+  msg.headers=__CORS; msg.payload={ ok: true, shelf: newShelf, shelves: activeOnly }; node.send(msg);
+})()` + bbErr
+
+const shelvingUnshelveFunc = CORS + `const au=msg.auth||{}; const orgId=msg.req.params.orgId; const b=msg.payload||{}; const pool=global.get('pool');
+if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode=403;msg.payload={error:'outside your organization'};return msg;}
+(async()=>{
+  if(!b.nodeId) { msg.headers=__CORS; msg.statusCode=400; msg.payload={error:'nodeId required'}; return msg; }
+  let existing = [];
+  try {
+    const [r] = await pool.query("SELECT sval FROM platform_settings WHERE skey=?", ['maintenance_shelving.' + orgId]);
+    if(r.length && r[0].sval) existing = JSON.parse(r[0].sval);
+  } catch(_) {}
+  const now = Date.now();
+  const updated = (existing || []).map(s => {
+    if(s.nodeId === b.nodeId && (!b.paramKey || s.paramKey === b.paramKey)) {
+      return { ...s, active: false, unShelvedAt: new Date(now).toISOString(), unShelvedBy: au.name || au.email || 'Admin' };
+    }
+    return s;
+  });
+  await pool.query("INSERT INTO platform_settings (skey, sval) VALUES (?, ?) ON DUPLICATE KEY UPDATE sval=VALUES(sval)", ['maintenance_shelving.' + orgId, JSON.stringify(updated)]);
+  const activeOnly = updated.filter(s => s.active && new Date(s.expiresAt).getTime() > now);
+  msg.headers=__CORS; msg.payload={ ok: true, shelves: activeOnly }; node.send(msg);
+})()` + bbErr
+
 // --- Which themes an ORGANIZATION is entitled to (superadmin-owned) ----------
 // This lived in a frontend const (orgThemes.ts) listing org-1/2/3 and nothing
 // else, so every other organization fell back to ['th-overview'] — its admin
@@ -8215,6 +8359,12 @@ const flow = [
   ...endpoint('emailtplget', 'get', '/api/orgs/:orgId/email-template', emailTplGetFunc),
   ...endpoint('emailtplput', 'put', '/api/orgs/:orgId/email-template', emailTplPutFunc, 'admin'),
   ...endpoint('emailtpltest', 'post', '/api/orgs/:orgId/email-template/test', emailTplTestFunc, 'admin'),
+  ...endpoint('escpolicyget', 'get', '/api/orgs/:orgId/escalation-policy', escPolicyGetFunc),
+  ...endpoint('escpolicyput', 'put', '/api/orgs/:orgId/escalation-policy', escPolicyPutFunc, 'admin'),
+  ...endpoint('escpolicytest', 'post', '/api/orgs/:orgId/escalation-policy/test', escPolicyTestFunc, 'admin'),
+  ...endpoint('shelvingget', 'get', '/api/orgs/:orgId/shelving', shelvingGetFunc),
+  ...endpoint('shelvingput', 'put', '/api/orgs/:orgId/shelving', shelvingPutFunc, 'admin'),
+  ...endpoint('shelvingunshelve', 'post', '/api/orgs/:orgId/shelving/unshelve', shelvingUnshelveFunc, 'admin'),
   ...endpoint('dtget', 'get', '/api/orgs/:orgId/department-themes', dtGetFunc),
   ...endpoint('dtput', 'put', '/api/orgs/:orgId/department-themes', dtPutFunc, 'admin'),
   // The org's theme entitlement: readable by its admin (to allocate from),
