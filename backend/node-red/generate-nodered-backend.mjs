@@ -1959,8 +1959,8 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
           }
         }
         const r = (rAll || []).filter(c => c.enabled === 1 || c.enabled === true);
-        // If a department has its own specific channel configured, it overrides the org-level fallback for that channel
-        const deptTypes = new Set(r.filter(c => c.department_id && (!c.user_id || c.user_id === '')).map(c => c.channel));
+        // If a department has its own specific channel configured (enabled or disabled), it overrides the org-level fallback for that channel
+        const deptTypes = new Set((rAll || []).filter(c => c.department_id && (!c.user_id || c.user_id === '')).map(c => c.channel));
         channels = r.filter(c => {
           if (!c.department_id && (!c.user_id || c.user_id === '')) {
             return !deptTypes.has(c.channel);
