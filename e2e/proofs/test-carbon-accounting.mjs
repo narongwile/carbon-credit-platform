@@ -21,8 +21,8 @@ assert.ok(
 )
 
 assert.ok(
-  !source.includes("DemoDataBanner"),
-  "admin/carbon must replace DemoDataBanner with the production GHG Protocol compliant status"
+  source.includes("DemoDataBanner"),
+  "admin/carbon must render DemoDataBanner disclosing that emissions figures are modeled estimates, not continuous stack measurements"
 )
 
 assert.ok(

@@ -51,6 +51,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 import { useAppStore } from '@/lib/store'
 import { useManagedDevices } from '@/lib/useManagedDevices'
 import { api } from '@/lib/api'
@@ -418,6 +419,11 @@ export default function CarbonPage() {
   return (
     <div className="min-h-screen bg-[#050505] text-slate-300 p-6 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
+        {/* ISO 14064-1 & GHG Protocol Activity Data Disclosure */}
+        <DemoDataBanner
+          title="Emissions Accounting Methodology & Unmeasured Direct Source Disclosure"
+          detail="Scope 2 electricity emissions are calculated by multiplying active IoT device energy throughput by regional Grid Emission Factors. Scope 1 (SF₆ switchgear fugitive gas, backup diesel) and Scope 3 (cold-chain transits, fleet logistics) represent activity-data engineering estimates rather than continuous stack emissions monitoring (CEMS). Official reporting under CDP, SBTi, or ISO 14064-1 requires third-party verification (ISO 14064-3) of corporate activity data."
+        />
 
         {/* Compliant Status Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
