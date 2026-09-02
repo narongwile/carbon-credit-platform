@@ -52,7 +52,7 @@ spec:
       annotations:
         # sha256 of flows.nodered-backend.json — changes on every flow update, so
         # the pod template changes → ArgoCD rolls the pod → load-flow re-copies the
-        checksum/flow: "64a3f537585d1774"
+        checksum/flow: "985d4d9c7ee29e08"
     spec:
       securityContext:
         fsGroup: 1000

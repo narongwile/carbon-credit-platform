@@ -4756,11 +4756,19 @@ const FETCH_LIB = { var: 'fetch', module: 'node-fetch' }
 // Same story as FETCH_LIB, for the same reason: the function sandbox is a bare
 // object literal, so Node's built-in `crypto` is NOT in scope either — and on
 // Node 20 the host's global `crypto` is WebCrypto, which has no createHash at
-// all. The three audit handlers each call crypto.createHash to build the
+// all. The three audit handlers each hash their record to build the
 // tamper-evident checksum that IS the 21 CFR Part 11 record, and none declared
-// it: every one of them threw before its INSERT, so the audit trail recorded
-// nothing while the operation it was meant to witness went ahead.
-const CRYPTO_LIB = { var: 'crypto', module: 'crypto' }
+// anything: every one of them threw before its INSERT, so the audit trail
+// recorded nothing while the operation it was meant to witness went ahead.
+//
+// crypto-js, NOT node's built-in 'crypto'. functionExternalModules installs
+// each declared module from npm, and every other lib in this flow is an npm
+// package — a core module has no precedent here, and `crypto` on npm is a
+// deprecated stub with no createHash, so declaring it risks resolving to that
+// instead. crypto-js is already declared in INIT_LIBS, so this deployment
+// demonstrably installs it, and CryptoJS.SHA256(x).toString() is byte-identical
+// to createHash('sha256').update(x).digest('hex') (verified).
+const CRYPTO_LIB = { var: 'CryptoJS', module: 'crypto-js' }
 // notify node also needs nodemailer (SMTP email), like the Express service
 const NOTIFY_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'nodemailer', module: 'nodemailer' }, FETCH_LIB]
 // reportrun additionally attaches a CSV to a scheduled Telegram report. The
@@ -6269,7 +6277,7 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
   const workOrderId = b.workOrderId ? String(b.workOrderId).trim() : null;
 
   const rawData = now.toISOString() + ':' + actorEmail + ':' + action + ':' + targetId + ':' + beforeVal + ':' + afterVal + ':' + justification;
-  const checksum = crypto.createHash('sha256').update(rawData).digest('hex');
+  const checksum = CryptoJS.SHA256(rawData).toString();
 
   try {
     await pool.query(
@@ -6435,7 +6443,7 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 
   const execId = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-EXEC-' + Math.random().toString(36).slice(2,6).toUpperCase();
   const execRaw = now.toISOString() + ':' + task.maker_email + ':' + task.action + ':' + task.target_asset_id + ':' + task.before_val + ':' + task.after_val + ':' + task.justification;
-  const execHash = crypto.createHash('sha256').update(execRaw).digest('hex');
+  const execHash = CryptoJS.SHA256(execRaw).toString();
   await pool.query(
     'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, checker_id, checker_name, checker_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [execId, orgId, task.maker_id, task.maker_name, task.maker_email, task.maker_role, ip, task.action, task.target_asset_id, task.target_asset_name, task.before_val, task.after_val, task.justification, task.work_order_id, execHash, 'APPROVED', checkerId, checkerName, checkerEmail, now]
@@ -6443,7 +6451,7 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 
   const signId = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-4EYE-' + Math.random().toString(36).slice(2,6).toUpperCase();
   const signRaw = now.toISOString() + ':' + checkerEmail + ':FOUR_EYES_APPROVAL:' + task.target_asset_id + ':Approved via Four-Eyes Dual Control';
-  const signHash = crypto.createHash('sha256').update(signRaw).digest('hex');
+  const signHash = CryptoJS.SHA256(signRaw).toString();
   await pool.query(
     'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, checker_id, checker_name, checker_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [signId, orgId, checkerId, checkerName, checkerEmail, 'Dual-Control Reviewer', ip, 'FOUR_EYES_APPROVAL', task.target_asset_id, task.target_asset_name, 'Status: Pending Dual-Control Approval', 'Status: Approved & Executed', 'Approved by ' + checkerName + ' (' + checkerEmail + ')', task.work_order_id, signHash, 'APPROVED', checkerId, checkerName, checkerEmail, now]
@@ -6484,7 +6492,7 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
 
   const rejId = 'AUD-' + now.getFullYear() + (now.getMonth()+1).toString().padStart(2,'0') + '-REJ-' + Math.random().toString(36).slice(2,6).toUpperCase();
   const rejRaw = now.toISOString() + ':' + checkerEmail + ':FOUR_EYES_REJECTION:' + task.target_asset_id + ':' + reason;
-  const rejHash = crypto.createHash('sha256').update(rejRaw).digest('hex');
+  const rejHash = CryptoJS.SHA256(rejRaw).toString();
   await pool.query(
     'INSERT INTO audit_trail_logs (id, org_id, actor_id, actor_name, actor_email, actor_role, ip_address, action, target_asset_id, target_asset_name, before_val, after_val, justification, work_order_id, checksum, approval_status, checker_id, checker_name, checker_email, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [rejId, orgId, checkerId, checkerName, checkerEmail, 'Dual-Control Reviewer', ip, 'FOUR_EYES_REJECTION', task.target_asset_id, task.target_asset_name, 'Status: Pending Dual-Control Approval', 'Status: Rejected by Reviewer', reason, task.work_order_id, rejHash, 'REJECTED', checkerId, checkerName, checkerEmail, now]
@@ -8860,7 +8868,7 @@ const personalRuleTestFn = flow.find((n) => n.id === 'personalruletest_fn'); if 
 // (form-data + fetch) — the same trio reportrun uses. Without this it would
 // throw ReferenceError on the first send rather than at deploy time.
 const sendExportFn = flow.find((n) => n.id === 'sendexport_fn'); if (sendExportFn) sendExportFn.libs = REPORT_LIBS
-// All three audit handlers hash their record with crypto.createHash. Approve
+// All three audit handlers hash their record with CryptoJS.SHA256. Approve
 // additionally verifies the signer's password with bcrypt.
 const auditApproveFn = flow.find((n) => n.id === 'auditpendingapprove_fn'); if (auditApproveFn) auditApproveFn.libs = [...USRPOST_LIBS, CRYPTO_LIB]
 const auditLogsPostFn = flow.find((n) => n.id === 'auditlogspost_fn'); if (auditLogsPostFn) auditLogsPostFn.libs = [...LIBS, CRYPTO_LIB]

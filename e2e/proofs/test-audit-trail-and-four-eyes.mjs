@@ -83,7 +83,7 @@ t('auditlogspost_fn extracts real client IP from headers/socket',
   /x-forwarded-for/i.test(logsPostFn?.func || '') &&
   /remoteAddress/i.test(logsPostFn?.func || ''))
 t('auditlogspost_fn generates SHA-256 cryptographic checksum on server',
-  /crypto\.createHash\('sha256'\)/i.test(logsPostFn?.func || ''))
+  /CryptoJS\.SHA256\(/.test(logsPostFn?.func || ''))
 
 // ── 5. Frontend API & UI Integration ───────────────────────────────────────
 const apiTs = readFileSync(new URL('frontend-next/src/lib/api.ts', root), 'utf8')
@@ -168,7 +168,7 @@ t('admin/audit/page.tsx exports CSV with correct newline format (not \\\\n)',
     const n = flows.find((x) => x.id === id)
     const body = n?.func || ''
     const declared = (n?.libs || []).map((l) => l.var)
-    for (const [used, mod] of [[/\bcrypto\.createHash/, 'crypto'], [/\bbcrypt\.compare/, 'bcrypt'], [/\bmysql\./, 'mysql']]) {
+    for (const [used, mod] of [[/\bCryptoJS\.SHA256/, 'CryptoJS'], [/\bcrypto\.createHash/, 'crypto'], [/\bbcrypt\.compare/, 'bcrypt'], [/\bmysql\./, 'mysql']]) {
       if (used.test(body)) {
         t(`${id} declares '${mod}' in libs, which it uses`,
           declared.includes(mod),
@@ -184,6 +184,19 @@ t('admin/audit/page.tsx exports CSV with correct newline format (not \\\\n)',
     /task\.maker_id === checkerId/.test(fn) &&
     /maker_email\.toLowerCase\(\) === checkerEmail\.toLowerCase\(\)/.test(fn))
 }
+
+  // Node's built-in 'crypto' is not resolvable in this sandbox, and declared as
+  // an external module npm would fetch the deprecated `crypto` stub, which has
+  // no createHash — so the trail would still write nothing, just differently.
+  // crypto-js is the dependency this deployment already installs (INIT_LIBS),
+  // and CryptoJS.SHA256(x).toString() is byte-identical to
+  // createHash('sha256').update(x).digest('hex').
+  for (const id of ['auditlogspost_fn', 'auditpendingapprove_fn', 'auditpendingreject_fn']) {
+    const n = flows.find((x) => x.id === id)
+    t(`${id} hashes with crypto-js, not node's built-in crypto`,
+      !/crypto\.createHash/.test(n?.func || '') &&
+      (n?.libs || []).every((l) => l.module !== 'crypto'))
+  }
 
 console.log(`\n${pass} passed, ${fail} failed\n`)
 if (fail > 0) process.exit(1)
