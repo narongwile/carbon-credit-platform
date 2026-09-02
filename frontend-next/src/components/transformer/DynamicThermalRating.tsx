@@ -4,11 +4,13 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import {
   Zap, Wind, Sun, Thermometer, ShieldCheck, TrendingUp, AlertCircle,
   ArrowUpRight, Radio, RefreshCw, DollarSign, Clock, CheckCircle2,
-  Sliders, Fan, Sparkles
+  Sliders, Fan, Sparkles, Download, Wrench
 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 import { computeDynamicRating, type CoolingStage } from '@/lib/dtrModel'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface DynamicThermalRatingProps {
   nameplateKva?: number
@@ -19,6 +21,7 @@ interface DynamicThermalRatingProps {
   lng?: number
   assetId?: string
   assetName?: string
+  orgId?: string
 }
 
 export default function DynamicThermalRating({
@@ -243,6 +246,68 @@ export default function DynamicThermalRating({
       }
     })
   }, [nameplateKva])
+
+  const [dispatchedWo, setDispatchedWo] = useState<string | null>(null)
+
+  const handleExportDtrCsv = () => {
+    const headers = ['Time', 'Ambient Temp (C)', 'Actual Load (kVA)', 'Dynamic Rating (kVA)', 'Nameplate (kVA)', 'Available Headroom (kVA)']
+    const rows = profile24h.map(pt => [
+      pt.time,
+      pt.ambient,
+      pt.actualLoad,
+      pt.dynamicRating,
+      pt.nameplate,
+      pt.extraHeadroom,
+    ])
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `DTR_Diurnal_Profile_${assetId}_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast.success('ส่งออกข้อมูล Dynamic Rating 24 ชม. (CSV) สำเร็จ')
+  }
+
+  const handleToggleCoolingDispatch = () => {
+    const nextState = !coolingDispatched
+    setCoolingDispatched(nextState)
+
+    recordAuditAction({
+      action: 'THRESHOLD_CHANGE',
+      target: { assetId, assetName },
+      before: coolingDispatched ? 'Cooling Stage: ONAF2' : `Cooling Stage: ${coolingStage}`,
+      after: nextState ? 'Cooling Stage: ONAF2 (Simulated)' : `Cooling Stage: ${coolingStage}`,
+      justification: nextState
+        ? `Operator initiated ONAF-2 pre-cooling simulation for ${assetName} (ambient ${ambientTemp}°C, hot-spot ${dtrMetrics.dynamicHotSpot}°C).`
+        : `Deactivated simulated ONAF-2 cooling stage for ${assetName}.`,
+    })
+
+    if (nextState) {
+      toast.success('จำลองเปิดพัดลมช่วยระบายความร้อน ONAF-2 สำเร็จ (บันทึกลง Audit Trail)')
+    } else {
+      toast('ยกเลิกการจำลองพัดลมช่วยระบายความร้อน ONAF-2')
+    }
+  }
+
+  const handleDispatchThermalWo = () => {
+    const woNumber = `WO-DTR-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 6)}-${Date.now().toString(36).toUpperCase().slice(-5)}`
+    setDispatchedWo(woNumber)
+
+    recordAuditAction({
+      action: 'THRESHOLD_CHANGE',
+      target: { assetId, assetName },
+      before: `Dynamic Hot-Spot: ${dtrMetrics.dynamicHotSpot}°C, Margin: ${dtrMetrics.hotSpotMarginC}°C`,
+      after: `Work Order ${woNumber} queued in CMMS`,
+      justification: `Thermal load headroom restricted. Dispatched radiator cleaning and cooling airflow verification.`,
+      workOrderId: woNumber,
+    })
+
+    toast.success(`Work Order ${woNumber} queued — export to your CMMS manually (no direct integration configured)`)
+  }
 
   return (
     <div className="rounded-2xl p-5 space-y-6 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -576,9 +641,9 @@ export default function DynamicThermalRating({
           </button>
 
           <button
-            onClick={() => setCoolingDispatched(!coolingDispatched)}
+            onClick={handleToggleCoolingDispatch}
             className={clsx(
-              'px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm',
+              'px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer',
               coolingDispatched
                 ? 'bg-rose-600 text-white hover:bg-rose-500'
                 : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400'
@@ -592,8 +657,18 @@ export default function DynamicThermalRating({
 
       {/* 24-Hour DTR vs Actual Load Chart */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between text-xs">
-          <div className="font-semibold text-slate-200">24-Hour Diurnal DTR Capacity vs Actual Load Profile</div>
+        <div className="flex items-center justify-between text-xs flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-200">24-Hour Diurnal DTR Capacity vs Actual Load Profile</span>
+            <button
+              onClick={handleExportDtrCsv}
+              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+              title="ดาวน์โหลดตารางข้อมูล DTR 24 ชั่วโมงลงไฟล์ CSV"
+            >
+              <Download size={11} />
+              <span>Export CSV</span>
+            </button>
+          </div>
           <div className="flex items-center gap-3 text-[10px]">
             <span className="flex items-center gap-1 text-amber-400 font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-400 inline-block" /> Real-Time DTR
@@ -631,6 +706,37 @@ export default function DynamicThermalRating({
               <Area type="monotone" dataKey="actualLoad" stroke="#6366f1" strokeWidth={2} fill="url(#loadGrad)" name="Actual Load (kVA)" />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Prescriptive Thermal Health Action Plan */}
+      <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-950/20 space-y-2.5">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Wrench size={15} className="text-indigo-400" />
+            <h4 className="text-xs font-bold text-white">Prescriptive Thermal Action Plan (RxM)</h4>
+          </div>
+          {dispatchedWo ? (
+            <span className="text-[10px] px-2.5 py-1 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
+              <CheckCircle2 size={12} /> {dispatchedWo} DISPATCHED
+            </span>
+          ) : (
+            <button
+              onClick={handleDispatchThermalWo}
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            >
+              <Wrench size={12} />
+              <span>สั่งตรวจเช็คพัดลมระบายความร้อน CMMS</span>
+            </button>
+          )}
+        </div>
+        <div className="text-[11px] text-slate-300 space-y-1">
+          <div>
+            <strong>Target Asset:</strong> <span className="font-mono text-indigo-300">{assetId}</span> · {assetName}
+          </div>
+          <div className="text-slate-400">
+            <strong>Thermal Directive:</strong> รักษาอุณหภูมิ Hot-Spot ให้อยู่ต่ำกว่า 98°C เพื่อคงอายุการใช้งานของฉนวนตามมาตรฐาน IEEE C57.91 หากต้องการรองรับโหลดช่วงพีคเกินพิกัด ให้เตรียมเดินพัดลม ONAF ล่วงหน้า 45 นาที
+          </div>
         </div>
       </div>
     </div>

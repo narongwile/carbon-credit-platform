@@ -1,8 +1,11 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
+import { CheckCircle2, Wrench, ShieldAlert, AlertTriangle, Sliders, X, Sparkles } from 'lucide-react'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface DgaDuvalTriangleProps {
   /** true only when this asset really publishes dissolved-gas values. */
@@ -12,6 +15,9 @@ interface DgaDuvalTriangleProps {
   c2h2?: number // ppm
   h2?: number // ppm
   c2h6?: number // ppm
+  assetId?: string
+  assetName?: string
+  orgId?: string
 }
 
 type MethodType = 'T1' | 'T4' | 'T5' | 'P1' | 'P2'
@@ -188,8 +194,24 @@ export default function DgaDuvalTriangle({
   c2h2 = 3.2,
   h2 = 65,
   c2h6 = 28,
+  assetId = 'TRF-01',
+  assetName = 'Transformer Unit',
+  orgId = 'org-1',
 }: DgaDuvalTriangleProps) {
   const [selectedMethod, setSelectedMethod] = useState<MethodType>('T1')
+  const [showWhatIfModal, setShowWhatIfModal] = useState(false)
+  const [dispatchedWo, setDispatchedWo] = useState<string | null>(null)
+  const [simOffset, setSimOffset] = useState({ h2: 0, ch4: 0, c2h2: 0, c2h4: 0, c2h6: 0 })
+
+  const isSimulating = simOffset.h2 !== 0 || simOffset.ch4 !== 0 || simOffset.c2h2 !== 0 || simOffset.c2h4 !== 0 || simOffset.c2h6 !== 0
+
+  // Effective gases with optional what-if projection
+  const effCh4 = Math.max(0, ch4 + simOffset.ch4)
+  const effC2h4 = Math.max(0, c2h4 + simOffset.c2h4)
+  const effC2h2 = Math.max(0, c2h2 + simOffset.c2h2)
+  const effH2 = Math.max(0, h2 + simOffset.h2)
+  const effC2h6 = Math.max(0, c2h6 + simOffset.c2h6)
+
   const currentCfg = METHODS[selectedMethod]
 
   // Triangle calculations
@@ -198,11 +220,11 @@ export default function DgaDuvalTriangle({
   let valLeft = 0
 
   if (selectedMethod === 'T1') {
-    valTop = ch4; valRight = c2h4; valLeft = c2h2
+    valTop = effCh4; valRight = effC2h4; valLeft = effC2h2
   } else if (selectedMethod === 'T4') {
-    valTop = h2; valRight = ch4; valLeft = c2h6
+    valTop = effH2; valRight = effCh4; valLeft = effC2h6
   } else if (selectedMethod === 'T5') {
-    valTop = ch4; valRight = c2h4; valLeft = c2h6
+    valTop = effCh4; valRight = effC2h4; valLeft = effC2h6
   }
 
   const totalTri = valTop + valRight + valLeft
@@ -216,15 +238,14 @@ export default function DgaDuvalTriangle({
   const toY = (a: number, _b: number, _c: number) => H - (a / 100) * H
 
   // ── Duval Pentagon Centroid Calculation ────────────────────────────────
-  // 5 Vertices: Top (H2), Top-Right (C2H6), Bottom-Right (CH4), Bottom-Left (C2H4), Top-Left (C2H2)
   const pentagonVertices = [
-    { name: '%H2', x: 140, y: 32, labelX: 140, labelY: 18, val: h2, color: '#38bdf8' },
-    { name: '%C2H6', x: 223.7, y: 92.8, labelX: 245, labelY: 96, val: c2h6, color: '#a78bfa' },
-    { name: '%CH4', x: 191.7, y: 191.2, labelX: 205, labelY: 208, val: ch4, color: '#4ade80' },
-    { name: '%C2H4', x: 88.3, y: 191.2, labelX: 75, labelY: 208, val: c2h4, color: '#fb923c' },
-    { name: '%C2H2', x: 56.3, y: 92.8, labelX: 35, labelY: 96, val: c2h2, color: '#f43f5e' },
+    { name: '%H2', x: 140, y: 32, labelX: 140, labelY: 18, val: effH2, color: '#38bdf8' },
+    { name: '%C2H6', x: 223.7, y: 92.8, labelX: 245, labelY: 96, val: effC2h6, color: '#a78bfa' },
+    { name: '%CH4', x: 191.7, y: 191.2, labelX: 205, labelY: 208, val: effCh4, color: '#4ade80' },
+    { name: '%C2H4', x: 88.3, y: 191.2, labelX: 75, labelY: 208, val: effC2h4, color: '#fb923c' },
+    { name: '%C2H2', x: 56.3, y: 92.8, labelX: 35, labelY: 96, val: effC2h2, color: '#f43f5e' },
   ]
-  const total5 = h2 + c2h6 + ch4 + c2h4 + c2h2
+  const total5 = effH2 + effC2h6 + effCh4 + effC2h4 + effC2h2
   const pentagonDotX = total5 > 0 ? pentagonVertices.reduce((acc, v) => acc + (v.val / total5) * v.x, 0) : 140
   const pentagonDotY = total5 > 0 ? pentagonVertices.reduce((acc, v) => acc + (v.val / total5) * v.y, 0) : 120
 
@@ -233,8 +254,44 @@ export default function DgaDuvalTriangle({
 
   const activeZoneId = currentCfg.type === 'triangle'
     ? currentCfg.diagnose(pTop, pRight, pLeft)
-    : currentCfg.diagnose(h2, c2h6, ch4, c2h4, c2h2)
+    : currentCfg.diagnose(effH2, effC2h6, effCh4, effC2h4, effC2h2)
   const activeZoneInfo = currentCfg.zones.find(z => z.id === activeZoneId) || currentCfg.zones[0]
+
+  // ── Multi-Standard Cross-Validation Engine (IEC 60599 / Rogers Ratios) ──
+  const r1 = effC2h4 > 0 ? (effC2h2 / effC2h4) : 0 // C2H2 / C2H4
+  const r2 = effH2 > 0 ? (effCh4 / effH2) : 0 // CH4 / H2
+  const r3 = effC2h6 > 0 ? (effC2h4 / effC2h6) : 0 // C2H4 / C2H6
+
+  const iecDiagnosis = useMemo(() => {
+    if (effC2h2 > 35 || (r1 > 1.0 && r2 > 0.1 && r2 < 0.5)) return { code: 'D2', name: 'High Energy Arcing', color: '#ef4444' }
+    if (r1 >= 0.1 && r1 <= 1.0) return { code: 'D1', name: 'Low Energy Discharge', color: '#ec4899' }
+    if (r1 < 0.1 && r2 > 1.0 && r3 > 3.0) return { code: 'T3', name: 'Thermal > 700°C', color: '#f97316' }
+    if (r1 < 0.1 && r2 > 1.0 && r3 >= 1.0 && r3 <= 3.0) return { code: 'T2', name: 'Thermal 300–700°C', color: '#eab308' }
+    if (r1 < 0.1 && r2 >= 0.1 && r2 <= 1.0 && r3 < 1.0) return { code: 'T1', name: 'Thermal < 300°C', color: '#22c55e' }
+    if (r1 < 0.1 && r2 < 0.1 && r3 < 0.2) return { code: 'PD', name: 'Partial Discharge', color: '#3b82f6' }
+    return { code: 'ND', name: 'Normal / Inconclusive Gas Ratio', color: '#94a3b8' }
+  }, [r1, r2, r3, effC2h2])
+
+  // Consensus score between T1, P1 and IEC 60599
+  const t1Verdict = METHODS.T1.diagnose((effCh4 / (effCh4 + effC2h4 + effC2h2 || 1)) * 100, (effC2h4 / (effCh4 + effC2h4 + effC2h2 || 1)) * 100, (effC2h2 / (effCh4 + effC2h4 + effC2h2 || 1)) * 100)
+  const p1Verdict = METHODS.P1.diagnose(effH2, effC2h6, effCh4, effC2h4, effC2h2)
+  const isConsensusHigh = t1Verdict === p1Verdict || t1Verdict === iecDiagnosis.code
+
+  const handleDispatchDgaWo = () => {
+    const woNumber = `WO-DGA-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 6)}-${Date.now().toString(36).toUpperCase().slice(-5)}`
+    setDispatchedWo(woNumber)
+
+    recordAuditAction({
+      action: 'THRESHOLD_CHANGE',
+      target: { assetId, assetName },
+      before: `Zone: ${activeZoneInfo.id} (${activeZoneInfo.name}), C2H2: ${effC2h2} ppm, C2H4: ${effC2h4} ppm`,
+      after: `Work Order ${woNumber} queued in CMMS`,
+      justification: `DGA diagnostic detected active ${activeZoneInfo.id} (${activeZoneInfo.name}). Immediate oil degassing and degasifier hookup queued.`,
+      workOrderId: woNumber,
+    })
+
+    toast.success(`Work Order ${woNumber} queued — export to your CMMS manually (no direct integration configured)`)
+  }
 
   // ── Trajectory Vector & Time-to-Trip (RTT) Forecasting ────────────────
   const [showTrajectory, setShowTrajectory] = useState(true)
@@ -300,16 +357,30 @@ export default function DgaDuvalTriangle({
         {/* Diagnostic Method Tabs & Trajectory Toggle */}
         <div className="flex items-center gap-1.5 self-start sm:self-auto flex-wrap">
           <button
+            onClick={() => setShowWhatIfModal(true)}
+            className={clsx(
+              'text-[11px] px-2.5 py-1 rounded-lg font-semibold transition-all border flex items-center gap-1 cursor-pointer',
+              isSimulating
+                ? 'bg-amber-950/60 text-amber-200 border-amber-500/50 shadow-sm ring-1 ring-amber-500/30'
+                : 'text-slate-400 border-slate-800 bg-[#0a0e1a] hover:text-white'
+            )}
+            title="จำลองการเพิ่มขึ้นของก๊าซเพื่อดูการเคลื่อนที่ของฟอลต์โซน"
+          >
+            <Sliders size={12} />
+            <span>{isSimulating ? '🧪 จำลองก๊าซ (Active)' : '🧪 จำลองก๊าซ (What-If)'}</span>
+          </button>
+
+          <button
             onClick={() => setShowTrajectory(!showTrajectory)}
             className={clsx(
-              'text-[11px] px-2.5 py-1 rounded-lg font-semibold transition-all border flex items-center gap-1',
+              'text-[11px] px-2.5 py-1 rounded-lg font-semibold transition-all border flex items-center gap-1 cursor-pointer',
               showTrajectory
                 ? 'bg-purple-950/60 text-purple-200 border-purple-500/50 shadow-sm ring-1 ring-purple-500/30'
                 : 'text-slate-400 border-slate-800 bg-[#0a0e1a] hover:text-white'
             )}
           >
             <span>🔮</span>
-            <span>Trajectory & RTT</span>
+            <span>Trajectory &amp; RTT</span>
           </button>
 
           <div className="flex items-center gap-1 bg-[#0a0e1a] p-1 rounded-lg border border-slate-800">
@@ -591,6 +662,190 @@ export default function DgaDuvalTriangle({
           </div>
         ))}
       </div>
+
+      {/* Multi-Standard Consensus Cross-Validation Engine */}
+      <div className="p-3.5 rounded-xl border border-slate-800 bg-[#0a0e1a] space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Sparkles size={15} className="text-indigo-400" />
+            <h4 className="text-xs font-bold text-white">Multi-Standard Consensus Matrix (Duval vs IEC 60599 / Rogers)</h4>
+          </div>
+          <span
+            className={clsx(
+              'text-[10px] px-2 py-0.5 rounded font-mono font-bold uppercase tracking-wider border',
+              isConsensusHigh
+                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                : 'bg-amber-950/60 text-amber-300 border-amber-500/40'
+            )}
+          >
+            {isConsensusHigh ? 'Consensus High (Corroborated)' : 'Partial Divergence (Review Sample)'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+          <div className="p-2.5 rounded-lg bg-[#0d1117] border border-slate-800 space-y-1">
+            <div className="text-[10px] text-slate-400 flex justify-between">
+              <span>Duval Triangle 1</span>
+              <span className="font-mono text-cyan-300">Ternary</span>
+            </div>
+            <div className="font-bold text-white font-mono">{t1Verdict}</div>
+            <div className="text-[10px] text-slate-400">CH₄/C₂H₄/C₂H₂ plane</div>
+          </div>
+
+          <div className="p-2.5 rounded-lg bg-[#0d1117] border border-slate-800 space-y-1">
+            <div className="text-[10px] text-slate-400 flex justify-between">
+              <span>Duval Pentagon 1</span>
+              <span className="font-mono text-purple-300">5-Gas</span>
+            </div>
+            <div className="font-bold text-white font-mono">{p1Verdict}</div>
+            <div className="text-[10px] text-slate-400">Universal coordinate</div>
+          </div>
+
+          <div className="p-2.5 rounded-lg bg-[#0d1117] border border-slate-800 space-y-1">
+            <div className="text-[10px] text-slate-400 flex justify-between">
+              <span>IEC 60599 / Rogers</span>
+              <span className="font-mono text-amber-300">Ratios</span>
+            </div>
+            <div className="font-bold font-mono" style={{ color: iecDiagnosis.color }}>
+              {iecDiagnosis.code} — {iecDiagnosis.name}
+            </div>
+            <div className="text-[9px] text-slate-500 font-mono">
+              R1(C₂H₂/C₂H₄)={r1.toFixed(2)} · R2(CH₄/H₂)={r2.toFixed(2)} · R3(C₂H₄/C₂H₆)={r3.toFixed(2)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Prescriptive Maintenance Action & CMMS Work Order Dispatch */}
+      <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-950/20 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Wrench size={15} className="text-indigo-400" />
+            <h4 className="text-xs font-bold text-white">Prescriptive Maintenance Action Plan (RxM)</h4>
+          </div>
+          {dispatchedWo ? (
+            <span className="text-[10px] px-2.5 py-1 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
+              <CheckCircle2 size={12} /> {dispatchedWo} DISPATCHED
+            </span>
+          ) : (
+            <button
+              onClick={handleDispatchDgaWo}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow transition-transform active:scale-95 cursor-pointer"
+              style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
+            >
+              <Wrench size={12} /> Dispatch CMMS Work Order
+            </button>
+          )}
+        </div>
+
+        <div className="space-y-1.5 text-[11px]">
+          <div className="text-slate-200">
+            <strong>Target Asset:</strong> <span className="font-mono text-indigo-300">{assetId}</span> · {assetName}
+          </div>
+          <div className="text-slate-300 leading-relaxed">
+            <strong>Directive:</strong>{' '}
+            {activeZoneId.startsWith('D')
+              ? 'High probability of active electrical discharge/arcing. Mobilize infrared thermography, acoustic partial discharge scanner, and schedule oil degassing immediately.'
+              : activeZoneId.startsWith('T')
+              ? 'Elevated thermal fault signature detected. Inspect cooling radiators, verify oil pump circulation flow, and restrict continuous overload.'
+              : 'Routine diagnostic profile. Maintain standard quarterly DGA monitoring protocol.'}
+          </div>
+        </div>
+      </div>
+
+      {/* What-If Gas Projection Simulator Modal */}
+      {showWhatIfModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl p-5 space-y-4 border border-indigo-500/50 shadow-2xl bg-[#0d1117]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sliders size={16} className="text-indigo-400" />
+                <h3 className="text-sm font-bold text-white">จำลองการเพิ่มขึ้นของก๊าซ (What-If Projection)</h3>
+              </div>
+              <button
+                onClick={() => setShowWhatIfModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <p className="text-slate-400 text-[11px]">
+                ทดสอบจำลองเพิ่มความเข้มข้นของก๊าซเพื่อดูว่าพิกัดบน Duval Triangle/Pentagon จะเคลื่อนที่ไปอยู่ในโซนอันตรายใด
+              </p>
+
+              <div>
+                <div className="flex justify-between mb-1 text-slate-300 font-semibold">
+                  <span>+Acetylene (C₂H₂) อาร์กความร้อนสูง:</span>
+                  <span className="font-mono text-rose-400">+{simOffset.c2h2} ppm (รวม: {c2h2 + simOffset.c2h2})</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="40"
+                  step="0.5"
+                  value={simOffset.c2h2}
+                  onChange={(e) => setSimOffset({ ...simOffset, c2h2: parseFloat(e.target.value) || 0 })}
+                  className="w-full accent-rose-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between mb-1 text-slate-300 font-semibold">
+                  <span>+Ethylene (C₂H₄) ร้อนจัดเกิน 700°C:</span>
+                  <span className="font-mono text-orange-400">+{simOffset.c2h4} ppm (รวม: {c2h4 + simOffset.c2h4})</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={simOffset.c2h4}
+                  onChange={(e) => setSimOffset({ ...simOffset, c2h4: parseFloat(e.target.value) || 0 })}
+                  className="w-full accent-orange-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex justify-between mb-1 text-slate-300 font-semibold">
+                  <span>+Hydrogen (H₂) สัญญาณดิสชาร์จ/PD:</span>
+                  <span className="font-mono text-cyan-400">+{simOffset.h2} ppm (รวม: {h2 + simOffset.h2})</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  step="5"
+                  value={simOffset.h2}
+                  onChange={(e) => setSimOffset({ ...simOffset, h2: parseFloat(e.target.value) || 0 })}
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+
+              <div className="flex justify-between gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSimOffset({ h2: 0, ch4: 0, c2h2: 0, c2h4: 0, c2h6: 0 })
+                    toast.success('รีเซ็ตค่าจำลองก๊าซกลับสู่ค่าเซนเซอร์ปกติ')
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                >
+                  รีเซ็ตกลับเป็นปกติ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowWhatIfModal(false)}
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow cursor-pointer"
+                >
+                  ดูผลการจำลอง
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

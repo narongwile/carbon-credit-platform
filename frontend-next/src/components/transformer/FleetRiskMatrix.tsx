@@ -1,13 +1,15 @@
 'use client'
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet, Database, RefreshCw } from 'lucide-react'
+import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet, Database, RefreshCw, Download, Edit3, Wrench, X } from 'lucide-react'
 import clsx from 'clsx'
+import toast from 'react-hot-toast'
 import type { SensorHost } from '@/types/fleet'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
 import { api, useIsLive } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { healthFromValues } from '@/lib/alarmParams'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface FleetRiskMatrixProps {
   hosts?: SensorHost[]
@@ -279,24 +281,146 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
   const isFromDb = Boolean(live && (propHosts || dbHosts))
   const hasRealData = Boolean(scopedHosts && scopedHosts.length > 0)
 
+  // Multi-tenant criticality overrides
+  const critStorageKey = `pdm_fleet_criticality_${orgId}`
+  const [critOverrides, setCritOverrides] = useState<Record<string, { cof: number; loadCriticality: string }>>({})
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(critStorageKey)
+      if (saved) setCritOverrides(JSON.parse(saved))
+    } catch {}
+  }, [critStorageKey])
+
+  const [showCritModal, setShowCritModal] = useState(false)
+  const [critForm, setCritForm] = useState<{ id: string; name: string; cof: number; loadCriticality: string }>({
+    id: '',
+    name: '',
+    cof: 3,
+    loadCriticality: '',
+  })
+  const [dispatchedWoMap, setDispatchedWoMap] = useState<Record<string, string>>({})
+
   const FLEET_DATA: FleetTransformerRisk[] = useMemo(() => {
+    let baseList: FleetTransformerRisk[] = []
     if (!hasRealData) {
       if (isFromDb) {
-        // When querying database, if org has 0 transformers, reflect truth (empty array, no fake transformers)
         return []
       }
-      return FALLBACK_DATA.filter((f) => !f.id.startsWith('tr-1') && !f.id.startsWith('tr-2') && !f.id.startsWith('tr-3'))
+      baseList = FALLBACK_DATA.filter((f) => !f.id.startsWith('tr-1') && !f.id.startsWith('tr-2') && !f.id.startsWith('tr-3'))
+    } else {
+      baseList = scopedHosts!.map((h) => deriveRisk(h, sites[h.siteId ?? ''] ?? h.siteId ?? '—'))
     }
-    return scopedHosts!
-      .map((h) => deriveRisk(h, sites[h.siteId ?? ''] ?? h.siteId ?? '—'))
-      .sort((a, b) => (b.pof * b.cof) - (a.pof * a.cof))
-  }, [scopedHosts, sites, hasRealData, isFromDb])
+
+    // Apply custom criticality overrides
+    return baseList.map((item) => {
+      const ovr = critOverrides[item.id]
+      if (!ovr) return item
+      const newCof = ovr.cof
+      const riskScore = item.pof * newCof
+      const tierKey = Object.keys(CAPEX_MATRIX).map(Number).sort((a, b) => b - a).find((k) => k <= riskScore) ?? 1
+      const { action: capexAction, budgetUsd: budgetEstUsd, targetFy: fiscalYear } = CAPEX_MATRIX[tierKey]
+      const status: 'CRITICAL' | 'WARNING' | 'NORMAL' = item.pof >= 4 && newCof >= 4 ? 'CRITICAL' : riskScore >= 9 ? 'WARNING' : 'NORMAL'
+
+      return {
+        ...item,
+        cof: newCof,
+        loadCriticality: ovr.loadCriticality || item.loadCriticality,
+        capexAction,
+        budgetEstUsd,
+        fiscalYear,
+        status,
+      }
+    }).sort((a, b) => (b.pof * b.cof) - (a.pof * a.cof))
+  }, [scopedHosts, sites, hasRealData, isFromDb, critOverrides])
   
   const [selectedAsset, setSelectedAsset] = useState<FleetTransformerRisk | null>(FLEET_DATA[0] ?? null)
+
+  useEffect(() => {
+    if (FLEET_DATA.length > 0 && !selectedAsset) {
+      setSelectedAsset(FLEET_DATA[0])
+    }
+  }, [FLEET_DATA, selectedAsset])
 
   const totalBudgetReqUsd = FLEET_DATA.reduce((acc, a) => acc + a.budgetEstUsd, 0)
   const criticalCount = FLEET_DATA.filter(a => a.status === 'CRITICAL').length
   const warningCount = FLEET_DATA.filter(a => a.status === 'WARNING').length
+
+  const handleExportCapexCsv = () => {
+    if (FLEET_DATA.length === 0) {
+      toast.error('ไม่พบข้อมูลที่จะส่งออก')
+      return
+    }
+    const headers = ['Asset ID', 'Name', 'Site', 'Health Index (%)', 'RUL (Years)', 'PoF (1-5)', 'CoF (1-5)', 'Risk Score', 'Load Criticality', 'Recommended CapEx Directive', 'Target FY', 'Estimated Budget (USD)']
+    const rows = FLEET_DATA.map(a => [
+      `"${a.id}"`,
+      `"${a.name}"`,
+      `"${a.site}"`,
+      a.healthIndex,
+      a.rulYears,
+      a.pof,
+      a.cof,
+      a.pof * a.cof,
+      `"${a.loadCriticality}"`,
+      `"${a.capexAction}"`,
+      `"${a.fiscalYear}"`,
+      a.budgetEstUsd,
+    ])
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `Fleet_CapEx_Investment_Plan_${orgId}_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    toast.success('ส่งออกแผนงบประมาณ CapEx (CSV) เรียบร้อยแล้ว')
+  }
+
+  const handleSaveCriticality = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!critForm.id) return
+    const updated = {
+      ...critOverrides,
+      [critForm.id]: {
+        cof: critForm.cof,
+        loadCriticality: critForm.loadCriticality,
+      },
+    }
+    setCritOverrides(updated)
+    try {
+      localStorage.setItem(critStorageKey, JSON.stringify(updated))
+    } catch {}
+
+    recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId: critForm.id, assetName: critForm.name },
+      before: `CoF: ${selectedAsset?.cof}, Criticality: ${selectedAsset?.loadCriticality}`,
+      after: `CoF: ${critForm.cof}, Criticality: ${critForm.loadCriticality}`,
+      justification: `Updated ISO 55000 asset consequence-of-failure criticality ranking for ${critForm.name}.`,
+    })
+
+    setShowCritModal(false)
+    toast.success(`อัปเดตระดับความสำคัญของ ${critForm.name} สำเร็จ`)
+  }
+
+  const handleDispatchCapexWo = (asset: FleetTransformerRisk) => {
+    const woNumber = `WO-CAPEX-${asset.id.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 6)}-${Date.now().toString(36).toUpperCase().slice(-5)}`
+    setDispatchedWoMap((prev) => ({ ...prev, [asset.id]: woNumber }))
+
+    recordAuditAction({
+      action: 'THRESHOLD_CHANGE',
+      target: { assetId: asset.id, assetName: asset.name },
+      before: `Risk: PoF ${asset.pof} x CoF ${asset.cof} = ${asset.pof * asset.cof}, Health: ${asset.healthIndex}%`,
+      after: `Dispatched CMMS Work Order ${woNumber} (${asset.capexAction})`,
+      justification: `High risk score (${asset.pof * asset.cof}). Queued ${asset.capexAction} for ${asset.fiscalYear} (Budget: $${asset.budgetEstUsd.toLocaleString()} USD).`,
+      workOrderId: woNumber,
+    })
+
+    toast.success(`เปิดใบสั่งงาน CMMS ${woNumber} เรียบร้อยแล้ว`)
+  }
 
   return (
     <div className="rounded-2xl p-5 space-y-5 text-white" style={{ background: '#0d1117', border: '1px solid #1e2433' }}>
@@ -359,7 +483,15 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 text-xs self-start sm:self-auto font-mono">
+        <div className="flex items-center gap-3 text-xs self-start sm:self-auto font-mono flex-wrap">
+          <button
+            onClick={handleExportCapexCsv}
+            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Download full 5-year CapEx investment plan and replacement queue to CSV"
+          >
+            <Download size={13} />
+            <span>📥 Export CapEx CSV</span>
+          </button>
           <div className="text-right">
             <div className="text-[10px] text-slate-400">Total CapEx Pipeline</div>
             <div className="font-bold text-emerald-400">${totalBudgetReqUsd.toLocaleString()} USD</div>
@@ -594,23 +726,144 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
 
           {/* Selected Asset Spotlight */}
           {selectedAsset && (
-            <div className="p-3 rounded-xl border border-indigo-500/30 bg-indigo-950/20 text-xs space-y-1.5">
-              <div className="flex items-center justify-between">
+            <div className="p-3.5 rounded-xl border border-indigo-500/30 bg-indigo-950/20 text-xs space-y-2.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="font-bold text-white flex items-center gap-1.5">
                   <Building size={14} className="text-indigo-400" />
                   Spotlight: {selectedAsset.name} ({selectedAsset.site})
                 </span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-900/60 text-indigo-200 font-mono">
-                  Criticality: {selectedAsset.loadCriticality}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-900/60 text-indigo-200 font-mono">
+                    CoF: {selectedAsset.cof}/5 · {selectedAsset.loadCriticality}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setCritForm({
+                        id: selectedAsset.id,
+                        name: selectedAsset.name,
+                        cof: selectedAsset.cof,
+                        loadCriticality: selectedAsset.loadCriticality,
+                      })
+                      setShowCritModal(true)
+                    }}
+                    className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                    title="ปรับระดับผลกระทบและความสำคัญ (Edit CoF)"
+                  >
+                    <Edit3 size={12} />
+                  </button>
+                </div>
               </div>
               <p className="text-[11px] text-slate-300 leading-relaxed">
-                <strong>CapEx Rationale:</strong> Asset condition (Health Index {selectedAsset.healthIndex}%, RUL {selectedAsset.rulYears} years) threatens high-consequence feeder. Allocating ${selectedAsset.budgetEstUsd.toLocaleString()} in {selectedAsset.fiscalYear} mitigates a projected downtime loss of $1.4M USD.
+                <strong>CapEx Rationale:</strong> Asset condition (Health Index {selectedAsset.healthIndex}%, RUL {selectedAsset.rulYears} years) threatens high-consequence feeder. Allocating ${selectedAsset.budgetEstUsd.toLocaleString()} in {selectedAsset.fiscalYear} mitigates an operational failure risk.
               </p>
+
+              {/* Action Toolbar */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800/80 flex-wrap gap-2">
+                <div className="text-[10px] text-slate-400 font-mono">
+                  Directive: <span className="text-slate-200 font-semibold">{selectedAsset.capexAction}</span>
+                </div>
+                {dispatchedWoMap[selectedAsset.id] ? (
+                  <span className="text-[10px] px-2.5 py-1 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 font-mono font-bold flex items-center gap-1">
+                    <CheckCircle2 size={12} /> {dispatchedWoMap[selectedAsset.id]} DISPATCHED
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleDispatchCapexWo(selectedAsset)}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <Wrench size={12} />
+                    <span>สั่งเปิดใบแจ้งซ่อม CMMS</span>
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
       </div>
+
+      {/* Criticality & Consequence Customizer Modal */}
+      {showCritModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl p-5 space-y-4 border border-indigo-500/50 shadow-2xl bg-[#0d1117]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit3 size={16} className="text-indigo-400" />
+                <h3 className="text-sm font-bold text-white">ปรับระดับความสำคัญ (ISO 55000 CoF)</h3>
+              </div>
+              <button
+                onClick={() => setShowCritModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCriticality} className="space-y-4 text-xs">
+              <div>
+                <label className="text-slate-300 block mb-1 font-semibold">หม้อแปลงเป้าหมาย:</label>
+                <div className="px-3 py-2 rounded-lg bg-[#0a0e1a] border border-slate-800 font-mono text-indigo-300">
+                  {critForm.name} ({critForm.id})
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 block mb-1 font-semibold">ระดับผลกระทบเมื่อเกิดความเสียหาย (Consequence of Failure 1-5):</label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[1, 2, 3, 4, 5].map((lvl) => (
+                    <button
+                      key={lvl}
+                      type="button"
+                      onClick={() => setCritForm({ ...critForm, cof: lvl })}
+                      className={clsx(
+                        'py-2 rounded-lg font-mono font-bold text-center border transition-all cursor-pointer',
+                        critForm.cof === lvl
+                          ? 'bg-rose-600 border-rose-400 text-white shadow-md'
+                          : 'bg-[#0a0e1a] border-slate-800 text-slate-400 hover:text-white'
+                      )}
+                    >
+                      CoF {lvl}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  1: ผลกระทบต่ำ (โหลดสำรอง) · 3: โหลดอุตสาหกรรมทั่วไป · 5: โหลดวิกฤตสูงสุด (โรงพยาบาล/ดาต้าเซ็นเตอร์/โรงกลั่น)
+                </span>
+              </div>
+
+              <div>
+                <label className="text-slate-300 block mb-1 font-semibold">คำอธิบายความสำคัญของโหลด (Load Criticality Description):</label>
+                <input
+                  type="text"
+                  value={critForm.loadCriticality}
+                  onChange={(e) => setCritForm({ ...critForm, loadCriticality: e.target.value })}
+                  placeholder="เช่น โรงพยาบาลศูนย์, สายป้อน Data Center Bus, โรงงานอุตสาหกรรม Line 1"
+                  className="w-full px-3 py-2 rounded-lg bg-[#0a0e1a] border border-slate-700 text-white focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-indigo-950/30 border border-indigo-500/30 text-[11px] text-slate-300">
+                ℹ️ การปรับเปลี่ยน CoF จะคำนวณตำแหน่ง 9-Box Matrix และงบประมาณ CapEx ใหม่อัตโนมัติ พร้อมบันทึกประวัติการแก้ไข
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowCritModal(false)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow cursor-pointer"
+                >
+                  บันทึกระดับความสำคัญ
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

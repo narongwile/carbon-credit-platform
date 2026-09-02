@@ -1,10 +1,11 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Droplets, Wrench, CheckCircle2, AlertTriangle, ShieldAlert, Clock } from 'lucide-react'
+import React, { useState, useEffect, useMemo } from 'react'
+import { Droplets, Wrench, CheckCircle2, AlertTriangle, ShieldAlert, Clock, Settings2, Sliders, X, Flame, Snowflake } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
+import { recordAuditAction } from '@/lib/auditStore'
 
 interface InsulationAgingRulProps {
   /** true only when hot-spot AND service hours are real for this asset. */
@@ -14,6 +15,15 @@ interface InsulationAgingRulProps {
   oilTemp: number
   moistureInOil?: number // ppm
   assetId?: string
+  assetName?: string
+  orgId?: string
+}
+
+interface RulConfig {
+  commissioningYear: number
+  initialDp: number
+  paperType: 'standard_kraft' | 'thermally_upgraded'
+  eolDpThreshold: number
 }
 
 export default function InsulationAgingRul({
@@ -23,28 +33,88 @@ export default function InsulationAgingRul({
   oilTemp,
   moistureInOil = 22,
   assetId = 'TRF-01',
+  assetName = 'Transformer Unit',
+  orgId = 'org-1',
 }: InsulationAgingRulProps) {
   const [dispatchedWo, setDispatchedWo] = useState<string | null>(null)
+  const [showConfigModal, setShowConfigModal] = useState(false)
+  const [simScenario, setSimScenario] = useState<'actual' | 'overload' | 'precool'>('actual')
+
+  // Multi-tenant configuration persistence
+  const storageKey = `pdm_rul_config_${assetId}`
+  const [config, setConfig] = useState<RulConfig>({
+    commissioningYear: 2016,
+    initialDp: 1000,
+    paperType: 'standard_kraft',
+    eolDpThreshold: 200,
+  })
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(storageKey)
+      if (saved) {
+        setConfig(JSON.parse(saved))
+      }
+    } catch {}
+  }, [storageKey])
+
+  // Form states for modal
+  const [editForm, setEditForm] = useState<RulConfig>(config)
+
+  const handleSaveConfig = (e: React.FormEvent) => {
+    e.preventDefault()
+    setConfig(editForm)
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(editForm))
+    } catch {}
+
+    recordAuditAction({
+      action: 'CONFIG_CHANGE',
+      target: { assetId, assetName },
+      before: `Paper: ${config.paperType}, DP0: ${config.initialDp}, Year: ${config.commissioningYear}`,
+      after: `Paper: ${editForm.paperType}, DP0: ${editForm.initialDp}, Year: ${editForm.commissioningYear}`,
+      justification: 'Calibrated nameplate insulation commissioning year and paper grade per factory test record.',
+    })
+
+    setShowConfigModal(false)
+    toast.success('บันทึกการตั้งค่าเริ่มต้นและเกรดกระดาษฉนวนเรียบร้อยแล้ว')
+  }
+
+  // Derived effective hours based on commissioning year if provided
+  const derivedHours = useMemo(() => {
+    if (config.commissioningYear) {
+      const years = Math.max(0.5, new Date().getFullYear() - config.commissioningYear)
+      return Math.round(years * 8760)
+    }
+    return hoursInService
+  }, [config.commissioningYear, hoursInService])
+
+  // Simulated hot-spot offset based on what-if scenario
+  const effectiveHotSpot = useMemo(() => {
+    if (simScenario === 'overload') return hotSpotTemp + 15
+    if (simScenario === 'precool') return Math.max(30, hotSpotTemp - 10)
+    return hotSpotTemp
+  }, [hotSpotTemp, simScenario])
 
   // IEEE C57.91 Arrhenius aging
-  // Reference temp = 110°C (383.15 K)
-  const refTempK = 110 + 273.15
-  const hotSpotK = hotSpotTemp + 273.15
+  // Reference temp = 110°C (383.15 K) for standard kraft, 120°C (393.15 K) for thermally upgraded
+  const refTempK = config.paperType === 'thermally_upgraded' ? 120 + 273.15 : 110 + 273.15
+  const hotSpotK = effectiveHotSpot + 273.15
   const faa = Math.exp(15000 / refTempK - 15000 / hotSpotK)
   
   // Cumulative Equivalent Hours
-  const eqHours = hoursInService * faa
+  const eqHours = derivedHours * faa
   
-  // DP Estimation (Simplified Chendong model)
-  const EOL_HOURS = 180000
-  const dpValue = Math.max(200, 1000 - (eqHours / EOL_HOURS) * 800)
-  const percentLife = Math.max(0, 100 - (eqHours / EOL_HOURS) * 100)
+  // DP Estimation (Chendong model adapted to initial DP)
+  const EOL_HOURS = config.paperType === 'thermally_upgraded' ? 220000 : 180000
+  const maxDpLoss = config.initialDp - config.eolDpThreshold
+  const dpValue = Math.max(config.eolDpThreshold, Math.round(config.initialDp - (eqHours / EOL_HOURS) * maxDpLoss))
+  const percentLife = Math.max(0, Math.min(100, Math.round(((dpValue - config.eolDpThreshold) / maxDpLoss) * 100)))
   
   const remainingHours = Math.max(0, EOL_HOURS - eqHours)
-  const remainingYears = remainingHours / (365.25 * 24)
+  const remainingYears = parseFloat((remainingHours / (365.25 * 24 * Math.max(0.1, faa))).toFixed(1))
 
   // ── Oommen & Fessler Moisture Equilibrium Model ───────────────────────
-  // Saturation concentration in mineral oil: So = 10^(7.0895 - 1567 / T_kelvin)
   const tempK = oilTemp + 273.15
   const oilSaturationPpm = Math.pow(10, 7.0895 - 1567 / tempK)
   const relativeSaturationPct = Math.min(100, Math.max(1, (moistureInOil / oilSaturationPpm) * 100))
@@ -59,9 +129,26 @@ export default function InsulationAgingRul({
     ? { label: 'Wet (Bubble Hazard)', color: '#f97316', bg: 'rgba(249,115,22,0.1)', risk: 'Steam bubble evolution hazard during emergency overload' }
     : { label: 'Critically Wet', color: '#ef4444', bg: 'rgba(239,68,68,0.1)', risk: 'Severe dielectric flashover risk; urgent dehydration required' }
 
-  const handleDispatchWorkOrder = () => {
-    const woNumber = `WO-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 6)}-${Date.now().toString(36).toUpperCase().slice(-6)}`
+  const handleDispatchWorkOrder = (type: 'RUL' | 'DEHYD' | 'COOLING') => {
+    const prefix = type === 'DEHYD' ? 'WO-DEHYD' : type === 'COOLING' ? 'WO-COOL' : 'WO-RUL'
+    const woNumber = `${prefix}-${assetId.replace(/[^A-Z0-9]/gi, '').toUpperCase().slice(0, 6)}-${Date.now().toString(36).toUpperCase().slice(-5)}`
     setDispatchedWo(woNumber)
+
+    const justification = type === 'DEHYD'
+      ? `Moisture in paper reached ${waterInPaperPct.toFixed(2)}% (relative saturation ${relativeSaturationPct.toFixed(1)}%). Online molecular vacuum dehydration ordered.`
+      : type === 'COOLING'
+      ? `Aging Acceleration Factor (FAA) elevated to ${faa.toFixed(2)}x at hot-spot ${effectiveHotSpot.toFixed(1)}°C. Radiator inspection and fan stage maintenance dispatched.`
+      : `Insulation remaining life estimated at ${remainingYears} yrs (DP ${dpValue}). Life extension overhaul queued in CMMS.`
+
+    recordAuditAction({
+      action: 'THRESHOLD_CHANGE',
+      target: { assetId, assetName },
+      before: `DP: ${dpValue}, FAA: ${faa.toFixed(2)}, WaterInPaper: ${waterInPaperPct.toFixed(2)}%`,
+      after: `Work Order ${woNumber} queued in CMMS`,
+      justification,
+      workOrderId: woNumber,
+    })
+
     toast.success(`Work Order ${woNumber} queued — export to your CMMS manually (no direct integration configured)`)
   }
 
@@ -98,9 +185,59 @@ export default function InsulationAgingRul({
           detail="ชั่วโมงใช้งานสะสมถูกกำหนดเป็นค่าคงที่ (52,000 ชม.) และอุณหภูมิ Hot-Spot ประมาณจาก 'อุณหภูมิน้ำมัน + 14°C' เมื่อไม่มีเซนเซอร์วัดขดลวดจริง เนื่องจากสมการ Arrhenius เป็นเอ็กซ์โพเนนเชียล ความคลาดเคลื่อนของ Hot-Spot เพียงไม่กี่องศาทำให้ RUL เปลี่ยนเป็นปี ห้ามใช้ตัวเลขนี้ตั้งงบเปลี่ยนหม้อแปลง"
         />
       )}
-      <div>
-        <h3 className="text-sm font-semibold">Insulation Aging & RUL</h3>
-        <p className="text-xs text-slate-400">IEEE C57.91 Thermal Degradation Model</p>
+      {/* Header with Title and Calibrate button */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">Insulation Aging & RUL</h3>
+          <p className="text-xs text-slate-400">IEEE C57.91 Thermal Degradation &amp; Arrhenius Rate Model</p>
+        </div>
+        <button
+          onClick={() => {
+            setEditForm(config)
+            setShowConfigModal(true)
+          }}
+          className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+        >
+          <Settings2 size={13} className="text-indigo-400" />
+          <span>ปรับเทียบปีติดตั้ง/เกรดกระดาษ</span>
+        </button>
+      </div>
+
+      {/* What-If Thermal Scenario Switcher */}
+      <div className="p-3 rounded-xl bg-[#0a0e1a] border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+        <div className="flex items-center gap-1.5 text-slate-300">
+          <Sliders size={14} className="text-indigo-400" />
+          <span className="font-semibold">แบบจำลองสภาวะอุณหภูมิ (Thermal Scenario):</span>
+        </div>
+        <div className="flex items-center gap-1 bg-[#0d1117] p-1 rounded-lg border border-slate-800">
+          <button
+            onClick={() => setSimScenario('actual')}
+            className={clsx(
+              'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all cursor-pointer',
+              simScenario === 'actual' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            ตามเซนเซอร์จริง ({hotSpotTemp}°C)
+          </button>
+          <button
+            onClick={() => setSimScenario('overload')}
+            className={clsx(
+              'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer',
+              simScenario === 'overload' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            <Flame size={11} /> Overload (+15°C)
+          </button>
+          <button
+            onClick={() => setSimScenario('precool')}
+            className={clsx(
+              'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer',
+              simScenario === 'precool' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+            )}
+          >
+            <Snowflake size={11} /> Pre-Cooling (-10°C)
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-6 items-center">
@@ -235,30 +372,132 @@ export default function InsulationAgingRul({
               <CheckCircle2 size={12} /> {dispatchedWo} DISPATCHED
             </span>
           ) : (
-            <button
-              onClick={handleDispatchWorkOrder}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow transition-transform active:scale-95"
-              style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
-            >
-              <Wrench size={12} /> Dispatch CMMS Work Order
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              {waterInPaperPct > 2.2 && (
+                <button
+                  onClick={() => handleDispatchWorkOrder('DEHYD')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow transition-transform active:scale-95 bg-cyan-600 hover:bg-cyan-500 cursor-pointer"
+                >
+                  <Droplets size={12} /> สั่งอบไล่ความชื้นน้ำมัน (Dehydration)
+                </button>
+              )}
+              <button
+                onClick={() => handleDispatchWorkOrder(faa > 1.5 ? 'COOLING' : 'RUL')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white shadow transition-transform active:scale-95 cursor-pointer"
+                style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}
+              >
+                <Wrench size={12} /> Dispatch CMMS Work Order
+              </button>
+            </div>
           )}
         </div>
 
         <div className="space-y-1.5 text-[11px]">
           <div className="text-slate-200">
-            <strong>Target Asset:</strong> <span className="font-mono text-indigo-300">{assetId}</span> · Substation Main Transformer
+            <strong>Target Asset:</strong> <span className="font-mono text-indigo-300">{assetId}</span> · {assetName}
           </div>
           <div className="text-slate-300 leading-relaxed">
             <strong>Recommended Directive:</strong>{' '}
             {waterInPaperPct > 2.5
-              ? 'Schedule online vacuum oil degassing & dehydration within 14 days. Restrict maximum loading to 85% until moisture in paper drops below 2.0%.'
+              ? 'Schedule online vacuum oil degassing & dehydration within 14 days. Restrict maximum emergency loading to 85% until moisture in paper drops below 2.0%.'
               : faa > 1.5
-              ? 'Inspect radiator forced-cooling fans and clean heat-sink fins. Verify radiator butterfly valves are 100% open.'
+              ? 'Inspect radiator forced-cooling fans and clean heat-sink fins. Verify radiator butterfly valves are 100% open to arrest Arrhenius aging.'
               : 'Normal operating envelope. Continue routine DGA monitoring interval (90-day cycle).'}
           </div>
         </div>
       </div>
+
+      {/* Calibration Modal */}
+      {showConfigModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl p-5 space-y-4 border border-indigo-500/50 shadow-2xl bg-[#0d1117]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Settings2 size={16} className="text-indigo-400" />
+                <h3 className="text-sm font-bold text-white">ปรับเทียบข้อมูลตั้งต้นและเกรดฉนวน</h3>
+              </div>
+              <button
+                onClick={() => setShowConfigModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveConfig} className="space-y-4 text-xs">
+              <div>
+                <label className="text-slate-300 block mb-1 font-semibold">ปีที่เริ่มเดินเครื่อง (Commissioning Year):</label>
+                <input
+                  type="number"
+                  min="1970"
+                  max={new Date().getFullYear()}
+                  value={editForm.commissioningYear}
+                  onChange={(e) => setEditForm({ ...editForm, commissioningYear: parseInt(e.target.value) || 2016 })}
+                  className="w-full px-3 py-2 rounded-lg bg-[#0a0e1a] border border-slate-700 text-white font-mono focus:border-indigo-500 focus:outline-none"
+                />
+                <span className="text-[10px] text-slate-500">คำนวณอายุสะสมจริง ({new Date().getFullYear() - editForm.commissioningYear} ปี)</span>
+              </div>
+
+              <div>
+                <label className="text-slate-300 block mb-1 font-semibold">ชนิดของกระดาษฉนวน (Insulation Paper Grade):</label>
+                <select
+                  value={editForm.paperType}
+                  onChange={(e) => setEditForm({ ...editForm, paperType: e.target.value as any })}
+                  className="w-full px-3 py-2 rounded-lg bg-[#0a0e1a] border border-slate-700 text-white focus:border-indigo-500 focus:outline-none"
+                >
+                  <option value="standard_kraft">Standard Kraft Paper (Ref Temp: 110°C · DP₀: 1,000)</option>
+                  <option value="thermally_upgraded">Thermally Upgraded Kraft (Ref Temp: 120°C · DP₀: 1,200)</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-300 block mb-1 font-semibold">ค่าเริ่มต้น DP₀:</label>
+                  <input
+                    type="number"
+                    min="800"
+                    max="1400"
+                    value={editForm.initialDp}
+                    onChange={(e) => setEditForm({ ...editForm, initialDp: parseInt(e.target.value) || 1000 })}
+                    className="w-full px-3 py-2 rounded-lg bg-[#0a0e1a] border border-slate-700 text-white font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-300 block mb-1 font-semibold">เกณฑ์สิ้นสุดอายุ (EOL DP):</label>
+                  <input
+                    type="number"
+                    min="150"
+                    max="300"
+                    value={editForm.eolDpThreshold}
+                    onChange={(e) => setEditForm({ ...editForm, eolDpThreshold: parseInt(e.target.value) || 200 })}
+                    className="w-full px-3 py-2 rounded-lg bg-[#0a0e1a] border border-slate-700 text-white font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-500/30 text-[11px] text-slate-300">
+                ℹ️ ข้อมูลนี้จะถูกบันทึกแยกต่อหม้อแปลง (<span className="font-mono text-indigo-300">{assetId}</span>) และบันทึกลง 21 CFR Part 11 Audit Trail
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowConfigModal(false)}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow cursor-pointer"
+                >
+                  บันทึกการตั้งค่า
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

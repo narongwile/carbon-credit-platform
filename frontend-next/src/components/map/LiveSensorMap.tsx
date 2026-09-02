@@ -808,7 +808,7 @@ export default function LiveSensorMap({
       `}</style>
 
       {/* Unified Top Navigation & Controls Bar */}
-      <div className="absolute top-3 left-3 right-3 z-[1000] flex items-center justify-between gap-3 pointer-events-none">
+      <div className="absolute top-3 left-3 right-3 z-[1000] flex items-center gap-2 pointer-events-none">
         {/* Left: Search Bar & Filters */}
         <div className="flex items-center gap-2 pointer-events-auto min-w-0 flex-1 overflow-x-auto no-scrollbar py-0.5">
           <div className="w-[240px] sm:w-[270px] shrink-0">
@@ -970,45 +970,6 @@ export default function LiveSensorMap({
             )}
           </div>
         </div>
-
-        {/* Right: Map Layer Switcher (Streets, Satellite, Dark) */}
-        <div className="shrink-0 pointer-events-auto flex items-center">
-          <div
-            className="flex items-center p-0.5 rounded-xl shadow-lg border border-[#1e2433]"
-            style={{ background: 'rgba(13, 17, 23, 0.95)', backdropFilter: 'blur(8px)' }}
-          >
-            <button
-              type="button"
-              onClick={() => switchLayer('streets')}
-              title="Street map (OpenStreetMap)"
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <MapIcon size={12} /> Streets
-            </button>
-            <button
-              type="button"
-              onClick={() => switchLayer('satellite')}
-              title="Satellite imagery (Esri World Imagery / ArcGIS)"
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Globe size={12} /> Satellite
-            </button>
-            <button
-              type="button"
-              onClick={() => switchLayer('dark')}
-              title="Dark map (CARTO Dark Matter)"
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Moon size={12} /> Dark
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Floating Status Legend (Bottom-Left) */}
@@ -1041,35 +1002,75 @@ export default function LiveSensorMap({
         })}
       </div>
 
-      {/* Floating Action Controls (Bottom Right) */}
-      <div className="absolute bottom-4 right-4 z-[1000] flex flex-col gap-2 pointer-events-auto">
-        <button
-          type="button"
-          onClick={handleFitFleet}
-          title="Fit all devices in view"
-          className="p-2.5 rounded-xl shadow-xl transition-all hover:scale-105 active:scale-95 text-white flex items-center justify-center cursor-pointer"
-          style={{
-            background: 'rgba(13, 17, 23, 0.94)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid #1e2433',
-          }}
+      {/* Floating Action Controls & Layer Switcher (Bottom Right) */}
+      <div className="absolute bottom-4 right-4 z-[1000] flex items-center gap-2 pointer-events-auto flex-wrap justify-end">
+        {/* Map Layer Switcher (Streets, Satellite, Dark) */}
+        <div
+          className="flex items-center p-0.5 rounded-xl shadow-xl border border-[#1e2433]"
+          style={{ background: 'rgba(13, 17, 23, 0.94)', backdropFilter: 'blur(8px)' }}
         >
-          <Maximize2 size={16} className="text-indigo-400" />
-        </button>
-        <button
-          type="button"
-          onClick={handleMyLocation}
-          disabled={locating}
-          title="Locate my position"
-          className="p-2.5 rounded-xl shadow-xl transition-all hover:scale-105 active:scale-95 text-white flex items-center justify-center cursor-pointer disabled:opacity-50"
-          style={{
-            background: 'rgba(13, 17, 23, 0.94)',
-            backdropFilter: 'blur(8px)',
-            border: '1px solid #1e2433',
-          }}
-        >
-          <Navigation size={16} className={locating ? 'text-indigo-400 animate-spin' : 'text-cyan-400'} />
-        </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('streets')}
+            title="Street map (OpenStreetMap)"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentLayer === 'streets' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <MapIcon size={12} /> Streets
+          </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('satellite')}
+            title="Satellite imagery (Esri World Imagery / ArcGIS)"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentLayer === 'satellite' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Globe size={12} /> Satellite
+          </button>
+          <button
+            type="button"
+            onClick={() => switchLayer('dark')}
+            title="Dark map (CARTO Dark Matter)"
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              currentLayer === 'dark' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Moon size={12} /> Dark
+          </button>
+        </div>
+
+        {/* Action Controls: Fit & Locate */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleFitFleet}
+            title="Fit all devices in view"
+            className="p-2 rounded-xl shadow-xl transition-all hover:scale-105 active:scale-95 text-white flex items-center justify-center cursor-pointer"
+            style={{
+              background: 'rgba(13, 17, 23, 0.94)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid #1e2433',
+            }}
+          >
+            <Maximize2 size={15} className="text-indigo-400" />
+          </button>
+          <button
+            type="button"
+            onClick={handleMyLocation}
+            disabled={locating}
+            title="Locate my position"
+            className="p-2 rounded-xl shadow-xl transition-all hover:scale-105 active:scale-95 text-white flex items-center justify-center cursor-pointer disabled:opacity-50"
+            style={{
+              background: 'rgba(13, 17, 23, 0.94)',
+              backdropFilter: 'blur(8px)',
+              border: '1px solid #1e2433',
+            }}
+          >
+            <Navigation size={15} className={locating ? 'text-indigo-400 animate-spin' : 'text-cyan-400'} />
+          </button>
+        </div>
       </div>
 
       <div
