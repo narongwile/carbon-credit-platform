@@ -105,5 +105,85 @@ t('admin/audit/page.tsx enforces anti-self-approval in UI',
 t('admin/audit/page.tsx exports CSV with correct newline format (not \\\\n)',
   /\.join\('\\n'\)/.test(auditPage) && !/\.join\('\\\\n'\)/.test(auditPage))
 
+// ---------------------------------------------------------------------------
+// The electronic signature must FAIL CLOSED.
+//
+// The checks above assert that bcrypt is declared and that bcrypt.compare
+// appears in the handler. Both were true while the handler also opened with
+//
+//     let passwordValid = (password === 'admin123' || password === 'password'
+//                          || password === 'admin');
+//
+// so this file passed 38/38 with a hardcoded credential list in the one place
+// that stands between an admin session and executing ANOTHER admin's firmware
+// deployment, setpoint change or emergency override. Asserting that a
+// verification call is present is not the same as asserting it decides the
+// outcome; these check the paths where it did not.
+// ---------------------------------------------------------------------------
+{
+  // Comments stripped: the assertions below are NEGATIVE, and the fix
+  // deliberately quotes the old backdoor in a comment explaining it. Matching
+  // raw text would fail on the very explanation of the fix.
+  const fn = (approveFn?.func || '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+
+  t('the signature check contains no hardcoded credentials',
+    !/'admin123'|password === 'password'|password === 'admin'/.test(fn),
+    'a well-known password in an auth path is a backdoor regardless of what else is checked')
+
+  t('passwordValid starts false',
+    /let passwordValid = false;/.test(fn),
+    'seeding it from a literal meant every later branch could only widen access')
+
+  t('no branch ORs a previous pass back in',
+    !/\|\| passwordValid/.test(fn),
+    'the non-bcrypt branch did exactly this, re-admitting the hardcoded value')
+
+  // A checker whose users row has no password_hash used to skip the verify
+  // block entirely, leaving the seeded value in place.
+  t('an account with no stored hash is refused, not skipped',
+    /no password set and therefore cannot sign/i.test(fn))
+
+  // catch(_){} around the verify meant any query error was a silent pass.
+  t('a verification error refuses instead of falling through',
+    /Could not verify the electronic signature/i.test(fn) &&
+    !/\}\s*catch\(_\)\s*\{\s*\}\s*\n\s*if \(!passwordValid\)/.test(fn))
+
+  t('an unavailable comparator refuses instead of degrading',
+    /Signature verification is unavailable/i.test(fn))
+
+  // `crypto` is not in this node's libs, so the old sha256 fallback would have
+  // thrown into the silent catch — reaching the seeded value again.
+  // Every module a handler USES must be declared in its libs. A Node-RED
+  // function node runs in a vm.createContext sandbox that is a bare object
+  // literal, so it inherits none of the host's globals — the same reason
+  // FETCH_LIB exists. All three audit handlers call crypto.createHash to build
+  // the tamper-evident checksum that IS the Part 11 record, and none declared
+  // crypto: each threw before its INSERT, so the trail recorded nothing while
+  // the operation it was meant to witness went ahead. (On Node 20 the host's
+  // global `crypto` is WebCrypto, which has no createHash, so even inheriting
+  // globals would not have saved it.)
+  for (const id of ['auditlogspost_fn', 'auditpendingapprove_fn', 'auditpendingreject_fn']) {
+    const n = flows.find((x) => x.id === id)
+    const body = n?.func || ''
+    const declared = (n?.libs || []).map((l) => l.var)
+    for (const [used, mod] of [[/\bcrypto\.createHash/, 'crypto'], [/\bbcrypt\.compare/, 'bcrypt'], [/\bmysql\./, 'mysql']]) {
+      if (used.test(body)) {
+        t(`${id} declares '${mod}' in libs, which it uses`,
+          declared.includes(mod),
+          `declared: ${JSON.stringify(declared)}`)
+      }
+    }
+  }
+
+  // The two-man rule itself, enforced server-side: the UI disables the button
+  // for the maker, but that is a client affordance, not a control.
+  t('the server refuses a maker approving their own operation',
+    /Four-Eyes Violation/.test(fn) &&
+    /task\.maker_id === checkerId/.test(fn) &&
+    /maker_email\.toLowerCase\(\) === checkerEmail\.toLowerCase\(\)/.test(fn))
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`)
 if (fail > 0) process.exit(1)

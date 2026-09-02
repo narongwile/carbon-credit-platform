@@ -34,7 +34,13 @@ const actionColors: Record<string, string> = {
 const chartColors = ['#fbbf24', '#60a5fa', '#fb7185', '#c084fc', '#e879f9', '#34d399', '#4ade80', '#f87171', '#22d3ee']
 
 export default function AuditPage() {
-  const { records, pending, approvePending, rejectPending } = useAuditStore()
+  // approvePending/rejectPending are NOT destructured: they mutate the local
+  // zustand store, which is where this page used to keep its "21 CFR Part 11
+  // audit trail" (see 1f2981e6). The four-eyes flow now goes through
+  // api.approveAuditPending / api.rejectAuditPending so the decision is
+  // recorded server-side and the maker check is enforced there. Calling the
+  // store versions would approve a task in the browser only.
+  const { records, pending } = useAuditStore()
   const session = useSession()
   const { selectedOrgId } = useAppStore()
   const isSuperadmin = session?.role === 'superadmin'
@@ -473,7 +479,13 @@ export default function AuditPage() {
                 {filteredRecords.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center text-slate-500 text-sm">
-                      No audit records found matching your filters.
+                      {/* `loading` was set around the fetch and never rendered, so a
+                          slow or failed load looked identical to a genuinely empty
+                          audit trail — the worst thing to be ambiguous about on a
+                          compliance record, where "nothing here" is itself a finding. */}
+                      {loading
+                        ? 'Loading audit records…'
+                        : 'No audit records found matching your filters.'}
                     </td>
                   </tr>
                 )}

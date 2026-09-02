@@ -4753,6 +4753,14 @@ const LIBS = [{ var: 'mysql', module: 'mysql2/promise' }]
 // broken. RED.import() resolves ESM packages fine (it takes lib.default ?? lib),
 // confirmed against node-fetch@3's actual export shape.
 const FETCH_LIB = { var: 'fetch', module: 'node-fetch' }
+// Same story as FETCH_LIB, for the same reason: the function sandbox is a bare
+// object literal, so Node's built-in `crypto` is NOT in scope either — and on
+// Node 20 the host's global `crypto` is WebCrypto, which has no createHash at
+// all. The three audit handlers each call crypto.createHash to build the
+// tamper-evident checksum that IS the 21 CFR Part 11 record, and none declared
+// it: every one of them threw before its INSERT, so the audit trail recorded
+// nothing while the operation it was meant to witness went ahead.
+const CRYPTO_LIB = { var: 'crypto', module: 'crypto' }
 // notify node also needs nodemailer (SMTP email), like the Express service
 const NOTIFY_LIBS = [{ var: 'mysql', module: 'mysql2/promise' }, { var: 'nodemailer', module: 'nodemailer' }, FETCH_LIB]
 // reportrun additionally attaches a CSV to a scheduled Telegram report. The
@@ -6369,18 +6377,48 @@ if(au.role!=='superadmin' && orgId!==au.orgId){msg.headers=__CORS;msg.statusCode
     msg.headers = __CORS; msg.statusCode = 400; msg.payload = { error: 'Password required for electronic signature' }; node.send(msg); return;
   }
 
-  let passwordValid = (password === 'admin123' || password === 'password' || password === 'admin');
+  // Electronic signature (21 CFR Part 11 §11.200). The signature is the ONLY
+  // thing standing between an admin session and executing another admin's
+  // firmware deployment, setpoint change or emergency override, so every path
+  // through here must FAIL CLOSED.
+  //
+  // It previously opened with
+  //     let passwordValid = (password === 'admin123' || password === 'password'
+  //                          || password === 'admin');
+  // and that value survived three ways:
+  //   1. a checker whose users row has no password_hash skipped the whole
+  //      verify block, leaving the hardcoded value in place;
+  //   2. any query error was swallowed by catch(_){} , same result;
+  //   3. the non-bcrypt branch ORed it straight back in
+  //      (\`passwordValid = (hash === ...) || passwordValid\`), and that branch
+  //      referenced \`crypto\`, which this node does not declare in libs — so it
+  //      would have thrown into the same silent catch.
+  // Typing admin123 therefore signed off someone else's critical operation.
+  //
+  // Now: starts false, requires a stored hash, verifies with the same bcryptjs
+  // this node already declares (the identical check login_fn uses), and treats
+  // an unavailable comparator or a query failure as a refusal, never a pass.
+  let passwordValid = false;
   try {
-    const [userRows] = await pool.query('SELECT password_hash FROM users WHERE id = ? OR email = ?', [checkerId, checkerEmail]);
-    if (userRows.length && userRows[0].password_hash) {
-      if (typeof bcrypt !== 'undefined' && bcrypt.compare) {
-        passwordValid = await bcrypt.compare(password, userRows[0].password_hash);
-      } else {
-        const hash = crypto.createHash('sha256').update(password).digest('hex');
-        passwordValid = (hash === userRows[0].password_hash) || passwordValid;
-      }
+    const [userRows] = await pool.query('SELECT password_hash FROM users WHERE id = ? OR email = ? LIMIT 1', [checkerId, checkerEmail]);
+    const storedHash = userRows.length ? userRows[0].password_hash : null;
+    if (!storedHash) {
+      msg.headers = __CORS; msg.statusCode = 403;
+      msg.payload = { error: 'This account has no password set and therefore cannot sign. Set a password before authorizing dual-control operations.' };
+      node.send(msg); return;
     }
-  } catch(_) {}
+    if (typeof bcrypt === 'undefined' || !bcrypt.compare) {
+      msg.headers = __CORS; msg.statusCode = 500;
+      msg.payload = { error: 'Signature verification is unavailable on this node' };
+      node.send(msg); return;
+    }
+    passwordValid = await bcrypt.compare(password, storedHash);
+  } catch(err) {
+    node.error('auditApprove: signature verification failed: ' + err.message);
+    msg.headers = __CORS; msg.statusCode = 500;
+    msg.payload = { error: 'Could not verify the electronic signature' };
+    node.send(msg); return;
+  }
 
   if (!passwordValid) {
     msg.headers = __CORS; msg.statusCode = 401; msg.payload = { error: 'Invalid signature credentials' }; node.send(msg); return;
@@ -8822,7 +8860,11 @@ const personalRuleTestFn = flow.find((n) => n.id === 'personalruletest_fn'); if 
 // (form-data + fetch) — the same trio reportrun uses. Without this it would
 // throw ReferenceError on the first send rather than at deploy time.
 const sendExportFn = flow.find((n) => n.id === 'sendexport_fn'); if (sendExportFn) sendExportFn.libs = REPORT_LIBS
-const auditApproveFn = flow.find((n) => n.id === 'auditpendingapprove_fn'); if (auditApproveFn) auditApproveFn.libs = USRPOST_LIBS
+// All three audit handlers hash their record with crypto.createHash. Approve
+// additionally verifies the signer's password with bcrypt.
+const auditApproveFn = flow.find((n) => n.id === 'auditpendingapprove_fn'); if (auditApproveFn) auditApproveFn.libs = [...USRPOST_LIBS, CRYPTO_LIB]
+const auditLogsPostFn = flow.find((n) => n.id === 'auditlogspost_fn'); if (auditLogsPostFn) auditLogsPostFn.libs = [...LIBS, CRYPTO_LIB]
+const auditRejectFn = flow.find((n) => n.id === 'auditpendingreject_fn'); if (auditRejectFn) auditRejectFn.libs = [...LIBS, CRYPTO_LIB]
 
 // --- DB-per-tenant: route data-plane REST handlers to the caller's org DB ----
 // Swap the control-pool lookup for the per-org resolver (keyed by the JWT org).
