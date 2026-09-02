@@ -22,7 +22,31 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 SRC="${1:?usage: sync-sql-configmap.sh <backend/sql dir>}"
-OUT="$(cd "$(dirname "$0")/../k8s/custom-apps/overlays/uat" && pwd)/mysql-migrations-configmap.yaml"
+# Writes where the caller asks, NOT into the deploy overlay.
+#
+# It used to default to overlays/uat/mysql-migrations-configmap.yaml. That put a
+# 2,500-line file titled "SQL shipped to the mysql-auto-migrate Job" inside the
+# directory ArgoCD renders — while the overlay's kustomization.yaml does not
+# list it, nothing mounts it, and both the Job and the kustomization carry
+# comments saying the ConfigMap was deliberately removed because the SQL now
+# ships inside the image. A CI commit then began "syncing" that file, which is
+# how a decoy becomes load-bearing in someone's head: the next person adds a
+# migration, updates the ConfigMap, and it silently never runs.
+#
+# Regenerating is still fine — reviving the mount approach, or feeding a plain
+# mysql client — but the output has to be somewhere that cannot be mistaken for
+# the deploy path.
+OUT="${2:-}"
+if [ -z "$OUT" ]; then
+  echo "usage: sync-sql-configmap.sh <backend/sql dir> <output file>" >&2
+  echo "" >&2
+  echo "Refusing to default into infra/k8s/custom-apps/overlays/uat/." >&2
+  echo "Migrations are delivered by the migrate-service IMAGE" >&2
+  echo "(backend/Dockerfile: COPY sql ./sql), so a ConfigMap there is not" >&2
+  echo "applied by ArgoCD and only creates a second source that can drift." >&2
+  echo "Name an explicit output path if you are reviving the mount approach." >&2
+  exit 2
+fi
 
 {
   cat <<'HDR'

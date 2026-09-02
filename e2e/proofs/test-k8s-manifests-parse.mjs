@@ -122,5 +122,67 @@ t('every k8s manifest is valid YAML',
     `${(txt.match(/^\s*checksum\/flow:/gm) || []).length} found`)
 }
 
+// ── 4. No orphan manifests in a deploy overlay ───────────────────────────
+// 86a18931 re-synced infra/k8s/custom-apps/overlays/uat/mysql-migrations-configmap.yaml
+// — 2,500 lines headed "SQL shipped to the mysql-auto-migrate Job" — sitting in
+// the directory ArgoCD renders. But the overlay's kustomization.yaml does not
+// list it, so kustomize never emits it and the cluster never sees it. Both the
+// Job and the kustomization say why: the SQL now ships INSIDE the
+// migrate-service image (backend/Dockerfile: COPY sql ./sql) "so schema and
+// runner can never drift apart", and the 65 KB ConfigMap was removed on purpose.
+//
+// Nothing was broken by it — and that is the danger. A file that looks
+// authoritative, is kept in sync by CI, and is applied by nothing will convince
+// the next person that migrations are delivered that way. They add a
+// migrate-vN.sql, update the ConfigMap, and it silently never runs.
+//
+// Scoped to overlays/: they are small and curated (4 manifests here), unlike
+// base/, which deliberately parks legacy components (ai-agents, mosquitto,
+// mqtt-bridge) that no kustomization lists.
+{
+  const overlays = []
+  const walkDirs = (dir) => {
+    for (const name of readdirSync(dir)) {
+      if (SKIP_DIRS.has(name)) continue
+      const full = join(dir, name)
+      let st; try { st = statSync(full) } catch { continue }
+      if (!st.isDirectory()) continue
+      if (/(^|\/)overlays\/[^/]+$/.test(full.replace(/\\/g, '/'))) overlays.push(full)
+      walkDirs(full)
+    }
+  }
+  walkDirs(join(ROOT, 'infra', 'k8s'))
+
+  t('found deploy overlays to check', overlays.length > 0, `${overlays.length}`)
+
+  for (const dir of overlays) {
+    const kPath = join(dir, 'kustomization.yaml')
+    let kText
+    try { kText = readFileSync(kPath, 'utf8') } catch { continue }
+    const onDisk = readdirSync(dir).filter((f) => /\.ya?ml$/i.test(f) && f !== 'kustomization.yaml')
+    // Substring match against the kustomization text: enough to tell "listed"
+    // from "orphaned" without reimplementing kustomize's resource resolution.
+    const orphans = onDisk.filter((f) => !kText.includes(f))
+    t(`${relative(ROOT, dir)} has no manifest that kustomize never renders`,
+      orphans.length === 0,
+      orphans.length ? `orphaned: ${orphans.join(', ')} — delete it or list it in kustomization.yaml` : `${onDisk.length} manifests, all listed`)
+  }
+}
+
+// ── 5. Migrations have exactly one delivery mechanism ────────────────────
+// Two sources for the same SQL is the drift this repo already closed once.
+{
+  const cm = join(ROOT, 'infra', 'k8s', 'custom-apps', 'overlays', 'uat', 'mysql-migrations-configmap.yaml')
+  let exists = true
+  try { statSync(cm) } catch { exists = false }
+  t('the mysql-migrations ConfigMap is not back in the deploy overlay', !exists,
+    'the migrate-service image ships backend/sql; a second copy can only drift from it')
+
+  const dockerfile = readFileSync(join(ROOT, 'backend', 'Dockerfile'), 'utf8')
+  t('the migrate image still ships backend/sql beside its runner',
+    /^COPY sql \.\/sql/m.test(dockerfile),
+    'if this ever goes, the Job has no SQL at all')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)
