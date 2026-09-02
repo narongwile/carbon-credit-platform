@@ -1942,12 +1942,23 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
     const emailPlain = text + (emailHeaderNote ? '\\n\\nNotice: ' + emailHeaderNote : '') + (emailFooterSop ? '\\n\\nSOP Protocol:\\n' + emailFooterSop : '');
 
     let channels = [];
+    let orgConfiguredChannels = new Set();
+    let orgDisabledChannels = new Set();
     if (pool && e.orgId) {
       try {
-        const [r] = await pool.query(
-          "SELECT channel,target,min_severity,department_id,user_id FROM notification_channels WHERE org_id=? AND enabled=1 AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND (user_id IN (SELECT user_id FROM user_departments WHERE department_id=?) OR user_id IN (SELECT id FROM users WHERE department_id=? OR (department_id IS NULL AND (role='admin' OR role='superadmin'))))) )",
+        const [rAll] = await pool.query(
+          "SELECT channel,target,min_severity,department_id,user_id,enabled FROM notification_channels WHERE org_id=? AND ( (department_id IS NULL AND (user_id IS NULL OR user_id='')) OR department_id=? OR (user_id IS NOT NULL AND (user_id IN (SELECT user_id FROM user_departments WHERE department_id=?) OR user_id IN (SELECT id FROM users WHERE department_id=? OR (department_id IS NULL AND (role='admin' OR role='superadmin'))))) )",
           [e.orgId, e.departmentId || null, e.departmentId || null, e.departmentId || null]
         );
+        for (const c of (rAll || [])) {
+          if (!c.department_id && (!c.user_id || c.user_id === '')) {
+            orgConfiguredChannels.add(c.channel);
+            if (c.enabled === 0 || c.enabled === false) {
+              orgDisabledChannels.add(c.channel);
+            }
+          }
+        }
+        const r = (rAll || []).filter(c => c.enabled === 1 || c.enabled === true);
         // If a department has its own specific channel configured, it overrides the org-level fallback for that channel
         const deptTypes = new Set(r.filter(c => c.department_id && (!c.user_id || c.user_id === '')).map(c => c.channel));
         channels = r.filter(c => {
@@ -1957,24 +1968,35 @@ const __gchat = (link) => ({ text: subject, cardsV2: [{ cardId: 'oneops-alarm', 
           return true;
         });
       } catch(err) {
-        const [r] = await pool.query(
-          "SELECT channel,target,min_severity FROM notification_channels WHERE org_id=? AND enabled=1 AND (department_id IS NULL OR department_id=?)",
-          [e.orgId, e.departmentId || null]
-        );
-        channels = r;
+        try {
+          const [rAll] = await pool.query(
+            "SELECT channel,target,min_severity,enabled FROM notification_channels WHERE org_id=? AND (department_id IS NULL OR department_id=?)",
+            [e.orgId, e.departmentId || null]
+          );
+          for (const c of (rAll || [])) {
+            orgConfiguredChannels.add(c.channel);
+            if (c.enabled === 0 || c.enabled === false) orgDisabledChannels.add(c.channel);
+          }
+          channels = (rAll || []).filter(c => c.enabled === 1 || c.enabled === true);
+        } catch(_) {}
       }
     }
     const nc = await global.get('notifyConfig')();
-    // Fall back to platform-wide notify credentials for any channel NOT configured in this org.
-    // The previous all-or-nothing check (if (!channels.length)) silenced chat whenever an email
-    // channel was enabled: in UAT, mail-sink-guard disables per-org chat channels so test alarms
-    // route to the operator's test Telegram/GoogleChat — but because the org still had an email
-    // channel, channels.length was never 0, so Telegram, Google Chat, and LINE platform fallbacks
-    // were completely suppressed!
-    const _hasChan = (ch) => channels.some(c => c.channel === ch);
-    if (!_hasChan('line') && nc.lineToken) channels.push({ channel:'line', target:'' });
-    if (!_hasChan('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });
-    if (!_hasChan('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
+    // Fall back to platform-wide notify credentials ONLY for channels that were NOT configured / explicitly turned OFF by the tenant.
+    // If the tenant explicitly turned OFF a channel (e.g. Telegram: OFF, Google Chat: OFF), orgDisabledChannels contains it
+    // and we MUST NOT fall back to server-wide default webhooks.
+    const _isBlocked = (ch) => orgDisabledChannels.has(ch) || channels.some(c => c.channel === ch);
+    if (!orgConfiguredChannels.size) {
+      // If the org has NEVER configured notification_channels at all, use platform defaults
+      if (nc.lineToken) channels.push({ channel:'line', target:'' });
+      if ((nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });
+      if (nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
+    } else {
+      // Org has configured channels: only fall back for channels that are NOT in DB at all (neither enabled nor disabled)
+      if (!_isBlocked('line') && !orgConfiguredChannels.has('line') && nc.lineToken) channels.push({ channel:'line', target:'' });
+      if (!_isBlocked('telegram') && !orgConfiguredChannels.has('telegram') && (nc.telegramToken || (nc.telegramChatId || '').includes(':') || (nc.telegramChatId || '').includes('@')) && (nc.telegramChatId || '').trim()) channels.push({ channel:'telegram', target:'' });
+      if (!_isBlocked('googlechat') && !orgConfiguredChannels.has('googlechat') && nc.googleChatWebhook) channels.push({ channel:'googlechat', target:'' });
+    }
     for (const c of channels) {
       if (c.min_severity === 'CRITICAL' && topSeverity !== 'CRITICAL') continue;
       try {
