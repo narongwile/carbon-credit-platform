@@ -200,6 +200,15 @@ test_proofs_and_integrity:
     # EXECUTES the handler rather than pattern-matching it, because a TDZ bug
     # is invisible to a regex. Verified to fail 9/19 on the pre-fix code.
     - node e2e/proofs/test-escalation-and-shelving.mjs
+    # ...and that a shelf ON SCREEN corresponds to a real one. The admin panel
+    # seeded a hardcoded shelf (TRF-SUBSTATION-02 / WO-8491, "shelved by
+    # Somchai") and only replaced it when the server returned a NON-EMPTY list,
+    # so every org with no shelves kept it forever; CustomerAlarmsView rendered
+    # the same fabrication to every customer of every org with no fetch at all,
+    # including a "7h remaining" that never counted down. A shelf asserts that
+    # alarms are SUPPRESSED, so a fake one tells an operator to read silence as
+    # expected. Verified to fail 13/18 on the pre-fix code.
+    - node e2e/proofs/test-shelving-is-real.mjs
     # 21 CFR Part 11 / ISA-84 Audit Trail & Four-Eyes Dual Control governance gate
     - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     # Carbon & ESG Net-Zero Accounting & SBTi 1.5°C math verification gate

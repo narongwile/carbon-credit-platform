@@ -442,21 +442,23 @@ export default function AlarmNotificationPage() {
     shelvedAt: string
     expiresAt: string
     active: boolean
-  }>>([
-    {
-      id: 'shlv_demo_1',
-      nodeId: 'TRF-SUBSTATION-02',
-      name: 'Main Substation TR-02',
-      paramKey: 'oilTemp',
-      paramLabel: 'Top Oil Temperature',
-      reason: 'WO-8491 Bushing replacement & oil degassing',
-      workOrderId: 'WO-8491',
-      shelvedBy: 'Somchai (Lead Electrical Engineer)',
-      shelvedAt: new Date(Date.now() - 3600000).toISOString(),
-      expiresAt: new Date(Date.now() + 7 * 3600000).toISOString(),
-      active: true,
-    },
-  ])
+  }>>([])
+  // Seeded empty, NOT with a demo shelf.
+  //
+  // This list used to start with a hardcoded shlv_demo_1 —
+  // "Main Substation TR-02 / TRF-SUBSTATION-02, oilTemp, WO-8491 Bushing
+  // replacement & oil degassing, shelved by Somchai (Lead Electrical
+  // Engineer)" — and the loader below only replaced it when the server
+  // returned a NON-EMPTY list. An organization with no shelves, which is every
+  // organization until someone shelves something, therefore kept that entry on
+  // screen permanently.
+  //
+  // A shelf is a statement that alarms on an asset are SUPPRESSED (ISA-18.2
+  // §12). Showing a fabricated one asserts that suppression is in effect for a
+  // device that is not in this tenant, attributes it to a named engineer who
+  // never did it, and cites a work order that does not exist. An operator who
+  // believes it has been told not to expect alarms from an asset — the exact
+  // reasoning shelving exists to make explicit and bounded.
   const [shelveLoading, setShelveLoading] = useState(false)
   const [shelveSearch, setShelveSearch] = useState('')
   const [shelveModalOpen, setShelveModalOpen] = useState(false)
@@ -481,10 +483,10 @@ export default function AlarmNotificationPage() {
     setShelveLoading(true)
     api.shelving(orgId).then((res) => {
       setShelveLoading(false)
-      if (res?.shelves && res.shelves.length > 0) {
-        setShelvedDevices(res.shelves)
-      }
-    }).catch(() => setShelveLoading(false))
+      // Assign whatever came back, including an empty array. The `length > 0`
+      // guard is what kept the demo shelf alive for every org that has none.
+      setShelvedDevices(res?.shelves ?? [])
+    }).catch(() => { setShelveLoading(false); setShelvedDevices([]) })
   }, [live, orgId])
 
   const handleSaveEscalationPolicy = async () => {

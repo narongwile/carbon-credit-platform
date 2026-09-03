@@ -65,6 +65,38 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
   const [to, setTo] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false)
   const [shelveDismissed, setShelveDismissed] = useState(false)
+  // Real shelves for THIS org.
+  //
+  // The banner below was a hardcoded string — "Asset TRF-SUBSTATION-02 is
+  // currently in authorized maintenance (WO-8491 ... 7h remaining). Audio
+  // alarms are silenced" — rendered for every customer of every organization,
+  // gated only on the dismiss button. No fetch, no org check, no expiry: the
+  // "7h remaining" never counted down because it was a literal.
+  //
+  // It is the most consequential thing on the page to get wrong. A shelf means
+  // alarms on an asset are SUPPRESSED (ISA-18.2 §12), so the notice tells an
+  // operator not to expect alerts from that device. It named an asset that is
+  // not in their fleet, cited a work order that does not exist, and claimed a
+  // suppression that was not in effect — while a genuine shelf on one of their
+  // own assets was never shown at all.
+  const [shelves, setShelves] = useState<Array<{
+    id: string; nodeId: string; name: string; paramLabel: string
+    reason: string; workOrderId?: string; expiresAt: string; active: boolean
+  }>>([])
+  useEffect(() => {
+    if (!live || !orgId) { setShelves([]); return }
+    let cancelled = false
+    api.shelving(orgId)
+      .then((res) => { if (!cancelled) setShelves(res?.shelves ?? []) })
+      .catch(() => { if (!cancelled) setShelves([]) })
+  }, [live, orgId])
+
+  // An expired shelf is not a shelf. The server filters too, but this view
+  // polls the alarm list far more often than it refetches shelves, so a stale
+  // entry would otherwise keep claiming suppression after it lapsed.
+  const activeShelves = shelves.filter(
+    (sh) => sh.active && new Date(sh.expiresAt).getTime() > Date.now(),
+  )
 
   // Escalation timer helper (ISA-18.2 §11).
   //
@@ -299,14 +331,29 @@ export default function CustomerAlarmsView({ embedded = false }: { embedded?: bo
         </div>
       </div>
 
-      {/* Maintenance Shelving Awareness Notice (ISA-18.2 §12) */}
-      {!shelveDismissed && (
+      {/* Maintenance Shelving Awareness Notice (ISA-18.2 §12) — real shelves only */}
+      {!shelveDismissed && activeShelves.length > 0 && (
         <div className="p-3 rounded-xl border border-blue-500/30 bg-blue-950/20 flex items-start justify-between gap-3 animate-in fade-in">
           <div className="flex items-start gap-2.5">
             <PauseCircle size={16} className="text-blue-400 shrink-0 mt-0.5" />
             <div className="text-xs text-blue-200/90 leading-relaxed">
               <strong className="text-white font-semibold">Maintenance Shelving Active:</strong>{' '}
-              <span>Asset <code className="text-blue-300 bg-blue-900/40 px-1 py-0.5 rounded">TRF-SUBSTATION-02</code> is currently in authorized maintenance (WO-8491 Bushing replacement &amp; oil degassing · 7h remaining). Audio alarms are silenced; all excursions are logged to the audit trail.</span>
+              <span>
+                {activeShelves.map((sh, i) => {
+                  const hoursLeft = Math.max(0, Math.round((new Date(sh.expiresAt).getTime() - Date.now()) / 3600000))
+                  return (
+                    <span key={sh.id}>
+                      {i > 0 && '; '}
+                      <code className="text-blue-300 bg-blue-900/40 px-1 py-0.5 rounded">{sh.nodeId}</code>
+                      {sh.name ? ` (${sh.name})` : ''} — {sh.paramLabel || 'all parameters'}
+                      {sh.reason ? `, ${sh.reason}` : ''}
+                      {sh.workOrderId ? ` [${sh.workOrderId}]` : ''}
+                      {` · ${hoursLeft}h remaining`}
+                    </span>
+                  )
+                })}
+                . Alerts for the listed parameters are suppressed until the shelf expires; excursions are still recorded.
+              </span>
             </div>
           </div>
           <button
