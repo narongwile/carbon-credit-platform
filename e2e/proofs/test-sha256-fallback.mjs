@@ -202,7 +202,7 @@ for (const [file, label] of [
     'exporting one table in both formats should yield the same hash')
 
   t('downloadCSV stamps a digest', /csvHashTrailer\(digestOf\(headers, rows\)\)/.test(code))
-  t('downloadCSVSections stamps a digest', /# Snapshot SHA-256: \$\{sha256Text\(/.test(code))
+  t('downloadCSVSections stamps a digest', /# Snapshot SHA-256: \$\{sectionsDigest\(sections\)\}/.test(code))
   t('printTablePDF stamps a digest', /Snapshot SHA-256: \$\{escapeHtml\(digestOf\(headers, rows\)\)\}/.test(code))
 
   // The digest is only useful if a reader can reproduce it, which means the
@@ -221,6 +221,39 @@ for (const [file, label] of [
   // downloadText carries JSON; embedding a hash of the payload inside the
   // payload would change the document it describes.
   t('downloadText is left alone', !/downloadText[\s\S]{0,300}?sha256Text/.test(code))
+}
+
+// ── 7. The dashboard's Report menu, in all four formats ──────────────────
+// A third export path, separate from the PdM dossier and the date-range
+// dialog: the "Report" button top-right on the transformer dashboard. Its CSV
+// picked up a digest for free once exportFile stamped one, but its PDF renders
+// its own jsPDF document and its XLSX builds its own workbook — neither goes
+// through the shared exporters — and its JSON went through downloadText, which
+// is deliberately not hashed. So three of the four formats shipped without one,
+// while the CSV of the very same report carried it.
+{
+  const btn = readFileSync(new URL('frontend-next/src/components/device/NodeReportButton.tsx', root), 'utf8')
+  const code = btn.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  const ex = readFileSync(new URL('frontend-next/src/lib/exportFile.ts', root), 'utf8')
+
+  t('the multi-section digest is a shared, exported definition',
+    /export function sectionsDigest\(/.test(ex),
+    'a builder outside downloadCSVSections must be able to print the SAME value')
+  t('downloadCSVSections uses that same definition',
+    /# Snapshot SHA-256: \$\{sectionsDigest\(sections\)\}/.test(ex))
+
+  t('the Report PDF stamps the digest', /Snapshot SHA-256: \$\{digest\}/.test(code))
+  t('it stamps every page, not just the last',
+    /const pages = doc\.getNumberOfPages\(\)/.test(code) && /doc\.setPage\(i\)/.test(code))
+  t('the Report XLSX carries the digest', /\['Snapshot SHA-256', sectionsDigest\(report\.sections\)\]/.test(code))
+  t('the Report JSON carries it beside the data, not over the whole file',
+    /integrity: \{/.test(code) && /algorithm: 'SHA-256'/.test(code) && /covers:/.test(code),
+    'hashing a document that contains its own hash is not reproducible')
+
+  t('all four formats print one digest for the same report',
+    (code.match(/sectionsDigest\(report\.sections\)/g) || []).length >= 3 &&
+    /downloadCSVSections\(`\$\{report\.filenameBase\}\.csv`, report\.sections, report\.meta\)/.test(code),
+    'a recipient holding the PDF and the CSV should see they are the same snapshot')
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

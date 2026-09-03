@@ -18,7 +18,7 @@ import { buildDeviceReport, type DeviceReport } from '@/lib/deviceReport'
 import { fetchPhotoDataUrl } from '@/lib/photoDataUrl'
 import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
 import { useAppStore } from '@/lib/store'
-import { downloadCSVSections, downloadText } from '@/lib/exportFile'
+import { downloadCSVSections, downloadText, sectionsDigest } from '@/lib/exportFile'
 import { downloadXLSX } from '@/lib/xlsx'
 import type { SensorDomain } from '@/types/fleet'
 import { Download, FileText, FileSpreadsheet, FileJson, Loader2, ChevronDown } from 'lucide-react'
@@ -171,6 +171,26 @@ export default function NodeReportButton({
       // jspdf-autotable records where it stopped on the doc it just drew into.
       y = ((doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y) + 10
     }
+    // Same digest the CSV of this report prints, on every page.
+    //
+    // This button's PDF renders its own jsPDF document rather than going
+    // through printTablePDF, so the integrity line added to the shared
+    // exporters never reached it — the report an engineer downloads from the
+    // dashboard's Report menu went out with nothing a recipient could check it
+    // against, while the CSV of the very same report carried one.
+    const digest = sectionsDigest(report.sections)
+    const pages = doc.getNumberOfPages()
+    for (let i = 1; i <= pages; i++) {
+      doc.setPage(i)
+      doc.setFont('courier', 'normal')
+      doc.setFontSize(6.5)
+      doc.setTextColor(120, 130, 145)
+      doc.text(
+        `Snapshot SHA-256: ${digest}  ·  covers every section header and data row in this report`,
+        14,
+        doc.internal.pageSize.getHeight() - 6,
+      )
+    }
     doc.save(`${report.filenameBase}.pdf`)
   }
 
@@ -188,12 +208,33 @@ export default function NodeReportButton({
         toast('No readings stored for this period', { icon: '📭' })
       }
       if (format === 'pdf') await exportPDF(report)
+      // One digest for all four formats of this report, so a recipient holding
+      // the PDF and the CSV can see they describe the same snapshot.
       else if (format === 'xlsx') downloadXLSX(`${report.filenameBase}.xlsx`, [
-        { name: 'Report', rows: [['Device report'], ...report.meta.map((m) => [m])] },
+        {
+          name: 'Report',
+          rows: [
+            ['Device report'],
+            ...report.meta.map((m) => [m]),
+            ['Snapshot SHA-256', sectionsDigest(report.sections)],
+            ['', 'Covers every section header and data row in the sheets that follow.'],
+          ],
+        },
         ...report.sections.map((s) => ({ name: s.title, rows: [s.headers, ...s.rows] })),
       ])
       else if (format === 'csv') downloadCSVSections(`${report.filenameBase}.csv`, report.sections, report.meta)
-      else downloadText(`${report.filenameBase}.json`, JSON.stringify({ meta: report.meta, ...raw }, null, 2))
+      // The digest sits BESIDE the data, not over the whole file: hashing a
+      // document that contains its own hash is not reproducible. `covers` says
+      // exactly what to recompute, so a reader can actually check it.
+      else downloadText(`${report.filenameBase}.json`, JSON.stringify({
+        meta: report.meta,
+        integrity: {
+          algorithm: 'SHA-256',
+          value: sectionsDigest(report.sections),
+          covers: 'every section header and data row of this report, rendered as CSV rows and joined — identical to the digest printed in the PDF, CSV and XLSX exports of the same report',
+        },
+        ...raw,
+      }, null, 2))
       setOpen(false)
     } catch (e) {
       toast.error(`Report failed: ${(e as Error).message}`)

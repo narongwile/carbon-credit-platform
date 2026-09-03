@@ -47,6 +47,22 @@ function digestOf(headers: string[], rows: unknown[][]): string {
   return sha256Text([headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\n'))
 }
 
+/**
+ * The digest over a multi-section document.
+ *
+ * Exported so a builder that does not go through downloadCSVSections — the
+ * device Report button renders its own jsPDF and its own workbook — can print
+ * the SAME value. All four formats of one report then carry one digest, and a
+ * recipient holding the PDF and the CSV can see they are the same snapshot.
+ */
+export function sectionsDigest(
+  sections: { title: string; headers: string[]; rows: unknown[][] }[],
+): string {
+  return sha256Text(
+    sections.map((sec) => [sec.headers, ...sec.rows].map((r) => r.map(csvCell).join(',')).join('\n')).join('\n\n'),
+  )
+}
+
 /** The trailer appended to a CSV, stating what the digest covers. */
 function csvHashTrailer(hash: string): string[] {
   return [
@@ -97,9 +113,7 @@ export function downloadCSVSections(
   // document rather than one per section, because the document is what gets
   // sent on. Leading `#` metadata is this function's existing convention, so
   // the hash goes at the top here and no consumer contract changes.
-  lines.push(`# Snapshot SHA-256: ${sha256Text(
-    sections.map((sec) => [sec.headers, ...sec.rows].map((r) => r.map(csvCell).join(',')).join('\n')).join('\n\n'),
-  )}`)
+  lines.push(`# Snapshot SHA-256: ${sectionsDigest(sections)}`)
   lines.push('# Covers every section header and data row below, joined with newlines,')
   lines.push('# excluding these comment lines, the section titles and the byte-order mark.')
   for (const s of sections) {
