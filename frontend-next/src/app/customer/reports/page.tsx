@@ -281,9 +281,9 @@ export default function CustomerReportsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
-            <ShieldCheck size={12} className="text-emerald-400" />
-            <span>SHA-256 Verified</span>
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono text-slate-400 bg-slate-500/10 border border-slate-500/30">
+            <ShieldCheck size={12} className="text-slate-400" />
+            <span>SHA-256 on export</span>
           </div>
           <span className="text-xs text-slate-500 font-medium">Accessible:</span>
           <span className="text-xs font-semibold text-emerald-400 px-2.5 py-1 rounded bg-emerald-950/40 border border-emerald-800/40">
@@ -685,9 +685,9 @@ export default function CustomerReportsPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
-                  <ShieldCheck size={12} className="text-emerald-400" />
-                  <span>SHA-256 Verified</span>
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-500/10 border border-slate-500/30">
+                  <ShieldCheck size={12} className="text-slate-400" />
+                  <span>SHA-256 on export</span>
                 </div>
                 <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30">
                   CONFIDENTIAL
@@ -713,7 +713,7 @@ export default function CustomerReportsPage() {
                     <span>·</span>
                     <span>Resolution: <strong className="text-white">{AGGREGATION_RESOLUTIONS.find(r => r.id === aggregationInterval)?.label}</strong></span>
                     <span>·</span>
-                    <span className="text-emerald-400 font-mono">Immutable Integrity: SHA-256</span>
+                    <span className="text-slate-400 font-mono">Integrity: SHA-256 stamped at export</span>
                   </div>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-lg">
@@ -910,7 +910,7 @@ export default function CustomerReportsPage() {
             {/* Modal Footer */}
             <div className="px-6 py-3.5 border-t border-slate-800 bg-[#0a0e1a] flex items-center justify-between">
               <span className="text-[11px] text-slate-500 font-mono">
-                Cryptographic Signature: SHA-256 Authenticated
+                Integrity: SHA-256 stamped at export
               </span>
               <div className="flex items-center gap-2">
                 <button
