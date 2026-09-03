@@ -24,6 +24,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { fmtDateTime, toDisplayInput, fromDisplayInput, DISPLAY_TZ_LABEL } from '@/lib/displayTime'
 import { getOrgLogoDataUrl } from '@/lib/orgLogoDataUrl'
+import { sha256, canonicalJson } from '@/lib/sha256'
 import { X, Download, Send, Loader2, FileText, Table, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -88,19 +89,52 @@ export default function DeviceExportDialog({
     return () => { cancelled = true }
   }, [nodeId, range.start, range.end, validRange])
 
-  const buildCsv = () => {
+  /**
+   * One snapshot per export action.
+   *
+   * The exported files carried no integrity hash at all, while the PdM dossier
+   * from the same dashboard does — so the per-device report an engineer
+   * actually forwards was the one a recipient could not check against what the
+   * platform produced.
+   *
+   * Built once and handed to both builders rather than computed inside each,
+   * for two reasons: the CSV and the PDF of a single export then describe the
+   * same snapshot and carry the same digest, and `Exported At` stops differing
+   * between them — buildCsv() stamped `new Date()` on every call, so the
+   * downloaded CSV and the emailed CSV of one action already disagreed.
+   *
+   * canonicalJson, not JSON.stringify: a hash is only checkable if the reader
+   * can reproduce the exact bytes, and insertion order is not a stable
+   * property to hang that on.
+   */
+  type Snapshot = { exportedAt: string; hash: string }
+  const buildSnapshot = async (): Promise<Snapshot> => {
+    const exportedAt = fmtDateTime(new Date())
+    const payload = canonicalJson({
+      orgId: selectedOrgId, orgName, nodeId, deviceName,
+      from, to, timezone: DISPLAY_TZ_LABEL, exportedAt,
+      rows: (rows ?? []).map((r) => ({ param_key: r.param_key, value: r.value, taken_at: r.taken_at })),
+    })
+    return { exportedAt, hash: await sha256(payload) }
+  }
+
+  const buildCsv = (snap: Snapshot) => {
     const metaHeader = [
       `# Organization: ${orgName} (${selectedOrgId})`,
       `# Device: ${deviceName} (${nodeId})`,
       `# Window: ${from} → ${to} (${DISPLAY_TZ_LABEL})`,
-      `# Exported At: ${fmtDateTime(new Date())}`,
+      `# Exported At: ${snap.exportedAt}`,
+      `# Readings: ${(rows ?? []).length}`,
+      `# Snapshot SHA-256: ${snap.hash}`,
+      `# The digest covers this export's org, device, window, timestamp and every`,
+      `# reading row below, serialised with object keys sorted at each level.`,
     ].join('\n')
     const header = 'device,param_key,value,taken_at'
     const body = (rows ?? []).map((r) => [deviceName, r.param_key, r.value, fmtDateTime(r.taken_at)].join(','))
     return [metaHeader, '', header, ...body].join('\n')
   }
 
-  const buildPdf = async (): Promise<Blob> => {
+  const buildPdf = async (snap: Snapshot): Promise<Blob> => {
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
     const doc = new jsPDF()
@@ -131,7 +165,16 @@ export default function DeviceExportDialog({
     doc.text(`Device: ${deviceName}`, 14, 27)
     doc.text(`Window: ${from} → ${to} (${DISPLAY_TZ_LABEL})`, 14, 33)
     doc.text(`Readings: ${(rows ?? []).length}`, 14, 39)
-    const tableStartY = Math.max(46, logoBottom + 6)
+    doc.text(`Exported: ${snap.exportedAt}`, 14, 45)
+    // Same digest as the CSV of this export, and the same role the PdM dossier's
+    // integrity page fills: it lets a recipient confirm the file matches what
+    // the platform produced. Courier so the hex is legible character by
+    // character, split across two lines because 64 chars does not fit the width.
+    doc.setFont('courier', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139)
+    doc.text('Snapshot SHA-256:', 14, 52)
+    doc.text(doc.splitTextToSize(snap.hash, pageWidth - 60), 45, 52)
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(71, 85, 105)
+    const tableStartY = Math.max(62, logoBottom + 6)
     if ((rows ?? []).length) {
       autoTable(doc, {
         startY: tableStartY,
@@ -160,13 +203,14 @@ export default function DeviceExportDialog({
     if (!wantCsv && !wantPdf) { toast.error('Pick at least one format'); return }
     setBusy(true)
     try {
+      const snap = await buildSnapshot()
       if (wantCsv) {
-        const url = URL.createObjectURL(new Blob([buildCsv()], { type: 'text/csv;charset=utf-8;' }))
+        const url = URL.createObjectURL(new Blob([buildCsv(snap)], { type: 'text/csv;charset=utf-8;' }))
         const a = document.createElement('a'); a.href = url; a.download = `${stamp}.csv`
         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
       }
       if (wantPdf) {
-        const url = URL.createObjectURL(await buildPdf())
+        const url = URL.createObjectURL(await buildPdf(snap))
         const a = document.createElement('a'); a.href = url; a.download = `${stamp}.pdf`
         document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
       }
@@ -180,17 +224,18 @@ export default function DeviceExportDialog({
     if (chan && !chan.attachments) { toast.error(`${chan.label} cannot carry file attachments — use Email or Telegram`); return }
     setBusy(true)
     try {
+      const snap = await buildSnapshot()
       const attachments: { filename: string; contentType?: string; dataBase64: string }[] = []
       if (wantCsv) {
         attachments.push({
           filename: `${stamp}.csv`, contentType: 'text/csv',
-          dataBase64: await blobToBase64(new Blob([buildCsv()], { type: 'text/csv' })),
+          dataBase64: await blobToBase64(new Blob([buildCsv(snap)], { type: 'text/csv' })),
         })
       }
       if (wantPdf) {
         attachments.push({
           filename: `${stamp}.pdf`, contentType: 'application/pdf',
-          dataBase64: await blobToBase64(await buildPdf()),
+          dataBase64: await blobToBase64(await buildPdf(snap)),
         })
       }
       const r = await api.sendNodeExport(nodeId, { channel, to: target.trim() || undefined, subject, body: note, attachments })

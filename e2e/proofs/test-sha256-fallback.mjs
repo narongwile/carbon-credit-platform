@@ -141,5 +141,42 @@ for (const [file, label] of [
     'a 32/53-bit value rendered at 64 hex chars reads as a digest and is not one')
 }
 
+// ── 5. The per-device export carries the same integrity hash ─────────────
+// The PdM dossier from the transformer dashboard prints a Snapshot SHA-256;
+// the per-device date-range export from the SAME dashboard printed none, in
+// either format — and that is the file an engineer actually forwards, and the
+// one the dialog can also email as an attachment. A recipient had no way to
+// check it against what the platform produced.
+{
+  const dlg = readFileSync(new URL('frontend-next/src/components/device/DeviceExportDialog.tsx', root), 'utf8')
+  const code = dlg.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  t('the device export computes a snapshot hash',
+    /from '@\/lib\/sha256'/.test(dlg) && /await sha256\(payload\)/.test(code))
+  t('it hashes a canonical serialisation of the exported rows',
+    /canonicalJson\(\{/.test(code) && /rows: \(rows \?\? \[\]\)\.map/.test(code),
+    'the digest has to cover the data, not just the header fields')
+
+  t('the CSV prints the hash', /# Snapshot SHA-256: \$\{snap\.hash\}/.test(code))
+  t('the PDF prints the hash', /doc\.text\('Snapshot SHA-256:'/.test(code))
+
+  // One snapshot per action: the CSV and the PDF of a single export describe
+  // the same data, so they must carry the same digest — and Exported At must
+  // stop differing between them. buildCsv() stamped new Date() on every call,
+  // so the downloaded CSV and the emailed CSV of one action already disagreed.
+  t('both formats are built from ONE snapshot',
+    /const buildCsv = \(snap: Snapshot\)/.test(code) &&
+    /const buildPdf = async \(snap: Snapshot\)/.test(code) &&
+    !/buildCsv\(\)/.test(code) && !/buildPdf\(\)/.test(code))
+  t('the export timestamp comes from the snapshot, not a fresh clock read',
+    /# Exported At: \$\{snap\.exportedAt\}/.test(code) &&
+    !/# Exported At: \$\{fmtDateTime\(new Date\(\)\)\}/.test(code))
+
+  // Both the download path and the send-as-attachment path.
+  t('the downloaded files and the emailed attachments use the same snapshot',
+    (code.match(/const snap = await buildSnapshot\(\)/g) || []).length === 2,
+    'download() and send() must each take one snapshot and use it for both files')
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)
