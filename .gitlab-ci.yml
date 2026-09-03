@@ -226,6 +226,13 @@ test_proofs_and_integrity:
     # unit, and offline units are selectable — rendered identically to a reading
     # taken seconds ago. Verified to fail 10/12 on the pre-fix code.
     - node e2e/proofs/test-live-reading-per-device.mjs
+    # STEP 2's four rollout scopes are not interchangeable: 'org' is the only
+    # writer of org_domain_rules, the baseline a newly provisioned device
+    # inherits, so dropping it would remove the capability outright. The real
+    # defect was that Step 1 ticks devices "to inspect & edit" while Step 2
+    # decides what is written, and a mismatch (two ticked, rolled out to three)
+    # was silent. Verified to fail 5/14 on the pre-fix code.
+    - node e2e/proofs/test-rollout-scope-clarity.mjs
     # 21 CFR Part 11 / ISA-84 Audit Trail & Four-Eyes Dual Control governance gate
     - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     # Carbon & ESG Net-Zero Accounting & SBTi 1.5°C math verification gate

@@ -21,7 +21,7 @@ import { useAlarmDB } from '@/server/alarmStore'
 import { api, isLive } from '@/lib/api'
 import type { NodeAlarmRule } from '@/server/alarmEngine'
 import { DOMAIN_META, type SensorDomain } from '@/types/fleet'
-import { Check, Users, Building2, Globe, Search, Sliders, Cpu } from 'lucide-react'
+import { Check, Users, Building2, Globe, Search, Sliders, Cpu, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { recordAuditAction } from '@/lib/auditStore'
@@ -419,6 +419,48 @@ export default function AdminBulkApplyAlarmEditor({
             </button>
           ))}
         </div>
+
+        {/* What the chosen scope actually WRITES.
+            The four buttons look interchangeable but hit different tables:
+            'devices' and 'org' both write every matching device's alarm_rules,
+            and 'org' additionally sets org_domain_rules — the baseline a newly
+            provisioned device inherits. An admin picking between them from the
+            labels alone has no way to know that only one of them changes what
+            future devices start with. */}
+        <div className="text-[11px] text-slate-400 leading-relaxed px-1">
+          {applyScope === 'devices' && (
+            <>Overwrites the alarm rule on <strong className="text-slate-200">each device ticked in Step 1</strong> only. The organization baseline is left as it is.</>
+          )}
+          {applyScope === 'org' && (
+            <>Overwrites the alarm rule on <strong className="text-slate-200">every {DOMAIN_META[domain]?.platform ?? domain} device in the organization</strong>, and sets the organization baseline that <strong className="text-slate-200">newly provisioned devices will inherit</strong>.</>
+          )}
+          {applyScope === 'department' && (
+            <>Overwrites the alarm rule on every device belonging to the chosen departments. The organization baseline is left as it is.</>
+          )}
+          {applyScope === 'user' && (
+            <>Resolves each chosen user to their department, then overwrites the alarm rule on that department&apos;s devices. The organization baseline is left as it is.</>
+          )}
+        </div>
+
+        {/* Step 1 ticks devices "to inspect & edit"; this step decides what is
+            written. When they disagree the checkboxes stay lit while the write
+            goes somewhere else entirely — in the reported case, two devices
+            ticked and a Whole-Organization rollout over three. Saying so is the
+            point: the mismatch is legitimate (inspect two, roll out to all),
+            it just must not be silent. */}
+        {applyScope !== 'devices' && selectedDeviceIds.length > 0 && (
+          <div
+            className="flex items-start gap-2 p-2.5 rounded-lg text-[11px]"
+            style={{ background: 'rgba(120,53,15,0.25)', border: '1px solid rgba(245,158,11,0.35)' }}
+          >
+            <AlertTriangle size={13} className="text-amber-400 shrink-0 mt-0.5" />
+            <span className="text-amber-200/90">
+              Step 1 has <strong>{selectedDeviceIds.length} device(s)</strong> ticked, but this rollout writes to{' '}
+              <strong>{targetDeviceIds.size} device(s)</strong> — the Step 1 selection is only deciding which
+              readings and parameters you are inspecting above, not what gets overwritten.
+            </span>
+          </div>
+        )}
 
         {/* Multi-Department Picker */}
         {applyScope === 'department' && (
