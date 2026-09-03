@@ -218,6 +218,14 @@ test_proofs_and_integrity:
     # including an enabled "Monthly Compliance Export" against the demo org's
     # departments. Verified to fail 9/13 on the pre-fix code.
     - node e2e/proofs/test-report-schedules-ux.mjs
+    # The LIVE READING column on the multi-device threshold editor. Reported as
+    # "one device's value shown for every device". The resolution was already
+    # per-device, but a selected device that reported nothing was DROPPED, so a
+    # single badge could not be told apart from "the other device wasn't
+    # included"; and a device_presence.last_sample — days old for an offline
+    # unit, and offline units are selectable — rendered identically to a reading
+    # taken seconds ago. Verified to fail 10/12 on the pre-fix code.
+    - node e2e/proofs/test-live-reading-per-device.mjs
     # 21 CFR Part 11 / ISA-84 Audit Trail & Four-Eyes Dual Control governance gate
     - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     # Carbon & ESG Net-Zero Accounting & SBTi 1.5°C math verification gate

@@ -472,6 +472,11 @@ export default function AlarmParamConfig({
   // Current live sensor readings polled or subscribed
   const [liveReadings, setLiveReadings] = useState<Record<string, number>>({})
   const [deviceReadingsMap, setDeviceReadingsMap] = useState<Record<string, Record<string, number>>>({})
+  // When each device's values were last observed. Without this a badge cannot
+  // say whether it is showing a live reading or the last payload a device sent
+  // before it went offline — and the two render identically today, which is
+  // what makes a stale number indistinguishable from a current one.
+  const [deviceReadingAt, setDeviceReadingAt] = useState<Record<string, number>>({})
   const [configuredDisplayKeys, setConfiguredDisplayKeys] = useState<string[]>([])
   const [discoveredWireKeys, setDiscoveredWireKeys] = useState<string[]>([])
   const [customParams, setCustomParams] = useState<AlarmParam[]>([])
@@ -507,6 +512,7 @@ export default function AlarmParamConfig({
           if (cancelled || !r?.values) return
           setLiveReadings(r.values)
           setDeviceReadingsMap((prev) => ({ ...prev, [nodeId]: r.values }))
+          setDeviceReadingAt((prev) => ({ ...prev, [nodeId]: Date.now() }))
           setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(r.values)])))
         })
       }
@@ -521,6 +527,7 @@ export default function AlarmParamConfig({
             ...prev,
             [nodeId]: { ...(prev[nodeId] ?? {}), ...frame.values },
           }))
+          setDeviceReadingAt((prev) => ({ ...prev, [nodeId]: Date.now() }))
           setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
         }
       })
@@ -565,6 +572,12 @@ export default function AlarmParamConfig({
             })
             return next
           })
+          // Only the devices that actually answered this round.
+          setDeviceReadingAt((prev) => {
+            const next = { ...prev }
+            Object.keys(devMap).forEach((id) => { next[id] = Date.now() })
+            return next
+          })
           if (keys.size > 0) {
             setLiveReadings((prev) => ({ ...prev, ...combined }))
             setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Array.from(keys)])))
@@ -583,6 +596,7 @@ export default function AlarmParamConfig({
             ...prev,
             [frame.id]: { ...(prev[frame.id] ?? {}), ...frame.values },
           }))
+          setDeviceReadingAt((prev) => ({ ...prev, [frame.id!]: Date.now() }))
           setDiscoveredWireKeys((prev) => Array.from(new Set([...prev, ...Object.keys(frame.values ?? {})])))
         }
       })
@@ -609,6 +623,7 @@ export default function AlarmParamConfig({
     } else {
       setLiveReadings({})
       setDeviceReadingsMap({})
+      setDeviceReadingAt({})
     }
   }, [live, nodeId, targetDeviceIds])
 
@@ -1248,50 +1263,139 @@ export default function AlarmParamConfig({
     return undefined
   }
 
-  // Resolves live readings for this parameter across the scoped devices
-  const getDeviceReadings = (paramKey: string) => {
-    const results: Array<{ deviceId: string; deviceName: string; value: number }> = []
+  type DevReading = {
+    deviceId: string
+    deviceName: string
+    /** null when this device does not report the parameter at all. */
+    value: number | null
+    /**
+     * Where the number came from.
+     *  'live'       — this device's own polled/streamed values, seen just now
+     *  'last-known' — device_presence.last_sample, the last payload it ever
+     *                 sent; correct for that device, but possibly days old
+     *  'none'       — the device was in scope and reported nothing
+     */
+    source: 'live' | 'last-known' | 'none'
+    /** ms since this device's values were observed, for 'live' only. */
+    ageMs: number | null
+  }
+
+  /**
+   * One entry per device IN SCOPE — including the ones with no reading.
+   *
+   * Two rules, both of which the column needs to be trustworthy when more than
+   * one device is selected:
+   *
+   * 1. A value shown against a device comes only from THAT device. Each source
+   *    below is keyed by dev.id; the merged cross-device map (liveReadings,
+   *    which takes the first device's value for each key) is used only on the
+   *    single-device path, never here. That is what stops one transformer's
+   *    reading being printed beside another's name.
+   *
+   * 2. A device that reports nothing is RETURNED, not dropped. It used to be
+   *    skipped silently, so selecting tr-221 and tr-222 and seeing one badge
+   *    was indistinguishable from "the other device wasn't included" — which
+   *    is exactly what makes the column look like it is showing one device's
+   *    data for everything. Now it says so.
+   *
+   * Provenance travels with the value because a last_sample from a device that
+   * went offline days ago rendered identically to a reading taken seconds ago.
+   */
+  const getDeviceReadings = (paramKey: string): DevReading[] => {
+    const read = (dev: { id: string; name?: string } | undefined, id: string): DevReading => {
+      const name = dev?.name || id
+      const own = getRawParamValue(deviceReadingsMap[id], paramKey)
+      if (own != null) {
+        const val = typeof own === 'number' ? own : parseFloat(String(own))
+        if (!isNaN(val)) {
+          const at = deviceReadingAt[id]
+          return { deviceId: id, deviceName: name, value: val, source: 'live', ageMs: at ? Date.now() - at : null }
+        }
+      }
+      const stale = getRawParamValue((dev as any)?.lastSample, paramKey)
+      if (stale != null) {
+        const val = typeof stale === 'number' ? stale : parseFloat(String(stale))
+        if (!isNaN(val)) {
+          return { deviceId: id, deviceName: name, value: val, source: 'last-known', ageMs: null }
+        }
+      }
+      return { deviceId: id, deviceName: name, value: null, source: 'none', ageMs: null }
+    }
+
     if (nodeId) {
       const dev = devices.find((d) => d.id === nodeId)
-      const devMap = deviceReadingsMap[nodeId]
-      const raw = getRawParamValue(devMap, paramKey) ?? getRawParamValue(liveReadings, paramKey) ?? getRawParamValue((dev as any)?.lastSample, paramKey)
-      if (raw != null) {
-        const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
-        if (!isNaN(val)) {
-          results.push({ deviceId: nodeId, deviceName: dev?.name || nodeId, value: val })
+      const r = read(dev, nodeId)
+      // Single-device view only: the merged map is a legitimate last resort
+      // here because there is exactly one device, so it cannot borrow.
+      if (r.source === 'none') {
+        const merged = getRawParamValue(liveReadings, paramKey)
+        if (merged != null) {
+          const val = typeof merged === 'number' ? merged : parseFloat(String(merged))
+          if (!isNaN(val)) return [{ ...r, value: val, source: 'live', ageMs: null }]
         }
       }
-    } else {
-      for (const dev of scopedDevices) {
-        const devMap = deviceReadingsMap[dev.id]
-        const raw = getRawParamValue(devMap, paramKey) ?? getRawParamValue((dev as any)?.lastSample, paramKey)
-        if (raw != null) {
-          const val = typeof raw === 'number' ? raw : parseFloat(String(raw))
-          if (!isNaN(val)) {
-            results.push({ deviceId: dev.id, deviceName: dev.name || dev.id, value: val })
-          }
-        }
-      }
+      return [r]
     }
-    return results
+    return scopedDevices.map((dev) => read(dev, dev.id))
   }
 
   // Live status evaluation helper with Device labeling (IIoT Best Practice: asset tagging & spread overview)
   const renderLiveReadingCell = (param: ExtendedAlarmParam) => {
-    const devReadings = getDeviceReadings(param.key)
+    const all = getDeviceReadings(param.key)
+    const devReadings = all.filter((d) => d.value !== null) as (DevReading & { value: number })[]
+    const silent = all.filter((d) => d.value === null)
+
     if (!devReadings.length) {
-      return <span className="text-[10px] text-slate-600 font-mono italic" title="No telemetry reported yet for this sensor">—</span>
+      return (
+        <span
+          className="text-[10px] text-slate-600 font-mono italic"
+          title={silent.length > 1
+            ? `None of the ${silent.length} selected devices report this parameter.`
+            : 'No telemetry reported yet for this sensor'}
+        >
+          — {silent.length > 1 && <span className="not-italic">({silent.length} devices)</span>}
+        </span>
+      )
     }
 
     const v = vals[rowId(param)] ?? param
     const isHigh = param.direction === 'high'
 
-    // 1. Single device in scope or exactly 1 device reports this sensor
+    /**
+     * Devices that were selected and reported nothing for this parameter.
+     *
+     * Named rather than omitted. Dropping them made "tr-222 does not publish
+     * this sensor" look exactly like "tr-222 was not selected", which is what
+     * makes the column read as though one device's data is being shown for
+     * every device.
+     */
+    const silentNote = silent.length > 0 && (
+      <div
+        className="text-[9px] text-slate-500 font-mono mt-0.5"
+        title={`Selected, but reported no value for ${param.key}: ${silent.map((d) => d.deviceName).join(', ')}`}
+      >
+        no data: {silent.map((d) => d.deviceName).join(', ')}
+      </div>
+    )
+
+    /** A last_sample is that device's own number, but it can be days old. */
+    const staleMark = (dr: DevReading) =>
+      dr.source === 'last-known' ? (
+        <span
+          className="text-[8px] px-1 rounded bg-slate-700 text-slate-300 font-bold uppercase"
+          title="Last payload this device sent — not a current reading. It may predate the device going offline."
+        >
+          last known
+        </span>
+      ) : null
+
+    // 1. Exactly one device reports this sensor
     if (devReadings.length === 1) {
       const dr = devReadings[0]
       const isCrit = isHigh ? dr.value >= v.critical : dr.value <= v.critical
       const isWarn = isHigh ? dr.value >= v.warn : dr.value <= v.warn
       return (
+        <>
         <div
           className={clsx(
             'inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono border shadow-sm',
@@ -1305,7 +1409,10 @@ export default function AlarmParamConfig({
           <span className="font-bold">{dr.value.toFixed(1)} {param.unit}</span>
           {isCrit && <span className="text-[8px] px-1 rounded bg-red-600 text-white font-extrabold uppercase">Crit</span>}
           {isWarn && !isCrit && <span className="text-[8px] px-1 rounded bg-amber-600 text-white font-extrabold uppercase">Warn</span>}
+          {staleMark(dr)}
         </div>
+        {silentNote}
+        </>
       )
     }
 
@@ -1332,9 +1439,11 @@ export default function AlarmParamConfig({
                   {dr.value.toFixed(1)} {param.unit}
                 </span>
                 {isCrit && <span className="text-[8px] px-0.5 rounded bg-red-800 text-white font-bold">CRIT</span>}
+                {staleMark(dr)}
               </div>
             )
           })}
+          {silentNote}
         </div>
       )
     }
@@ -1355,6 +1464,7 @@ export default function AlarmParamConfig({
     }
 
     return (
+      <>
       <div className="relative group inline-block">
         <div
           className={clsx(
@@ -1394,6 +1504,8 @@ export default function AlarmParamConfig({
           </div>
         </div>
       </div>
+      {silentNote}
+      </>
     )
   }
 
