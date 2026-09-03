@@ -68,6 +68,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import { fmtDateTime } from '@/lib/displayTime'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -630,6 +631,13 @@ function ReportsPageContent() {
     windowDays: number | null
     recipientMode: RecipientMode; recipientDeptIds: string[]; recipientUserIds: string[]
     subjectTemplate: string; bodyTemplate: string
+    // The two fields that say whether the automation is actually working.
+    // report_schedules has carried them since migrate-v4 and the runner
+    // maintains them (UPDATE ... SET last_run_at=NOW(3), next_run_at=?), but
+    // this page dropped both while mapping the response — so a schedule that
+    // has been failing for a month looked exactly like one that ran an hour
+    // ago, under a header counting "Active Crons".
+    lastRunAt: string | null; nextRunAt: string | null
   }
 
   const [activeTab, setActiveTab] = useState<'studio' | 'sequence'>('studio')
@@ -647,10 +655,11 @@ function ReportsPageContent() {
     ...blankSchedule,
     id: r.id, name: r.name, scope: r.scope, scopeId: r.scopeId, domain: 'all', sequence: r.sequence,
     format: r.format, channel: 'email', recipients: '', enabled: r.enabled,
+    lastRunAt: null, nextRunAt: null,
   }))
 
   const [schedules, setSchedules] = useState<SchedRow[]>(seedRows)
-  const [draft, setDraft] = useState<Omit<SchedRow, 'id' | 'enabled'>>({
+  const [draft, setDraft] = useState<Omit<SchedRow, 'id' | 'enabled' | 'lastRunAt' | 'nextRunAt'>>({
     ...blankSchedule,
     name: '', scope: 'department', scopeId: departments[0]?.id ?? '', domain: 'all', sequence: 'daily',
     format: 'CSV', channel: 'email', recipients: '',
@@ -671,7 +680,14 @@ function ReportsPageContent() {
   useEffect(() => {
     let cancelled = false
     api.listSchedules(orgId).then((rows) => {
-      if (cancelled || !rows) return
+      if (cancelled) return
+      // A null response means the request FAILED. Returning early left the
+      // three seeded demo rows on screen — "Daily Cold-Chain Summary",
+      // "Weekly Transformer Health" (both enabled) and "Monthly Compliance
+      // Export" — against departments and a device that belong to the demo
+      // org, under a header reading "2 Active Crons". A compliance officer
+      // reading that believes a monthly export is being generated and sent.
+      if (!rows) { setSchedules([]); return }
       const csv = (v: string | null) => (v ? v.split(',').map((x) => x.trim()).filter(Boolean) : [])
       setSchedules(rows.map((r) => ({
         id: r.id, name: r.name, scope: r.scope, scopeId: r.scope_id ?? '',
@@ -684,6 +700,7 @@ function ReportsPageContent() {
         recipientMode: (r.recipient_mode ?? 'manual') as RecipientMode,
         recipientDeptIds: csv(r.recipient_dept_ids), recipientUserIds: csv(r.recipient_user_ids),
         subjectTemplate: r.subject_template ?? '', bodyTemplate: r.body_template ?? '',
+        lastRunAt: r.last_run_at ?? null, nextRunAt: r.next_run_at ?? null,
       })))
     })
     return () => { cancelled = true }
@@ -875,7 +892,15 @@ function ReportsPageContent() {
 
     const id = editingScheduleId || `rs-${Date.now()}`
     const scopeId = draft.scope === 'org' ? '' : (draft.scopeId || scopeOptions[0]?.id || '')
-    const row: SchedRow = { ...draft, id, scopeId, enabled: true }
+    // Preserve the runner's own record on an edit; a newly created schedule has
+    // not run yet, and saying so is the point — "Never run" on a week-old
+    // schedule is exactly the signal an operator needs.
+    const existing = editingScheduleId ? schedules.find((x) => x.id === editingScheduleId) : undefined
+    const row: SchedRow = {
+      ...draft, id, scopeId, enabled: true,
+      lastRunAt: existing?.lastRunAt ?? null,
+      nextRunAt: existing?.nextRunAt ?? null,
+    }
 
     if (editingScheduleId) {
       setSchedules((s) => s.map((x) => (x.id === id ? row : x)))
@@ -1669,7 +1694,7 @@ function ReportsPageContent() {
             <table className="w-full text-xs" style={{ background: '#0d1117' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid #1e2433' }}>
-                  {['Schedule Name', 'Product Domain', 'Scope Target', 'Frequency & Timing', 'History Window', 'Delivery Channel', 'Active', 'Dispatch Actions'].map((h) => (
+                  {['Schedule Name', 'Product Domain', 'Scope Target', 'Frequency & Timing', 'History Window', 'Delivery Channel', 'Last Run / Next Run', 'Active', 'Dispatch Actions'].map((h) => (
                     <th key={h} className="py-3 px-4 text-left text-slate-400 font-semibold uppercase tracking-wider text-[10px]">{h}</th>
                   ))}
                 </tr>
@@ -1677,7 +1702,7 @@ function ReportsPageContent() {
               <tbody>
                 {schedules.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-slate-500 space-y-2">
+                    <td colSpan={9} className="py-12 text-center text-slate-500 space-y-2">
                       <CalendarClock size={28} className="mx-auto text-slate-600 opacity-50" />
                       <div className="text-sm font-semibold text-slate-400">No automated schedules defined</div>
                       <p className="text-xs text-slate-600">Click &ldquo;Create New Sequence&rdquo; above to set up your first recurring report dispatch.</p>
@@ -1716,6 +1741,30 @@ function ReportsPageContent() {
                         <td className="py-3.5 px-4 text-slate-300">
                           <span className="capitalize font-semibold">{s.channel === 'googlechat' ? 'Google Chat' : s.channel}</span>
                           {to && <span className="text-slate-500 truncate max-w-xs block text-[11px]">{to}</span>}
+                        </td>
+                        {/* The state that says whether the automation works.
+                            An enabled schedule that has never run, or last ran
+                            weeks ago, is indistinguishable from a healthy one
+                            without this — and the panel header counts it as an
+                            "Active Cron" either way. */}
+                        <td className="py-3.5 px-4">
+                          {s.lastRunAt ? (
+                            <span className="text-slate-300">{fmtDateTime(s.lastRunAt)}</span>
+                          ) : (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/25"
+                              title="This schedule has not run since it was created."
+                            >
+                              Never run
+                            </span>
+                          )}
+                          <span className="block text-[11px] text-slate-500">
+                            {!s.enabled
+                              ? 'disabled — will not run'
+                              : s.nextRunAt
+                              ? `next ${fmtDateTime(s.nextRunAt)}`
+                              : 'next run not scheduled yet'}
+                          </span>
                         </td>
                         <td className="py-3.5 px-4">
                           <button onClick={() => toggleSchedule(s.id)}>

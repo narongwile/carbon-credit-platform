@@ -209,6 +209,15 @@ test_proofs_and_integrity:
     # alarms are SUPPRESSED, so a fake one tells an operator to read silence as
     # expected. Verified to fail 13/18 on the pre-fix code.
     - node e2e/proofs/test-shelving-is-real.mjs
+    # Automated Sequences must show whether the automation ran. report_schedules
+    # has carried last_run_at/next_run_at since migrate-v4 and the Node-RED
+    # runner maintains them, but the page dropped both while mapping the
+    # response — so a sequence that had never fired looked identical to one that
+    # ran an hour ago, under a header counting it as an "Active Cron". And a
+    # failed listSchedules (null) left three seeded demo rows on screen,
+    # including an enabled "Monthly Compliance Export" against the demo org's
+    # departments. Verified to fail 9/13 on the pre-fix code.
+    - node e2e/proofs/test-report-schedules-ux.mjs
     # 21 CFR Part 11 / ISA-84 Audit Trail & Four-Eyes Dual Control governance gate
     - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     # Carbon & ESG Net-Zero Accounting & SBTi 1.5°C math verification gate
