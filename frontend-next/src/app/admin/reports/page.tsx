@@ -64,11 +64,13 @@ import {
   Webhook,
   MessageSquare,
   Bot,
-  MessagesSquare,
+  MessagesSquare, Table
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import { fmtDateTime } from '@/lib/displayTime'
+import { buildIIoTCsvSections, buildIIoTXlsxSheets } from '@/lib/iiotReportGenerator'
+import type { Sheet } from '@/lib/xlsx'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
 const inset = { background: '#0a0e1a', border: '1px solid #1e2433' }
@@ -413,6 +415,26 @@ function ReportsPageContent() {
 
   // Modals
   const [previewModalOpen, setPreviewModalOpen] = useState(false)
+  // Which of the SELECTED formats the preview is showing.
+  //
+  // The preview built its data with `format: selectedFormats[0]` and rendered
+  // one generic document layout, while the footer button said "Download Formal
+  // PDF & XLSX & CSV Report". Two of the three files were never previewed, and
+  // they are not restylings of the first — the CSV is titled sections of rows
+  // and the XLSX is a multi-sheet workbook with a different first sheet. An
+  // operator checking a report before sending it to an auditor was checking
+  // one document and shipping three.
+  const [previewFormat, setPreviewFormat] = useState<'PDF' | 'XLSX' | 'CSV'>('PDF')
+  const [previewCsv, setPreviewCsv] = useState<{ title: string; headers: string[]; rows: (string | number)[][] }[] | null>(null)
+  const [previewXlsx, setPreviewXlsx] = useState<Sheet[] | null>(null)
+  const [previewBuilding, setPreviewBuilding] = useState(false)
+
+  // Keep the tab on a format that is actually selected.
+  useEffect(() => {
+    if (!selectedFormats.includes(previewFormat)) setPreviewFormat(selectedFormats[0] ?? 'PDF')
+  }, [selectedFormats, previewFormat])
+
+
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false)
   const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
   const [historyModalSchedule, setHistoryModalSchedule] = useState<SchedRow | null>(null)
@@ -532,6 +554,44 @@ function ReportsPageContent() {
     })
     return () => { cancelled = true }
   }, [orgId, orgName, effectiveDays, selectedDomains, effectiveDomains, departments, generatorScope, selectedSite, activeSiteName, selectedDeptIds, selectedSections, selectedFormats, generatorFilteredDevices, customReportTitle, classification, aggregationInterval])
+
+  // Build the real document for the chosen tab, from the same builders the
+  // download path uses — so the preview is the file, not an impression of it.
+  useEffect(() => {
+    if (!previewModalOpen || !reportData || previewFormat === 'PDF') return
+    let cancelled = false
+    setPreviewBuilding(true)
+    // The same option shape the download path uses, so what is previewed and
+    // what is produced cannot drift.
+    const opts = {
+      orgId, orgName, days: effectiveDays,
+      title: customReportTitle.trim() || undefined,
+      selectedTypes: selectedSections, format: previewFormat,
+      devices: generatorFilteredDevices,
+      siteName: generatorScope === 'site' ? activeSiteName : undefined,
+      departmentName: selectedDeptIds.length === 1
+        ? departments.find((d) => d.id === selectedDeptIds[0])?.name
+        : selectedDeptIds.length > 1 ? `${selectedDeptIds.length} Departments Selected` : undefined,
+      classification,
+      aggregationInterval: AGGREGATION_RESOLUTIONS.find((r) => r.id === aggregationInterval)?.label,
+    }
+    ;(async () => {
+      try {
+        if (previewFormat === 'CSV') {
+          const { sections } = await buildIIoTCsvSections(opts, reportData)
+          if (!cancelled) setPreviewCsv(sections)
+        } else {
+          const sheets = await buildIIoTXlsxSheets(opts, reportData)
+          if (!cancelled) setPreviewXlsx(sheets)
+        }
+      } finally {
+        if (!cancelled) setPreviewBuilding(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [previewModalOpen, previewFormat, reportData, orgId, orgName, effectiveDays, selectedSections,
+      customReportTitle, classification, aggregationInterval, generatorFilteredDevices,
+      generatorScope, activeSiteName, selectedDeptIds, departments])
 
   // Cold-Chain Temperature Summary (MKT) is strictly for refrigeration/bloodBox assets.
   // Never show or apply it if user only selected transformers or automobile.
@@ -2844,9 +2904,14 @@ function ReportsPageContent() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/30">
-                  <ShieldCheck size={12} className="text-emerald-400" />
-                  <span>SHA-256 Verified</span>
+                {/* Not "SHA-256 Verified": at preview time no document exists,
+                    nothing has been hashed, and no verification has run.
+                    "Verified" states that a check was performed and passed. The
+                    digest is computed when the file is generated, and that is
+                    what this now says. */}
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-mono text-slate-400 bg-slate-500/10 border border-slate-500/30">
+                  <ShieldCheck size={12} className="text-slate-400" />
+                  <span>SHA-256 on export</span>
                 </div>
                 <span className="px-2.5 py-0.5 rounded text-[10px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30">
                   {classification}
@@ -2860,8 +2925,107 @@ function ReportsPageContent() {
               </div>
             </div>
 
+            {/* One tab per SELECTED format. The download button produces every
+                one of them, and they are different documents — the CSV is
+                titled sections of rows, the XLSX a multi-sheet workbook — so a
+                single preview could only ever represent one. */}
+            {selectedFormats.length > 1 && (
+              <div className="px-6 pt-3 pb-0 bg-[#0a0e1a] border-b border-slate-800 flex items-center gap-2">
+                {selectedFormats.map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setPreviewFormat(f)}
+                    className={clsx(
+                      'px-3 py-1.5 rounded-t-lg text-xs font-semibold border-b-2 transition-colors',
+                      previewFormat === f
+                        ? 'text-white border-indigo-500 bg-[#080c16]'
+                        : 'text-slate-400 border-transparent hover:text-white',
+                    )}
+                  >
+                    {f}
+                  </button>
+                ))}
+                <span className="ml-auto text-[10px] text-slate-500">
+                  Previewing {previewFormat} · all {selectedFormats.length} files are produced on download
+                </span>
+              </div>
+            )}
+
             {/* Body Preview */}
             <div className="p-6 overflow-y-auto space-y-6 flex-1 bg-[#080c16]">
+              {previewFormat === 'CSV' && (
+                <div className="space-y-3">
+                  {previewBuilding && <div className="text-xs text-slate-400">Building the CSV…</div>}
+                  {!previewBuilding && previewCsv?.map((sec) => (
+                    <div key={sec.title} className="rounded-xl border border-slate-800 overflow-hidden">
+                      <div className="px-3 py-2 bg-[#0d1117] text-[11px] font-mono text-indigo-300"># {sec.title}</div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px] font-mono">
+                          <thead>
+                            <tr className="bg-[#0a0e1a]">
+                              {sec.headers.map((h) => (
+                                <th key={h} className="px-3 py-1.5 text-left text-slate-400 font-semibold whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sec.rows.slice(0, 8).map((r, i) => (
+                              <tr key={i} className="border-t border-slate-800/60">
+                                {r.map((c, j) => <td key={j} className="px-3 py-1.5 text-slate-300 whitespace-nowrap">{String(c)}</td>)}
+                              </tr>
+                            ))}
+                            {sec.rows.length === 0 && (
+                              <tr><td className="px-3 py-2 text-slate-500 italic">(no rows in this period)</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      {sec.rows.length > 8 && (
+                        <div className="px-3 py-1.5 text-[10px] text-slate-500 bg-[#0d1117]">
+                          showing 8 of {sec.rows.length} rows — the file contains all of them
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {!previewBuilding && !previewCsv?.length && (
+                    <div className="text-xs text-slate-500 italic">No sections selected, so the CSV would be empty.</div>
+                  )}
+                </div>
+              )}
+
+              {previewFormat === 'XLSX' && (
+                <div className="space-y-3">
+                  {previewBuilding && <div className="text-xs text-slate-400">Building the workbook…</div>}
+                  {!previewBuilding && previewXlsx?.map((sheet) => (
+                    <div key={sheet.name} className="rounded-xl border border-slate-800 overflow-hidden">
+                      <div className="px-3 py-2 bg-[#0d1117] text-[11px] font-semibold text-emerald-300 flex items-center gap-2">
+                        <Table size={12} /> {sheet.name}
+                        <span className="ml-auto text-slate-500 font-normal">{sheet.rows.length} rows</span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px] font-mono">
+                          <tbody>
+                            {sheet.rows.slice(0, 8).map((r, i) => (
+                              <tr key={i} className="border-t border-slate-800/60">
+                                {(r as (string | number)[]).map((c, j) => (
+                                  <td key={j} className="px-3 py-1.5 text-slate-300 whitespace-nowrap">{String(c ?? '')}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {sheet.rows.length > 8 && (
+                        <div className="px-3 py-1.5 text-[10px] text-slate-500 bg-[#0d1117]">
+                          showing 8 of {sheet.rows.length} rows — the sheet contains all of them
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {previewFormat === 'PDF' && (<>
               {/* Document Header Card */}
               <div className="p-5 rounded-xl border border-slate-800 bg-[#0d1117] flex items-center justify-between">
                 <div className="space-y-1">
@@ -2874,7 +3038,7 @@ function ReportsPageContent() {
                     <span>·</span>
                     <span>Scope: <strong className="text-white">{generatorScope === 'all' ? 'All Assets' : generatorScope === 'department' ? 'By Department' : 'Specific Devices'}</strong></span>
                     <span>·</span>
-                    <span className="text-emerald-400 font-mono">Immutable Integrity: SHA-256</span>
+                    <span className="text-slate-400 font-mono">Integrity: SHA-256 stamped at export</span>
                   </div>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-lg">
@@ -3145,6 +3309,7 @@ function ReportsPageContent() {
                   </div>
                 </div>
               )}
+              </>)}
             </div>
 
             {/* Footer */}

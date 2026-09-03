@@ -771,7 +771,8 @@ export async function exportIIoTPDF(
 /**
  * Generate and trigger download of Multi-Sheet Excel Workbook
  */
-export async function exportIIoTXLSX(
+/** The XLSX workbook, built but not downloaded — see buildIIoTCsvSections. */
+export async function buildIIoTXlsxSheets(
   opts: IIoTReportOptions,
   data: { metrics: IIoTMetricSummary; summaries: DeviceTelemetrySummary[]; alarms: AlarmLogItem[] }
 ) {
@@ -900,14 +901,30 @@ export async function exportIIoTXLSX(
     })
   }
 
+  return sheets.length ? sheets : [{ name: 'Empty', rows: [['No sections selected']] }]
+}
+
+export async function exportIIoTXLSX(
+  opts: IIoTReportOptions,
+  data: { metrics: IIoTMetricSummary; summaries: DeviceTelemetrySummary[]; alarms: AlarmLogItem[] }
+) {
+  const sheets = await buildIIoTXlsxSheets(opts, data)
   const filename = `${opts.orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_Operations_Report_${opts.days}d_${Date.now()}.xlsx`
-  downloadXLSX(filename, sheets.length ? sheets : [{ name: 'Empty', rows: [['No sections selected']] }])
+  downloadXLSX(filename, sheets)
 }
 
 /**
  * Generate and trigger download of Multi-Section CSV
  */
-export async function exportIIoTCSV(
+/**
+ * The CSV document, built but not downloaded.
+ *
+ * Split out so the Preview modal can show the REAL sections rather than a
+ * stand-in: previewing one generic layout while the button promises PDF + XLSX
+ * + CSV told the operator nothing about two of the three files, and those two
+ * are structurally different documents, not restylings of the first.
+ */
+export async function buildIIoTCsvSections(
   opts: IIoTReportOptions,
   data: { metrics: IIoTMetricSummary; summaries: DeviceTelemetrySummary[]; alarms: AlarmLogItem[] }
 ) {
@@ -1009,8 +1026,7 @@ export async function exportIIoTCSV(
     })
   }
 
-  const filename = `${opts.orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_Operations_Report_${opts.days}d_${Date.now()}.csv`
-  downloadCSVSections(filename, sections, [
+  return { sections, meta: [
     `# Document Integrity (SHA-256): sha256:${docHash}`,
     `# Security Classification: ${opts.classification || 'INTERNAL USE ONLY'}`,
     `# Aggregation Interval: ${opts.aggregationInterval || '15-Minute Standard Rollup'}`,
@@ -1029,5 +1045,14 @@ export async function exportIIoTCSV(
     opts.domain && opts.domain !== 'all' ? `Asset Domain: ${opts.domain}` : 'Asset Domain: All Fleet Domains',
     `Reporting Window: Last ${opts.days} Days`,
     `Generated At: ${fmtDateTime(new Date())} (${DISPLAY_TZ_LABEL})`,
-  ])
+  ] }
+}
+
+export async function exportIIoTCSV(
+  opts: IIoTReportOptions,
+  data: { metrics: IIoTMetricSummary; summaries: DeviceTelemetrySummary[]; alarms: AlarmLogItem[] }
+) {
+  const { sections, meta } = await buildIIoTCsvSections(opts, data)
+  const filename = `${opts.orgName.replace(/[^a-zA-Z0-9_-]+/g, '_')}_Operations_Report_${opts.days}d_${Date.now()}.csv`
+  downloadCSVSections(filename, sections, meta)
 }

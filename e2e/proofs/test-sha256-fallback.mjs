@@ -178,5 +178,50 @@ for (const [file, label] of [
     'download() and send() must each take one snapshot and use it for both files')
 }
 
+// ── 6. The shared table exporters stamp a digest too ─────────────────────
+// lib/exportFile.ts backs thirteen call sites — the alarm console, node event
+// log, parameter history, fleet risk matrix and others. Those files leave the
+// platform (an alarm log attached to an incident report, a parameter history
+// sent to a manufacturer) and carried no integrity hash at all, while the PdM
+// dossier and the per-device export both do.
+//
+// It uses the SYNCHRONOUS sha256Text rather than the async sha256, which is
+// what let this happen without converting four signatures and thirteen call
+// sites to async.
+{
+  const ex = readFileSync(new URL('frontend-next/src/lib/exportFile.ts', root), 'utf8')
+  const code = ex.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  t('exportFile uses the synchronous digest so no signature had to change',
+    /import \{ sha256Text \} from '@\/lib\/sha256'/.test(ex) &&
+    !/await sha256\(/.test(code),
+    'these helpers are called synchronously from thirteen places')
+
+  t('one digest definition is shared by the CSV and PDF paths',
+    /function digestOf\(headers: string\[\], rows: unknown\[\]\[\]\): string/.test(code),
+    'exporting one table in both formats should yield the same hash')
+
+  t('downloadCSV stamps a digest', /csvHashTrailer\(digestOf\(headers, rows\)\)/.test(code))
+  t('downloadCSVSections stamps a digest', /# Snapshot SHA-256: \$\{sha256Text\(/.test(code))
+  t('printTablePDF stamps a digest', /Snapshot SHA-256: \$\{escapeHtml\(digestOf\(headers, rows\)\)\}/.test(code))
+
+  // The digest is only useful if a reader can reproduce it, which means the
+  // document has to say what it covers.
+  t('each document states what the digest covers',
+    /Covers the header row and every data row above/.test(code) &&
+    /Covers every section header and data row below/.test(code) &&
+    /Covers the header row and every data row in the table below/.test(code))
+
+  // downloadCSV has always put the header row on line 1; prepending `#` lines
+  // would shift it down a row in Excel for every existing caller.
+  t('downloadCSV keeps the header row first and appends the digest',
+    /const out = \[body, \.\.\.csvHashTrailer/.test(code),
+    'a leading comment block would change what thirteen callers parse')
+
+  // downloadText carries JSON; embedding a hash of the payload inside the
+  // payload would change the document it describes.
+  t('downloadText is left alone', !/downloadText[\s\S]{0,300}?sha256Text/.test(code))
+}
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)

@@ -98,5 +98,50 @@ t('the old early-return on a null response is gone',
     'a NULL next_run_at with no NOW() default would sit unfired forever')
 }
 
+// ── 6. Preview covers every format the download will produce ─────────────
+// The preview built its data with `format: selectedFormats[0]` and rendered one
+// generic document, while the footer button read "Download Formal PDF & XLSX &
+// CSV Report". Two of the three files were never shown, and they are not
+// restylings of the first: exportIIoTCSV emits titled sections of rows and
+// exportIIoTXLSX emits a multi-sheet workbook whose first sheet is a key/value
+// cover page. An operator checking a report before sending it to an auditor was
+// checking one document and shipping three.
+{
+  const gen = readFileSync(new URL('frontend-next/src/lib/iiotReportGenerator.ts', root), 'utf8')
+
+  // The builders must be separable from the download, or the preview can only
+  // ever be an impression of the file rather than the file.
+  t('the CSV document can be built without downloading it',
+    /export async function buildIIoTCsvSections\(/.test(gen))
+  t('the XLSX workbook can be built without downloading it',
+    /export async function buildIIoTXlsxSheets\(/.test(gen))
+  t('the download path still goes through those same builders',
+    /const \{ sections, meta \} = await buildIIoTCsvSections\(opts, data\)/.test(gen) &&
+    /const sheets = await buildIIoTXlsxSheets\(opts, data\)/.test(gen),
+    'a preview built by different code than the export is not a preview')
+
+  t('the preview has a tab per selected format',
+    /selectedFormats\.length > 1 && \(/.test(src) && /setPreviewFormat\(f\)/.test(src))
+  t('the preview renders the real CSV sections',
+    /buildIIoTCsvSections\(opts, reportData\)/.test(src))
+  t('the preview renders the real XLSX sheets',
+    /buildIIoTXlsxSheets\(opts, reportData\)/.test(src))
+  t('the tab cannot point at a format that is not selected',
+    /if \(!selectedFormats\.includes\(previewFormat\)\) setPreviewFormat/.test(src))
+  t('the preview states that every selected format is produced on download',
+    /all \{selectedFormats\.length\} files are produced on download/.test(src))
+  t('a truncated preview says the file still contains every row',
+    /the file contains all of them/.test(src) && /the sheet contains all of them/.test(src),
+    'showing 8 rows without saying so reads as "this is the whole export"')
+}
+
+// ── 7. The preview does not claim a verification it has not performed ────
+// At preview time no document exists, nothing has been hashed, and no check has
+// run. "SHA-256 Verified" states that one was performed and passed.
+t('the preview does not badge itself "SHA-256 Verified"',
+  !/SHA-256 Verified/.test(src))
+t('it says when the digest is actually computed instead',
+  /SHA-256 on export/.test(src) && /stamped at export/.test(src))
+
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail > 0 ? 1 : 0)
