@@ -6,6 +6,7 @@ import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import type { SensorHost } from '@/types/fleet'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
+import LocalOnlyNotice from '@/components/transformer/LocalOnlyNotice'
 import { api, useIsLive } from '@/lib/api'
 import { useAppStore } from '@/lib/store'
 import { healthFromValues } from '@/lib/alarmParams'
@@ -31,6 +32,20 @@ interface FleetTransformerRisk {
   budgetEstUsd: number
   fiscalYear: string
   status: 'CRITICAL' | 'WARNING' | 'NORMAL'
+  /**
+   * Where each axis came from. The matrix is read as an ISO 55000 criticality
+   * assessment, so how a score was arrived at matters as much as the score.
+   *
+   *   pofBasis 'health'    — banded from this asset's health index
+   *            'assumed'   — the asset publishes no health index and 95 was
+   *                          substituted, which lands it at the BEST PoF
+   *   cofBasis 'operator'  — a person set the consequence for this asset
+   *            'capacity'  — banded from nameplate kVA as a stand-in
+   *            'assumed'   — capacity unknown; a mid CoF was substituted, which
+   *                          scores WORSE than a known small transformer
+   */
+  pofBasis: 'health' | 'assumed'
+  cofBasis: 'operator' | 'capacity' | 'assumed'
 }
 
 const FALLBACK_DATA: FleetTransformerRisk[] = [
@@ -46,6 +61,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Emergency Unit Replacement (New 30MVA Core)',
     budgetEstUsd: 185000,
     fiscalYear: 'FY2026',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'CRITICAL',
   },
   {
@@ -60,6 +77,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Complete Core Overhaul & Rewinding',
     budgetEstUsd: 85000,
     fiscalYear: 'FY2027',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'CRITICAL',
   },
   {
@@ -74,6 +93,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Online Vacuum Dehydration & Bushing Retrofit',
     budgetEstUsd: 14000,
     fiscalYear: 'FY2026',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'WARNING',
   },
   {
@@ -88,6 +109,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Full Oil Reclamation & Tap Changer Service',
     budgetEstUsd: 22000,
     fiscalYear: 'FY2027',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'WARNING',
   },
   {
@@ -102,6 +125,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Radiator Cleaning & Gasket Replacement',
     budgetEstUsd: 8500,
     fiscalYear: 'FY2028',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'WARNING',
   },
   {
@@ -116,6 +141,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'De-sludging & Silica Gel Regeneration',
     budgetEstUsd: 6200,
     fiscalYear: 'FY2028',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'NORMAL',
   },
   {
@@ -130,6 +157,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Routine Condition Assessment & Oil Sampling',
     budgetEstUsd: 2500,
     fiscalYear: 'FY2029',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'NORMAL',
   },
   {
@@ -144,6 +173,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Routine Condition Assessment & Oil Sampling',
     budgetEstUsd: 2500,
     fiscalYear: 'FY2029',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'NORMAL',
   },
   {
@@ -158,6 +189,8 @@ const FALLBACK_DATA: FleetTransformerRisk[] = [
     capexAction: 'Routine Condition Assessment & Oil Sampling',
     budgetEstUsd: 2500,
     fiscalYear: 'FY2030',
+    pofBasis: 'health' as const,
+    cofBasis: 'capacity' as const,
     status: 'NORMAL',
   },
 ]
@@ -180,17 +213,34 @@ const CAPEX_MATRIX: Record<number, { action: string; budgetUsd: number; targetFy
 
 function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
   const tHost = host as unknown as { healthIndex?: number; kva?: number }
+  // Both defaults change the verdict, in opposite directions, and neither was
+  // visible on screen: a missing health index scored the asset at the BEST PoF
+  // (95 → band 1), while a missing capacity scored it at CoF 3 — worse than a
+  // known small transformer at CoF 2. So an asset the platform knows nothing
+  // about could outrank one it has measured. The substitutions stay (the matrix
+  // has to place every asset somewhere) but they are now labelled.
+  const hasHealth = typeof tHost.healthIndex === 'number'
+  const hasKva = typeof tHost.kva === 'number' && tHost.kva > 0
   const hi = tHost.healthIndex ?? 95
   const kva = tHost.kva ?? 0
   const status = host.status === 'CRITICAL' ? 'CRITICAL' : host.status === 'WARNING' ? 'WARNING' : 'NORMAL'
 
-  // PoF derived from Health Index (1-5 scale)
+  // PoF banded from Health Index (1-5).
   const pof = hi <= 50 ? 5 : hi <= 65 ? 4 : hi <= 75 ? 3 : hi <= 85 ? 2 : 1
 
-  // CoF derived from capacity / kVA rating
+  // CoF banded from nameplate kVA — a PROXY for consequence, not a measure of
+  // it. ISO 55000 criticality is about what failing costs the business: what it
+  // feeds, whether there is redundancy, what an outage is worth. A big
+  // transformer on a spare-backed bus can matter less than a small one feeding
+  // a single line. That is what the Set Criticality override exists for, and
+  // until someone sets it this number is an opening guess.
   const cof = kva >= 3000 ? 5 : kva >= 2000 ? 4 : kva >= 1000 ? 3 : kva > 0 ? 2 : 3
 
-  // RUL estimated linearly from health index (50 years max design life)
+  // A linear rescale of the health index onto a 25-year span — NOT a computed
+  // remaining life. The previous comment said "50 years max design life" while
+  // the code multiplied by 25, so the two disagreed about the horizon by a
+  // factor of two. Insulation ageing is exponential (see InsulationAgingRul,
+  // which does the Arrhenius work); this is an ordering aid for the table.
   const rulYears = parseFloat(Math.max(0.5, (hi / 100) * 25).toFixed(1))
 
   const riskScore = pof * cof
@@ -211,6 +261,8 @@ function deriveRisk(host: SensorHost, siteName: string): FleetTransformerRisk {
     budgetEstUsd,
     fiscalYear,
     status,
+    pofBasis: hasHealth ? 'health' : 'assumed',
+    cofBasis: hasKva ? 'capacity' : 'assumed',
   }
 }
 
@@ -330,6 +382,7 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
         budgetEstUsd,
         fiscalYear,
         status,
+        cofBasis: 'operator' as const,
       }
     }).sort((a, b) => (b.pof * b.cof) - (a.pof * a.cof))
   }, [scopedHosts, sites, hasRealData, isFromDb, critOverrides])
@@ -432,6 +485,10 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
           this did — leaves an unqualified "CapEx Investment Planning" heading
           over a budget total that is a bucket count times a made-up constant.
           That reads as more authoritative than the fully-fake version did. */}
+      {/* Outside the hasRealData branch: the criticality overrides are stored
+          in this browser whether or not the fleet list is real, and they are
+          the input to the CapEx budget shown below. */}
+      <LocalOnlyNotice what="ระดับความสำคัญ (CoF) ที่ตั้งเอง" />
       {!hasRealData ? (
         <DemoDataBanner
           title="หน้าจอนี้ไม่ได้ดึงข้อมูลจากฟลีทจริงขององค์กรคุณ"
@@ -709,8 +766,27 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
                       <span className={item.healthIndex < 60 ? 'text-rose-400' : item.healthIndex < 80 ? 'text-amber-400' : 'text-emerald-400'}>
                         {item.healthIndex}%
                       </span>
+                      {/* An asset that publishes no health index was scored at
+                          95 — the BEST probability-of-failure band — and looked
+                          identical to one measured at 95. */}
+                      {item.pofBasis === 'assumed' && (
+                        <span
+                          className="ml-1 text-[9px] px-1 rounded bg-slate-700 text-slate-300 font-semibold"
+                          title="This asset reports no health index. 95 was assumed, which places it in the best PoF band — it is not a measurement."
+                        >
+                          assumed
+                        </span>
+                      )}
                     </td>
-                    <td className="py-2 px-2 text-slate-300">{item.rulYears} yrs</td>
+                    <td className="py-2 px-2 text-slate-300">
+                      {item.rulYears} yrs
+                      <span
+                        className="ml-1 text-[9px] text-slate-500"
+                        title="A linear rescale of the health index onto 25 years, for ordering the table. Not an ageing calculation — the Insulation Aging studio does the Arrhenius work."
+                      >
+                        ≈
+                      </span>
+                    </td>
                     <td className="py-2 px-3 font-sans text-slate-200 text-[10px]">
                       {item.capexAction}
                     </td>
@@ -736,6 +812,31 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
                   <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-900/60 text-indigo-200 font-mono">
                     CoF: {selectedAsset.cof}/5 · {selectedAsset.loadCriticality}
                   </span>
+                  {/* Consequence of Failure is the ISO 55000 half of this
+                      matrix, and until someone sets it the number is banded
+                      from nameplate kVA — a proxy for consequence, not a
+                      measure of it. A large transformer on a spare-backed bus
+                      can matter less than a small one feeding a single line.
+                      Saying which of the two you are looking at is the
+                      difference between a criticality assessment and a
+                      capacity chart. */}
+                  {selectedAsset.cofBasis === 'operator' ? (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-300 font-semibold"
+                      title="A person set this consequence rating for this asset."
+                    >
+                      set by operator
+                    </span>
+                  ) : (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded bg-amber-900/50 text-amber-300 font-semibold"
+                      title={selectedAsset.cofBasis === 'assumed'
+                        ? 'This asset has no nameplate capacity recorded, so a mid consequence rating was assumed — which scores it WORSE than a known small transformer. Set the criticality to replace it.'
+                        : 'Derived from nameplate kVA as a stand-in. ISO 55000 consequence is about what failing costs the business — what it feeds, whether there is redundancy — which capacity does not capture. Set the criticality to replace it.'}
+                    >
+                      {selectedAsset.cofBasis === 'assumed' ? 'assumed — capacity unknown' : 'auto: kVA proxy'}
+                    </span>
+                  )}
                   <button
                     onClick={() => {
                       setCritForm({

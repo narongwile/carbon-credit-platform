@@ -137,8 +137,32 @@ t('BessCoOptimization names its tariff/FX/emission-factor assumptions',
     const body = readFileSync(new URL(file, dir), 'utf8');
     const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const persistsLocally = /localStorage\.setItem/.test(code);
-    const callsApi = /\bapi\.[a-zA-Z]+\(/.test(code);
-    if (!persistsLocally || callsApi) continue;
+    // Skip only when the operator's input has an API WRITE behind it — not
+    // when the file happens to call an API at all.
+    //
+    // The old rule was `callsApi → skip`, and FleetRiskMatrix walked straight
+    // through it: it calls api.fleet and api.sites to READ the fleet, while the
+    // criticality overrides an asset manager sets — the CoF half of the ISO
+    // 55000 matrix, and the input to the CapEx budget the panel prints — go to
+    // localStorage and nowhere else. Reading from a server says nothing about
+    // where what you typed went.
+    const writesToApi = /\bapi\.(put|post|save|create|update|delete|ack|send)[A-Za-z]*\(/.test(code);
+    if (!persistsLocally || writesToApi) continue;
+
+    // Per-VIEWER layout is not an engineering record, and localStorage is the
+    // right home for it: nobody expects the order they dragged their cards
+    // into to follow them to a colleague's screen, and no verdict is computed
+    // from it. Listing the exempt keys explicitly rather than guessing from
+    // their names — a heuristic would quietly exempt a real record the day
+    // someone names one `..._config`.
+    const PREFERENCE_KEYS = [
+      'sensor_card_order_',   // the order the operator dragged the cards into
+      'pinned_trend_slots_',  // which two parameters are pinned to a trend slot
+    ];
+    const writes = code.match(/localStorage\.setItem\(\s*[`'"]?([A-Za-z0-9_]+)/g) || [];
+    const onlyPreferences = writes.length > 0 &&
+      writes.every((w) => PREFERENCE_KEYS.some((k) => w.includes(k)));
+    if (onlyPreferences) continue;
     t(`${file} discloses that what the operator saves stays in this browser`,
       /<LocalOnlyNotice/.test(code),
       'it writes operator input to localStorage and makes no API call');
@@ -165,6 +189,61 @@ t('BessCoOptimization names its tariff/FX/emission-factor assumptions',
     !/per factory test record/.test(code));
   t('its audit entry says the change is browser-local, not applied for others',
     /browser-local/.test(code) && /Stored in this browser only/.test(code));
+}
+
+// ── 9. The risk matrix must show how each axis was reached ───────────────
+// "Fleet Risk Matrix & Criticality Index (ISO 55000)" places every asset on a
+// PoF x CoF grid and prints a CapEx budget from it. Neither axis said what it
+// was computed from, and both substituted values for missing inputs — in
+// opposite directions:
+//
+//   healthIndex ?? 95   a device that publishes no health index scored the
+//                       BEST probability-of-failure band, indistinguishable
+//                       from one measured at 95;
+//   kva > 0 ? 2 : 3     a device with no nameplate capacity scored CoF 3,
+//                       WORSE than a known small transformer at CoF 2. An
+//                       asset the platform knows nothing about could outrank
+//                       one it has measured.
+//
+// And CoF itself is banded from kVA, which is a proxy: ISO 55000 consequence
+// is what failing costs the business — what the asset feeds, whether there is
+// redundancy — not its nameplate rating. The product already knows this, which
+// is why a Set Criticality override exists; what was missing was any sign of
+// which assets still carry the proxy.
+{
+  const fleet = readFileSync(new URL('FleetRiskMatrix.tsx', DIR), 'utf8');
+  const code = fleet.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*(\/\/|\{\/\*).*$/gm, '');
+
+  t('each asset records how its PoF and CoF were reached',
+    /pofBasis: 'health' \| 'assumed'/.test(code) &&
+    /cofBasis: 'operator' \| 'capacity' \| 'assumed'/.test(code));
+  t('a substituted health index is detected rather than silently defaulted',
+    /const hasHealth = typeof tHost\.healthIndex === 'number'/.test(code));
+  t('a missing nameplate capacity is detected too',
+    /const hasKva = typeof tHost\.kva === 'number' && tHost\.kva > 0/.test(code));
+
+  t('an assumed health index is marked in the table',
+    /item\.pofBasis === 'assumed' &&/.test(code) &&
+    /95 was assumed, which places it in the best PoF band/.test(fleet));
+  t('an operator-set consequence is distinguished from the kVA proxy',
+    /selectedAsset\.cofBasis === 'operator' \?/.test(code) &&
+    /set by operator/.test(code) && /auto: kVA proxy/.test(code));
+  t('an unknown-capacity consequence says it scores worse than a known one',
+    /assumed — capacity unknown/.test(code));
+  t('setting the criticality marks the asset as operator-rated',
+    /cofBasis: 'operator' as const/.test(code));
+
+  // RUL: the comment said a 50-year design life while the code used 25.
+  // Negative half checked against comment-STRIPPED source: the fix deliberately
+  // quotes the old "50 years max design life" comment while explaining that it
+  // disagreed with the code, so matching raw text would fail on the explanation.
+  t('the RUL rescale is labelled and its horizon matches the code',
+    /linear rescale of the health index onto a 25-year span/.test(fleet) &&
+    !/50 years max design life/.test(code));
+
+  // The overrides drive the CapEx total and never leave the browser.
+  t('FleetRiskMatrix discloses that criticality overrides are browser-local',
+    /<LocalOnlyNotice/.test(code));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
