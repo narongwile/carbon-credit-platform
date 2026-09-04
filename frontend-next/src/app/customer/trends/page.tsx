@@ -686,8 +686,8 @@ export default function CustomerTrendsPage() {
                 {/* Alarm Thresholds */}
                 {showThresholds && param && (
                   <>
-                    <ReferenceLine y={param.warn} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Warn: ${param.warn}`, fill: '#f59e0b', fontSize: 10, position: 'insideBottomRight' }} />
-                    <ReferenceLine y={param.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Crit: ${param.critical}`, fill: '#ef4444', fontSize: 10, position: 'insideTopRight' }} />
+                    <ReferenceLine yAxisId="left" y={param.warn} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Warn: ${param.warn}`, fill: '#f59e0b', fontSize: 10, position: 'insideBottomRight' }} />
+                    <ReferenceLine yAxisId="left" y={param.critical} stroke="#ef4444" strokeDasharray="4 4" strokeWidth={1} label={{ value: `Crit: ${param.critical}`, fill: '#ef4444', fontSize: 10, position: 'insideTopRight' }} />
                   </>
                 )}
                 {/* Device Lines */}

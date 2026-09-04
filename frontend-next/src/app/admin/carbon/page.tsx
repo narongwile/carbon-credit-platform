@@ -100,9 +100,9 @@ export default function CarbonPage() {
   const [dieselFuelLiters, setDieselFuelLiters] = useState<number>(920) // Liters of backup genset diesel
 
   // Scope 3 inputs
-  const [transitTrips, setTransitTrips] = useState<number>(142) // BloodBox shipments
-  const [avgTransitKm, setAvgTransitKm] = useState<number>(45) // km per trip
-  const [fleetLogisticsKm, setFleetLogisticsKm] = useState<number>(8500) // automobile fleet km
+  const [transitTrips, setTransitTrips] = useState<number>(142) // Substation field service dispatches
+  const [avgTransitKm, setAvgTransitKm] = useState<number>(45) // km per dispatch trip
+  const [fleetLogisticsKm, setFleetLogisticsKm] = useState<number>(8500) // service vehicle fleet km
 
   // Effective grid emission factor (kgCO2e/kWh)
   const effectiveGridEf = useMemo(() => {
@@ -131,23 +131,11 @@ export default function CarbonPage() {
       let activityDesc = ''
       let scopeCategory = 'Scope 2 (Grid)'
 
-      if (domain === 'transformer') {
-        const kva = (d as any).kva || 1250
-        const loadFactor = 0.68
-        const pf = 0.85
-        periodKwh = Math.round(kva * pf * loadFactor * 24 * periodDays)
-        activityDesc = `${kva} kVA Substation (${(loadFactor * 100).toFixed(0)}% avg load)`
-      } else if (domain === 'carbonNode') {
-        periodKwh = Math.round(1.45 * 24 * periodDays)
-        activityDesc = `Commercial Chiller (${(periodDays * 24).toLocaleString()} hrs run)`
-      } else if (domain === 'bloodBox') {
-        periodKwh = Math.round(0.22 * periodDays)
-        activityDesc = `Active Cold Chain Box (${periodDays} days monitored)`
-        scopeCategory = 'Scope 2 / 3'
-      } else if (domain === 'automobile') {
-        periodKwh = Math.round(42 * periodDays)
-        activityDesc = `EV Fast Charging Telemetry (${periodDays} days)`
-      }
+      const kva = (d as any).kva || 1250
+      const loadFactor = 0.68
+      const pf = 0.85
+      periodKwh = Math.round(kva * pf * loadFactor * 24 * periodDays)
+      activityDesc = `${kva} kVA Substation Transformer (${(loadFactor * 100).toFixed(0)}% avg load)`
 
       const emissionsTco2e = Number(((periodKwh * effectiveGridEf) / 1000).toFixed(2))
 
@@ -422,7 +410,7 @@ export default function CarbonPage() {
         {/* ISO 14064-1 & GHG Protocol Activity Data Disclosure */}
         <DemoDataBanner
           title="Emissions Accounting Methodology & Unmeasured Direct Source Disclosure"
-          detail="Scope 2 electricity emissions are calculated by multiplying active IoT device energy throughput by regional Grid Emission Factors. Scope 1 (SF₆ switchgear fugitive gas, backup diesel) and Scope 3 (cold-chain transits, fleet logistics) represent activity-data engineering estimates rather than continuous stack emissions monitoring (CEMS). Official reporting under CDP, SBTi, or ISO 14064-1 requires third-party verification (ISO 14064-3) of corporate activity data."
+          detail="Scope 2 electricity emissions are calculated by multiplying active IoT device energy throughput by regional Grid Emission Factors. Scope 1 (SF₆ switchgear fugitive gas, backup diesel) and Scope 3 (substation field service dispatches, maintenance fleet logistics) represent activity-data engineering estimates rather than continuous stack emissions monitoring (CEMS). Official reporting under CDP, SBTi, or ISO 14064-1 requires third-party verification (ISO 14064-3) of corporate activity data."
         />
 
         {/* Compliant Status Header */}
@@ -604,7 +592,7 @@ export default function CarbonPage() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[11px] text-slate-400">BloodBOX Transits</label>
+                    <label className="text-[11px] text-slate-400">Service Dispatches</label>
                     <input
                       type="number"
                       value={transitTrips}
@@ -716,7 +704,7 @@ export default function CarbonPage() {
                       </div>
                       <div>
                         <h3 className="font-semibold text-white">Scope 3 (Value Chain)</h3>
-                        <p className="text-[11px] text-slate-400">Cold-Chain Transit &amp; Fleet Logistics</p>
+                        <p className="text-[11px] text-slate-400">Substation Maintenance &amp; Logistics Fleet</p>
                       </div>
                     </div>
                   </div>
@@ -727,13 +715,13 @@ export default function CarbonPage() {
 
                 <div className="space-y-1.5 pt-3 border-t border-slate-800/80 text-xs">
                   <div className="flex justify-between items-center text-slate-400">
-                    <span>BloodBOX Transits ({transitTrips} trips):</span>
+                    <span>Field Service Dispatches ({transitTrips} trips):</span>
                     <span className="font-mono text-amber-300">
                       {(((transitTrips * avgTransitKm * 0.21) / 1000) * periodYearFraction).toFixed(2)} tCO₂e
                     </span>
                   </div>
                   <div className="flex justify-between items-center text-slate-400">
-                    <span>Automobile Logistics ({fleetLogisticsKm.toLocaleString()} km):</span>
+                    <span>Maintenance Fleet Logistics ({fleetLogisticsKm.toLocaleString()} km):</span>
                     <span className="font-mono text-amber-300">
                       {(((fleetLogisticsKm * 0.165) / 1000) * periodYearFraction).toFixed(2)} tCO₂e
                     </span>
@@ -805,11 +793,8 @@ export default function CarbonPage() {
                       onChange={(e) => setDomainFilter(e.target.value)}
                       className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white"
                     >
-                      <option value="all">All Domains ({assetInventory.length})</option>
-                      <option value="transformer">Transformers</option>
-                      <option value="carbonNode">Refrigeration</option>
-                      <option value="bloodBox">Cold-Chain Boxes</option>
-                      <option value="automobile">Automobile Fleet</option>
+                      <option value="all">All Transformers ({assetInventory.length})</option>
+                      <option value="transformer">Substation Transformers</option>
                     </select>
                   </div>
                 </div>
@@ -1063,9 +1048,9 @@ export default function CarbonPage() {
                 <div className="p-4 rounded-lg border border-emerald-500/20 bg-emerald-500/5 flex gap-3.5">
                   <div className="mt-0.5"><CheckCircle className="w-5 h-5 text-emerald-400" /></div>
                   <div className="space-y-1">
-                    <h4 className="text-xs font-bold text-emerald-300">Cold-Chain Thermal Pre-Chilling</h4>
+                    <h4 className="text-xs font-bold text-emerald-300">BESS Peak Shaving &amp; Transformer Pre-Cooling</h4>
                     <p className="text-xs text-slate-400">
-                      Lower chiller setpoint by 2°C between 11:00 and 14:00 using solar power; allow thermal inertia to coast through 18:00–21:00 peak hours without compressor cycling.
+                      Pre-cool radiator fan banks and charge co-located BESS during low-carbon solar hours (11:00–14:00); discharge battery to reduce transformer thermal loading during 18:00–21:00 peak grid hours.
                     </p>
                   </div>
                 </div>
@@ -1073,9 +1058,9 @@ export default function CarbonPage() {
                 <div className="p-4 rounded-lg border border-indigo-500/20 bg-indigo-500/5 flex gap-3.5">
                   <div className="mt-0.5"><BatteryCharging className="w-5 h-5 text-indigo-400" /></div>
                   <div className="space-y-1">
-                    <h4 className="text-xs font-bold text-indigo-300">Smart EV Fleet Overnight Interlock</h4>
+                    <h4 className="text-xs font-bold text-indigo-300">OLTC Tap Position &amp; Transmission Optimization</h4>
                     <p className="text-xs text-slate-400">
-                      Configure downlink commands on automobile charging points to gate high-amperage charging until after 22:00, preventing peak grid surcharge.
+                      Optimize OLTC tap changer settings to minimize reactive power circulation and I²R winding losses during evening peak grid carbon intensity hours.
                     </p>
                   </div>
                 </div>
