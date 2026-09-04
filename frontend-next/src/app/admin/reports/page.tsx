@@ -68,6 +68,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import Modal from '@/components/ui/Modal'
 import { fmtDateTime } from '@/lib/displayTime'
 import { buildIIoTCsvSections, buildIIoTXlsxSheets } from '@/lib/iiotReportGenerator'
 import type { Sheet } from '@/lib/xlsx'
@@ -1882,14 +1883,20 @@ function ReportsPageContent() {
       {/* MODAL 1: SCHEDULE BUILDER & SIMULATOR MODAL                               */}
       {/* ========================================================================= */}
       {scheduleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <Modal
+          open
+          onClose={() => setScheduleModalOpen(false)}
+          labelledBy="sched-modal-title"
+          overlayClassName="bg-black/75"
+          className="w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95"
+        >
+          <>
             {/* Modal Header */}
             <div className="px-6 py-4 border-b border-slate-800 bg-[#0a0e1a] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <CalendarClock size={18} className="text-indigo-400" />
                 <div>
-                  <h3 className="text-sm font-bold text-white">
+                  <h3 id="sched-modal-title" className="text-sm font-bold text-white">
                     {editingScheduleId ? 'Edit Automated Sequence' : 'Create New Automated Sequence'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
@@ -2749,21 +2756,27 @@ function ReportsPageContent() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
+          </>
+        </Modal>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL 2: EXECUTION & DISPATCH AUDIT LOG MODAL                             */}
       {/* ========================================================================= */}
       {historyModalSchedule && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-2xl rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <Modal
+          open
+          onClose={() => setHistoryModalSchedule(null)}
+          labelledBy="sched-history-title"
+          overlayClassName="bg-black/75"
+          className="w-full max-w-2xl rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95"
+        >
+          <>
             <div className="px-6 py-4 border-b border-slate-800 bg-[#0a0e1a] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <History size={18} className="text-indigo-400" />
                 <div>
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                  <h3 id="sched-history-title" className="text-sm font-bold text-white uppercase tracking-wider">
                     Execution &amp; Dispatch History
                   </h3>
                   <p className="text-[11px] text-slate-400 font-mono">
@@ -2840,22 +2853,28 @@ function ReportsPageContent() {
                 Close History
               </button>
             </div>
-          </div>
-        </div>
+          </>
+        </Modal>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL 3: DELETE CONFIRMATION MODAL                                        */}
       {/* ========================================================================= */}
       {deleteConfirmSchedule && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl p-6 space-y-4 border border-rose-900/50 bg-[#0d1117] shadow-2xl animate-in fade-in zoom-in-95">
+        <Modal
+          open
+          onClose={() => setDeleteConfirmSchedule(null)}
+          labelledBy="sched-delete-title"
+          overlayClassName="bg-black/75"
+          className="w-full max-w-md rounded-2xl p-6 border border-rose-900/50 bg-[#0d1117] shadow-2xl animate-in fade-in zoom-in-95"
+        >
+          <div className="space-y-4">
             <div className="flex items-center gap-3 text-rose-400">
               <div className="p-2.5 rounded-full bg-rose-500/10 border border-rose-500/20">
                 <AlertTriangle size={20} />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-white">Delete Automated Sequence?</h3>
+                <h3 id="sched-delete-title" className="text-sm font-bold text-white">Delete Automated Sequence?</h3>
                 <p className="text-xs text-slate-400">This action cannot be undone.</p>
               </div>
             </div>
@@ -2881,21 +2900,27 @@ function ReportsPageContent() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL 4: DOCUMENT PREVIEW MODAL                                           */}
       {/* ========================================================================= */}
       {previewModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+        <Modal
+          open
+          onClose={() => setPreviewModalOpen(false)}
+          labelledBy="report-preview-title"
+          overlayClassName="bg-black/75"
+          className="w-full max-w-4xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95"
+        >
+          <>
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-800 bg-[#0a0e1a] flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <FileText size={18} className="text-indigo-400" />
                 <div>
-                  <h3 className="text-sm font-bold text-white">
+                  <h3 id="report-preview-title" className="text-sm font-bold text-white">
                     {customReportTitle.trim() || 'Operations &amp; Compliance Executive Audit Preview'}
                   </h3>
                   <p className="text-[11px] text-slate-400">
@@ -3332,8 +3357,8 @@ function ReportsPageContent() {
                 <span>Download Formal {selectedFormats.join(' & ')} Report</span>
               </button>
             </div>
-          </div>
-        </div>
+          </>
+        </Modal>
       )}
     </div>
   )

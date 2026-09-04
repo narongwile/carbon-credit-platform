@@ -16,6 +16,7 @@ import {
   Layers, RefreshCw, Send, Radio
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import Modal from '@/components/ui/Modal'
 import type { SensorDomain } from '@/types/fleet'
 import { recordAuditAction } from '@/lib/auditStore'
 
@@ -232,16 +233,33 @@ export default function OTAManagementPage() {
     }
   }
 
+  // Neither of the two operations behind these dialogs was guarded against a
+  // second click while the first was still in flight. Deleting a release twice
+  // is merely noisy; dispatching a fleet-wide firmware rollout twice sends a
+  // second OTA command to every device in the domain and writes a second
+  // OTA_FLEET_DEPLOY row into the audit ledger for one operator decision.
+  const [otaBusy, setOtaBusy] = useState(false)
+
   const handleDelete = async (id: string) => {
-    await api.deleteOtaRelease(id)
-    toast.success('Release deleted')
-    setDeleteConfirm(null)
-    load()
+    if (otaBusy) return
+    setOtaBusy(true)
+    try {
+      await api.deleteOtaRelease(id)
+      toast.success('Release deleted')
+      setDeleteConfirm(null)
+      load()
+    } catch {
+      toast.error('Failed to delete release')
+    } finally {
+      setOtaBusy(false)
+    }
   }
 
   const handleExecuteDeploy = async () => {
-    if (!deployTarget) return
+    if (!deployTarget || otaBusy) return
     const { release, mode, nodeId } = deployTarget
+    setOtaBusy(true)
+    try {
 
     if (mode === 'canary') {
       if (!nodeId) {
@@ -296,6 +314,10 @@ export default function OTAManagementPage() {
       } catch (err) {
         toast.error('Error deploying to fleet')
       }
+    }
+
+    } finally {
+      setOtaBusy(false)
     }
   }
 
@@ -703,9 +725,15 @@ export default function OTAManagementPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-6 max-w-sm w-full space-y-4 shadow-2xl animate-in zoom-in-95 duration-150">
-            <h3 className="text-base font-bold text-white flex items-center gap-2">
+        <Modal
+          open
+          onClose={() => setDeleteConfirm(null)}
+          busy={otaBusy}
+          labelledBy="ota-delete-title"
+          className="bg-[#0d1117] border border-[#1e2433] rounded-xl p-6 max-w-sm w-full space-y-4 shadow-2xl animate-in zoom-in-95 duration-150"
+        >
+          <div className="space-y-4">
+            <h3 id="ota-delete-title" className="text-base font-bold text-white flex items-center gap-2">
               <AlertTriangle size={18} className="text-red-400" /> Delete Release?
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
@@ -714,19 +742,21 @@ export default function OTAManagementPage() {
             <div className="flex gap-2 justify-end pt-2">
               <button
                 onClick={() => setDeleteConfirm(null)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                disabled={otaBusy}
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleDelete(deleteConfirm)}
-                className="px-4 py-1.5 text-xs text-white bg-red-600 hover:bg-red-500 font-semibold rounded-lg shadow"
+                disabled={otaBusy}
+                className="px-4 py-1.5 text-xs text-white bg-red-600 hover:bg-red-500 font-semibold rounded-lg shadow disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Confirm Delete
+                {otaBusy ? 'Deleting…' : 'Confirm Delete'}
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* ═══════════════════════════════════════════════════════════════════ */}
@@ -915,12 +945,18 @@ export default function OTAManagementPage() {
 
       {/* Advanced Deployment Modal: Fleet vs Canary */}
       {deployTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-          <div className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl animate-in zoom-in-95 duration-150">
+        <Modal
+          open
+          onClose={() => setDeployTarget(null)}
+          busy={otaBusy}
+          labelledBy="ota-deploy-title"
+          className="bg-[#0d1117] border border-[#1e2433] rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl animate-in zoom-in-95 duration-150"
+        >
+          <div className="space-y-5">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Server size={18} className="text-indigo-400" />
-                <h3 className="text-base font-bold text-white">Deploy OTA Firmware</h3>
+                <h3 id="ota-deploy-title" className="text-base font-bold text-white">Deploy OTA Firmware</h3>
               </div>
               <span className="text-xs font-mono font-bold text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
                 {deployTarget.release.version}
@@ -1003,20 +1039,27 @@ export default function OTAManagementPage() {
             <div className="flex gap-2 justify-end pt-2 border-t border-slate-800">
               <button
                 onClick={() => setDeployTarget(null)}
-                className="px-4 py-2 text-xs text-slate-400 hover:text-white"
+                disabled={otaBusy}
+                className="px-4 py-2 text-xs text-slate-400 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={handleExecuteDeploy}
-                className="px-5 py-2 text-xs font-semibold text-white rounded-lg shadow transition-opacity hover:opacity-90 flex items-center gap-1.5"
+                disabled={otaBusy}
+                className="px-5 py-2 text-xs font-semibold text-white rounded-lg shadow transition-opacity hover:opacity-90 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={gradient}
               >
-                <Send size={12} /> {deployTarget.mode === 'canary' ? 'Start Canary Test' : 'Deploy Fleet Update'}
+                <Send size={12} />{' '}
+                {otaBusy
+                  ? 'Dispatching…'
+                  : deployTarget.mode === 'canary'
+                    ? 'Start Canary Test'
+                    : 'Deploy Fleet Update'}
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )

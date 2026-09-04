@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import Modal from '@/components/ui/Modal'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 
 const surface = { background: '#0d1117', border: '1px solid #1e2433' }
@@ -725,9 +726,16 @@ export default function AuditPage() {
 
       {/* APPROVAL MODAL */}
       {confirmApproveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#0d1117] border border-slate-700 rounded-xl max-w-md w-full shadow-2xl p-6">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-2">
+        <Modal
+          open
+          onClose={() => setConfirmApproveModal(null)}
+          busy={isSubmitting}
+          labelledBy="approve-modal-title"
+          overlayClassName="bg-black/60"
+          className="bg-[#0d1117] border border-slate-700 rounded-xl max-w-md w-full shadow-2xl p-6"
+        >
+          <div>
+            <h3 id="approve-modal-title" className="text-lg font-bold text-white flex items-center gap-2 mb-2">
               <Key className="text-emerald-400" />
               Cryptographic Signature Required
             </h3>
@@ -746,8 +754,14 @@ export default function AuditPage() {
                   type="password"
                   value={password}
                   onChange={e => setPassword(e.target.value)}
-                  placeholder="Enter admin123"
-                  className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
+                  onKeyDown={e => { if (e.key === 'Enter' && !isSubmitting) handleApprove() }}
+                  // The placeholder used to read "Enter admin123", printing the
+                  // seed password on the face of a 21 CFR Part 11 signature
+                  // prompt. A signature field must not suggest its own answer.
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  disabled={isSubmitting}
+                  className="w-full bg-[#0a0e1a] border border-slate-700 rounded-lg px-3 py-2 text-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all disabled:opacity-60"
                   autoFocus
                 />
               </div>
@@ -756,26 +770,39 @@ export default function AuditPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmApproveModal(null)}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                disabled={isSubmitting}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
+              {/* isSubmitting was set by handleApprove but never read here, so a
+                  second click during the round-trip issued a second signature
+                  attempt against the same pending operation. */}
               <button
                 onClick={handleApprove}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-emerald-600 text-white hover:bg-emerald-500 transition-colors"
+                disabled={isSubmitting || !password.trim()}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-emerald-600 text-white hover:bg-emerald-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Sign &amp; Approve
+                {isSubmitting && <Loader2 size={14} className="animate-spin" />}
+                {isSubmitting ? 'Signing…' : 'Sign & Approve'}
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* REJECTION MODAL */}
       {confirmRejectModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#0d1117] border border-rose-900/50 rounded-xl max-w-md w-full shadow-2xl p-6">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-2">
+        <Modal
+          open
+          onClose={() => setConfirmRejectModal(null)}
+          busy={isSubmitting}
+          labelledBy="reject-modal-title"
+          overlayClassName="bg-black/60"
+          className="bg-[#0d1117] border border-rose-900/50 rounded-xl max-w-md w-full shadow-2xl p-6"
+        >
+          <div>
+            <h3 id="reject-modal-title" className="text-lg font-bold text-white flex items-center gap-2 mb-2">
               <XCircle className="text-rose-400" />
               Reject Operation Request
             </h3>
@@ -791,7 +818,8 @@ export default function AuditPage() {
                   onChange={e => setRejectReason(e.target.value)}
                   placeholder="e.g. Insufficient testing, waiting for maintenance window..."
                   rows={3}
-                  className="w-full bg-[#0a0e1a] border border-rose-900/40 rounded-lg px-3 py-2 text-white outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 transition-all text-sm"
+                  disabled={isSubmitting}
+                  className="w-full bg-[#0a0e1a] border border-rose-900/40 rounded-lg px-3 py-2 text-white outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500 transition-all text-sm disabled:opacity-60"
                   autoFocus
                 />
               </div>
@@ -800,27 +828,37 @@ export default function AuditPage() {
             <div className="flex gap-3">
               <button
                 onClick={() => setConfirmRejectModal(null)}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                disabled={isSubmitting}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Cancel
               </button>
               <button
                 onClick={handleReject}
-                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-rose-600/90 text-white hover:bg-rose-500 transition-colors"
+                disabled={isSubmitting || !rejectReason.trim()}
+                className="flex-1 py-2 rounded-lg font-semibold text-sm bg-rose-600/90 text-white hover:bg-rose-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                Reject Request
+                {isSubmitting && <Loader2 size={14} className="animate-spin" />}
+                {isSubmitting ? 'Recording…' : 'Reject Request'}
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* REQUEST DUAL-CONTROL OPERATION MODAL */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="bg-[#0d1117] border border-slate-700 rounded-xl max-w-lg w-full shadow-2xl p-6">
+        <Modal
+          open
+          onClose={() => setIsCreateModalOpen(false)}
+          busy={isSubmitting}
+          labelledBy="create-pending-modal-title"
+          overlayClassName="bg-black/60"
+          className="bg-[#0d1117] border border-slate-700 rounded-xl max-w-lg w-full shadow-2xl p-6"
+        >
+          <div>
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+              <h3 id="create-pending-modal-title" className="text-lg font-bold text-white flex items-center gap-2">
                 <ShieldAlert className="text-amber-400" size={20} />
                 Submit Dual-Control Operation Request
               </h3>
@@ -935,7 +973,8 @@ export default function AuditPage() {
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(false)}
-                  className="flex-1 py-2 rounded-lg font-semibold text-xs bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                  disabled={isSubmitting}
+                  className="flex-1 py-2 rounded-lg font-semibold text-xs bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Cancel
                 </button>
@@ -950,7 +989,7 @@ export default function AuditPage() {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )

@@ -52,6 +52,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import toast from 'react-hot-toast'
+import Modal from '@/components/ui/Modal'
 import { useAudioChimeStore } from '@/lib/audioChimeStore'
 import { recordAuditAction } from '@/lib/auditStore'
 
@@ -569,7 +570,14 @@ export default function AlarmNotificationPage() {
     })
   }
 
+  // putShelving is awaited and followed by an unconditional recordAuditAction,
+  // so a second click before the first returned wrote a second shelving record
+  // and a second ALARM_SHELVE row for one operator decision — an ISA-18.2 §12
+  // authorization is exactly the thing that must appear once.
+  const [shelveSaving, setShelveSaving] = useState(false)
+
   const handleAddShelve = async () => {
+    if (shelveSaving) return
     if (!newShelveNodeId) {
       toast.error('Select an asset to shelve')
       return
@@ -593,13 +601,24 @@ export default function AlarmNotificationPage() {
       durationHours: newShelveDurationHours,
     }
 
+    setShelveSaving(true)
     if (live) {
-      const res = await api.putShelving(orgId, shelfPayload)
+      let res: any = null
+      try {
+        res = await api.putShelving(orgId, shelfPayload)
+      } catch {
+        res = null
+      }
       if (res?.ok) {
         setShelvedDevices(res.shelves || [])
         toast.success(`Silenced alarms for ${dev?.name || newShelveNodeId} for ${newShelveDurationHours} hours`, { icon: '⏸️' })
       } else {
-        toast.error('Failed to save shelving record to backend')
+        // The alarms are still live. Saying so and leaving the dialog open is
+        // the safe reading: an operator who believes a unit is shelved when it
+        // is not will treat the alarms it keeps raising as spurious.
+        toast.error('Failed to save shelving record to backend — alarms remain ACTIVE')
+        setShelveSaving(false)
+        return
       }
     } else {
       const mockShelf = {
@@ -628,6 +647,7 @@ export default function AlarmNotificationPage() {
       },
     })
 
+    setShelveSaving(false)
     setShelveModalOpen(false)
     setNewShelveReason('')
     setNewShelveWorkOrder('')
@@ -1857,16 +1877,20 @@ export default function AlarmNotificationPage() {
 
       {/* MODAL 1: Single Entity Configuration Modal (Best Practice) */}
       {modalEntity && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div
-            className="w-full max-w-2xl rounded-2xl border border-slate-800 shadow-2xl p-6 space-y-5 max-h-[90vh] overflow-y-auto"
-            style={{ background: '#0d1117' }}
-          >
+        <Modal
+          open
+          onClose={() => setModalEntity(null)}
+          busy={modalSaving}
+          labelledBy="notif-config-title"
+          overlayClassName="bg-black/80 animate-in fade-in duration-150"
+          className="w-full max-w-2xl rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl p-6 max-h-[90vh] overflow-y-auto"
+        >
+          <div className="space-y-5">
             {/* Modal Header */}
             <div className="flex items-start justify-between gap-3 border-b border-slate-800/80 pb-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-base font-bold text-white">
+                  <h3 id="notif-config-title" className="text-base font-bold text-white">
                     Configure Notification Channels
                   </h3>
                   <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
@@ -2028,19 +2052,23 @@ export default function AlarmNotificationPage() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* MODAL 2: Bulk Copy / Apply Modal */}
       {bulkModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div
-            className="w-full max-w-xl rounded-2xl border border-slate-800 shadow-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
-            style={{ background: '#0d1117' }}
-          >
+        <Modal
+          open
+          onClose={() => setBulkModalOpen(false)}
+          busy={bulkApplying}
+          labelledBy="notif-bulk-title"
+          overlayClassName="bg-black/80 animate-in fade-in duration-150"
+          className="w-full max-w-xl rounded-2xl border border-slate-800 bg-[#0d1117] shadow-2xl p-6 max-h-[90vh] overflow-y-auto"
+        >
+          <div className="space-y-4">
             <div className="flex items-start justify-between gap-3 border-b border-slate-800/80 pb-3">
               <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <h3 id="notif-bulk-title" className="text-base font-bold text-white flex items-center gap-2">
                   <Layers size={16} className="text-indigo-400" />
                   Bulk Copy Channel Configuration
                 </h3>
@@ -2149,18 +2177,25 @@ export default function AlarmNotificationPage() {
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* MODAL 3: Proactive Alarm Shelving (ISA-18.2 §12) */}
       {shelveModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0d1117] p-6 space-y-4 shadow-2xl">
+        <Modal
+          open
+          onClose={() => setShelveModalOpen(false)}
+          busy={shelveSaving}
+          labelledBy="notif-shelve-title"
+          overlayClassName="bg-black/80 animate-in fade-in"
+          className="w-full max-w-lg rounded-2xl border border-slate-800 bg-[#0d1117] p-6 shadow-2xl"
+        >
+          <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <PauseCircle size={18} className="text-blue-400" />
                 <div>
-                  <h3 className="text-sm font-bold text-white">Temporary Alarm Shelving (ISA-18.2 §12)</h3>
+                  <h3 id="notif-shelve-title" className="text-sm font-bold text-white">Temporary Alarm Shelving (ISA-18.2 §12)</h3>
                   <p className="text-[11px] text-slate-400">ระงับการส่งเสียงและแจ้งเตือนชั่วคราวระหว่างซ่อมบำรุง</p>
                 </div>
               </div>
@@ -2261,22 +2296,24 @@ export default function AlarmNotificationPage() {
               <button
                 type="button"
                 onClick={() => setShelveModalOpen(false)}
-                className="px-3.5 py-2 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800 cursor-pointer"
+                disabled={shelveSaving}
+                className="px-3.5 py-2 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 ยกเลิก (Cancel)
               </button>
               <button
                 type="button"
                 onClick={handleAddShelve}
-                className="px-5 py-2 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
+                disabled={shelveSaving}
+                className="px-5 py-2 rounded-lg text-xs font-bold text-white shadow-md transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={gradient}
               >
-                <ShieldCheck size={14} />
-                <span>ยืนยันระงับชั่วคราว (Confirm Shelve)</span>
+                {shelveSaving ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                <span>{shelveSaving ? 'กำลังบันทึก… (Saving)' : 'ยืนยันระงับชั่วคราว (Confirm Shelve)'}</span>
               </button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Helpful shortcut footer to Event Catalog */}

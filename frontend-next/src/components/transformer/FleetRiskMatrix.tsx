@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { Layers, AlertTriangle, CheckCircle2, ShieldAlert, DollarSign, TrendingDown, Building, FileSpreadsheet, Database, RefreshCw, Download, Edit3, Wrench, X } from 'lucide-react'
 import clsx from 'clsx'
+import Modal from '@/components/ui/Modal'
 import toast from 'react-hot-toast'
 import type { SensorHost } from '@/types/fleet'
 import DemoDataBanner from '@/components/transformer/DemoDataBanner'
@@ -884,12 +885,18 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
 
       {/* Criticality & Consequence Customizer Modal */}
       {showCritModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-md rounded-2xl p-5 space-y-4 border border-indigo-500/50 shadow-2xl bg-[#0d1117]">
+        <Modal
+          open
+          onClose={() => setShowCritModal(false)}
+          labelledBy="crit-modal-title"
+          overlayClassName="bg-black/80 animate-in fade-in duration-150"
+          className="w-full max-w-md rounded-2xl p-5 border border-indigo-500/50 shadow-2xl bg-[#0d1117]"
+        >
+          <div className="space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Edit3 size={16} className="text-indigo-400" />
-                <h3 className="text-sm font-bold text-white">ปรับระดับความสำคัญ (ISO 55000 CoF)</h3>
+                <h3 id="crit-modal-title" className="text-sm font-bold text-white">ปรับระดับความสำคัญ (ISO 55000 CoF)</h3>
               </div>
               <button
                 onClick={() => setShowCritModal(false)}
@@ -963,7 +970,7 @@ export default function FleetRiskMatrix({ hosts: propHosts, sites: propSites = {
               </div>
             </form>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )

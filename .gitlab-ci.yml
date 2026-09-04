@@ -233,6 +233,15 @@ test_proofs_and_integrity:
     # decides what is written, and a mismatch (two ticked, rolled out to three)
     # was silent. Verified to fail 5/14 on the pre-fix code.
     - node e2e/proofs/test-rollout-scope-clarity.mjs
+    # 37 files render their own `fixed inset-0` overlay; 6 handled Escape, 3
+    # locked body scroll, 1 did anything with focus and none trapped Tab. The
+    # dialogs carrying the four-eyes signature, the OTA fleet rollout, ISA-18.2
+    # shelving and the ISO 55000 criticality write now go through one shared
+    # Modal. Auditing those same dialogs for double-submit found the signature
+    # button never read isSubmitting, OTA deploy had no busy state at all, and
+    # a FAILED shelving save still wrote its ALARM_SHELVE audit row.
+    # Verified to fail 29/29 on the pre-fix code (660c8c05).
+    - node e2e/proofs/test-modal-dialog-contract.mjs
     # 21 CFR Part 11 / ISA-84 Audit Trail & Four-Eyes Dual Control governance gate
     - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     # Carbon & ESG Net-Zero Accounting & SBTi 1.5°C math verification gate
