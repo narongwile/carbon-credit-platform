@@ -91,7 +91,6 @@ export default function CarbonPage() {
   const [period, setPeriod] = useState<TimePeriod>('30d')
   const [selectedEfPreset, setSelectedEfPreset] = useState<string>('th_egat')
   const [customEf, setCustomEf] = useState<number>(0.4999)
-  const [domainFilter, setDomainFilter] = useState<string>('all')
   const [showScopeInputs, setShowScopeInputs] = useState<boolean>(false)
 
   // Scope 1 inputs
@@ -124,39 +123,45 @@ export default function CarbonPage() {
   const periodYearFraction = periodDays / 365.25
 
   // ── Asset-by-Asset Energy & Carbon Calculation ──────────────────────────
-  const assetInventory = useMemo(() => {
-    return devices.map((d) => {
-      const domain = d.domain || 'transformer'
-      let periodKwh = 0
-      let activityDesc = ''
-      let scopeCategory = 'Scope 2 (Grid)'
+  // Scope narrowed to substation transformers. useManagedDevices returns EVERY
+  // device in the org and the platform still ships three other domains
+  // (carbonNode, bloodBox, automobile — see SensorDomain in types/fleet.ts,
+  // plus the admin/bloodbox and admin/automobile pages), so the narrowing has
+  // to happen on the device list. Applying the transformer formula to an
+  // unfiltered list does not scope the page to transformers, it just relabels
+  // every asset as one: a cold-chain box drawn at 0.22 kWh/day would be billed
+  // at 1250 kVA x 0.85 pf x 0.68 load x 24 h = 17,340 kWh/day, ~78,000 times
+  // its real consumption, and that number feeds totalScope2Tco2e and the whole
+  // ISO 14064-1 / SBTi trajectory.
+  const transformerDevices = useMemo(
+    () => devices.filter((d) => (d.domain || 'transformer') === 'transformer'),
+    [devices],
+  )
+  // Excluding an asset silently is the mirror of the bug above: a mixed fleet
+  // would show a total that quietly leaves devices out. Counted so the page
+  // can say so.
+  const excludedDeviceCount = devices.length - transformerDevices.length
 
+  const assetInventory = useMemo(() => {
+    return transformerDevices.map((d) => {
       const kva = (d as any).kva || 1250
       const loadFactor = 0.68
       const pf = 0.85
-      periodKwh = Math.round(kva * pf * loadFactor * 24 * periodDays)
-      activityDesc = `${kva} kVA Substation Transformer (${(loadFactor * 100).toFixed(0)}% avg load)`
-
-      const emissionsTco2e = Number(((periodKwh * effectiveGridEf) / 1000).toFixed(2))
+      const periodKwh = Math.round(kva * pf * loadFactor * 24 * periodDays)
 
       return {
         id: d.id,
         name: d.name || d.id,
         serial: d.serial || d.id,
-        domain,
+        domain: d.domain || 'transformer',
         location: d.location || 'Facility Alpha',
         periodKwh,
-        activityDesc,
-        scopeCategory,
-        emissionsTco2e,
+        activityDesc: `${kva} kVA Substation Transformer (${(loadFactor * 100).toFixed(0)}% avg load)`,
+        scopeCategory: 'Scope 2 (Grid)',
+        emissionsTco2e: Number(((periodKwh * effectiveGridEf) / 1000).toFixed(2)),
       }
     })
-  }, [devices, periodDays, effectiveGridEf])
-
-  const filteredAssetInventory = useMemo(() => {
-    if (domainFilter === 'all') return assetInventory
-    return assetInventory.filter((a) => a.domain === domainFilter)
-  }, [assetInventory, domainFilter])
+  }, [transformerDevices, periodDays, effectiveGridEf])
 
   const totalScope2Tco2e = useMemo(() => {
     return Number(assetInventory.reduce((acc, a) => acc + a.emissionsTco2e, 0).toFixed(2))
@@ -329,7 +334,7 @@ export default function CarbonPage() {
 
   const handleExportGhgCsv = useCallback(() => {
     const headers = ['Asset_ID', 'Asset_Name', 'Serial', 'Domain', 'Scope_Category', 'Activity_Description', 'Electricity_kWh', 'Grid_Factor_kgCO2e_kWh', 'Emissions_tCO2e']
-    const rows = filteredAssetInventory.map((a) => [
+    const rows = assetInventory.map((a) => [
       a.id,
       `"${a.name}"`,
       a.serial,
@@ -365,7 +370,7 @@ export default function CarbonPage() {
     link.click()
     document.body.removeChild(link)
     toast.success('GHG Protocol corporate inventory exported successfully!')
-  }, [filteredAssetInventory, orgId, period, periodDays, selectedEfPreset, effectiveGridEf, totalScope1Tco2e, totalScope2Tco2e, totalScope3Tco2e, totalEmissionsTco2e])
+  }, [assetInventory, orgId, period, periodDays, selectedEfPreset, effectiveGridEf, totalScope1Tco2e, totalScope2Tco2e, totalScope3Tco2e, totalEmissionsTco2e])
 
   const handleApplyArbitrageRule = async () => {
     try {
@@ -428,7 +433,7 @@ export default function CarbonPage() {
               {fromBackend && (
                 <span className="text-[10px] px-2.5 py-0.5 rounded font-mono font-semibold bg-indigo-950/60 text-indigo-300 border border-indigo-500/40 flex items-center gap-1.5">
                   <CheckCircle size={12} className="text-indigo-400" />
-                  Live Fleet Synced ({devices.length} Assets)
+                  Live Fleet Synced ({assetInventory.length} of {devices.length} Assets Accounted)
                 </span>
               )}
             </div>
@@ -786,18 +791,28 @@ export default function CarbonPage() {
                     <h3 className="text-sm font-bold text-white">Live Asset GHG Inventory</h3>
                     <p className="text-xs text-slate-500">Granular electricity consumption and Scope 2 allocations</p>
                   </div>
+                  {/* This was a domain <select> whose two remaining options —
+                      "All" and "Substation Transformers" — selected the same
+                      rows once the page was scoped to transformers, so it was
+                      a control that could not change anything. */}
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-slate-500">Filter:</span>
-                    <select
-                      value={domainFilter}
-                      onChange={(e) => setDomainFilter(e.target.value)}
-                      className="px-2.5 py-1 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white"
-                    >
-                      <option value="all">All Transformers ({assetInventory.length})</option>
-                      <option value="transformer">Substation Transformers</option>
-                    </select>
+                    <span className="text-[10px] px-2 py-0.5 rounded font-mono font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                      {assetInventory.length} SUBSTATION TRANSFORMER{assetInventory.length === 1 ? '' : 'S'}
+                    </span>
                   </div>
                 </div>
+
+                {excludedDeviceCount > 0 && (
+                  <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/5 text-[11px] text-amber-200/90 leading-relaxed">
+                    <strong>{excludedDeviceCount}</strong> of {devices.length} device(s) in this
+                    organization are not substation transformers and are{' '}
+                    <strong>excluded</strong> from every figure on this page — the
+                    Scope&nbsp;2 total, the fleet energy figure and the SBTi trajectory
+                    all count transformers only. Their emissions are not reported
+                    anywhere else either, so a corporate inventory that must cover the
+                    whole estate is not complete from this page alone.
+                  </div>
+                )}
 
                 <div className="overflow-x-auto max-h-[320px] rounded-lg border border-slate-800">
                   <table className="w-full text-xs text-left">
@@ -811,7 +826,7 @@ export default function CarbonPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800 font-mono">
-                      {filteredAssetInventory.map((item) => (
+                      {assetInventory.map((item) => (
                         <tr key={item.id} className="hover:bg-slate-800/30 transition-colors">
                           <td className="px-3.5 py-2.5">
                             <div className="font-semibold text-slate-200 font-sans">{item.name}</div>
@@ -827,7 +842,7 @@ export default function CarbonPage() {
                           <td className="px-3.5 py-2.5 text-right font-bold text-emerald-400">{item.emissionsTco2e.toFixed(2)}</td>
                         </tr>
                       ))}
-                      {filteredAssetInventory.length === 0 && (
+                      {assetInventory.length === 0 && (
                         <tr>
                           <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                             No devices matched filter

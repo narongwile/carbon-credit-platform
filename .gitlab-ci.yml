@@ -246,6 +246,15 @@ test_proofs_and_integrity:
     - node e2e/proofs/test-audit-trail-and-four-eyes.mjs
     # Carbon & ESG Net-Zero Accounting & SBTi 1.5°C math verification gate
     - node e2e/proofs/test-carbon-accounting.mjs
+    # 332dac58 narrowed the carbon page to substation transformers by deleting
+    # the per-domain branch and applying the transformer formula to the WHOLE
+    # org device list. The platform still ships carbonNode/bloodBox/automobile,
+    # so that relabelled every asset as a 1250 kVA transformer — a cold-chain
+    # box went from 0.22 to 17,340 kWh/day (~78,800x) straight into
+    # totalScope2Tco2e and the SBTi trajectory. Narrowing now happens on the
+    # device list, and what is excluded is stated on the page instead of
+    # silently dropped. Verified to fail 9/11 on the pre-fix code (87ff4120).
+    - node e2e/proofs/test-carbon-domain-scope.mjs
     - node backend/node-red/notify-routing.test.mjs
     - node backend/node-red/notify-org-channels.test.mjs
     # Node-RED handler bodies are template STRINGS — eslint and tsc never see
